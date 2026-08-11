@@ -184,11 +184,18 @@ export function parseFindingResponses(text: string): ParseResult<FindingResponse
   return { ok: true, value: responses, warnings };
 }
 
-/** JSON Schema handed to CLIs that can constrain their final message natively. */
+/**
+ * JSON Schema handed to CLIs that can constrain their final message natively.
+ *
+ * Written for the strictest consumer: OpenAI structured outputs reject any
+ * object whose `required` array does not list every key in `properties`. So
+ * optional fields are declared required-but-nullable rather than omitted, and
+ * the parser treats null the same as absent.
+ */
 export const REVIEW_JSON_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
-  required: ['decision', 'findings'],
+  required: ['decision', 'summary', 'findings'],
   properties: {
     decision: { type: 'string', enum: [...DECISIONS] },
     summary: { type: 'string' },
@@ -197,19 +204,60 @@ export const REVIEW_JSON_SCHEMA: Record<string, unknown> = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['id', 'severity', 'category', 'summary'],
+        required: ['id', 'severity', 'category', 'impact', 'summary', 'evidence', 'suggestedFix', 'file', 'line'],
         properties: {
           id: { type: 'string' },
           severity: { type: 'string', enum: [...SEVERITIES] },
           category: { type: 'string', enum: [...CATEGORIES] },
-          impact: { type: 'string', enum: [...IMPACTS] },
+          // Nullable fields carry no enum: an enum that omits null is rejected,
+          // and the parser validates these values anyway.
+          impact: { type: ['string', 'null'] },
           summary: { type: 'string' },
-          evidence: { type: 'string' },
-          suggestedFix: { type: 'string' },
-          file: { type: 'string' },
-          line: { type: 'integer' },
+          evidence: { type: ['string', 'null'] },
+          suggestedFix: { type: ['string', 'null'] },
+          file: { type: ['string', 'null'] },
+          line: { type: ['integer', 'null'] },
         },
       },
     },
   },
 };
+
+/**
+ * Checks a schema against the rules strict structured-output modes enforce.
+ * Exported so a test can assert it, rather than discovering a violation only
+ * when a live agent run fails.
+ */
+export function findStrictSchemaViolations(schema: unknown, path = 'root'): string[] {
+  const problems: string[] = [];
+  const node = asRecord(schema);
+  if (node === undefined) return problems;
+
+  if (node['type'] === 'object') {
+    const properties = asRecord(node['properties']) ?? {};
+    const required = Array.isArray(node['required']) ? (node['required'] as unknown[]) : [];
+
+    if (node['additionalProperties'] !== false) {
+      problems.push(`${path}: additionalProperties must be false`);
+    }
+    for (const key of Object.keys(properties)) {
+      if (!required.includes(key)) problems.push(`${path}: "${key}" is missing from required`);
+    }
+    for (const [key, value] of Object.entries(properties)) {
+      problems.push(...findStrictSchemaViolations(value, `${path}.${key}`));
+    }
+  }
+
+  if (node['type'] === 'array') {
+    problems.push(...findStrictSchemaViolations(node['items'], `${path}[]`));
+  }
+
+  // An enum that cannot express null contradicts a nullable type.
+  if (Array.isArray(node['type']) && (node['type'] as unknown[]).includes('null') && Array.isArray(node['enum'])) {
+    if (!(node['enum'] as unknown[]).includes(null)) {
+      problems.push(`${path}: nullable field has an enum that does not permit null`);
+    }
+  }
+
+  return problems;
+}

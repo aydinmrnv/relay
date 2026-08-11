@@ -2,7 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { extractSection, extractJson, beginMarker, endMarker } from '../src/reviews/protocol.ts';
-import { parseReview, parseFindingResponses } from '../src/reviews/parse.ts';
+import {
+  parseReview,
+  parseFindingResponses,
+  REVIEW_JSON_SCHEMA,
+  findStrictSchemaViolations,
+} from '../src/reviews/parse.ts';
 import { isBlocking, isActionable, formatFindingLine } from '../src/reviews/types.ts';
 
 describe('artifact protocol', () => {
@@ -115,6 +120,59 @@ describe('review parsing', () => {
     if (!result.ok) return;
     assert.equal(result.value.findings.length, 1);
     assert.equal(result.warnings.length, 2);
+  });
+});
+
+describe('review json schema', () => {
+  // A schema violation here is invisible until a live agent run fails with
+  // `invalid_json_schema`, so it is asserted directly.
+  it('satisfies strict structured-output rules', () => {
+    assert.deepEqual(findStrictSchemaViolations(REVIEW_JSON_SCHEMA), []);
+  });
+
+  it('catches a schema that omits a property from required', () => {
+    const bad = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['a'],
+      properties: { a: { type: 'string' }, b: { type: 'string' } },
+    };
+    assert.match(findStrictSchemaViolations(bad).join(' '), /"b" is missing from required/);
+  });
+
+  it('catches a missing additionalProperties: false', () => {
+    const bad = { type: 'object', required: ['a'], properties: { a: { type: 'string' } } };
+    assert.match(findStrictSchemaViolations(bad).join(' '), /additionalProperties must be false/);
+  });
+
+  it('parses a review whose optional fields came back as null', () => {
+    const result = parseReview(
+      JSON.stringify({
+        decision: 'request_changes',
+        summary: 'Problems found.',
+        findings: [
+          {
+            id: 'F1',
+            severity: 'high',
+            category: 'correctness',
+            impact: null,
+            summary: 'Boundary is wrong',
+            evidence: null,
+            suggestedFix: null,
+            file: null,
+            line: null,
+          },
+        ],
+      }),
+    );
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const finding = result.value.findings[0]!;
+    assert.equal(finding.summary, 'Boundary is wrong');
+    assert.equal(finding.file, undefined);
+    assert.equal(finding.line, undefined);
+    assert.equal(finding.impact, undefined);
   });
 });
 

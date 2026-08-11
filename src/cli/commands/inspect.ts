@@ -6,6 +6,7 @@ import { snapshotDiff, formatDiffStat, formatFileList } from '../../git/diff.ts'
 import { worktreeExists } from '../../git/worktree.ts';
 import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
 import { isTerminal, phaseLabel } from '../../workflow/phases.ts';
+import type { RunState } from '../../workflow/state.ts';
 import { createCliContext } from '../context.ts';
 import { dim, failure, heading, out, success, warning } from '../output.ts';
 
@@ -15,12 +16,16 @@ export async function statusCommand(runRef?: string): Promise<number> {
   if (runRef !== undefined) {
     const state = await resolveRun(cli.repo.root, runRef);
     const store = new RunStore(cli.repo.root, state.runId);
-    const summary = await store.readArtifact(RUN_FILES.summary);
+
+    // A finished run has a summary worth reading in full. An in-progress one
+    // does not yet, so report live state rather than a bare phase name.
+    const summary = isTerminal(state.phase) ? await store.readArtifact(RUN_FILES.summary) : undefined;
     if (summary !== undefined) {
       out(summary.trimEnd());
       return 0;
     }
-    out(`${state.runId}  ${phaseLabel(state.phase)}`);
+
+    await printLiveStatus(state, store);
     return 0;
   }
 
@@ -57,6 +62,50 @@ export async function statusCommand(runRef?: string): Promise<number> {
 
   if (runs.length > 20) out(dim(`  … and ${runs.length - 20} older run(s)`));
   return 0;
+}
+
+/** Progress view for a run that has not finished yet. */
+async function printLiveStatus(state: RunState, store: RunStore): Promise<void> {
+  const issue = state.issue;
+  heading(`${state.runId}  ${phaseLabel(state.phase)}`);
+  out();
+
+  if (issue !== undefined) out(`  Issue      #${issue.number} ${issue.title}`);
+  if (state.workspace !== undefined) {
+    out(`  Branch     ${state.workspace.branch}`);
+    out(`  Worktree   ${state.workspace.path}`);
+  }
+  out(
+    `  Agents     planner=${state.config.agents.planner}, plan reviewer=${state.config.agents.planReviewer}, ` +
+      `implementer=${state.config.agents.implementer}, code reviewer=${state.config.agents.codeReviewer}`,
+  );
+  out(
+    `  Rounds     plan ${state.rounds.planReview}/${state.config.workflow.maxPlanReviewRounds}, ` +
+      `code ${state.rounds.codeReview}/${state.config.workflow.maxCodeReviewRounds}` +
+      (state.planApproved ? dim('  (plan approved)') : ''),
+  );
+  if (state.diff !== undefined) {
+    out(`  Changes    ${state.diff.fileCount} file(s), +${state.diff.additions} −${state.diff.deletions}`);
+  }
+  if (state.error !== undefined) out(`  ${failure('Error')}      ${state.error.message}`);
+
+  const elapsed = Date.now() - new Date(state.createdAt).getTime();
+  out(`  Elapsed    ${formatDuration(elapsed)}`);
+  if (state.pid !== undefined) out(dim(`  Driven by process ${state.pid}`));
+
+  const events = await store.readEvents();
+  const recent = events.slice(-8);
+  if (recent.length > 0) {
+    out();
+    out(dim('  Recent activity'));
+    for (const event of recent) {
+      const detail = event.message ?? (event.data === undefined ? '' : oneLine(JSON.stringify(event.data), 90));
+      out(dim(`    ${event.timestamp.slice(11, 19)}  ${(event.agent ?? 'relay').padEnd(13)} ${event.type.padEnd(15)} ${detail}`));
+    }
+  }
+
+  out();
+  out(dim(`  relay watch ${state.runId}`));
 }
 
 /**
