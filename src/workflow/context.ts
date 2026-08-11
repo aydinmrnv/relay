@@ -1,0 +1,34 @@
+import type { AgentHarness } from '../agents/types.ts';
+import type { IssueProvider } from '../github/types.ts';
+import type { AgentProvider, Role } from '../storage/config.ts';
+import type { RunStore } from '../storage/runs.ts';
+import type { RunObserver } from './observer.ts';
+import type { RunState } from './state.ts';
+import type { Phase } from './phases.ts';
+
+export interface EngineContext {
+  state: RunState;
+  store: RunStore;
+  /** Every installed harness, keyed by provider. Roles map onto these. */
+  harnesses: Readonly<Record<AgentProvider, AgentHarness>>;
+  issueProvider: IssueProvider;
+  observer: RunObserver;
+  signal: AbortSignal;
+  /** Cached issue markdown for the current run, loaded from disk on resume. */
+  issueMarkdown?: string;
+}
+
+/** Outcome of a phase handler: the phase to move to, plus an optional note. */
+export interface PhaseResult {
+  next: Phase;
+  note?: string;
+}
+
+export function harnessFor(context: EngineContext, role: Role): AgentHarness {
+  const provider = context.state.agents[role]?.provider ?? context.state.config.agents[role];
+  return context.harnesses[provider];
+}
+
+export function providerNameFor(context: EngineContext, role: Role): AgentProvider {
+  return context.state.agents[role]?.provider ?? context.state.config.agents[role];
+}

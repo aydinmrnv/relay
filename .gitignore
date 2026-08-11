@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Relay run state is local-only: it records this machine's runs, not the project.
+.relay/runs/
+
+.DS_Store
