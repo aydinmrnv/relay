@@ -7,7 +7,12 @@ import {
   CLAUDE_ALWAYS_DENIED,
   CLAUDE_READ_ONLY_DENIED,
 } from '../src/agents/claude.ts';
-import { buildCodexArgs, normalizeCodexLine, codexSandboxMode } from '../src/agents/codex.ts';
+import {
+  buildCodexArgs,
+  normalizeCodexLine,
+  codexSandboxMode,
+  CODEX_EXEC_ONLY_FLAGS,
+} from '../src/agents/codex.ts';
 import { describeEvent } from '../src/agents/types.ts';
 
 describe('claude command construction', () => {
@@ -134,6 +139,45 @@ describe('codex command construction', () => {
     assert.deepEqual(args.slice(0, 3), ['exec', 'resume', 'thread-7']);
     assert.ok(!args.includes('--sandbox'));
     assert.ok(args.includes('sandbox_mode="read-only"'));
+  });
+
+  it('passes no exec-only flag to resume', () => {
+    // `codex exec resume` takes a narrower option set than `codex exec`, and
+    // rejects the difference with exit 2 before doing any work.
+    const args = buildCodexArgs({
+      capability: 'write',
+      resumeSessionId: 'thread-7',
+      lastMessageFile: '/tmp/last.txt',
+      outputSchemaFile: '/tmp/schema.json',
+      model: 'gpt-5',
+    });
+
+    for (const flag of CODEX_EXEC_ONLY_FLAGS) {
+      assert.ok(!args.includes(flag), `resume must not pass ${flag}`);
+    }
+  });
+
+  it('only passes flags that codex exec resume documents', () => {
+    const RESUME_SUPPORTED = new Set([
+      '--last', '--all', '-c', '--config', '--enable', '--disable', '-i', '--image',
+      '--strict-config', '-m', '--model', '--skip-git-repo-check', '--ephemeral',
+      '--ignore-user-config', '--ignore-rules', '--output-schema', '--json',
+      '-o', '--output-last-message',
+    ]);
+
+    const args = buildCodexArgs({
+      capability: 'read_only',
+      resumeSessionId: 'thread-7',
+      lastMessageFile: '/tmp/last.txt',
+      outputSchemaFile: '/tmp/schema.json',
+      model: 'gpt-5',
+    });
+
+    for (const arg of args) {
+      if (arg.startsWith('-') && arg !== '-') {
+        assert.ok(RESUME_SUPPORTED.has(arg), `codex exec resume does not accept ${arg}`);
+      }
+    }
   });
 
   it('never leaves approvals interactive', () => {

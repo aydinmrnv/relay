@@ -34,26 +34,35 @@ export interface CodexArgsOptions {
 }
 
 /**
+ * Flags accepted by `codex exec` but NOT by `codex exec resume`, which takes a
+ * narrower option set. Passing one of these to resume makes codex exit 2 before
+ * doing any work, so the two argv shapes are built separately.
+ */
+export const CODEX_EXEC_ONLY_FLAGS = ['--sandbox', '--color', '--cd', '--add-dir'] as const;
+
+/**
  * Builds the argv for a `codex exec` invocation.
  *
- * `codex exec resume` accepts neither `--cd` nor `-s`, so the working directory
- * comes from the spawned process's cwd and the sandbox is set through the
- * config override that both subcommands understand.
+ * The working directory always comes from the spawned process's cwd rather than
+ * `--cd`, because resume does not support it. The sandbox is set with `--sandbox`
+ * on a fresh exec and with the equivalent config override on resume.
  */
 export function buildCodexArgs(options: CodexArgsOptions): string[] {
   const sandbox = codexSandboxMode(options.capability);
+  const resuming = options.resumeSessionId !== undefined;
   const args = ['exec'];
 
   if (options.resumeSessionId !== undefined) {
     args.push('resume', options.resumeSessionId);
   }
 
-  args.push('--json', '--color', 'never');
+  args.push('--json');
 
-  if (options.resumeSessionId === undefined) {
-    args.push('--sandbox', sandbox);
-  } else {
+  if (resuming) {
     args.push('-c', `sandbox_mode="${sandbox}"`);
+  } else {
+    // Colour is suppressed on resume through NO_COLOR in the environment.
+    args.push('--color', 'never', '--sandbox', sandbox);
   }
 
   // Never wait on an approval prompt: there is no human attached to this process.
