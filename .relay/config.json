@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "agents": {
+    "planner": "claude",
+    "planReviewer": "codex",
+    "implementer": "codex",
+    "codeReviewer": "claude"
+  },
+  "models": {},
+  "workflow": {
+    "maxPlanReviewRounds": 3,
+    "maxCodeReviewRounds": 2,
+    "baseBranch": "",
+    "branchPrefix": "relay",
+    "runTests": true
+  },
+  "timeouts": {
+    "planningMs": 1200000,
+    "reviewMs": 1200000,
+    "implementationMs": 2700000,
+    "testsMs": 900000
+  },
+  "tests": {
+    "command": null
+  }
+}
