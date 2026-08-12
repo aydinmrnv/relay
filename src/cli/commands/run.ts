@@ -7,6 +7,7 @@ import type { RelayConfig } from '../../storage/config.ts';
 import { WorkflowEngine } from '../../workflow/engine.ts';
 import { createRunState, type RunState } from '../../workflow/state.ts';
 import { isTerminal } from '../../workflow/phases.ts';
+import { formatUsage } from '../../workflow/usage.ts';
 import type { EngineContext } from '../../workflow/context.ts';
 import { RunRenderer } from '../../ui/renderer.ts';
 import { formatDuration } from '../../util/text.ts';
@@ -203,6 +204,7 @@ function printOutcome(state: RunState, store: RunStore): void {
     );
   }
   out(`  Reviews    plan ${state.rounds.planReview} round(s), code ${state.rounds.codeReview} round(s)`);
+  if (state.usage !== undefined) out(`  Usage      ${formatUsage(state.usage.total)}`);
   out(`  Run state  ${store.dir}`);
 
   out();

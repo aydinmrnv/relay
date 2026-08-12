@@ -6,6 +6,7 @@ import type { Role } from '../storage/config.ts';
 import type { ParseResult } from '../reviews/parse.ts';
 import { harnessFor, providerNameFor, type EngineContext } from './context.ts';
 import { recordAgentSession } from './state.ts';
+import { recordTurnUsage } from './usage.ts';
 
 export interface AgentTurnOptions {
   role: Role;
@@ -68,6 +69,12 @@ export async function runAgentTurn(context: EngineContext, options: AgentTurnOpt
 
   recordAgentSession(state, options.role, session.sessionId);
 
+  // A failed turn still spent tokens, so usage is recorded before the throw
+  // below rather than only on the happy path.
+  if (session.usage !== undefined) {
+    state.usage = recordTurnUsage(state.usage, state.phase, session.usage);
+  }
+
   await store.logEvent({
     timestamp: new Date().toISOString(),
     runId: state.runId,
@@ -81,6 +88,7 @@ export async function runAgentTurn(context: EngineContext, options: AgentTurnOpt
       sessionId: session.sessionId,
       exitCode: session.exitCode,
       durationMs: session.durationMs,
+      ...(session.usage === undefined ? {} : { usage: session.usage }),
       // The exact argv is part of the audit trail; it contains no secrets.
       invocation: `${session.invocation.command} ${session.invocation.args.join(' ')}`,
     },

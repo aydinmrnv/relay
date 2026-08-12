@@ -3,6 +3,7 @@ import type { AgentProvider, RelayConfig, Role } from '../storage/config.ts';
 import type { ReviewRound } from '../reviews/types.ts';
 import type { Phase } from './phases.ts';
 import { canTransition, isTerminal } from './phases.ts';
+import type { RunUsage } from './usage.ts';
 
 export interface AgentBinding {
   provider: AgentProvider;
@@ -77,6 +78,8 @@ export interface RunState {
   planApproved: boolean;
   diff?: DiffSummary;
   tests?: TestRecord;
+  /** Tokens and cost the run has spent so far. Absent until a CLI reports any. */
+  usage?: RunUsage;
 
   error?: { message: string; phase: Phase; code?: string };
   /** PID of the process driving the run, so `relay stop` can signal it. */

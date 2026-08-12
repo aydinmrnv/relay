@@ -8,6 +8,7 @@ import type {
   AgentHarness,
   AgentRunOptions,
   AgentSession,
+  AgentUsage,
   AvailabilityResult,
   ResumeOptions,
 } from './types.ts';
@@ -120,14 +121,16 @@ export function normalizeClaudeLine(raw: Record<string, unknown>, agent: string)
   if (type === 'result') {
     const isError = raw['is_error'] === true || raw['subtype'] !== 'success';
     const result = typeof raw['result'] === 'string' ? raw['result'] : undefined;
+    const usage = claudeUsage(raw);
+    const billing = usage === undefined ? {} : { usage };
     if (isError) {
       const detail =
         typeof raw['error'] === 'string'
           ? raw['error']
           : (result ?? `claude ended with subtype "${String(raw['subtype'])}"`);
-      return [makeEvent('failed', agent, { error: detail })];
+      return [makeEvent('failed', agent, { error: detail, ...billing })];
     }
-    return [makeEvent('completed', agent, result === undefined ? {} : { result })];
+    return [makeEvent('completed', agent, { ...(result === undefined ? {} : { result }), ...billing })];
   }
 
   if (type === 'error' || type === 'stream_error') {
@@ -136,6 +139,33 @@ export function normalizeClaudeLine(raw: Record<string, unknown>, agent: string)
   }
 
   return [];
+}
+
+/**
+ * Reads the token counts and cost Claude puts on its `result` line.
+ *
+ * Cache creation and cache reads are billed input, so they are folded into
+ * `inputTokens` rather than dropped: the total is what the run actually cost.
+ */
+export function claudeUsage(raw: Record<string, unknown>): AgentUsage | undefined {
+  const usage = raw['usage'];
+  const record = usage !== null && typeof usage === 'object' ? (usage as Record<string, unknown>) : {};
+
+  const inputTokens =
+    finiteNumber(record['input_tokens']) +
+    finiteNumber(record['cache_creation_input_tokens']) +
+    finiteNumber(record['cache_read_input_tokens']);
+  const outputTokens = finiteNumber(record['output_tokens']);
+
+  const cost = raw['total_cost_usd'];
+  const costUsd = typeof cost === 'number' && Number.isFinite(cost) ? cost : undefined;
+
+  if (inputTokens === 0 && outputTokens === 0 && costUsd === undefined) return undefined;
+  return { inputTokens, outputTokens, ...(costUsd === undefined ? {} : { costUsd }) };
+}
+
+function finiteNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 /** Maps Claude tool names onto the richer event types Relay renders specially. */
@@ -263,6 +293,7 @@ export class ClaudeHarness implements AgentHarness {
     let sessionId: string | undefined = knownSessionId;
     let finalText = '';
     let failure: string | undefined;
+    let usage: AgentUsage | undefined;
 
     const emit = (event: AgentEvent): void => {
       events.push(event);
@@ -270,6 +301,7 @@ export class ClaudeHarness implements AgentHarness {
       if (event.type === 'started' && event.sessionId !== undefined) sessionId = event.sessionId;
       if (event.type === 'completed' && event.result !== undefined) finalText = event.result;
       if (event.type === 'failed') failure = event.error;
+      if ((event.type === 'completed' || event.type === 'failed') && event.usage !== undefined) usage = event.usage;
     };
 
     try {
@@ -313,6 +345,7 @@ export class ClaudeHarness implements AgentHarness {
         durationMs: result.durationMs,
         timedOut: result.timedOut,
         aborted: result.aborted,
+        ...(usage === undefined ? {} : { usage }),
         invocation: { command: this.binary, args },
       };
     } finally {

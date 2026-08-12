@@ -11,6 +11,7 @@ import type {
   AgentHarness,
   AgentRunOptions,
   AgentSession,
+  AgentUsage,
   AvailabilityResult,
   ResumeOptions,
 } from './types.ts';
@@ -110,7 +111,8 @@ export function normalizeCodexLine(raw: Record<string, unknown>, agent: string):
   }
 
   if (type === 'turn.completed') {
-    return [makeEvent('completed', agent, {})];
+    const usage = codexUsage(raw);
+    return [makeEvent('completed', agent, usage === undefined ? {} : { usage })];
   }
 
   if (type === 'turn.failed' || type === 'error') {
@@ -121,7 +123,8 @@ export function normalizeCodexLine(raw: Record<string, unknown>, agent: string):
         : typeof raw['message'] === 'string'
           ? raw['message']
           : 'codex reported a failed turn';
-    return [makeEvent('failed', agent, { error: detail })];
+    const usage = codexUsage(raw);
+    return [makeEvent('failed', agent, { error: detail, ...(usage === undefined ? {} : { usage }) })];
   }
 
   if (type === 'item.completed' || type === 'item.started') {
@@ -134,6 +137,27 @@ export function normalizeCodexLine(raw: Record<string, unknown>, agent: string):
   }
 
   return [];
+}
+
+/**
+ * Reads the token counts Codex attaches to a finished turn. Unlike Claude,
+ * `input_tokens` already includes `cached_input_tokens`, so adding them would
+ * double-count. Codex reports no price, so `costUsd` stays absent.
+ */
+export function codexUsage(raw: Record<string, unknown>): AgentUsage | undefined {
+  const usage = raw['usage'];
+  if (usage === null || typeof usage !== 'object') return undefined;
+  const record = usage as Record<string, unknown>;
+
+  const inputTokens = finiteNumber(record['input_tokens']);
+  const outputTokens = finiteNumber(record['output_tokens']);
+  if (inputTokens === 0 && outputTokens === 0) return undefined;
+
+  return { inputTokens, outputTokens };
+}
+
+function finiteNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function normalizeCodexItem(item: CodexItem, agent: string, isStart: boolean): AgentEvent[] {
@@ -285,6 +309,7 @@ export class CodexHarness implements AgentHarness {
     let sessionId = resumeSessionId;
     let lastMessage = '';
     let failure: string | undefined;
+    let usage: AgentUsage | undefined;
 
     const emit = (event: AgentEvent): void => {
       events.push(event);
@@ -295,6 +320,7 @@ export class CodexHarness implements AgentHarness {
       }
       if (event.type === 'message') lastMessage = event.text;
       if (event.type === 'failed') failure = event.error;
+      if ((event.type === 'completed' || event.type === 'failed') && event.usage !== undefined) usage = event.usage;
     };
 
     try {
@@ -340,6 +366,7 @@ export class CodexHarness implements AgentHarness {
         durationMs: result.durationMs,
         timedOut: result.timedOut,
         aborted: result.aborted,
+        ...(usage === undefined ? {} : { usage }),
         invocation: { command: this.binary, args },
       };
     } finally {

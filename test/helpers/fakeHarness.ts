@@ -2,6 +2,7 @@ import type {
   AgentHarness,
   AgentRunOptions,
   AgentSession,
+  AgentUsage,
   AvailabilityResult,
   ResumeOptions,
 } from '../../src/agents/types.ts';
@@ -14,6 +15,8 @@ export interface ScriptedTurn {
   error?: string;
   /** Side effect on the worktree, so `git diff` sees real changes. */
   effect?: (cwd: string) => Promise<void>;
+  /** Token counts this turn reports, as a real CLI would. */
+  usage?: AgentUsage;
 }
 
 export interface RecordedCall {
@@ -101,22 +104,24 @@ export class FakeAgentHarness implements AgentHarness {
 
     if (turn.effect !== undefined) await turn.effect(options.cwd);
 
+    const billing = turn.usage === undefined ? {} : { usage: turn.usage };
+
     options.onEvent?.(makeEvent('started', options.role, { sessionId }));
     options.onEvent?.(makeEvent('message', options.role, { text: turn.text }));
 
     if (turn.ok === false) {
-      options.onEvent?.(makeEvent('failed', options.role, { error: turn.error ?? 'scripted failure' }));
-      return this.session(options, sessionId, { ok: false, error: turn.error ?? 'scripted failure' });
+      options.onEvent?.(makeEvent('failed', options.role, { error: turn.error ?? 'scripted failure', ...billing }));
+      return this.session(options, sessionId, { ok: false, error: turn.error ?? 'scripted failure', ...billing });
     }
 
-    options.onEvent?.(makeEvent('completed', options.role, { result: turn.text }));
-    return this.session(options, sessionId, { ok: true, text: turn.text });
+    options.onEvent?.(makeEvent('completed', options.role, { result: turn.text, ...billing }));
+    return this.session(options, sessionId, { ok: true, text: turn.text, ...billing });
   }
 
   private session(
     options: AgentRunOptions,
     sessionId: string,
-    overrides: { ok: boolean; text?: string; error?: string; aborted?: boolean },
+    overrides: { ok: boolean; text?: string; error?: string; aborted?: boolean; usage?: AgentUsage },
   ): AgentSession {
     return {
       provider: this.name,
@@ -130,6 +135,7 @@ export class FakeAgentHarness implements AgentHarness {
       durationMs: 1,
       timedOut: false,
       aborted: overrides.aborted ?? false,
+      ...(overrides.usage === undefined ? {} : { usage: overrides.usage }),
       invocation: { command: this.name, args: ['--fake'] },
     };
   }

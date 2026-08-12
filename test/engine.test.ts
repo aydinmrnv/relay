@@ -178,6 +178,52 @@ describe('workflow engine — happy path', () => {
     assert.equal(final.tests?.passed, true);
   });
 
+  it('accumulates the tokens each turn reported, per phase and per run', async () => {
+    const harnesses: Harness = {
+      claude: new FakeAgentHarness('claude', {
+        planner: [{ text: planText(), usage: { inputTokens: 1000, outputTokens: 200, costUsd: 0.1 } }],
+        codeReviewer: [{ text: approveReview(), usage: { inputTokens: 400, outputTokens: 40, costUsd: 0.05 } }],
+      }),
+      codex: new FakeAgentHarness('codex', {
+        // Codex reports tokens but no price, as the real CLI does.
+        planReviewer: [{ text: approveReview(), usage: { inputTokens: 500, outputTokens: 50 } }],
+        implementer: [
+          {
+            text: section('NOTES', 'Edited src/app.ts'),
+            effect: writesFile('src/app.ts', 'export const value = 2;\n'),
+            usage: { inputTokens: 2000, outputTokens: 800 },
+          },
+        ],
+      }),
+    };
+
+    const { context, store } = buildContext(harnesses);
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.equal(final.usage?.total.inputTokens, 3900);
+    assert.equal(final.usage?.total.outputTokens, 1090);
+    assert.equal(final.usage?.total.turns, 4);
+    // Only the two Claude turns priced themselves; the total says so honestly.
+    assert.ok(Math.abs((final.usage?.total.costUsd ?? 0) - 0.15) < 1e-9);
+
+    assert.equal(final.usage?.byPhase.PLANNING?.inputTokens, 1000);
+    assert.equal(final.usage?.byPhase.REVIEWING_PLAN?.inputTokens, 500);
+    assert.equal(final.usage?.byPhase.IMPLEMENTING?.outputTokens, 800);
+    assert.equal(final.usage?.byPhase.REVIEWING_PLAN?.costUsd, undefined);
+    assert.equal(final.usage?.byPhase.TESTING, undefined);
+
+    assert.match((await store.readArtifact('summary.md')) ?? '', /- Usage: 3\.9k in \/ 1\.1k out · \$0\.15 · 4 turns/);
+  });
+
+  it('records nothing when no CLI reports usage', async () => {
+    const { context } = buildContext(happyPathHarnesses());
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.usage, undefined);
+    assert.ok(!((await new RunStore(repo.root, final.runId).readArtifact('summary.md')) ?? '').includes('Usage'));
+  });
+
   it('gives the reviewer the real diff, not the agent summary', async () => {
     const harnesses = happyPathHarnesses();
     const { context } = buildContext(harnesses);

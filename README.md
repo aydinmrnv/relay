@@ -31,6 +31,8 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 
 **Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/` and one row in `AGENT_REGISTRY` (`src/agents/index.ts`) — config validation, `relay doctor`, `relay init` and the `--planner` / `--implementer` flags all read that array, so none of them need touching.
 
+**Cost is reported, not guessed.** Both CLIs report what a turn consumed, and Relay accumulates it per phase and per run. `relay status` shows the run total, `relay logs` breaks it down by phase, so `maxPlanReviewRounds` can be tuned against a real number. Relay never prices tokens itself: a missing cost means the CLI did not publish one, never that the work was free.
+
 **Verification is mechanical, not conversational.** Relay computes the diff itself (`git add -A` + `git diff --cached <baseSha>`), so an implementer that reports success while changing nothing fails the run. Test results come from process exit codes. A phase is never marked successful because an agent said so.
 
 **Agent output is untrusted input.** Artifacts are exchanged in delimited sections (`===RELAY:BEGIN REVIEW=== … ===RELAY:END REVIEW===`) carrying small JSON payloads. Parsing is tolerant but validating: unknown enum values are coerced with a recorded warning, malformed findings are dropped, and a review that requests changes without naming anything is rejected. If output does not parse, Relay resumes the same session once with a format reminder rather than re-running the turn.
@@ -72,7 +74,7 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 .relay/
   config.json
   runs/<run-id>/
-    state.json                 phase, sessions, rounds, diff summary, test results
+    state.json                 phase, sessions, rounds, diff summary, test results, token usage
     issue.md                   the issue as the agents received it
     plan.md                    current plan (rewritten on each revision)
     implementation-notes.md

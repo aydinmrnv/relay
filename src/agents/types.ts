@@ -3,6 +3,19 @@
  * know what a Claude `stream-json` line or a Codex `item.completed` looks like:
  * adding a third CLI must mean adding one file here, not touching the engine.
  */
+/**
+ * What one agent turn consumed, as reported by the CLI that ran it.
+ *
+ * Relay never prices tokens itself: `costUsd` is present only when the harness
+ * was told a cost, so a missing cost means "not reported", never "free".
+ */
+export interface AgentUsage {
+  /** Every input token the turn was billed for, including cached reads. */
+  inputTokens: number;
+  outputTokens: number;
+  costUsd?: number;
+}
+
 export type AgentEvent =
   | { type: 'started'; agent: string; at: string; sessionId?: string }
   | { type: 'message'; agent: string; at: string; text: string }
@@ -10,8 +23,10 @@ export type AgentEvent =
   | { type: 'tool'; agent: string; at: string; tool: string; input?: unknown }
   | { type: 'command'; agent: string; at: string; command: string; exitCode?: number }
   | { type: 'file_changed'; agent: string; at: string; path: string; change?: string }
-  | { type: 'completed'; agent: string; at: string; result?: string }
-  | { type: 'failed'; agent: string; at: string; error: string }
+  // Usage rides on the terminal events because that is where both CLIs report
+  // it — a turn that fails still spent tokens.
+  | { type: 'completed'; agent: string; at: string; result?: string; usage?: AgentUsage }
+  | { type: 'failed'; agent: string; at: string; error: string; usage?: AgentUsage }
   | { type: 'notice'; agent: string; at: string; text: string };
 
 export type AgentEventType = AgentEvent['type'];
@@ -55,6 +70,8 @@ export interface AgentSession {
   durationMs: number;
   timedOut: boolean;
   aborted: boolean;
+  /** Present when the CLI reported token counts for this turn. */
+  usage?: AgentUsage;
   /** Exact argv that was executed, for the audit trail. */
   invocation: { command: string; args: string[] };
 }

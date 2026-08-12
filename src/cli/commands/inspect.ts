@@ -5,8 +5,9 @@ import { formatDuration, oneLine } from '../../util/text.ts';
 import { snapshotDiff, formatDiffStat, formatFileList } from '../../git/diff.ts';
 import { worktreeExists } from '../../git/worktree.ts';
 import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
-import { isTerminal, phaseLabel } from '../../workflow/phases.ts';
+import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
 import type { RunState } from '../../workflow/state.ts';
+import { formatUsage } from '../../workflow/usage.ts';
 import { createCliContext } from '../context.ts';
 import { dim, failure, heading, out, success, warning } from '../output.ts';
 
@@ -87,6 +88,7 @@ async function printLiveStatus(state: RunState, store: RunStore): Promise<void> 
   if (state.diff !== undefined) {
     out(`  Changes    ${state.diff.fileCount} file(s), +${state.diff.additions} −${state.diff.deletions}`);
   }
+  if (state.usage !== undefined) out(`  Usage      ${formatUsage(state.usage.total)}`);
   if (state.error !== undefined) out(`  ${failure('Error')}      ${state.error.message}`);
 
   const elapsed = Date.now() - new Date(state.createdAt).getTime();
@@ -171,7 +173,24 @@ export async function logsCommand(runRef: string, options: { limit?: string; all
     const detail = event.message ?? (event.data === undefined ? '' : oneLine(JSON.stringify(event.data), 140));
     out(`${dim(time)}  ${event.phase.padEnd(18)} ${who.padEnd(14)} ${event.type.padEnd(16)} ${detail}`);
   }
+
+  printUsageByPhase(state);
   return 0;
+}
+
+/** Per-phase token spend, so a run's cost can be attributed to the rounds that caused it. */
+function printUsageByPhase(state: RunState): void {
+  const usage = state.usage;
+  if (usage === undefined) return;
+
+  out();
+  out(dim('Usage by phase'));
+  for (const phase of PHASES) {
+    const totals = usage.byPhase[phase];
+    if (totals === undefined) continue;
+    out(dim(`  ${phaseLabel(phase).padEnd(20)} ${formatUsage(totals)}`));
+  }
+  out(dim(`  ${'Total'.padEnd(20)} ${formatUsage(usage.total)}`));
 }
 
 /** Signals a running engine to stop at its next phase boundary. */
