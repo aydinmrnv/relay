@@ -1,5 +1,7 @@
 import { isRelayError, errorMessage } from '../util/errors.ts';
 import { asciiSafe, detectTheme, glyphs, paint, type Theme } from '../ui/theme.ts';
+import { layoutWidth, panel, table, type Column, type PanelOptions } from '../ui/box.ts';
+import { relayLogo } from '../ui/logo.ts';
 
 let cachedTheme: Theme | undefined;
 
@@ -62,6 +64,54 @@ export function warning(text: string): string {
 
 export function heading(text: string): void {
   out(bold(text));
+}
+
+// ---------------------------------------------------------------------------
+// Chrome: the banner, frames and tables that make a command read as a screen.
+//
+// The division of labour with the plain printers above is deliberate. A frame
+// is structure — it survives `cat`, it carries meaning about what belongs with
+// what, and so it is drawn whether or not anything is watching. The banner is
+// decoration, and decoration is drawn only for a person: a log collector does
+// not need five rows of block letters at the top of every file.
+// ---------------------------------------------------------------------------
+
+/** Columns the current terminal lays out to. */
+export function width(): number {
+  return layoutWidth(process.stdout);
+}
+
+/**
+ * The wordmark, at the top of the commands a session starts with. Prints
+ * nothing when the output is not a terminal, so a piped `relay doctor` still
+ * begins with its first real line.
+ */
+export function banner(tagline?: string): void {
+  if (!theme().interactive) return;
+
+  out();
+  for (const line of relayLogo({
+    theme: theme(),
+    width: width(),
+    ...(tagline === undefined ? {} : { tagline }),
+  })) {
+    out(line);
+  }
+  out();
+}
+
+/** A framed block. Takes everything `panel()` does except the theme and width. */
+export function box(options: Omit<PanelOptions, 'theme' | 'width'> & { width?: number }): void {
+  const { width: given, ...rest } = options;
+  for (const line of panel({ ...rest, theme: theme(), width: given ?? width() })) out(line);
+}
+
+/**
+ * Aligned columns, as lines. Returned rather than printed so a table can be a
+ * panel's body as easily as it can be a block of its own.
+ */
+export function gridLines(columns: readonly Column[], data: ReadonlyArray<readonly string[]>): string[] {
+  return table(theme(), columns, data);
 }
 
 /** A secondary heading inside a block, e.g. `Phases` above a list. */

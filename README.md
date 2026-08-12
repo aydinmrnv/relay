@@ -149,25 +149,66 @@ of during it).
 
 ## Terminal output
 
-A run takes minutes, so `relay run` shows a live checklist: the active phase
-carries a spinner and an elapsed time, review phases show the round being
-consumed (`round 2/2`) rather than a bare "revising", and the run ends with one
-block covering phases, rounds, diff, tests, cost and the next command — with a
-per-phase duration, which is the number to tune against. A `--fast` run shows
-the five steps it will actually take rather than greying out two it never
-enters. When a phase fails, that block names the agent that failed, the phase,
-and the two commands worth running next.
+A run takes minutes, so `relay run` shows a live dashboard: one framed row per
+phase, in fixed columns, redrawn in place.
+
+```
+◆ RELAY ───────────────────────────────────────────────────────── Issue #142
+Add authentication rate limiting
+
+╭─ Pipeline ───────────────────────────────────────────────────────────────╮
+│ ● Fetching issue              complete                                   │
+│ ● Creating workspace          complete                                   │
+│ ● Planning             1m 4s  claude · reading the codebase              │
+│ ● Plan review          21.0s  codex · round 1/3 · reviewing              │
+│ ⠋ Implementation      2m 12s  codex · editing src/auth/limiter.ts        │
+│ ○ Code review                 claude · waiting                           │
+│ ○ Tests                       waiting                                    │
+├──────────────────────────────────────────────────────────────────────────┤
+│ → implementer: $ npm test -- auth                                        │
+│ ███████░░░░░  4/7 phases                                          3m 37s │
+╰──────────────────────────────────────────────────────────────────────────╯
+```
+
+Every column starts in the same place from the first row to the last: mark,
+phase, clock, then who is doing what. A duration sits directly beside the phase
+it times rather than a column away from it, review phases show the round being
+consumed (`round 2/2`) rather than a bare "revising", and the footer carries how
+far in the run is and how long it has taken. A `--fast` run shows the five steps
+it will actually take rather than greying out two it never enters. The run ends
+with one block covering phases, rounds, diff, tests, cost and the next command —
+with a per-phase duration, which is the number to tune against. When a phase
+fails, that block names the agent that failed, the phase, and the two commands
+worth running next.
+
+`relay doctor` and `relay status` are framed the same way, and the commands a
+session opens with — `relay start`, `relay doctor` — print the wordmark first.
+The wordmark is drawn from a 5×5 pixel font (`src/ui/logo.ts`) rather than
+pasted as art, so one drawing serves both alphabets: the ink is a block on a
+unicode terminal and `#` everywhere else, and the two can never drift apart.
 
 The display resolves colour, unicode and interactivity once, from the
 environment, and everything routes through those primitives:
 
 | | effect |
 |---|---|
-| not a TTY (a pipe, a redirect) | append-only lines, no colour, no cursor control |
+| not a TTY (a pipe, a redirect) | append-only lines, no colour, no cursor control, no wordmark |
 | `CI=1` | same as a pipe, even on an allocated TTY |
 | `NO_COLOR=1` | colour off; the display is otherwise unchanged |
 | `TERM=dumb` | append-only, no colour, ASCII only |
-| `RELAY_ASCII=1` | ASCII glyphs and punctuation, colour kept |
+| `RELAY_ASCII=1` | ASCII glyphs, punctuation, frames and logo; colour kept |
+
+Frames are structure and are drawn wherever the output goes — they survive
+`cat`, and they carry what belongs with what. The wordmark is decoration and is
+drawn only for a person: a log collector does not need five rows of block
+letters at the top of every file.
+
+Two rules hold across all of it. Every border character is chosen from the
+theme rather than written literally, so a terminal with no box drawing gets a
+frame of `+-|` instead of a row of question marks. And every width is measured
+with `visibleWidth`, never `.length`, because a coloured cell carries bytes that
+occupy no columns — padding by `.length` puts the right-hand border in a
+different place on every row exactly when colour is on.
 
 Content Relay only passes through — a patch, a `--json` payload, an agent's
 plan — is never rewritten by any of that.
@@ -243,7 +284,7 @@ Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed a
 ```bash
 npm install
 npm run typecheck
-npm test          # 356 tests, no network, no real agents
+npm test          # 393 tests, no network, no real agents
 npm run build
 ```
 

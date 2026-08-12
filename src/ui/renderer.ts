@@ -3,12 +3,21 @@ import type { Role } from '../storage/config.ts';
 import { DISPLAY_PHASES, displayPhaseFor, phaseLabel, phaseRole, type Phase } from '../workflow/phases.ts';
 import type { RunObserver } from '../workflow/observer.ts';
 import { formatDuration, oneLine } from '../util/text.ts';
-import { asciiSafe, detectTheme, fitWidth, glyphs, paint, type Theme } from './theme.ts';
+import { asciiSafe, detectTheme, fitWidth, glyphs, padVisible, paint, type Theme } from './theme.ts';
+import { gauge, layoutWidth, panel, panelInnerWidth, statusBar } from './box.ts';
+import { logoBar } from './logo.ts';
 
 type PhaseStatus = 'waiting' | 'active' | 'done' | 'failed';
 
 /** How often the spinner advances. Slow enough to read, fast enough to look alive. */
 const SPINNER_INTERVAL_MS = 120;
+
+/**
+ * Columns reserved for a phase's clock. Wide enough for the longest duration
+ * `formatDuration` produces at a run's scale (`1h 20m`), so the detail column
+ * starts in the same place from the first phase to the last.
+ */
+const TIMING_WIDTH = 7;
 
 export interface RunRendererOptions {
   title: string;
@@ -54,6 +63,8 @@ export class RunRenderer implements RunObserver {
   private stopped = false;
   private spinnerFrame = 0;
   private spinnerTimer: NodeJS.Timeout | undefined;
+  /** When the display opened, for the wall-clock in the footer. */
+  private runStartedAt = 0;
 
   constructor(options: RunRendererOptions) {
     this.options = options;
@@ -65,7 +76,16 @@ export class RunRenderer implements RunObserver {
   }
 
   start(): void {
-    this.write(`${paint(this.theme, 'bold', this.options.title)}\n`);
+    this.runStartedAt = this.now();
+
+    // On a terminal the header is the run's title bar: the mark, then what is
+    // being worked on, ruled across the full width. A pipe gets the same two
+    // facts as plain lines, because a log wants the text and not the furniture.
+    if (this.theme.interactive) {
+      this.write(`${logoBar(this.theme, this.options.title, this.width())}\n`);
+    } else {
+      this.write(`${paint(this.theme, 'bold', `Relay — ${this.options.title}`)}\n`);
+    }
     if (this.options.subtitle !== undefined) {
       this.write(`${paint(this.theme, 'gray', this.options.subtitle)}\n`);
     }
@@ -218,11 +238,25 @@ export class RunRenderer implements RunObserver {
     this.linesDrawn = lines.length;
   }
 
+  private width(): number {
+    return layoutWidth(this.stream);
+  }
+
+  /**
+   * The live region: one framed row per phase, in fixed columns.
+   *
+   * Everything is one line per phase and every column starts in the same place
+   * down the whole panel — mark, phase, clock, then who is doing what. A run
+   * redraws this several times a second, and a reader tracking a column with
+   * their eye must not have it move under them.
+   */
   private buildLines(): string[] {
     const marks = glyphs(this.theme);
-    const lines: string[] = [];
+    const width = this.width();
+    const inner = panelInnerWidth(width);
+    const labelWidth = Math.max(...this.phases.map((phase) => phaseLabel(phase).length));
 
-    for (const phase of this.phases) {
+    const body = this.phases.map((phase) => {
       const status = this.status.get(phase) ?? 'waiting';
       const role = phaseRole(phase);
       const agent = role === undefined ? undefined : this.options.agentNames[role];
@@ -236,26 +270,39 @@ export class RunRenderer implements RunObserver {
               ? paint(this.theme, 'red', marks.failed)
               : paint(this.theme, 'gray', marks.pending);
 
-      const label = status === 'waiting' ? paint(this.theme, 'gray', phaseLabel(phase)) : phaseLabel(phase);
-      const ms = this.elapsedFor(phase);
+      const label = padVisible(phaseLabel(phase), labelWidth);
       // Elapsed time is the run's only honest liveness signal, so it is shown
-      // while a phase runs and kept as its final duration once it is done.
-      const timing = ms === undefined || status === 'waiting' ? '' : `  ${paint(this.theme, 'gray', formatDuration(ms))}`;
-      lines.push(`${glyph} ${label}${timing}`);
+      // while a phase runs and kept as its final duration once it is done. It
+      // sits directly after the label: a duration a column away from the thing
+      // it times is a duration the reader has to hunt for.
+      const ms = this.elapsedFor(phase);
+      const timing = padVisible(ms === undefined || status === 'waiting' ? '' : formatDuration(ms), TIMING_WIDTH, 'right');
 
-      const detail = this.detailFor(phase, status);
-      const name = agent ?? '';
-      if (name.length > 0 || detail.length > 0) {
-        lines.push(paint(this.theme, 'gray', `  ${name.padEnd(18)} ${detail}`));
-      }
-    }
+      const detail = [agent, this.detailFor(phase, status)].filter((part) => part !== undefined && part.length > 0);
+      const row = `${glyph} ${status === 'waiting' ? paint(this.theme, 'gray', label) : label} ${paint(this.theme, 'gray', timing)}  ${paint(this.theme, 'gray', detail.join(' · '))}`;
+      return row;
+    });
 
+    const footer: string[] = [];
     if (this.activity.length > 0) {
-      lines.push('');
-      lines.push(paint(this.theme, 'gray', `  ${marks.arrow} ${this.activity}`));
+      footer.push(paint(this.theme, 'gray', `${marks.arrow} ${this.activity}`));
     }
+    footer.push(this.progressLine(inner));
 
-    return lines;
+    return panel({ theme: this.theme, width, title: 'Pipeline', body, footer });
+  }
+
+  /** `████░░░░  3/9 phases · 4m 2s` — how far in, and how long it has taken. */
+  private progressLine(inner: number): string {
+    const settled = this.phases.filter((phase) => {
+      const status = this.status.get(phase);
+      return status === 'done' || status === 'failed';
+    }).length;
+
+    const bar = gauge(this.theme, settled / Math.max(1, this.phases.length), 12);
+    const counts = paint(this.theme, 'gray', `${settled}/${this.phases.length} phases`);
+    const total = paint(this.theme, 'gray', formatDuration(Math.max(0, this.now() - this.runStartedAt)));
+    return statusBar(`${bar}  ${counts}`, total, inner);
   }
 
   /** `round 2/3 · reviewing` — round limits stay visible while they are consumed. */

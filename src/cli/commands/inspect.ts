@@ -11,12 +11,16 @@ import type { RunState } from '../../workflow/state.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import { createCliContext } from '../context.ts';
 import { runToJson } from '../runJson.ts';
+import { panelInnerWidth } from '../../ui/box.ts';
+import { visibleWidth } from '../../ui/theme.ts';
 import {
+  box,
   changeCount,
   dim,
   emptyState,
   facts,
   failure,
+  gridLines,
   heading,
   hint,
   out,
@@ -24,6 +28,7 @@ import {
   rows,
   success,
   warning,
+  width,
 } from '../output.ts';
 
 export interface StatusOptions {
@@ -61,42 +66,68 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
     return 0;
   }
 
-  heading(`Relay runs in ${cli.repo.root}`);
-  out();
+  const shown = runs.slice(0, 20);
+  const listed = await Promise.all(
+    shown.map(async (state) => {
+      const elapsed = new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
+      const issue = state.issue === undefined ? state.issueRef : `#${state.issue.number} ${state.issue.title}`;
+      const landing = await landingOf(cli.repo.root, state);
 
-  for (const state of runs.slice(0, 20)) {
-    const elapsed = new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
-    const label =
-      state.phase === 'COMPLETE'
-        ? success(phaseLabel(state.phase))
-        : state.phase === 'FAILED'
-          ? failure(phaseLabel(state.phase))
-          : isTerminal(state.phase)
-            ? warning(phaseLabel(state.phase))
-            : phaseLabel(state.phase);
+      return {
+        cells: [state.runId, phaseTag(state), oneLine(issue, 48)] as const,
+        // `unlanded` rides the detail line rather than the title row. It is a
+        // warning, and the title row is the one that has to absorb a long issue
+        // title — putting them together makes the warning the first thing a
+        // narrow terminal clips, which is exactly backwards.
+        facts: facts([
+          state.workspace?.branch ?? '(no branch)',
+          formatDuration(elapsed),
+          `plan ${state.rounds.planReview}r, code ${state.rounds.codeReview}r`,
+          state.diff !== undefined && changeCount(state.diff.additions, state.diff.deletions),
+          state.commit !== undefined && `committed ${state.commit.sha.slice(0, 8)}`,
+          landing === 'unlanded' && warning('unlanded'),
+        ]),
+      };
+    }),
+  );
 
-    const issue = state.issue === undefined ? state.issueRef : `#${state.issue.number} ${state.issue.title}`;
-    const landing = await landingOf(cli.repo.root, state);
-    out(
-      `  ${state.runId}  ${label.padEnd(22)} ${oneLine(issue, 48)}` +
-        (landing === 'unlanded' ? `  ${warning('unlanded')}` : ''),
-    );
-    out(
+  // The aligned row and its dim detail line are interleaved after alignment, so
+  // the run id, phase and issue still line up down the column while each run
+  // keeps the second line that carries its branch, duration and diff.
+  //
+  // The issue column is capped at whatever the frame has left after the two
+  // fixed columns, so the table clips the title itself — deliberately, with an
+  // ellipsis — instead of letting the panel shear the end off the row.
+  const fixed = Math.max(
+    ...listed.map((entry) => visibleWidth(entry.cells[0]) + visibleWidth(entry.cells[1])),
+  );
+  const aligned = gridLines(
+    [{ header: '' }, { header: '' }, { header: '', max: Math.max(24, panelInnerWidth(width()) - fixed - 4) }],
+    listed.map((entry) => entry.cells),
+  );
+  const body = aligned.flatMap((line, index) => [line, dim(`  ${listed[index]?.facts ?? ''}`)]);
+
+  box({
+    title: `Relay runs in ${cli.repo.root}`,
+    badge: `${runs.length} run${runs.length === 1 ? '' : 's'}`,
+    body,
+    footer: [
       dim(
-        `    ` +
-          facts([
-            state.workspace?.branch ?? '(no branch)',
-            formatDuration(elapsed),
-            `plan ${state.rounds.planReview}r, code ${state.rounds.codeReview}r`,
-            state.diff !== undefined && changeCount(state.diff.additions, state.diff.deletions),
-            state.commit !== undefined && `committed ${state.commit.sha.slice(0, 8)}`,
-          ]),
+        runs.length > shown.length
+          ? `… and ${runs.length - shown.length} older run(s)   ·   relay status <run>`
+          : 'relay status <run>   ·   relay diff <run>',
       ),
-    );
-  }
-
-  if (runs.length > 20) out(dim(`  … and ${runs.length - 20} older run(s)`));
+    ],
+  });
   return 0;
+}
+
+/** A run's phase, coloured by what that phase means for the reader. */
+function phaseTag(state: RunState): string {
+  const label = phaseLabel(state.phase);
+  if (state.phase === 'COMPLETE') return success(label);
+  if (state.phase === 'FAILED') return failure(label);
+  return isTerminal(state.phase) ? warning(label) : label;
 }
 
 /**
