@@ -1,5 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import { AGENT_REGISTRY } from '../../agents/index.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
@@ -7,10 +6,11 @@ import { DEFAULT_CONFIG, ROLES, configPath, loadConfig, writeConfig, type RelayC
 import { discoverTestCommand } from '../../testing/discovery.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
 import { agentChecks, type AgentCheck } from '../checks.ts';
+import { ensureRelayIgnored } from '../onboarding.ts';
 import { statusMark } from './doctor.ts';
 import { bullet, dim, heading, hint, out, rows, section, success, warning } from '../output.ts';
 
-const GITIGNORE_ENTRY = '.relay/runs/';
+const RUNS_ENTRY = '.relay/runs/';
 
 export interface InitOptions {
   force?: boolean;
@@ -136,7 +136,7 @@ async function guidedInit(repo: RepositoryInfo, path: string, config: RelayConfi
   section('Done');
   rows([
     { label: 'Config', value: path },
-    { label: 'Run state', value: dim(`${GITIGNORE_ENTRY} (git-ignored, machine-local)`) },
+    { label: 'Run state', value: dim(`${RUNS_ENTRY} (git-ignored, machine-local)`) },
   ]);
 
   out();
@@ -288,13 +288,8 @@ function roleLabel(role: Role): string {
  * The config itself is intentionally committable.
  */
 async function ensureGitignore(repoRoot: string): Promise<void> {
-  const path = join(repoRoot, '.gitignore');
-  const current = (await readFileOrUndefined(path)) ?? '';
-  if (current.split('\n').some((line) => line.trim() === GITIGNORE_ENTRY)) return;
-
-  const separator = current.length === 0 || current.endsWith('\n') ? '' : '\n';
-  await writeFile(path, `${current}${separator}\n# Relay run state (machine-local)\n${GITIGNORE_ENTRY}\n`, 'utf8');
-  out(dim(`  Added ${GITIGNORE_ENTRY} to .gitignore`));
+  const added = await ensureRelayIgnored(repoRoot);
+  if (added.length > 0) out(dim(`  Added ${added.join(', ')} to .gitignore`));
 }
 
 async function readFileOrUndefined(path: string): Promise<string | undefined> {

@@ -1,7 +1,7 @@
 import { createHarnesses } from '../agents/index.ts';
 import type { AgentHarness } from '../agents/types.ts';
-import { GitHubIssueProvider } from '../github/provider.ts';
 import type { IssueProvider } from '../github/types.ts';
+import { defaultIssueProvider } from '../issues/registry.ts';
 import { discoverRepository, type RepositoryInfo } from '../git/repository.ts';
 import { loadConfig, type AgentProvider, type RelayConfig } from '../storage/config.ts';
 
@@ -20,7 +20,9 @@ export async function createCliContext(cwd: string = process.cwd()): Promise<Cli
   // One harness per registered provider: nothing here names a CLI.
   const harnesses = createHarnesses(config.models);
 
-  const issueProvider = new GitHubIssueProvider({
+  // Built through the provider registry, so a second tracker is a registry row
+  // rather than an edit here.
+  const issueProvider = defaultIssueProvider({
     cwd: repo.root,
     defaultRepo: repo.owner !== null && repo.name !== null ? { owner: repo.owner, name: repo.name } : null,
   });

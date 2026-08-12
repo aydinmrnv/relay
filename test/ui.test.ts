@@ -441,6 +441,20 @@ describe('prompter', () => {
     io.prompter.close();
   });
 
+  it('takes the default when asked again after the terminal was released', async () => {
+    // `relay start` closes the prompter to hand the terminal to `relay init` or
+    // to a vendor login, then asks again. The readline it builds afterwards is
+    // new, so a stream that ended in the meantime never emits `end` for it to
+    // hear — which used to mean the next question waited forever.
+    const io = fake();
+    io.input.end();
+    io.prompter.close();
+
+    assert.equal(await io.prompter.text('Which issue?', ''), '');
+    assert.equal(await io.prompter.confirm('Start a run?', false), false);
+    io.prompter.close();
+  });
+
   it('reports Ctrl-C at a prompt as a cancellation rather than an accepted default', async () => {
     const io = fake();
     const answer = io.prompter.text('Base branch?', 'main');

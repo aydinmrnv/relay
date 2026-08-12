@@ -201,6 +201,25 @@ function summarizeToolInput(record: Record<string, unknown>): Record<string, unk
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * Reads sign-in state out of `claude auth status --json`, which exits 0 in both
+ * cases and so cannot be judged by its exit code.
+ *
+ * Only the boolean is returned. The rest of that payload identifies an account,
+ * and Relay has no business carrying it any further than this line.
+ */
+export function claudeSignedIn(stdout: string): boolean | undefined {
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (parsed === null || typeof parsed !== 'object') return undefined;
+    const loggedIn = (parsed as { loggedIn?: unknown }).loggedIn;
+    return typeof loggedIn === 'boolean' ? loggedIn : undefined;
+  } catch {
+    // Older builds print prose instead of JSON; the exit code decides there.
+    return undefined;
+  }
+}
+
 export interface ClaudeHarnessOptions {
   binary?: string;
   defaultTimeoutMs?: number;

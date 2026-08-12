@@ -1,6 +1,7 @@
 import { AGENT_REGISTRY, type HarnessRegistration } from '../agents/index.ts';
+import { describeCommand, probeAuth, type AuthState, type AuthSupport } from '../auth/delegated.ts';
 import { discoverRepository } from '../git/repository.ts';
-import { GitHubIssueProvider } from '../github/provider.ts';
+import { ISSUE_PROVIDER_REGISTRY } from '../issues/registry.ts';
 import { resolveExecutable, runProcess } from '../process/runner.ts';
 
 export interface Check {
@@ -61,10 +62,47 @@ export async function agentChecks(): Promise<AgentCheck[]> {
   );
 }
 
+/**
+ * Sign-in state for one delegated tool.
+ *
+ * Being installed is not being usable: a CLI that is present but signed out
+ * fails at the first agent turn, ten minutes into a run, which is exactly the
+ * failure onboarding exists to move forward to here.
+ */
+export async function authCheck(label: string, support: AuthSupport, cwd: string): Promise<Check> {
+  return authStateCheck(label, support, await probeAuth(support, { cwd }));
+}
+
+/** The reporting half of `authCheck`, kept pure so a flow can probe once and print twice. */
+export function authStateCheck(label: string, support: AuthSupport, state: AuthState): Check {
+  const login = describeCommand(support.login);
+
+  if (state === 'authenticated') return { label, status: 'ok', detail: 'signed in' };
+  if (state === 'unknown') {
+    return {
+      label,
+      status: 'warn',
+      detail: 'sign-in state unknown',
+      hint: `Relay could not ask. If a run fails to start, run \`${login}\`.`,
+    };
+  }
+  return { label, status: 'fail', detail: 'not signed in', hint: `Run \`${login}\`.` };
+}
+
+/**
+ * Sign-in state for every registered coding CLI that is actually installed.
+ * A missing CLI has already reported the more useful problem.
+ */
+export async function agentAuthChecks(cwd: string, agents?: readonly AgentCheck[]): Promise<Check[]> {
+  const installed = (agents ?? (await agentChecks())).filter(({ check }) => check.status === 'ok');
+  return Promise.all(installed.map(({ entry }) => authCheck(`${entry.label} sign-in`, entry.auth, cwd)));
+}
+
 export async function githubCheck(cwd: string): Promise<Check> {
-  const result = await new GitHubIssueProvider({ cwd }).checkAvailability();
+  const registration = ISSUE_PROVIDER_REGISTRY[0]!;
+  const result = await registration.create({ cwd }).checkAvailability();
   return {
-    label: 'GitHub authentication',
+    label: `${registration.label} authentication`,
     status: result.available ? 'ok' : 'fail',
     detail: result.detail,
     ...(result.hint === undefined ? {} : { hint: result.hint }),
@@ -107,9 +145,11 @@ export async function repositoryChecks(cwd: string): Promise<{ root?: string; ch
 export async function collectChecks(cwd: string): Promise<Check[]> {
   const checks: Check[] = [await checkBinary('git', ['--version']), await checkBinary('gh', ['--version'])];
 
-  for (const { check } of await agentChecks()) checks.push(check);
+  const agents = await agentChecks();
+  for (const { check } of agents) checks.push(check);
 
   const repository = await repositoryChecks(cwd);
+  checks.push(...(await agentAuthChecks(repository.root ?? cwd, agents)));
   checks.push(...repository.checks);
   checks.push(await githubCheck(repository.root ?? cwd));
 

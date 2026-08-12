@@ -4,5 +4,6 @@ dist/
 
 # Relay run state is local-only: it records this machine's runs, not the project.
 .relay/runs/
+.relay/onboarding.json
 
 .DS_Store

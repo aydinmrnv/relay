@@ -5,14 +5,32 @@ Relay takes a GitHub issue and coordinates the coding agents you already have in
 It is not "run several agents in parallel". The point is that **specialized agents review and challenge each other's actual engineering work**, and that every claim they make is checked against git rather than taken at face value.
 
 ```bash
-relay init        # guided: detects the repo, checks your agents, assigns roles
+relay start       # one command: dependencies, sign-in, config, and a first run
 relay run 142
 ```
 
-`relay init` walks through setup on a terminal and asks the one question that
-actually shapes a run — which model reviews the work another model produced.
-`relay init --yes` skips every prompt and writes the detected defaults, which is
-what CI and scripts should use.
+`relay start` is the whole path from a fresh clone to a run you understand. It
+checks that `git`, `gh`, Claude Code and Codex are installed *and* signed in,
+runs each vendor's own login command for you when one is not, hands off to
+`relay init` for configuration, explains what a run does before you spend
+anything on one, and then offers to start one. Every step is skipped when it is
+already satisfied, so re-running it is also the repair path when a CLI breaks
+later.
+
+**It never handles a credential.** Relay has no API keys and never sees a token:
+`start` only ever spawns `claude auth login`, `codex login` or `gh auth login`
+with the terminal handed over, and then asks that CLI again whether it worked.
+
+| | |
+|---|---|
+| `relay start --dry-run` | walk the whole pipeline with no agent calls, so a run costs nothing to preview |
+| `relay start --tour` | replay the explanation of the phases, artifacts, cost and guarantees |
+| `relay start --check` | report what is missing and exit non-zero, prompting nothing — what a pipe and CI get automatically |
+
+`relay init` walks through configuration on a terminal and asks the one question
+that actually shapes a run — which model reviews the work another model
+produced. `relay init --yes` skips every prompt and writes the detected
+defaults, which is what CI and scripts should use.
 
 ## What actually happens
 
@@ -35,7 +53,9 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 
 **Relay never calls a model API.** It has no API keys, reads no credentials, and never sees a token. It launches the official CLIs you have already authenticated (`claude`, `codex`, `gh`) as child processes and lets each one own its own auth.
 
-**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/` and one row in `AGENT_REGISTRY` (`src/agents/index.ts`) — config validation, `relay doctor`, `relay init` and the `--planner` / `--implementer` flags all read that array, so none of them need touching.
+**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/` and one row in `AGENT_REGISTRY` (`src/agents/index.ts`) — config validation, `relay doctor`, `relay init`, `relay start` and the `--planner` / `--implementer` flags all read that array, so none of them need touching. Each row also declares how that vendor is installed and how it is signed in, which is all onboarding needs to know to delegate.
+
+**Issue trackers use the same seam.** `IssueProvider` (`src/github/types.ts`) is implemented today only by `gh`, and `ISSUE_PROVIDER_REGISTRY` (`src/issues/registry.ts`) is where a second tracker plugs in: one implementation plus one row, carrying its own install command and its own login command. `relay start` asks where issues live by reading that array rather than by naming GitHub.
 
 **Cost is reported, not guessed.** Both CLIs report what a turn consumed, and Relay accumulates it per phase and per run. `relay status` shows the run total, `relay logs` breaks it down by phase, so `maxPlanReviewRounds` can be tuned against a real number. Relay never prices tokens itself: a missing cost means the CLI did not publish one, never that the work was free.
 
@@ -58,13 +78,15 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 7. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
 8. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
 9. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
+10. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`.
 
 ## Commands
 
 | Command | |
 |---|---|
+| `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
-| `relay doctor` | check git, gh, Claude Code, Codex, repo and auth |
+| `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth |
 | `relay run <issue>` | run the full workflow |
 | `relay status [run]` | list runs, or print one run's summary (`--json` for machine-readable output) |
 | `relay watch [run]` | follow a run's events live |

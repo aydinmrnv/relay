@@ -150,6 +150,11 @@ export class Prompter implements PromptSession {
    * "take the default", never "hang".
    */
   private async ask(prompt: string): Promise<string | undefined> {
+    // A stream that ended before this interface existed will never emit `end`
+    // again, so readline would neither answer nor close. That happens whenever
+    // a flow hands the terminal to something else and asks again afterwards.
+    if (this.inputEnded()) return undefined;
+
     const rl = this.ensureInterface();
 
     let resolveClosed: (value: undefined) => void = () => {};
@@ -172,6 +177,10 @@ export class Prompter implements PromptSession {
     } finally {
       rl.off('close', onClose);
     }
+  }
+
+  private inputEnded(): boolean {
+    return (this.input as { readableEnded?: boolean }).readableEnded === true;
   }
 
   private ensureInterface(): Interface {
