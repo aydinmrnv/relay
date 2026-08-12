@@ -1,3 +1,5 @@
+import { relative } from 'node:path';
+
 import { RelayError } from '../../util/errors.ts';
 import { discoverTestCommand } from '../../testing/discovery.ts';
 import { runTests } from '../../testing/runner.ts';
@@ -33,7 +35,11 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
     return { next: 'COMPLETE', note: 'tests disabled' };
   }
 
-  const discovery = await discoverTestCommand(workspace.path, state.config.tests.command);
+  // The run's own file list scopes discovery: in a monorepo whose root declares
+  // no suite, the package that was actually changed still gets verified.
+  const discovery = await discoverTestCommand(workspace.path, state.config.tests.command, {
+    changedPaths: state.diff?.files ?? [],
+  });
 
   if (!discovery.found) {
     state.tests = {
@@ -52,10 +58,12 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
   }
 
   const printable = discovery.command.command.join(' ');
+  const cwd = discovery.command.directory ?? workspace.path;
+  const directory = relative(workspace.path, cwd);
   observer.note(`Running tests: ${printable}  (${discovery.command.reason})`);
 
   const execution = await runTests(discovery.command, {
-    cwd: workspace.path,
+    cwd,
     timeoutMs: state.config.timeouts.testsMs,
     signal,
   });
@@ -64,6 +72,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
     'test-run',
     [
       `$ ${printable}`,
+      `directory: ${directory.length === 0 ? '.' : directory}`,
       `exit code: ${String(execution.exitCode)}`,
       `duration: ${formatDuration(execution.durationMs)}`,
       '',
@@ -78,6 +87,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
   state.tests = {
     discovered: true,
     command: execution.command,
+    ...(directory.length === 0 ? {} : { directory }),
     reason: discovery.command.reason,
     exitCode: execution.exitCode,
     passed: execution.passed,

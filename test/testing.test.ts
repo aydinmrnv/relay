@@ -120,6 +120,146 @@ describe('test discovery', () => {
     });
   });
 
+  it('prefers the Gradle wrapper the project pins, and falls back to gradle', async () => {
+    await withRepo(async (root) => {
+      await writeFile(join(root, 'build.gradle.kts'), 'plugins { java }\n', 'utf8');
+      const bare = await discoverTestCommand(root, null);
+      assert.equal(bare.found && bare.command.command.join(' '), 'gradle test');
+      assert.equal(bare.found && bare.command.ecosystem, 'jvm');
+
+      await writeFile(join(root, 'gradlew'), '#!/bin/sh\n', 'utf8');
+      const wrapped = await discoverTestCommand(root, null);
+      assert.equal(wrapped.found && wrapped.command.command.join(' '), './gradlew test');
+      assert.match(wrapped.found ? wrapped.command.reason : '', /wrapper/);
+    });
+  });
+
+  it('detects a Maven project', async () => {
+    await withRepo(async (root) => {
+      await writeFile(join(root, 'pom.xml'), '<project></project>\n', 'utf8');
+      const result = await discoverTestCommand(root, null);
+      assert.equal(result.found && result.command.command.join(' '), 'mvn -q test');
+    });
+  });
+
+  it('prefers rspec over rake, and needs a declared test task for rake', async () => {
+    await withRepo(async (root) => {
+      await writeFile(join(root, 'Gemfile'), "source 'https://rubygems.org'\n", 'utf8');
+
+      // A Gemfile alone declares nothing runnable.
+      assert.equal((await discoverTestCommand(root, null)).found, false);
+
+      await writeFile(join(root, 'Rakefile'), "task :build do\nend\n", 'utf8');
+      const noTask = await discoverTestCommand(root, null);
+      assert.equal(noTask.found, false);
+      assert.match(noTask.found ? '' : noTask.reason, /Rakefile declares no test task/);
+
+      await writeFile(join(root, 'Rakefile'), "Rake::TestTask.new(:test)\n", 'utf8');
+      const rake = await discoverTestCommand(root, null);
+      assert.equal(rake.found && rake.command.command.join(' '), 'bundle exec rake test');
+
+      await mkdir(join(root, 'spec'), { recursive: true });
+      const rspec = await discoverTestCommand(root, null);
+      assert.equal(rspec.found && rspec.command.command.join(' '), 'bundle exec rspec');
+      assert.equal(rspec.found && rspec.command.ecosystem, 'ruby');
+    });
+  });
+
+  it('detects a .NET solution or project', async () => {
+    await withRepo(async (root) => {
+      await writeFile(join(root, 'Widgets.csproj'), '<Project />\n', 'utf8');
+      const csproj = await discoverTestCommand(root, null);
+      assert.equal(csproj.found && csproj.command.command.join(' '), 'dotnet test');
+      assert.equal(csproj.found && csproj.command.ecosystem, 'dotnet');
+
+      await writeFile(join(root, 'Widgets.sln'), '\n', 'utf8');
+      const sln = await discoverTestCommand(root, null);
+      assert.match(sln.found ? sln.command.reason : '', /Widgets\.sln/);
+    });
+  });
+
+  it('uses a Makefile test target only when nothing more specific matches', async () => {
+    await withRepo(async (root) => {
+      await writeFile(join(root, 'Makefile'), 'build:\n\tcc main.c\n\ntest: build\n\t./run-tests.sh\n', 'utf8');
+      const make = await discoverTestCommand(root, null);
+      assert.equal(make.found && make.command.command.join(' '), 'make test');
+      assert.equal(make.found && make.command.ecosystem, 'make');
+
+      // A real ecosystem outranks a Makefile that only wraps it.
+      await writeFile(join(root, 'go.mod'), 'module x\n', 'utf8');
+      const go = await discoverTestCommand(root, null);
+      assert.equal(go.found && go.command.command.join(' '), 'go test ./...');
+    });
+  });
+
+  it('screens a Makefile test target the same way it screens scripts.test', async () => {
+    await withRepo(async (root) => {
+      await writeFile(join(root, 'Makefile'), 'test:\n\tsudo pytest\n', 'utf8');
+      const direct = await discoverTestCommand(root, null);
+      assert.equal(direct.found, false);
+      assert.match(direct.found ? '' : direct.reason, /sudo/);
+
+      // Hiding the command one target deeper does not get it past the screen.
+      await writeFile(join(root, 'Makefile'), 'reset-db:\n\trm -rf ./data\n\ntest: reset-db\n\tpytest\n', 'utf8');
+      const indirect = await discoverTestCommand(root, null);
+      assert.equal(indirect.found, false);
+      assert.match(indirect.found ? '' : indirect.reason, /recursive delete/);
+    });
+  });
+
+  it('ignores a Makefile with no test target', async () => {
+    await withRepo(async (root) => {
+      await writeFile(join(root, 'Makefile'), 'test := build\n\nall:\n\tcc main.c\n', 'utf8');
+      const result = await discoverTestCommand(root, null);
+      assert.equal(result.found, false);
+      assert.match(result.found ? '' : result.reason, /no recognized project metadata/);
+    });
+  });
+
+  it('falls back to the package a monorepo change was confined to', async () => {
+    await withRepo(async (root) => {
+      // A root with no suite of its own — the case that used to verify nothing.
+      await writeFile(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8');
+      await mkdir(join(root, 'packages', 'api'), { recursive: true });
+      await writeFile(
+        join(root, 'packages', 'api', 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+        'utf8',
+      );
+
+      const scoped = await discoverTestCommand(root, null, {
+        changedPaths: ['packages/api/src/index.ts', 'packages/api/test/index.test.ts'],
+      });
+      assert.equal(scoped.found, true);
+      if (!scoped.found) return;
+      assert.deepEqual(scoped.command.command, ['npm', 'test']);
+      assert.equal(scoped.command.directory, join(root, 'packages', 'api'));
+      assert.match(scoped.command.reason, /only changed files under packages\/api\//);
+
+      // A change spanning packages is not confined to one, so nothing is claimed.
+      const spread = await discoverTestCommand(root, null, {
+        changedPaths: ['packages/api/src/index.ts', 'packages/web/src/app.ts'],
+      });
+      assert.equal(spread.found, false);
+    });
+  });
+
+  it('keeps the root suite when the root has one', async () => {
+    await withRepo(async (root) => {
+      await writeFile(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }), 'utf8');
+      await mkdir(join(root, 'packages', 'api'), { recursive: true });
+      await writeFile(
+        join(root, 'packages', 'api', 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+        'utf8',
+      );
+
+      const result = await discoverTestCommand(root, null, { changedPaths: ['packages/api/src/index.ts'] });
+      assert.equal(result.found && result.command.directory, root);
+      assert.match(result.found ? result.command.reason : '', /node --test/);
+    });
+  });
+
   it('reports no command for a repository with no metadata', async () => {
     await withRepo(async (root) => {
       const result = await discoverTestCommand(root, null);

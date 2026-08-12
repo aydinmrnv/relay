@@ -16,6 +16,8 @@ export interface HarnessRegistration {
   readonly name: string;
   /** Human label for `relay doctor` and `relay init`. */
   readonly label: string;
+  /** Identity used in the `Co-Authored-By` trailer of a `--commit` commit. */
+  readonly coAuthor: { readonly name: string; readonly email: string };
   create(options: HarnessOptions): AgentHarness;
 }
 
@@ -28,8 +30,18 @@ export interface HarnessRegistration {
  * providers, so none of them need touching.
  */
 export const AGENT_REGISTRY: readonly HarnessRegistration[] = [
-  { name: 'claude', label: 'Claude Code', create: (options) => new ClaudeHarness(options) },
-  { name: 'codex', label: 'Codex', create: (options) => new CodexHarness(options) },
+  {
+    name: 'claude',
+    label: 'Claude Code',
+    coAuthor: { name: 'Claude', email: 'noreply@anthropic.com' },
+    create: (options) => new ClaudeHarness(options),
+  },
+  {
+    name: 'codex',
+    label: 'Codex',
+    coAuthor: { name: 'Codex', email: 'noreply@openai.com' },
+    create: (options) => new CodexHarness(options),
+  },
 ];
 
 export const AGENT_PROVIDERS: readonly string[] = AGENT_REGISTRY.map((entry) => entry.name);

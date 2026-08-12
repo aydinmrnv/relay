@@ -70,6 +70,7 @@ export function buildProgram(): Command {
     .option('--max-plan-rounds <n>', 'maximum plan review rounds')
     .option('--max-code-rounds <n>', 'maximum code review rounds')
     .option('--no-tests', 'skip the test phase')
+    .option('--commit', 'commit the finished work to the run branch (still never pushed or merged)')
     .action(wrap(runCommand));
 
   program
@@ -77,6 +78,7 @@ export function buildProgram(): Command {
     .argument('<run-id>', 'run id, short id, or "latest"')
     .description('continue an interrupted or failed run')
     .option('-v, --verbose', 'stream raw agent events')
+    .option('--commit', 'commit the finished work to the run branch (still never pushed or merged)')
     .action(wrap(resumeCommand));
 
   program

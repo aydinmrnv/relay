@@ -68,6 +68,19 @@ describe('config', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxPlanReviewRounds: 1.5 } }), RelayError);
   });
 
+  it('keeps committing opt-in and validates the flag', () => {
+    assert.equal(DEFAULT_CONFIG.workflow.commit, false);
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { commit: true } }).workflow.commit, true);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { commit: 'yes' } }), RelayError);
+  });
+
+  it('bounds the transient retry count', () => {
+    assert.equal(DEFAULT_CONFIG.workflow.maxTransientRetries, 2);
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { maxTransientRetries: 0 } }).workflow.maxTransientRetries, 0);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxTransientRetries: -1 } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxTransientRetries: 50 } }), RelayError);
+  });
+
   it('rejects a malformed test command', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { tests: { command: 'npm test' } }), RelayError);
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { tests: { command: [] } }), RelayError);

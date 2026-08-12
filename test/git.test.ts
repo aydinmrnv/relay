@@ -15,6 +15,7 @@ import {
 } from '../src/git/worktree.ts';
 import { discoverRepository, resolveBaseRef } from '../src/git/repository.ts';
 import { snapshotDiff, formatDiffStat } from '../src/git/diff.ts';
+import { buildCommitMessage, commitWorktree, describeLanding } from '../src/git/commit.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
@@ -71,6 +72,36 @@ describe('worktree naming', () => {
   it('builds a namespaced branch name', () => {
     assert.equal(branchNameFor(142, 'a1b2c3'), 'relay/142-a1b2c3');
     assert.equal(branchNameFor(142, 'a1b2c3', 'bot'), 'bot/142-a1b2c3');
+  });
+});
+
+describe('commit messages', () => {
+  it('separates subject, body and trailers the way git expects', () => {
+    const message = buildCommitMessage({
+      subject: 'Add authentication rate limiting (#142)',
+      body: ['Implemented by Relay run 20260811T120000-abc123.', ''],
+      coAuthors: [
+        { name: 'Claude', email: 'noreply@anthropic.com' },
+        { name: 'Codex', email: 'noreply@openai.com' },
+      ],
+    });
+
+    assert.equal(
+      message,
+      [
+        'Add authentication rate limiting (#142)',
+        '',
+        'Implemented by Relay run 20260811T120000-abc123.',
+        '',
+        'Co-Authored-By: Claude <noreply@anthropic.com>',
+        'Co-Authored-By: Codex <noreply@openai.com>',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('is just a subject when there is nothing else to say', () => {
+    assert.equal(buildCommitMessage({ subject: 'Relay: work for issue 7' }), 'Relay: work for issue 7\n');
   });
 });
 
@@ -159,6 +190,55 @@ describe('git integration', () => {
     const worktree = await createWorktree({ repo: info, issueNumber: 400, runShortId: 'empty1' });
     const snapshot = await snapshotDiff(worktree.path, worktree.baseSha);
     assert.equal(snapshot.isEmpty, true);
+  });
+
+  it('commits a run\'s work to its own branch and leaves every other ref alone', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issueNumber: 600, runShortId: 'cmt001' });
+    await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 42;\n', 'utf8');
+
+    const result = await commitWorktree(worktree.path, {
+      subject: 'Add authentication rate limiting (#600)',
+      body: ['Implemented by Relay run 20260811T120000-cmt001.'],
+      coAuthors: [{ name: 'Claude', email: 'noreply@anthropic.com' }],
+    });
+
+    assert.ok(result !== undefined);
+    assert.match(result.sha, /^[0-9a-f]{40}$/);
+
+    const message = await repo.git('-C', worktree.path, 'log', '-1', '--format=%B');
+    assert.match(message, /^Add authentication rate limiting \(#600\)/);
+    assert.match(message, /Co-Authored-By: Claude <noreply@anthropic\.com>/);
+
+    // Committed on the run branch; nothing left staged, and main did not move.
+    assert.equal(await repo.git('-C', worktree.path, 'status', '--porcelain'), '');
+    assert.equal(await repo.git('rev-parse', 'main'), worktree.baseSha);
+    assert.equal(await repo.git('rev-parse', 'relay/600-cmt001'), result.sha);
+  });
+
+  it('commits nothing when a run changed nothing', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issueNumber: 601, runShortId: 'cmt002' });
+    assert.equal(await commitWorktree(worktree.path, { subject: 'nothing to see' }), undefined);
+  });
+
+  it('reports whether a run\'s work is committed or still only staged', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issueNumber: 602, runShortId: 'lnd001' });
+    const subject = { branch: worktree.branch, baseSha: worktree.baseSha, changedFiles: 3 };
+
+    // A run that changed nothing has nothing to strand.
+    assert.equal(await describeLanding(repo.root, { ...subject, changedFiles: 0 }), 'empty');
+
+    // Work exists, but the branch still points at the base commit.
+    await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 43;\n', 'utf8');
+    assert.equal(await describeLanding(repo.root, subject), 'unlanded');
+
+    await commitWorktree(worktree.path, { subject: 'landed' });
+    assert.equal(await describeLanding(repo.root, subject), 'committed');
+
+    // A branch git no longer knows is never reported as safe.
+    assert.equal(await describeLanding(repo.root, { ...subject, branch: 'relay/gone' }), 'unknown');
   });
 
   it('removes only worktrees git knows about, and only inside the workspaces root', async () => {

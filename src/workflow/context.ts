@@ -16,6 +16,8 @@ export interface EngineContext {
   issueProvider: IssueProvider;
   observer: RunObserver;
   signal: AbortSignal;
+  /** Injected so retry backoff can be tested without waiting for it. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Cached issue markdown for the current run, loaded from disk on resume. */
   issueMarkdown?: string;
 }

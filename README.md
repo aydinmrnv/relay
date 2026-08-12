@@ -21,6 +21,7 @@ issue
   → revised implementation  (only BLOCKING findings are routed back)
   → test evidence           (the project's own test command, judged by exit code)
   → final summary
+  → optional local commit   (--commit, on the run's own branch — never pushed)
 ```
 
 Every one of those is a real artifact on disk. Nothing is a chat transcript.
@@ -33,7 +34,9 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 
 **Cost is reported, not guessed.** Both CLIs report what a turn consumed, and Relay accumulates it per phase and per run. `relay status` shows the run total, `relay logs` breaks it down by phase, so `maxPlanReviewRounds` can be tuned against a real number. Relay never prices tokens itself: a missing cost means the CLI did not publish one, never that the work was free.
 
-**Verification is mechanical, not conversational.** Relay computes the diff itself (`git add -A` + `git diff --cached <baseSha>`), so an implementer that reports success while changing nothing fails the run. Test results come from process exit codes. A phase is never marked successful because an agent said so.
+**Verification is mechanical, not conversational.** Relay computes the diff itself (`git add -A` + `git diff --cached <baseSha>`), so an implementer that reports success while changing nothing fails the run. Test results come from process exit codes. A phase is never marked successful because an agent said so. Test discovery recognizes what the project already declares — Node, Rust, Go, Python, Gradle, Maven, Ruby, .NET and a `Makefile` `test` target — and, when the root declares nothing, falls back to the one package the run's changes were confined to.
+
+**Transient failures are retried; real ones are not.** A turn that dies on a rate limit, a dropped connection or a 5xx is retried up to `workflow.maxTransientRetries` times with exponential backoff and jitter, resuming the agent's session when the CLI reported one so the retry keeps its context. Auth failures, a missing binary and cancellation are never retried — retrying them only spends tokens to reach the same error. Every retry is announced and logged; none are silent.
 
 **Agent output is untrusted input.** Artifacts are exchanged in delimited sections (`===RELAY:BEGIN REVIEW=== … ===RELAY:END REVIEW===`) carrying small JSON payloads. Parsing is tolerant but validating: unknown enum values are coerced with a recorded warning, malformed findings are dropped, and a review that requests changes without naming anything is rejected. If output does not parse, Relay resumes the same session once with a format reminder rather than re-running the turn.
 
@@ -43,11 +46,11 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 
 1. Agents only ever run with the worktree as their working directory. Codex gets a real OS sandbox (`--sandbox read-only` / `workspace-write`); Claude gets a tool deny list.
 2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role.
-3. Relay never pushes, merges, or opens a pull request. That is your decision.
+3. Relay never pushes, merges, or opens a pull request. That is your decision. `--commit` is opt-in and goes no further: it commits to the run's own local branch inside `~/.relay/workspaces`, moving no shared ref, so finished work survives a `git worktree prune` instead of stranding as a staged index. Without it, `relay status` marks a completed run whose diff is uncommitted as **unlanded**.
 4. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
 5. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
 6. No shell, anywhere. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax.
-7. Test commands are screened. A `scripts.test` containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
+7. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
 8. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
 9. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
 
@@ -66,7 +69,9 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 | `relay resume <run>` | continue an interrupted or failed run |
 | `relay stop [run]` | cancel a run at its next phase boundary |
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds` and `--no-tests`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests` and `--commit`.
+
+`relay resume <run> --commit` also works on a run that already completed: it commits that run's stranded work and does nothing else.
 
 ## Run state
 
@@ -74,7 +79,7 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 .relay/
   config.json
   runs/<run-id>/
-    state.json                 phase, sessions, rounds, diff summary, test results, token usage
+    state.json                 phase, sessions, rounds, diff summary, test results, token usage, commit
     issue.md                   the issue as the agents received it
     plan.md                    current plan (rewritten on each revision)
     implementation-notes.md
@@ -103,7 +108,9 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
   "workflow": {
     "maxPlanReviewRounds": 3,
     "maxCodeReviewRounds": 2,
-    "runTests": true
+    "runTests": true,
+    "commit": false,
+    "maxTransientRetries": 2
   },
   "tests": { "command": null }
 }
@@ -120,7 +127,7 @@ Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed a
 ```bash
 npm install
 npm run typecheck
-npm test          # 208 tests, no network, no real agents
+npm test          # 250 tests, no network, no real agents
 npm run build
 ```
 

@@ -115,6 +115,28 @@ describe('run JSON projection', () => {
     assert.equal(json.usage?.total.costUsd, 0.12);
   });
 
+  it('reports an unpriced usage bucket as a null cost, not a missing key', () => {
+    const state = populatedRun(repo.root);
+    // A Codex turn: real tokens, no price. The key must survive as null so a
+    // consumer can tell "not reported" from "free".
+    state.usage = recordTurnUsage(undefined, 'IMPLEMENTING', { inputTokens: 2000, outputTokens: 450 });
+
+    const json = runToJson(state);
+    const total = json.usage?.total;
+    assert.ok(total !== undefined);
+    assert.deepEqual(total, { inputTokens: 2000, outputTokens: 450, costUsd: null, turns: 1 });
+    assert.ok('costUsd' in total);
+    assert.deepEqual(json.usage?.byPhase.IMPLEMENTING, {
+      inputTokens: 2000,
+      outputTokens: 450,
+      costUsd: null,
+      turns: 1,
+    });
+
+    const roundTripped = JSON.parse(JSON.stringify(json)) as typeof json;
+    assert.equal(roundTripped.usage?.total.costUsd, null);
+  });
+
   it('reports absent facts as null rather than dropping the keys', () => {
     const bare = createRunState({
       runId: createRunId(new Date('2026-08-11T09:00:00Z')),
@@ -247,6 +269,53 @@ describe('relay status --json', () => {
     assert.ok(output.trimStart().startsWith('{'));
     assert.ok(output.trimEnd().endsWith('}'));
     assert.ok(!output.includes('\u001B'));
+  });
+
+  it('marks a completed run whose diff was never committed as unlanded', async () => {
+    // A real branch, still pointing at the commit the run branched from: the
+    // shape of every finished run Relay has not committed.
+    const baseSha = await repo.git('rev-parse', 'HEAD');
+    const state = populatedRun(repo.root);
+    state.workspace = { ...state.workspace!, branch: 'relay/142-aaa111', baseSha };
+    transition(state, 'FETCHING_ISSUE');
+    for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'COMPLETE'] as const) {
+      transition(state, phase);
+    }
+    await repo.git('branch', 'relay/142-aaa111', baseSha);
+    await persist(state);
+
+    const parsed = JSON.parse(await captureStatus([state.shortId, { json: true }])) as RunJson;
+    assert.equal(parsed.landing, 'unlanded');
+    assert.equal(parsed.unlanded, true);
+    assert.equal(parsed.commit, null);
+
+    // The human listing flags it too, rather than reporting a clean success.
+    assert.match(await captureStatus([undefined, {}]), /unlanded/);
+
+    // Once something is committed on the branch, it is no longer stranded.
+    await repo.writeFile('landed.txt', 'work\n');
+    await repo.git('add', '-A');
+    await repo.git('commit', '-q', '-m', 'work');
+    await repo.git('branch', '-f', 'relay/142-aaa111', 'HEAD');
+
+    const landed = JSON.parse(await captureStatus([state.shortId, { json: true }])) as RunJson;
+    assert.equal(landed.landing, 'committed');
+    assert.equal(landed.unlanded, false);
+  });
+
+  it('reports a commit Relay made without having to ask git', async () => {
+    const state = populatedRun(repo.root);
+    state.commit = {
+      sha: 'f'.repeat(40),
+      branch: 'relay/142-aaa111',
+      subject: 'Add authentication rate limiting (#142)',
+      at: '2026-08-11T10:07:00Z',
+    };
+
+    const json = runToJson(state);
+    assert.equal(json.landing, 'committed');
+    assert.equal(json.unlanded, false);
+    assert.equal(json.commit?.subject, 'Add authentication rate limiting (#142)');
   });
 
   it('keeps the human table as the default', async () => {

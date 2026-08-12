@@ -39,6 +39,8 @@ export interface DiffSummary {
 export interface TestRecord {
   discovered: boolean;
   command: string[];
+  /** Where the command ran, relative to the worktree. Absent means the root. */
+  directory?: string;
   reason: string;
   exitCode: number | null;
   passed: boolean;
@@ -47,6 +49,14 @@ export interface TestRecord {
   /** Relative path of the stored stdout/stderr capture. */
   outputFile?: string;
   skippedReason?: string;
+  at: string;
+}
+
+/** A commit Relay made on the run branch. Local only: nothing is ever pushed. */
+export interface CommitRecord {
+  sha: string;
+  branch: string;
+  subject: string;
   at: string;
 }
 
@@ -78,6 +88,8 @@ export interface RunState {
   planApproved: boolean;
   diff?: DiffSummary;
   tests?: TestRecord;
+  /** Present once `--commit` captured the work on the run branch. */
+  commit?: CommitRecord;
   /** Tokens and cost the run has spent so far. Absent until a CLI reports any. */
   usage?: RunUsage;
 
