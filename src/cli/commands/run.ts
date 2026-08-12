@@ -1,3 +1,4 @@
+import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
@@ -31,13 +32,13 @@ function applyOverrides(config: RelayConfig, options: RunOptions): RelayConfig {
 
   if (options.planner !== undefined) {
     assertProvider(options.planner, '--planner');
-    merged.agents.planner = options.planner as RelayConfig['agents']['planner'];
+    merged.agents.planner = options.planner;
     // Keeping the reviewer on the other model is the point of the workflow.
     merged.agents.codeReviewer = merged.agents.planner;
   }
   if (options.implementer !== undefined) {
     assertProvider(options.implementer, '--implementer');
-    merged.agents.implementer = options.implementer as RelayConfig['agents']['implementer'];
+    merged.agents.implementer = options.implementer;
     merged.agents.planReviewer = merged.agents.implementer;
   }
 
@@ -58,8 +59,8 @@ function applyOverrides(config: RelayConfig, options: RunOptions): RelayConfig {
 }
 
 function assertProvider(value: string, flag: string): void {
-  if (value !== 'claude' && value !== 'codex') {
-    throw new RelayError(`${flag} must be "claude" or "codex" (got "${value}").`, { code: 'BAD_FLAG' });
+  if (!isAgentProvider(value)) {
+    throw new RelayError(`${flag} must be one of ${AGENT_PROVIDERS.join(', ')} (got "${value}").`, { code: 'BAD_FLAG' });
   }
 }
 

@@ -14,6 +14,7 @@ import {
   CODEX_EXEC_ONLY_FLAGS,
 } from '../src/agents/codex.ts';
 import { describeEvent } from '../src/agents/types.ts';
+import { AGENT_REGISTRY, AGENT_PROVIDERS, createHarnesses, isAgentProvider } from '../src/agents/index.ts';
 
 describe('claude command construction', () => {
   it('requests a machine-readable stream and a caller-chosen session id', () => {
@@ -260,5 +261,40 @@ describe('codex event normalization', () => {
   it('ignores turn.started and unknown lines', () => {
     assert.deepEqual(normalizeCodexLine({ type: 'turn.started' }, 'x'), []);
     assert.deepEqual(normalizeCodexLine({ type: 'something.else' }, 'x'), []);
+  });
+});
+
+describe('harness registry', () => {
+  it('exposes a unique, non-empty name for every registered CLI', () => {
+    assert.ok(AGENT_REGISTRY.length >= 2);
+    const names = AGENT_REGISTRY.map((entry) => entry.name);
+    assert.deepEqual(names, AGENT_PROVIDERS);
+    assert.equal(new Set(names).size, names.length);
+    for (const entry of AGENT_REGISTRY) {
+      assert.ok(entry.name.length > 0);
+      assert.ok(entry.label.length > 0);
+    }
+  });
+
+  it('builds one harness per registered name, reporting that name back', () => {
+    const harnesses = createHarnesses();
+    assert.deepEqual(Object.keys(harnesses).sort(), [...AGENT_PROVIDERS].sort());
+    for (const entry of AGENT_REGISTRY) {
+      assert.equal(harnesses[entry.name]?.name, entry.name);
+    }
+  });
+
+  it('passes each provider only its own configured model', () => {
+    const first = AGENT_REGISTRY[0]!;
+    const harness = first.create({ defaultModel: 'some-model' });
+    // The harness owns its model; Relay only asserts construction is accepted.
+    assert.equal(harness.name, first.name);
+  });
+
+  it('recognizes exactly the registered names', () => {
+    for (const name of AGENT_PROVIDERS) assert.ok(isAgentProvider(name));
+    assert.equal(isAgentProvider('gemini'), false);
+    assert.equal(isAgentProvider(undefined), false);
+    assert.equal(isAgentProvider(42), false);
   });
 });

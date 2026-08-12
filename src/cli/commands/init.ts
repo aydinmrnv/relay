@@ -1,8 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { ClaudeHarness } from '../../agents/claude.ts';
-import { CodexHarness } from '../../agents/codex.ts';
+import { AGENT_REGISTRY } from '../../agents/index.ts';
 import { discoverRepository } from '../../git/repository.ts';
 import { DEFAULT_CONFIG, configPath, loadConfig, writeConfig } from '../../storage/config.ts';
 import { discoverTestCommand } from '../../testing/discovery.ts';
@@ -41,13 +40,16 @@ export async function initCommand(options: { force?: boolean }): Promise<number>
   const discovery = await discoverTestCommand(repo.root, null);
   out(`  Tests       ${discovery.found ? discovery.command.command.join(' ') : dim(`none detected (${discovery.reason})`)}`);
 
-  const claude = await new ClaudeHarness().checkAvailability();
-  const codex = await new CodexHarness().checkAvailability();
-  out(`  Claude Code ${claude.available ? claude.detail : warning(claude.detail)}`);
-  out(`  Codex       ${codex.available ? codex.detail : warning(codex.detail)}`);
+  const agents = await Promise.all(
+    AGENT_REGISTRY.map(async (entry) => ({ entry, result: await entry.create({}).checkAvailability() })),
+  );
+  const labelWidth = Math.max(11, ...AGENT_REGISTRY.map((entry) => entry.label.length));
+  for (const { entry, result } of agents) {
+    out(`  ${entry.label.padEnd(labelWidth)} ${result.available ? result.detail : warning(result.detail)}`);
+  }
 
   out();
-  if (!claude.available || !codex.available) {
+  if (agents.some(({ result }) => !result.available)) {
     out(warning('Some agents are unavailable. Run `relay doctor` for details.'));
   } else {
     out(success('Ready. Run `relay run <issue-number>` to start.'));

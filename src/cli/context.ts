@@ -1,5 +1,4 @@
-import { ClaudeHarness } from '../agents/claude.ts';
-import { CodexHarness } from '../agents/codex.ts';
+import { createHarnesses } from '../agents/index.ts';
 import type { AgentHarness } from '../agents/types.ts';
 import { GitHubIssueProvider } from '../github/provider.ts';
 import type { IssueProvider } from '../github/types.ts';
@@ -18,14 +17,8 @@ export async function createCliContext(cwd: string = process.cwd()): Promise<Cli
   const repo = await discoverRepository(cwd);
   const config = await loadConfig(repo.root);
 
-  const harnesses: Record<AgentProvider, AgentHarness> = {
-    claude: new ClaudeHarness(
-      config.models.claude === undefined ? {} : { defaultModel: config.models.claude },
-    ),
-    codex: new CodexHarness(
-      config.models.codex === undefined ? {} : { defaultModel: config.models.codex },
-    ),
-  };
+  // One harness per registered provider: nothing here names a CLI.
+  const harnesses = createHarnesses(config.models);
 
   const issueProvider = new GitHubIssueProvider({
     cwd: repo.root,
