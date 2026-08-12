@@ -22,6 +22,7 @@ import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '..
 import { agentChecks, authStateCheck, type AgentCheck, type Check } from '../checks.ts';
 import { ensureRelayIgnored, loadOnboarding, saveOnboarding } from '../onboarding.ts';
 import {
+  banner,
   bold,
   command,
   dim,
@@ -140,6 +141,7 @@ async function preflight(): Promise<RepositoryInfo> {
 }
 
 async function guidedStart(repo: RepositoryInfo, deps: StartDeps, options: StartOptions): Promise<number> {
+  banner('Coding agents that plan, review and check each other\'s work.');
   heading('relay start');
   out(dim('Anything already satisfied is skipped, so re-running is safe at any point.'));
   out(dim('Relay never asks for a token: every sign-in below is that vendor\'s own command.'));

@@ -233,6 +233,25 @@ describe('run renderer — interactive', () => {
     assert.match(final, new RegExp(`${marks.done} Planning`));
   });
 
+  it('draws the live region as a frame of one uniform width', () => {
+    const stream = new FakeStream();
+    const view = renderer(INTERACTIVE, stream);
+
+    view.start();
+    view.phaseChanged('PLANNING');
+    view.roleStatus('planner', 'reading the codebase');
+    view.agentEvent('planner', { type: 'command', agent: 'claude', at: '2026-08-11T10:00:00Z', command: 'rg TODO' });
+
+    const drawn = lastRegion(stream).split('\n').filter((line) => line.length > 0);
+    // Every row of the panel is the same width, painted or not. A row that is
+    // one column out puts a border character in a different place on each
+    // redraw, and the redraw is several times a second.
+    assert.deepEqual([...new Set(drawn.map((line) => line.length))], [92], drawn.join('\n'));
+    assert.ok(drawn.at(0)?.startsWith('╭'), drawn.at(0));
+    assert.ok(drawn.at(-1)?.startsWith('╰'), drawn.at(-1));
+    view.finish('COMPLETE');
+  });
+
   it('draws nothing more once the run has finished', () => {
     const stream = new FakeStream();
     const view = renderer(INTERACTIVE, stream);

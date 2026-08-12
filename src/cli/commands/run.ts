@@ -202,7 +202,8 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
   const controller = new AbortController();
 
   const renderer = new RunRenderer({
-    title: `Relay — ${state.issue === undefined ? `Issue ${state.issueRef}` : `Issue #${state.issue.number}`}`,
+    // The renderer supplies the mark; this is only what the run is about.
+    title: state.issue === undefined ? `Issue ${state.issueRef}` : `Issue #${state.issue.number}`,
     subtitle: state.issue?.title ?? `run ${state.runId}`,
     agentNames: {
       planner: state.config.agents.planner,

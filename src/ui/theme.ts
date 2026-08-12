@@ -115,9 +115,75 @@ export function glyphs(theme: Theme): Glyphs {
       };
 }
 
+// ---------------------------------------------------------------------------
+// Measuring painted text.
+//
+// `paint()` puts bytes in a string that occupy no columns, so `.length` is not
+// a width once anything is coloured — and a frame padded by `.length` has a
+// ragged right edge exactly when colour is on. Everything that aligns, pads or
+// clips Relay's chrome measures through here instead.
+//
+// These count UTF-16 code units, which is the true column count for the
+// characters Relay's own chrome is made of: box drawing, block letters, ASCII
+// and Latin punctuation are all one column and one unit. Content Relay merely
+// passes through never reaches this code, so a wide CJK character or an emoji
+// in an issue title is clipped by `oneLine()` long before a frame sees it.
+// ---------------------------------------------------------------------------
+
+/** One ANSI sequence: colour, cursor movement and erase alike. */
+const ANSI = /\u001B\[[0-9;]*[A-Za-z]/;
+/** The same, as a splitter that keeps the sequences as their own tokens. */
+const ANSI_TOKENS = /(\u001B\[[0-9;]*[A-Za-z])/;
+
+export function stripAnsi(text: string): string {
+  return text.split(ANSI_TOKENS).filter((part) => !ANSI.test(part)).join('');
+}
+
+/** Columns `text` will occupy, ignoring the escape sequences that occupy none. */
+export function visibleWidth(text: string): number {
+  return stripAnsi(text).length;
+}
+
+/**
+ * Clips to `width` columns, counting only what is visible and never cutting an
+ * escape sequence in half — a severed sequence bleeds its colour into the rest
+ * of the screen. Styling that survived the cut is closed with a reset.
+ */
+export function truncateVisible(text: string, width: number, ellipsis = '…'): string {
+  if (width <= 0) return '';
+  if (visibleWidth(text) <= width) return text;
+
+  const budget = Math.max(0, width - ellipsis.length);
+  let kept = '';
+  let used = 0;
+  let styled = false;
+
+  for (const part of text.split(ANSI_TOKENS)) {
+    if (part.length === 0) continue;
+    if (ANSI.test(part)) {
+      // Escapes cost no columns, so they are kept in full: dropping the opening
+      // sequence of a colour whose text survives would render it unpainted.
+      kept += part;
+      styled = true;
+      continue;
+    }
+    if (used >= budget) continue;
+    const take = part.slice(0, budget - used);
+    kept += take;
+    used += take.length;
+  }
+
+  return `${kept}${ellipsis}${styled ? CODES.reset : ''}`;
+}
+
+/** Pads to exactly `width` visible columns, clipping anything longer. */
+export function padVisible(text: string, width: number, align: 'left' | 'right' = 'left'): string {
+  const clipped = truncateVisible(text, width);
+  const padding = ' '.repeat(Math.max(0, width - visibleWidth(clipped)));
+  return align === 'right' ? `${padding}${clipped}` : `${clipped}${padding}`;
+}
+
 /** Truncates to the terminal width so live redraws never wrap and smear. */
 export function fitWidth(text: string, stream: NodeJS.WriteStream = process.stdout): string {
-  const width = stream.columns ?? 80;
-  if (text.length <= width) return text;
-  return `${text.slice(0, Math.max(0, width - 1))}…`;
+  return truncateVisible(text, stream.columns ?? 80);
 }
