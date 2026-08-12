@@ -1,5 +1,4 @@
-import { ClaudeHarness } from '../../agents/claude.ts';
-import { CodexHarness } from '../../agents/codex.ts';
+import { AGENT_REGISTRY } from '../../agents/index.ts';
 import { GitHubIssueProvider } from '../../github/provider.ts';
 import { discoverRepository } from '../../git/repository.ts';
 import { resolveExecutable, runProcess } from '../../process/runner.ts';
@@ -23,21 +22,19 @@ export async function doctorCommand(): Promise<number> {
   checks.push(await checkBinary('git', ['--version']));
   checks.push(await checkBinary('gh', ['--version']));
 
-  const claude = await new ClaudeHarness().checkAvailability();
-  checks.push({
-    label: 'Claude Code',
-    status: claude.available ? 'ok' : 'fail',
-    detail: claude.detail,
-    ...(claude.hint === undefined ? {} : { hint: claude.hint }),
-  });
-
-  const codex = await new CodexHarness().checkAvailability();
-  checks.push({
-    label: 'Codex',
-    status: codex.available ? 'ok' : 'fail',
-    detail: codex.detail,
-    ...(codex.hint === undefined ? {} : { hint: codex.hint }),
-  });
+  // Every registered CLI is checked, in registry order, so a newly added
+  // harness appears here without doctor knowing its name.
+  const agents = await Promise.all(
+    AGENT_REGISTRY.map(async (entry) => ({ entry, result: await entry.create({}).checkAvailability() })),
+  );
+  for (const { entry, result } of agents) {
+    checks.push({
+      label: entry.label,
+      status: result.available ? 'ok' : 'fail',
+      detail: result.detail,
+      ...(result.hint === undefined ? {} : { hint: result.hint }),
+    });
+  }
 
   let repoRoot: string | undefined;
   try {

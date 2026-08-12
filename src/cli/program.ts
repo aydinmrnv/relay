@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 
+import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
 import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
 import { runCommand, resumeCommand, type RunOptions } from './commands/run.ts';
@@ -14,6 +15,9 @@ import {
 import { reportError } from './output.ts';
 
 const VERSION = '0.1.0';
+
+/** Help text names whichever CLIs are registered, not whichever shipped first. */
+const AGENT_LABELS = AGENT_REGISTRY.map((entry) => entry.label).join(', ');
 
 /**
  * Wraps a command so every failure exits with a code and an actionable message
@@ -38,7 +42,7 @@ export function buildProgram(): Command {
   program
     .name('relay')
     .description(
-      'Coordinate locally installed coding agents (Claude Code, Codex) to plan, review, implement\n' +
+      `Coordinate locally installed coding agents (${AGENT_LABELS}) to plan, review, implement\n` +
         'and critique work on a GitHub issue inside an isolated git worktree.',
     )
     .version(VERSION)
@@ -52,7 +56,7 @@ export function buildProgram(): Command {
 
   program
     .command('doctor')
-    .description('check that git, gh, Claude Code and Codex are installed and authenticated')
+    .description(`check that git, gh, ${AGENT_LABELS} and the repo are installed and authenticated`)
     .action(wrap(doctorCommand));
 
   program
@@ -61,8 +65,8 @@ export function buildProgram(): Command {
     .description('run the full workflow for a GitHub issue')
     .option('-v, --verbose', 'stream raw agent events')
     .option('-b, --base <branch>', 'branch to base the worktree on')
-    .option('--planner <agent>', 'agent that plans and reviews code (claude|codex)')
-    .option('--implementer <agent>', 'agent that implements and reviews the plan (claude|codex)')
+    .option('--planner <agent>', `agent that plans and reviews code (${AGENT_PROVIDERS.join('|')})`)
+    .option('--implementer <agent>', `agent that implements and reviews the plan (${AGENT_PROVIDERS.join('|')})`)
     .option('--max-plan-rounds <n>', 'maximum plan review rounds')
     .option('--max-code-rounds <n>', 'maximum code review rounds')
     .option('--no-tests', 'skip the test phase')
@@ -79,6 +83,7 @@ export function buildProgram(): Command {
     .command('status')
     .argument('[run-id]', 'run id, short id, or "latest"')
     .description('list runs, or show one run\'s summary')
+    .option('--json', 'print machine-readable JSON instead of the formatted table')
     .action(wrap(statusCommand));
 
   program

@@ -1,10 +1,17 @@
 import { join } from 'node:path';
 
+import { AGENT_PROVIDERS, isAgentProvider } from '../agents/index.ts';
 import { RelayError } from '../util/errors.ts';
 import { readJsonFile, atomicWriteJson } from './atomic.ts';
 
-export const AGENT_PROVIDERS = ['claude', 'codex'] as const;
-export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
+export { AGENT_PROVIDERS };
+
+/**
+ * The name of a registered harness. Deliberately not a union of the CLIs that
+ * happen to ship today: the set lives in `AGENT_REGISTRY`, and every value that
+ * reaches config is checked against it at load time.
+ */
+export type AgentProvider = string;
 
 export const ROLES = ['planner', 'planReviewer', 'implementer', 'codeReviewer'] as const;
 export type Role = (typeof ROLES)[number];
@@ -115,13 +122,13 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
           code: 'BAD_CONFIG',
         });
       }
-      if (typeof provider !== 'string' || !(AGENT_PROVIDERS as readonly string[]).includes(provider)) {
+      if (!isAgentProvider(provider)) {
         throw new RelayError(
           `Unknown agent "${String(provider)}" for role "${role}". Valid agents: ${AGENT_PROVIDERS.join(', ')}.`,
           { code: 'BAD_CONFIG' },
         );
       }
-      config.agents[role as Role] = provider as AgentProvider;
+      config.agents[role as Role] = provider;
     }
   }
 
@@ -129,13 +136,16 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
   if (models !== undefined) {
     if (!isRecord(models)) throw new RelayError('config.models must be an object.', { code: 'BAD_CONFIG' });
     for (const [provider, model] of Object.entries(models)) {
-      if (!(AGENT_PROVIDERS as readonly string[]).includes(provider)) {
-        throw new RelayError(`Unknown agent "${provider}" in config.models.`, { code: 'BAD_CONFIG' });
+      if (!isAgentProvider(provider)) {
+        throw new RelayError(
+          `Unknown agent "${provider}" in config.models. Valid agents: ${AGENT_PROVIDERS.join(', ')}.`,
+          { code: 'BAD_CONFIG' },
+        );
       }
       if (typeof model !== 'string') {
         throw new RelayError(`config.models.${provider} must be a string.`, { code: 'BAD_CONFIG' });
       }
-      config.models[provider as AgentProvider] = model;
+      config.models[provider] = model;
     }
   }
 

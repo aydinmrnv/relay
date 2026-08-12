@@ -5,13 +5,21 @@ import { formatDuration, oneLine } from '../../util/text.ts';
 import { snapshotDiff, formatDiffStat, formatFileList } from '../../git/diff.ts';
 import { worktreeExists } from '../../git/worktree.ts';
 import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
-import { isTerminal, phaseLabel } from '../../workflow/phases.ts';
+import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
 import type { RunState } from '../../workflow/state.ts';
+import { formatUsage } from '../../workflow/usage.ts';
 import { createCliContext } from '../context.ts';
+import { runToJson } from '../runJson.ts';
 import { dim, failure, heading, out, success, warning } from '../output.ts';
 
-export async function statusCommand(runRef?: string): Promise<number> {
+export interface StatusOptions {
+  json?: boolean;
+}
+
+export async function statusCommand(runRef?: string, options: StatusOptions = {}): Promise<number> {
   const cli = await createCliContext();
+
+  if (options.json === true) return printStatusJson(cli.repo.root, runRef);
 
   if (runRef !== undefined) {
     const state = await resolveRun(cli.repo.root, runRef);
@@ -64,6 +72,20 @@ export async function statusCommand(runRef?: string): Promise<number> {
   return 0;
 }
 
+/**
+ * Machine-readable status. One object for a named run, the full list otherwise
+ * — unabridged, unlike the human table, since a script should not have to page.
+ * Colour never reaches this path: the payload is serialized straight from state.
+ */
+async function printStatusJson(repoRoot: string, runRef: string | undefined): Promise<number> {
+  if (runRef !== undefined) {
+    out(JSON.stringify(runToJson(await resolveRun(repoRoot, runRef)), null, 2));
+    return 0;
+  }
+  out(JSON.stringify((await listRuns(repoRoot)).map(runToJson), null, 2));
+  return 0;
+}
+
 /** Progress view for a run that has not finished yet. */
 async function printLiveStatus(state: RunState, store: RunStore): Promise<void> {
   const issue = state.issue;
@@ -87,6 +109,7 @@ async function printLiveStatus(state: RunState, store: RunStore): Promise<void> 
   if (state.diff !== undefined) {
     out(`  Changes    ${state.diff.fileCount} file(s), +${state.diff.additions} −${state.diff.deletions}`);
   }
+  if (state.usage !== undefined) out(`  Usage      ${formatUsage(state.usage.total)}`);
   if (state.error !== undefined) out(`  ${failure('Error')}      ${state.error.message}`);
 
   const elapsed = Date.now() - new Date(state.createdAt).getTime();
@@ -171,7 +194,24 @@ export async function logsCommand(runRef: string, options: { limit?: string; all
     const detail = event.message ?? (event.data === undefined ? '' : oneLine(JSON.stringify(event.data), 140));
     out(`${dim(time)}  ${event.phase.padEnd(18)} ${who.padEnd(14)} ${event.type.padEnd(16)} ${detail}`);
   }
+
+  printUsageByPhase(state);
   return 0;
+}
+
+/** Per-phase token spend, so a run's cost can be attributed to the rounds that caused it. */
+function printUsageByPhase(state: RunState): void {
+  const usage = state.usage;
+  if (usage === undefined) return;
+
+  out();
+  out(dim('Usage by phase'));
+  for (const phase of PHASES) {
+    const totals = usage.byPhase[phase];
+    if (totals === undefined) continue;
+    out(dim(`  ${phaseLabel(phase).padEnd(20)} ${formatUsage(totals)}`));
+  }
+  out(dim(`  ${'Total'.padEnd(20)} ${formatUsage(usage.total)}`));
 }
 
 /** Signals a running engine to stop at its next phase boundary. */

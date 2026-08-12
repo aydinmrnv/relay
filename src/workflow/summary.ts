@@ -1,7 +1,8 @@
 import { formatFindingLine, type ReviewRound } from '../reviews/types.ts';
 import { formatDuration } from '../util/text.ts';
-import { phaseLabel } from './phases.ts';
+import { PHASES, phaseLabel } from './phases.ts';
 import type { RunState } from './state.ts';
+import { formatUsage } from './usage.ts';
 
 /**
  * Renders `summary.md`: the record of what each agent decided and why. It is
@@ -61,7 +62,25 @@ export function renderSummary(state: RunState): string {
       );
     }
   }
+
+  const usage = state.usage;
+  if (usage !== undefined) {
+    lines.push(`- Usage: ${formatUsage(usage.total)}`);
+  }
   lines.push('');
+
+  if (usage !== undefined) {
+    // Cost per phase is the number that makes `maxPlanReviewRounds` an informed
+    // choice rather than a guess, so it is spelled out rather than totalled away.
+    lines.push('## Usage by phase');
+    lines.push('');
+    for (const phase of PHASES) {
+      const totals = usage.byPhase[phase];
+      if (totals === undefined) continue;
+      lines.push(`- ${phaseLabel(phase)}: ${formatUsage(totals)}`);
+    }
+    lines.push('');
+  }
 
   if (state.diff !== undefined && state.diff.files.length > 0) {
     lines.push('## Files changed');

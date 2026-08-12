@@ -1,4 +1,6 @@
+import { AGENT_PROVIDERS } from '../agents/index.ts';
 import type { AgentHarness } from '../agents/types.ts';
+import { RelayError } from '../util/errors.ts';
 import type { IssueProvider } from '../github/types.ts';
 import type { AgentProvider, Role } from '../storage/config.ts';
 import type { RunStore } from '../storage/runs.ts';
@@ -25,8 +27,17 @@ export interface PhaseResult {
 }
 
 export function harnessFor(context: EngineContext, role: Role): AgentHarness {
-  const provider = context.state.agents[role]?.provider ?? context.state.config.agents[role];
-  return context.harnesses[provider];
+  const provider = providerNameFor(context, role);
+  const harness = context.harnesses[provider];
+  if (harness === undefined) {
+    // Reachable when a run recorded a provider that is no longer registered,
+    // e.g. state written by a build that shipped an extra harness.
+    throw new RelayError(`No harness is registered for agent "${provider}" (role ${role}).`, {
+      code: 'UNKNOWN_AGENT',
+      hint: `Registered agents: ${AGENT_PROVIDERS.join(', ')}. Check .relay/config.json.`,
+    });
+  }
+  return harness;
 }
 
 export function providerNameFor(context: EngineContext, role: Role): AgentProvider {

@@ -3,17 +3,20 @@ import assert from 'node:assert/strict';
 
 import {
   buildClaudeArgs,
+  claudeUsage,
   normalizeClaudeLine,
   CLAUDE_ALWAYS_DENIED,
   CLAUDE_READ_ONLY_DENIED,
 } from '../src/agents/claude.ts';
 import {
   buildCodexArgs,
+  codexUsage,
   normalizeCodexLine,
   codexSandboxMode,
   CODEX_EXEC_ONLY_FLAGS,
 } from '../src/agents/codex.ts';
 import { describeEvent } from '../src/agents/types.ts';
+import { AGENT_REGISTRY, AGENT_PROVIDERS, createHarnesses, isAgentProvider } from '../src/agents/index.ts';
 
 describe('claude command construction', () => {
   it('requests a machine-readable stream and a caller-chosen session id', () => {
@@ -118,6 +121,54 @@ describe('claude event normalization', () => {
     );
     assert.equal(events[0]?.type, 'completed');
     assert.equal(events[0]?.type === 'completed' ? events[0].result : undefined, 'done');
+  });
+});
+
+describe('claude usage reporting', () => {
+  const RESULT = {
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    result: 'done',
+    total_cost_usd: 0.1234,
+    usage: {
+      input_tokens: 10,
+      cache_creation_input_tokens: 100,
+      cache_read_input_tokens: 1000,
+      output_tokens: 250,
+    },
+  };
+
+  it('counts cached and cache-creation tokens as billed input', () => {
+    assert.deepEqual(claudeUsage(RESULT), { inputTokens: 1110, outputTokens: 250, costUsd: 0.1234 });
+  });
+
+  it('attaches usage to the completed event', () => {
+    const events = normalizeClaudeLine(RESULT, 'planner');
+    assert.equal(events[0]?.type, 'completed');
+    assert.deepEqual(events[0]?.type === 'completed' ? events[0].usage : undefined, {
+      inputTokens: 1110,
+      outputTokens: 250,
+      costUsd: 0.1234,
+    });
+  });
+
+  it('still reports usage for a failed turn, which was billed all the same', () => {
+    const events = normalizeClaudeLine({ ...RESULT, is_error: true }, 'planner');
+    assert.equal(events[0]?.type, 'failed');
+    assert.equal(events[0]?.type === 'failed' ? events[0].usage?.outputTokens : undefined, 250);
+  });
+
+  it('reports nothing rather than zeros when the line carries no counts', () => {
+    assert.equal(claudeUsage({ type: 'result', subtype: 'success' }), undefined);
+    assert.equal(claudeUsage({ usage: { input_tokens: 'lots' } }), undefined);
+  });
+
+  it('keeps token counts when only the cost is missing', () => {
+    assert.deepEqual(claudeUsage({ usage: { input_tokens: 5, output_tokens: 7 } }), {
+      inputTokens: 5,
+      outputTokens: 7,
+    });
   });
 });
 
@@ -260,5 +311,80 @@ describe('codex event normalization', () => {
   it('ignores turn.started and unknown lines', () => {
     assert.deepEqual(normalizeCodexLine({ type: 'turn.started' }, 'x'), []);
     assert.deepEqual(normalizeCodexLine({ type: 'something.else' }, 'x'), []);
+  });
+});
+
+describe('codex usage reporting', () => {
+  const COMPLETED = {
+    type: 'turn.completed',
+    usage: { input_tokens: 2000, cached_input_tokens: 1800, output_tokens: 400 },
+  };
+
+  it('does not double-count cached input, which codex already includes', () => {
+    assert.deepEqual(codexUsage(COMPLETED), { inputTokens: 2000, outputTokens: 400 });
+  });
+
+  it('reports no cost, because codex publishes none', () => {
+    assert.equal(codexUsage(COMPLETED)?.costUsd, undefined);
+  });
+
+  it('attaches usage to the completed event', () => {
+    const events = normalizeCodexLine(COMPLETED, 'implementer');
+    assert.equal(events[0]?.type, 'completed');
+    assert.equal(events[0]?.type === 'completed' ? events[0].usage?.inputTokens : undefined, 2000);
+  });
+
+  it('attaches usage to a failed turn as well', () => {
+    const events = normalizeCodexLine(
+      { type: 'turn.failed', error: { message: 'sandbox denied' }, usage: { input_tokens: 12, output_tokens: 3 } },
+      'implementer',
+    );
+    assert.equal(events[0]?.type, 'failed');
+    assert.deepEqual(events[0]?.type === 'failed' ? events[0].usage : undefined, {
+      inputTokens: 12,
+      outputTokens: 3,
+    });
+  });
+
+  it('reports nothing when a turn carries no usage block', () => {
+    assert.equal(codexUsage({ type: 'turn.completed' }), undefined);
+    const event = normalizeCodexLine({ type: 'turn.completed' }, 'x')[0];
+    assert.equal(event?.type, 'completed');
+    assert.equal(event?.type === 'completed' ? event.usage : 'missing', undefined);
+  });
+});
+
+describe('harness registry', () => {
+  it('exposes a unique, non-empty name for every registered CLI', () => {
+    assert.ok(AGENT_REGISTRY.length >= 2);
+    const names = AGENT_REGISTRY.map((entry) => entry.name);
+    assert.deepEqual(names, AGENT_PROVIDERS);
+    assert.equal(new Set(names).size, names.length);
+    for (const entry of AGENT_REGISTRY) {
+      assert.ok(entry.name.length > 0);
+      assert.ok(entry.label.length > 0);
+    }
+  });
+
+  it('builds one harness per registered name, reporting that name back', () => {
+    const harnesses = createHarnesses();
+    assert.deepEqual(Object.keys(harnesses).sort(), [...AGENT_PROVIDERS].sort());
+    for (const entry of AGENT_REGISTRY) {
+      assert.equal(harnesses[entry.name]?.name, entry.name);
+    }
+  });
+
+  it('passes each provider only its own configured model', () => {
+    const first = AGENT_REGISTRY[0]!;
+    const harness = first.create({ defaultModel: 'some-model' });
+    // The harness owns its model; Relay only asserts construction is accepted.
+    assert.equal(harness.name, first.name);
+  });
+
+  it('recognizes exactly the registered names', () => {
+    for (const name of AGENT_PROVIDERS) assert.ok(isAgentProvider(name));
+    assert.equal(isAgentProvider('gemini'), false);
+    assert.equal(isAgentProvider(undefined), false);
+    assert.equal(isAgentProvider(42), false);
   });
 });

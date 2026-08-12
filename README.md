@@ -29,7 +29,9 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 
 **Relay never calls a model API.** It has no API keys, reads no credentials, and never sees a token. It launches the official CLIs you have already authenticated (`claude`, `codex`, `gh`) as child processes and lets each one own its own auth.
 
-**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file.
+**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/` and one row in `AGENT_REGISTRY` (`src/agents/index.ts`) — config validation, `relay doctor`, `relay init` and the `--planner` / `--implementer` flags all read that array, so none of them need touching.
+
+**Cost is reported, not guessed.** Both CLIs report what a turn consumed, and Relay accumulates it per phase and per run. `relay status` shows the run total, `relay logs` breaks it down by phase, so `maxPlanReviewRounds` can be tuned against a real number. Relay never prices tokens itself: a missing cost means the CLI did not publish one, never that the work was free.
 
 **Verification is mechanical, not conversational.** Relay computes the diff itself (`git add -A` + `git diff --cached <baseSha>`), so an implementer that reports success while changing nothing fails the run. Test results come from process exit codes. A phase is never marked successful because an agent said so.
 
@@ -56,7 +58,7 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 | `relay init` | write `.relay/config.json` |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo and auth |
 | `relay run <issue>` | run the full workflow |
-| `relay status [run]` | list runs, or print one run's summary |
+| `relay status [run]` | list runs, or print one run's summary (`--json` for machine-readable output) |
 | `relay watch [run]` | follow a run's events live |
 | `relay diff [run]` | show the diff a run produced (`--stat` for a file list) |
 | `relay plan [run]` | print the approved plan |
@@ -72,7 +74,7 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 .relay/
   config.json
   runs/<run-id>/
-    state.json                 phase, sessions, rounds, diff summary, test results
+    state.json                 phase, sessions, rounds, diff summary, test results, token usage
     issue.md                   the issue as the agents received it
     plan.md                    current plan (rewritten on each revision)
     implementation-notes.md
@@ -118,7 +120,7 @@ Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed a
 ```bash
 npm install
 npm run typecheck
-npm test          # 166 tests, no network, no real agents
+npm test          # 208 tests, no network, no real agents
 npm run build
 ```
 

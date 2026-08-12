@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 
 import { RunStore, listRuns, resolveRun } from '../src/storage/runs.ts';
-import { mergeConfig, DEFAULT_CONFIG, loadConfig, writeConfig } from '../src/storage/config.ts';
+import { mergeConfig, DEFAULT_CONFIG, loadConfig, writeConfig, AGENT_PROVIDERS, ROLES } from '../src/storage/config.ts';
 import { createRunState, transition } from '../src/workflow/state.ts';
 import { atomicWriteFile, readJsonFile } from '../src/storage/atomic.ts';
 import { redact } from '../src/util/redact.ts';
@@ -44,6 +44,22 @@ describe('config', () => {
   it('rejects unknown agents and roles rather than ignoring them', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { agents: { planner: 'gpt5' } }), RelayError);
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { agents: { architect: 'claude' } }), RelayError);
+  });
+
+  it('accepts every registered agent for every role, without a hardcoded union', () => {
+    for (const provider of AGENT_PROVIDERS) {
+      for (const role of ROLES) {
+        assert.equal(mergeConfig(DEFAULT_CONFIG, { agents: { [role]: provider } }).agents[role], provider);
+      }
+      assert.equal(mergeConfig(DEFAULT_CONFIG, { models: { [provider]: 'some-model' } }).models[provider], 'some-model');
+    }
+  });
+
+  it('names the registered agents when rejecting an unknown one', () => {
+    assert.throws(
+      () => mergeConfig(DEFAULT_CONFIG, { models: { gemini: 'flash' } }),
+      (error: unknown) => error instanceof RelayError && AGENT_PROVIDERS.every((name) => error.message.includes(name)),
+    );
   });
 
   it('rejects out-of-range and non-integer round limits', () => {

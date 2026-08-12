@@ -1,0 +1,55 @@
+import { ClaudeHarness } from './claude.ts';
+import { CodexHarness } from './codex.ts';
+import type { AgentHarness } from './types.ts';
+
+/**
+ * Everything Relay is willing to tell a harness at construction time. It is
+ * deliberately narrow: a harness reads its own auth, picks its own defaults, and
+ * only ever learns the model the user configured for it.
+ */
+export interface HarnessOptions {
+  defaultModel?: string;
+}
+
+export interface HarnessRegistration {
+  /** Name used in `.relay/config.json` (`agents.*`, `models.*`) and on the CLI. */
+  readonly name: string;
+  /** Human label for `relay doctor` and `relay init`. */
+  readonly label: string;
+  create(options: HarnessOptions): AgentHarness;
+}
+
+/**
+ * The single list of coding CLIs Relay knows about.
+ *
+ * This is the seam the README promises: a new CLI is one file under
+ * `src/agents/` plus one row here. Config validation, `createCliContext`,
+ * `relay doctor` and `relay init` all read this array rather than naming
+ * providers, so none of them need touching.
+ */
+export const AGENT_REGISTRY: readonly HarnessRegistration[] = [
+  { name: 'claude', label: 'Claude Code', create: (options) => new ClaudeHarness(options) },
+  { name: 'codex', label: 'Codex', create: (options) => new CodexHarness(options) },
+];
+
+export const AGENT_PROVIDERS: readonly string[] = AGENT_REGISTRY.map((entry) => entry.name);
+
+export function isAgentProvider(value: unknown): value is string {
+  return typeof value === 'string' && AGENT_PROVIDERS.includes(value);
+}
+
+export function harnessRegistration(name: string): HarnessRegistration | undefined {
+  return AGENT_REGISTRY.find((entry) => entry.name === name);
+}
+
+/** One live harness per registered provider, keyed by name. */
+export function createHarnesses(
+  models: Readonly<Record<string, string | undefined>> = {},
+): Record<string, AgentHarness> {
+  const harnesses: Record<string, AgentHarness> = {};
+  for (const entry of AGENT_REGISTRY) {
+    const model = models[entry.name];
+    harnesses[entry.name] = entry.create(model === undefined ? {} : { defaultModel: model });
+  }
+  return harnesses;
+}
