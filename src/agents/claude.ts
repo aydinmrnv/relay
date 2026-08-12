@@ -311,7 +311,10 @@ export class ClaudeHarness implements AgentHarness {
   ): Promise<AgentSession> {
     const controller = new AbortController();
     this.active.set(knownSessionId, controller);
-    options.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+    // Removed when the turn ends: a run makes many turns against one signal,
+    // and listeners that outlive their process pile up on it.
+    const onAbort = (): void => controller.abort();
+    options.signal?.addEventListener('abort', onAbort, { once: true });
 
     const events: AgentEvent[] = [];
     let sessionId: string | undefined = knownSessionId;
@@ -373,6 +376,7 @@ export class ClaudeHarness implements AgentHarness {
         invocation: { command: this.binary, args },
       };
     } finally {
+      options.signal?.removeEventListener('abort', onAbort);
       this.active.delete(knownSessionId);
     }
   }

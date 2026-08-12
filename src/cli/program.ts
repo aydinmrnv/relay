@@ -79,6 +79,9 @@ export function buildProgram(): Command {
     .option('--implementer <agent>', `agent that implements and reviews the plan (${AGENT_PROVIDERS.join('|')})`)
     .option('--max-plan-rounds <n>', 'maximum plan review rounds')
     .option('--max-code-rounds <n>', 'maximum code review rounds')
+    .option('-f, --fast', 'let the implementer plan in its own session: no separate plan review')
+    .option('--no-prime', 'do not let reviewers read the repository ahead of their turn')
+    .option('--no-parallel-tests', 'run the test suite after the code review instead of during it')
     .option('--no-tests', 'skip the test phase')
     .option('--commit', 'commit the finished work to the run branch (still never pushed or merged)')
     .action(wrap(runCommand));

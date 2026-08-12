@@ -1,4 +1,4 @@
-import type { Role } from '../storage/config.ts';
+import type { PlanMode, Role } from '../storage/config.ts';
 
 export const PHASES = [
   'INITIALIZING',
@@ -29,7 +29,9 @@ export const TERMINAL_PHASES: readonly Phase[] = ['COMPLETE', 'FAILED', 'CANCELL
 const FORWARD_TRANSITIONS: Record<Phase, readonly Phase[]> = {
   INITIALIZING: ['FETCHING_ISSUE'],
   FETCHING_ISSUE: ['CREATING_WORKSPACE'],
-  CREATING_WORKSPACE: ['PLANNING'],
+  // Inline planning skips the planner and plan-review turns entirely: the
+  // implementer writes the plan in its own session and implements it.
+  CREATING_WORKSPACE: ['PLANNING', 'IMPLEMENTING'],
   PLANNING: ['REVIEWING_PLAN'],
   // Plan review either accepts (implement) or sends the plan back for revision.
   REVIEWING_PLAN: ['REVISING_PLAN', 'IMPLEMENTING'],
@@ -112,6 +114,16 @@ export function displayPhaseFor(phase: Phase): Phase | undefined {
   if (phase === 'REVISING_PLAN') return 'REVIEWING_PLAN';
   if (phase === 'REVISING_CODE') return 'REVIEWING_CODE';
   return DISPLAY_PHASES.includes(phase) ? phase : undefined;
+}
+
+/**
+ * The checklist for a particular run. Inline planning never enters the two plan
+ * phases, and a checklist that lists steps the run will not take reads as a
+ * stall when they never turn green.
+ */
+export function displayPhasesFor(plan: PlanMode): readonly Phase[] {
+  if (plan === 'review') return DISPLAY_PHASES;
+  return DISPLAY_PHASES.filter((phase) => phase !== 'PLANNING' && phase !== 'REVIEWING_PLAN');
 }
 
 /**

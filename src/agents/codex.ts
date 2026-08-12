@@ -289,7 +289,10 @@ export class CodexHarness implements AgentHarness {
     const handle = resumeSessionId ?? `codex-pending-${(this.handleCounter += 1)}`;
     const controller = new AbortController();
     this.active.set(handle, controller);
-    options.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+    // Removed when the turn ends: a run makes many turns against one signal,
+    // and listeners that outlive their process pile up on it.
+    const onAbort = (): void => controller.abort();
+    options.signal?.addEventListener('abort', onAbort, { once: true });
 
     const scratch = await mkdtemp(join(tmpdir(), 'relay-codex-'));
     const lastMessageFile = join(scratch, 'last-message.txt');
@@ -375,6 +378,7 @@ export class CodexHarness implements AgentHarness {
         invocation: { command: this.binary, args },
       };
     } finally {
+      options.signal?.removeEventListener('abort', onAbort);
       this.active.delete(handle);
       if (sessionId !== undefined) this.active.delete(sessionId);
       await rm(scratch, { recursive: true, force: true });

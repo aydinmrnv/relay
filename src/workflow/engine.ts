@@ -1,6 +1,8 @@
 import { RelayError, errorMessage, isRelayError } from '../util/errors.ts';
 import { RUN_FILES } from '../storage/runs.ts';
 import { commitRunWork } from './commitRun.ts';
+import { cancelBackgroundTests } from './backgroundTests.ts';
+import { cancelPriming } from './priming.ts';
 import { isTerminal, phaseLabel, type Phase } from './phases.ts';
 import { transition, type RunState } from './state.ts';
 import { renderSummary } from './summary.ts';
@@ -54,34 +56,42 @@ export class WorkflowEngine {
     await store.clearCancel();
     await store.saveState(state);
 
-    while (!isTerminal(state.phase)) {
-      if (await this.shouldCancel()) {
-        await this.finish('CANCELLED', 'cancelled by user');
-        break;
-      }
-
-      const handler = HANDLERS[state.phase];
-      if (handler === undefined) {
-        await this.fail(new RelayError(`No handler for phase ${state.phase}.`, { code: 'NO_HANDLER' }));
-        break;
-      }
-
-      observer.phaseChanged(state.phase, roundDetail(state));
-      await this.logPhase('phase_started');
-
-      try {
-        const result = await handler(this.context);
-        await this.logPhase('phase_completed', result.note);
-        transition(state, result.next, result.note === undefined ? {} : { note: result.note });
-        await store.saveState(state);
-      } catch (error) {
-        if (this.context.signal.aborted || isCancellation(error)) {
-          await this.finish('CANCELLED', 'cancelled');
-        } else {
-          await this.fail(error);
+    try {
+      while (!isTerminal(state.phase)) {
+        if (await this.shouldCancel()) {
+          await this.finish('CANCELLED', 'cancelled by user');
+          break;
         }
-        break;
+
+        const handler = HANDLERS[state.phase];
+        if (handler === undefined) {
+          await this.fail(new RelayError(`No handler for phase ${state.phase}.`, { code: 'NO_HANDLER' }));
+          break;
+        }
+
+        observer.phaseChanged(state.phase, roundDetail(state));
+        await this.logPhase('phase_started');
+
+        try {
+          const result = await handler(this.context);
+          await this.logPhase('phase_completed', result.note);
+          transition(state, result.next, result.note === undefined ? {} : { note: result.note });
+          await store.saveState(state);
+        } catch (error) {
+          if (this.context.signal.aborted || isCancellation(error)) {
+            await this.finish('CANCELLED', 'cancelled');
+          } else {
+            await this.fail(error);
+          }
+          break;
+        }
       }
+    } finally {
+      // Speculative work — a reviewer reading ahead, a suite running against the
+      // diff — outlives the phase that started it by design. A run that is over,
+      // however it ended, must not leave either of them alive in its worktree.
+      await cancelPriming(this.context);
+      await cancelBackgroundTests(this.context);
     }
 
     // Opt-in, and only for a run that finished: a commit is how completed work

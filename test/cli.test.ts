@@ -111,7 +111,7 @@ describe('run JSON projection', () => {
     assert.deepEqual(json.tests?.command, ['npm', 'test']);
     assert.equal(json.tests?.skippedReason, null);
 
-    assert.deepEqual(json.rounds, { planReview: 2, codeReview: 1, maxPlanReview: 3, maxCodeReview: 2 });
+    assert.deepEqual(json.rounds, { planReview: 2, codeReview: 1, maxPlanReview: 2, maxCodeReview: 2 });
     assert.equal(json.reviews[0]?.findings, 1);
     assert.equal(json.usage?.total.costUsd, 0.12);
   });

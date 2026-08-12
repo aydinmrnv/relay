@@ -8,17 +8,22 @@
   },
   "models": {},
   "workflow": {
-    "maxPlanReviewRounds": 3,
+    "plan": "review",
+    "maxPlanReviewRounds": 2,
     "maxCodeReviewRounds": 2,
     "baseBranch": "",
     "branchPrefix": "relay",
-    "runTests": true
+    "runTests": true,
+    "primeReviewers": true,
+    "concurrentTests": true
   },
   "timeouts": {
     "planningMs": 1200000,
     "reviewMs": 1200000,
     "implementationMs": 2700000,
-    "testsMs": 900000
+    "testsMs": 900000,
+    "primingMs": 360000,
+    "primeGraceMs": 60000
   },
   "tests": {
     "command": null

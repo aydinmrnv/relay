@@ -9,7 +9,7 @@ import { commitRunWork } from '../../workflow/commitRun.ts';
 import type { RunObserver } from '../../workflow/observer.ts';
 import { renderSummary } from '../../workflow/summary.ts';
 import { createRunState, type RunState } from '../../workflow/state.ts';
-import { isTerminal, phaseLabel, phaseRole } from '../../workflow/phases.ts';
+import { displayPhasesFor, isTerminal, phaseLabel, phaseRole } from '../../workflow/phases.ts';
 import { failedPhase, phaseTimings } from '../../workflow/timeline.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import type { EngineContext } from '../../workflow/context.ts';
@@ -39,6 +39,11 @@ export interface RunOptions {
   maxCodeRounds?: string;
   tests?: boolean;
   commit?: boolean;
+  fast?: boolean;
+  /** `--no-prime`: make each reviewer read only once its turn starts. */
+  prime?: boolean;
+  /** `--no-parallel-tests`: run the suite after the code review, not during it. */
+  parallelTests?: boolean;
 }
 
 /** Applies `relay run` flags over the repository config for this run only. */
@@ -48,6 +53,18 @@ function applyOverrides(config: RelayConfig, options: RunOptions): RelayConfig {
   if (options.base !== undefined) merged.workflow.baseBranch = options.base;
   if (options.tests === false) merged.workflow.runTests = false;
   if (options.commit === true) merged.workflow.commit = true;
+  if (options.prime === false) merged.workflow.primeReviewers = false;
+  if (options.parallelTests === false) merged.workflow.concurrentTests = false;
+
+  if (options.fast === true) {
+    merged.workflow.plan = 'inline';
+    out(
+      dim(
+        'Fast: the implementer plans in its own session and there is no separate plan review. ' +
+          'The diff is still reviewed by the other model.',
+      ),
+    );
+  }
 
   if (options.planner !== undefined) {
     assertProvider(options.planner, '--planner');
@@ -68,7 +85,7 @@ function applyOverrides(config: RelayConfig, options: RunOptions): RelayConfig {
     merged.workflow.maxCodeReviewRounds = parseRounds(options.maxCodeRounds, '--max-code-rounds');
   }
 
-  if (merged.agents.planner === merged.agents.planReviewer) {
+  if (merged.workflow.plan === 'review' && merged.agents.planner === merged.agents.planReviewer) {
     // Not fatal — the user may only have one CLI installed — but it removes the
     // cross-model critique that makes the workflow worth running.
     out(warning('Warning: the planner and plan reviewer are the same agent, so the plan is self-reviewed.'));
@@ -193,6 +210,7 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
       implementer: state.config.agents.implementer,
       codeReviewer: state.config.agents.codeReviewer,
     },
+    phases: displayPhasesFor(state.config.workflow.plan),
     ...(options.verbose === true ? { verbose: true } : {}),
   });
 

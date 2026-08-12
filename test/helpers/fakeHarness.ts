@@ -28,6 +28,8 @@ export interface RecordedCall {
   capability: string;
   resumed: boolean;
   sessionId: string | undefined;
+  /** `prime` for a reviewer reading ahead; absent for the work itself. */
+  purpose?: string;
 }
 
 /**
@@ -36,6 +38,11 @@ export interface RecordedCall {
  * Scripted per role, so a workflow test can say exactly what the planner says,
  * what the reviewer objects to, and what the implementer writes — with no
  * network, no model, and no wall-clock dependence.
+ *
+ * Turns with a purpose are scripted under `role:purpose` (`planReviewer:prime`).
+ * An unscripted priming turn succeeds with no output rather than failing: it is
+ * speculative reading whose content no assertion depends on, and requiring
+ * every test to script one would say nothing about the behaviour under test.
  */
 export class FakeAgentHarness implements AgentHarness {
   readonly name: string;
@@ -83,25 +90,28 @@ export class FakeAgentHarness implements AgentHarness {
   }
 
   private async execute(options: AgentRunOptions, sessionId: string, resumed: boolean): Promise<AgentSession> {
+    const key = options.purpose === undefined ? options.role : `${options.role}:${options.purpose}`;
+
     this.calls.push({
       role: options.role,
       prompt: options.prompt,
       capability: options.capability,
       resumed,
       sessionId,
+      ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
     });
 
     if (this.cancelled || options.signal?.aborted === true) {
       return this.session(options, sessionId, { ok: false, error: 'cancelled', aborted: true });
     }
 
-    const queue = this.scripts.get(options.role);
-    const turn = queue?.shift();
+    const queue = this.scripts.get(key);
+    const turn = queue?.shift() ?? (options.purpose === 'prime' ? { text: '' } : undefined);
 
     if (turn === undefined) {
       return this.session(options, sessionId, {
         ok: false,
-        error: `no scripted turn for role "${options.role}" (call ${this.calls.length})`,
+        error: `no scripted turn for "${key}" (call ${this.calls.length})`,
       });
     }
 

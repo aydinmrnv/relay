@@ -6,6 +6,7 @@ import type { AgentCapability, AgentEvent, AgentSession } from '../agents/types.
 import type { Role } from '../storage/config.ts';
 import type { ParseResult } from '../reviews/parse.ts';
 import { harnessFor, providerNameFor, type EngineContext } from './context.ts';
+import type { Phase } from './phases.ts';
 import { recordAgentSession } from './state.ts';
 import { recordTurnUsage } from './usage.ts';
 import { canResumeAfterFailure, classifyFailure, retryDelayMs, sleep } from './retry.ts';
@@ -18,6 +19,14 @@ export interface AgentTurnOptions {
   /** Continue the role's existing session when one exists. */
   resume?: boolean;
   outputSchema?: Record<string, unknown>;
+  /**
+   * Phase this turn's events, usage and logs belong to. Defaults to the phase
+   * the run is in — which is not the same thing once a turn runs concurrently
+   * with the phase before its own, as a primed reviewer does.
+   */
+  phase?: Phase;
+  /** Why this turn ran, e.g. `prime`. Recorded in the audit log. */
+  purpose?: string;
 }
 
 /**
@@ -40,12 +49,23 @@ export async function runAgentTurn(context: EngineContext, options: AgentTurnOpt
     throw new RelayError('No workspace has been created for this run yet.', { code: 'NO_WORKSPACE' });
   }
 
+  // Pinned once, at the start: a turn that outlives the phase it began in must
+  // not have its events and tokens land wherever the run happens to be later.
+  const phase = options.phase ?? state.phase;
+  const model = modelFor(context, options.role);
+
   const pending: Array<Promise<void>> = [];
   const onEvent = (event: AgentEvent): void => {
     observer.agentEvent(options.role, event);
     // Log writes are fire-and-forget during streaming and awaited before the
     // turn returns, so a slow disk never stalls the agent's output.
-    pending.push(store.logAgentEvent(state.phase, event, { role: options.role, provider }));
+    pending.push(
+      store.logAgentEvent(phase, event, {
+        role: options.role,
+        provider,
+        ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
+      }),
+    );
   };
   const flush = async (): Promise<void> => {
     await Promise.allSettled(pending.splice(0));
@@ -71,8 +91,9 @@ export async function runAgentTurn(context: EngineContext, options: AgentTurnOpt
       timeoutMs: options.timeoutMs,
       signal,
       onEvent,
-      ...(state.config.models[provider] === undefined ? {} : { model: state.config.models[provider]! }),
+      ...(model === undefined ? {} : { model }),
       ...(options.outputSchema === undefined ? {} : { outputSchema: options.outputSchema }),
+      ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
     };
 
     try {
@@ -88,19 +109,20 @@ export async function runAgentTurn(context: EngineContext, options: AgentTurnOpt
     // A failed turn still spent tokens, so usage is recorded before the throw
     // below rather than only on the happy path.
     if (session.usage !== undefined) {
-      state.usage = recordTurnUsage(state.usage, state.phase, session.usage);
+      state.usage = recordTurnUsage(state.usage, phase, session.usage);
     }
 
     await store.logEvent({
       timestamp: new Date().toISOString(),
       runId: state.runId,
-      phase: state.phase,
+      phase,
       agent: options.role,
       type: session.ok ? 'turn_completed' : 'turn_failed',
       ...(session.ok || session.error === undefined ? {} : { message: session.error }),
       data: {
         provider,
         resumed: shouldResume,
+        ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
         attempt: attempt + 1,
         sessionId: session.sessionId,
         exitCode: session.exitCode,
@@ -231,6 +253,16 @@ export async function runStructuredTurn<T>(
 
   reportWarnings(context, options.role, repairedParse.warnings);
   return { value: repairedParse.value, session: repairSession, text: repairSession.text, repaired: true };
+}
+
+/**
+ * The model a seat runs on. A role override wins over a provider override, so
+ * `{"codeReviewer": "haiku"}` puts the review on a faster model than the
+ * planning turn even though both are the same CLI.
+ */
+function modelFor(context: EngineContext, role: Role): string | undefined {
+  const { models } = context.state.config;
+  return models[role] ?? models[providerNameFor(context, role)];
 }
 
 function reportWarnings(context: EngineContext, role: Role, warnings: readonly string[]): void {

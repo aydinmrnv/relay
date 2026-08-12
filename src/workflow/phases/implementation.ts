@@ -3,16 +3,20 @@ import {
   buildCodeReviewPrompt,
   buildCodeRevisionPrompt,
   buildImplementationPrompt,
+  buildInlinePlanPrompt,
+  buildReviewPrimingPrompt,
   discoverInstructionFiles,
   type PromptContext,
 } from '../../agents/prompts.ts';
 import { snapshotDiff, formatDiffStat, type DiffSnapshot } from '../../git/diff.ts';
-import { beginMarker, endMarker } from '../../reviews/protocol.ts';
+import { beginMarker, endMarker, extractSection } from '../../reviews/protocol.ts';
 import { parseReview, parseFindingResponses, REVIEW_JSON_SCHEMA } from '../../reviews/parse.ts';
 import { isBlocking, type ReviewRound } from '../../reviews/types.ts';
 import { discoverTestCommand } from '../../testing/discovery.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import { runAgentTurn, runStructuredTurn } from '../agentRunner.ts';
+import { cancelBackgroundTests, startBackgroundTests } from '../backgroundTests.ts';
+import { awaitPriming, startPriming } from '../priming.ts';
 import { providerNameFor, type EngineContext, type PhaseResult } from '../context.ts';
 
 /** Cap on how much diff is pasted into a review prompt. */
@@ -69,28 +73,56 @@ async function captureDiff(context: EngineContext, label: string): Promise<DiffS
 export async function implementing(context: EngineContext): Promise<PhaseResult> {
   const { state, store, observer } = context;
   const prompts = await promptContext(context);
+  const inline = state.config.workflow.plan === 'inline';
 
   const plan = await store.readArtifact(RUN_FILES.plan);
-  if (plan === undefined) throw new RelayError('plan.md is missing from this run.', { code: 'NO_PLAN' });
+  if (plan === undefined && !inline) {
+    throw new RelayError('plan.md is missing from this run.', { code: 'NO_PLAN' });
+  }
 
-  if (!state.planApproved) {
+  if (!inline && !state.planApproved) {
     observer.warn('Implementing a plan that was not approved by the reviewer.');
   }
 
   const discovery = await discoverTestCommand(prompts.worktreePath, state.config.tests.command);
+  const relayRunsTests = state.config.workflow.runTests && state.config.workflow.concurrentTests;
+  const promptOptions = {
+    ...prompts,
+    plan: plan ?? '',
+    relayRunsTests,
+    ...(discovery.found ? { testCommand: discovery.command.command } : {}),
+  };
+
+  // The code reviewer reads the issue and the plan while the code is written,
+  // so its review turn is spent on the diff rather than on the codebase.
+  startPriming(context, {
+    role: 'codeReviewer',
+    prompt: buildReviewPrimingPrompt(prompts, {
+      subject: 'implementation',
+      ...(plan === undefined ? {} : { plan }),
+    }),
+    phase: 'REVIEWING_CODE',
+  });
 
   const session = await runAgentTurn(context, {
     role: 'implementer',
-    prompt: buildImplementationPrompt({
-      ...prompts,
-      plan,
-      ...(discovery.found ? { testCommand: discovery.command.command } : {}),
-    }),
+    prompt: inline ? buildInlinePlanPrompt(promptOptions) : buildImplementationPrompt(promptOptions),
     capability: 'write',
     timeoutMs: state.config.timeouts.implementationMs,
   });
 
   await store.writeArtifact('implementation-notes.md', session.text);
+
+  // Inline planning still produces a plan.md: it is what the code reviewer
+  // reviews the diff against, and what `relay plan` prints afterwards.
+  if (inline) {
+    const stated = extractSection(session.text, 'PLAN');
+    if (stated === undefined) {
+      observer.warn('The implementer did not state a plan; the reviewer will judge the diff against the issue alone.');
+    } else {
+      await store.writeArtifact(RUN_FILES.plan, stated);
+    }
+  }
 
   // Verified through git, not through the agent's report.
   const snapshot = await captureDiff(context, 'implementation');
@@ -102,6 +134,10 @@ export async function implementing(context: EngineContext): Promise<PhaseResult>
     });
   }
 
+  // The tree is settled and the reviewer is about to read it: the suite can run
+  // against that same tree instead of waiting for the review to finish.
+  startBackgroundTests(context);
+
   observer.note(`Implementation: ${formatDiffStat(snapshot)}`);
   return { next: 'REVIEWING_CODE', note: formatDiffStat(snapshot) };
 }
@@ -110,8 +146,9 @@ export async function reviewingCode(context: EngineContext): Promise<PhaseResult
   const { state, store, observer } = context;
   const prompts = await promptContext(context);
 
-  const plan = await store.readArtifact(RUN_FILES.plan);
-  if (plan === undefined) throw new RelayError('plan.md is missing from this run.', { code: 'NO_PLAN' });
+  // Inline planning writes plan.md from the implementer's own account of what
+  // it did; an implementer that skipped it leaves the issue as the only spec.
+  const plan = (await store.readArtifact(RUN_FILES.plan)) ?? '(no written plan — review the diff against the issue)';
 
   const workspace = state.workspace;
   if (workspace === undefined) throw new RelayError('No workspace for this run.', { code: 'NO_WORKSPACE' });
@@ -126,6 +163,7 @@ export async function reviewingCode(context: EngineContext): Promise<PhaseResult
 
   const round = state.rounds.codeReview + 1;
   const maxRounds = state.config.workflow.maxCodeReviewRounds;
+  const primed = await awaitPriming(context, 'codeReviewer');
 
   const { value: review, text } = await runStructuredTurn(context, {
     role: 'codeReviewer',
@@ -136,10 +174,13 @@ export async function reviewingCode(context: EngineContext): Promise<PhaseResult
       diffStat: formatDiffStat(snapshot),
       round,
       maxRounds,
+      primed,
+      planApproved: state.planApproved,
+      testsRunning: context.backgroundTests !== undefined,
     }),
     capability: 'read_only',
     timeoutMs: state.config.timeouts.reviewMs,
-    resume: round > 1,
+    resume: true,
     outputSchema: REVIEW_JSON_SCHEMA,
     parse: parseReview,
     expectation: REVIEW_EXPECTATION,
@@ -176,6 +217,10 @@ export async function reviewingCode(context: EngineContext): Promise<PhaseResult
     return { next: 'TESTING', note: `round limit reached (${blocking.length} blocking unresolved)` };
   }
 
+  // The implementer is about to edit the tree the suite is running against, so
+  // that run is abandoned rather than allowed to report on a moving target.
+  await cancelBackgroundTests(context);
+
   observer.note(`Code review requested changes: ${blocking.length} blocking finding(s).`);
   return { next: 'REVISING_CODE', note: `${blocking.length} blocking` };
 }
@@ -196,6 +241,7 @@ export async function revisingCode(context: EngineContext): Promise<PhaseResult>
       round,
       maxRounds: state.config.workflow.maxCodeReviewRounds,
       reviewerName: providerNameFor(context, 'codeReviewer'),
+      relayRunsTests: state.config.workflow.runTests && state.config.workflow.concurrentTests,
       ...(lastReview.summary === undefined ? {} : { reviewSummary: lastReview.summary }),
     }),
     capability: 'write',
@@ -214,6 +260,8 @@ export async function revisingCode(context: EngineContext): Promise<PhaseResult>
   lastReview.responses = responses;
 
   const snapshot = await captureDiff(context, `revision-round-${round}`);
+  // A settled tree again: the suite can run against it during the next review.
+  startBackgroundTests(context);
 
   await store.saveDiscussion('code', round, {
     round,

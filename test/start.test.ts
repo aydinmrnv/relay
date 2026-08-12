@@ -352,7 +352,7 @@ describe('relay start — the tour', () => {
     assert.match(output, /2\. Plan review\s+codex/);
     assert.match(output, /3\. Implement\s+codex/);
     assert.match(output, /4\. Code review\s+claude/);
-    assert.match(output, /up to 3 round\(s\)/);
+    assert.match(output, /up to 2 round\(s\)/);
     assert.match(output, /up to 2 round\(s\)/);
   });
 
@@ -373,7 +373,8 @@ describe('relay start — the tour', () => {
   it('is honest about time, tokens and what Relay will never do', async () => {
     const { output } = await start([]);
 
-    assert.match(output, /10–20 minutes/);
+    assert.match(output, /8–15 minutes/);
+    assert.match(output, /--fast/);
     assert.match(output, /billed to your own Claude Code and Codex accounts/);
     assert.match(output, /never pushes, never merges, never opens a PR/);
     assert.match(output, /never read, never prompted for, never stored/);

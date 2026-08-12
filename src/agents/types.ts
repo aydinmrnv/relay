@@ -52,6 +52,12 @@ export interface AgentRunOptions {
   onEvent?: (event: AgentEvent) => void;
   /** JSON Schema for the final message, when the CLI supports enforcing one. */
   outputSchema?: Record<string, unknown>;
+  /**
+   * Why this turn is running, e.g. `prime` for a reviewer reading ahead. Every
+   * shipped harness ignores it; it exists so a turn's intent survives into
+   * anything that inspects a run rather than being inferred from its prompt.
+   */
+  purpose?: string;
 }
 
 export type ResumeOptions = Omit<AgentRunOptions, 'prompt'>;
