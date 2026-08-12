@@ -83,6 +83,7 @@ export function buildProgram(): Command {
     .command('status')
     .argument('[run-id]', 'run id, short id, or "latest"')
     .description('list runs, or show one run\'s summary')
+    .option('--json', 'print machine-readable JSON instead of the formatted table')
     .action(wrap(statusCommand));
 
   program

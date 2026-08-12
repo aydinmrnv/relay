@@ -9,10 +9,17 @@ import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
 import type { RunState } from '../../workflow/state.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import { createCliContext } from '../context.ts';
+import { runToJson } from '../runJson.ts';
 import { dim, failure, heading, out, success, warning } from '../output.ts';
 
-export async function statusCommand(runRef?: string): Promise<number> {
+export interface StatusOptions {
+  json?: boolean;
+}
+
+export async function statusCommand(runRef?: string, options: StatusOptions = {}): Promise<number> {
   const cli = await createCliContext();
+
+  if (options.json === true) return printStatusJson(cli.repo.root, runRef);
 
   if (runRef !== undefined) {
     const state = await resolveRun(cli.repo.root, runRef);
@@ -62,6 +69,20 @@ export async function statusCommand(runRef?: string): Promise<number> {
   }
 
   if (runs.length > 20) out(dim(`  … and ${runs.length - 20} older run(s)`));
+  return 0;
+}
+
+/**
+ * Machine-readable status. One object for a named run, the full list otherwise
+ * — unabridged, unlike the human table, since a script should not have to page.
+ * Colour never reaches this path: the payload is serialized straight from state.
+ */
+async function printStatusJson(repoRoot: string, runRef: string | undefined): Promise<number> {
+  if (runRef !== undefined) {
+    out(JSON.stringify(runToJson(await resolveRun(repoRoot, runRef)), null, 2));
+    return 0;
+  }
+  out(JSON.stringify((await listRuns(repoRoot)).map(runToJson), null, 2));
   return 0;
 }
 

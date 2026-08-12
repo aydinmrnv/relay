@@ -58,7 +58,7 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 | `relay init` | write `.relay/config.json` |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo and auth |
 | `relay run <issue>` | run the full workflow |
-| `relay status [run]` | list runs, or print one run's summary |
+| `relay status [run]` | list runs, or print one run's summary (`--json` for machine-readable output) |
 | `relay watch [run]` | follow a run's events live |
 | `relay diff [run]` | show the diff a run produced (`--stat` for a file list) |
 | `relay plan [run]` | print the approved plan |
@@ -120,7 +120,7 @@ Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed a
 ```bash
 npm install
 npm run typecheck
-npm test          # 166 tests, no network, no real agents
+npm test          # 208 tests, no network, no real agents
 npm run build
 ```
 
