@@ -8,9 +8,10 @@ import { setTheme } from '../src/cli/output.ts';
 import type { AgentCheck } from '../src/cli/checks.ts';
 import { AGENT_REGISTRY } from '../src/agents/index.ts';
 import { loadConfig, configPath, type RelayConfig } from '../src/storage/config.ts';
-import type { Choice, PromptSession } from '../src/ui/prompt.ts';
+import type { PromptSession } from '../src/ui/prompt.ts';
 import { RelayError } from '../src/util/errors.ts';
 import type { Theme } from '../src/ui/theme.ts';
+import { ScriptedPrompter } from './helpers/scriptedPrompter.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
 let repo: TempRepo;
@@ -27,73 +28,6 @@ afterEach(async () => {
   setTheme(undefined);
   await repo.cleanup();
 });
-
-/**
- * A terminal that answers from a script. The real `Prompter` is covered by its
- * own tests against a stream; what matters here is the flow: which questions it
- * asks, in what order, and what config the answers produce.
- *
- * An exhausted script takes the default, which is the same thing pressing Enter
- * does — so a flow that asks more than the test scripted still completes.
- */
-class ScriptedPrompter implements PromptSession {
-  readonly interactive: boolean;
-  readonly asked: string[] = [];
-  readonly offered: string[][] = [];
-  closed = false;
-
-  private readonly answers: string[];
-  private index = 0;
-
-  constructor(answers: readonly string[], interactive = true) {
-    this.answers = [...answers];
-    this.interactive = interactive;
-  }
-
-  private next(): string | undefined {
-    if (this.index >= this.answers.length) return undefined;
-    const answer = this.answers[this.index];
-    this.index += 1;
-    return answer === '' ? undefined : answer;
-  }
-
-  async text(question: string, defaultValue: string, validate?: (value: string) => string | undefined): Promise<string> {
-    this.asked.push(question);
-    if (!this.interactive) return defaultValue;
-
-    const value = this.next() ?? defaultValue;
-    // The real prompter re-asks; a script that fails validation is a test bug.
-    const problem = validate?.(value);
-    assert.equal(problem, undefined, `scripted answer "${value}" for "${question}" is invalid: ${problem ?? ''}`);
-    return value;
-  }
-
-  async confirm(question: string, defaultValue: boolean): Promise<boolean> {
-    this.asked.push(question);
-    if (!this.interactive) return defaultValue;
-
-    const answer = this.next();
-    if (answer === undefined) return defaultValue;
-    return answer.toLowerCase().startsWith('y');
-  }
-
-  async choice<T extends string>(question: string, choices: ReadonlyArray<Choice<T>>, defaultValue: T): Promise<T> {
-    this.asked.push(question);
-    this.offered.push(choices.map((choice) => choice.value));
-    if (!this.interactive) return defaultValue;
-
-    const answer = this.next();
-    if (answer === undefined) return defaultValue;
-
-    const match = choices.find((choice) => choice.value === answer);
-    assert.ok(match !== undefined, `scripted answer "${answer}" is not one of ${choices.map((c) => c.value).join(', ')}`);
-    return match.value;
-  }
-
-  close(): void {
-    this.closed = true;
-  }
-}
 
 /** Agent probe results, without spawning a real `claude --version`. */
 function stubAgents(available: boolean): () => Promise<AgentCheck[]> {

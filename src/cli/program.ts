@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
 import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
+import { startCommand } from './commands/start.ts';
 import { runCommand, resumeCommand, type RunOptions } from './commands/run.ts';
 import {
   diffCommand,
@@ -47,6 +48,14 @@ export function buildProgram(): Command {
     )
     .version(VERSION)
     .showHelpAfterError();
+
+  program
+    .command('start')
+    .description(`guided setup: ${AGENT_LABELS}, GitHub, config, and a first run you understand`)
+    .option('--check', 'report what is missing and exit, without prompting or signing in')
+    .option('--tour', 'replay the explanation of what a run does')
+    .option('--dry-run', 'walk the whole pipeline without calling a single agent')
+    .action(wrap(startCommand));
 
   program
     .command('init')

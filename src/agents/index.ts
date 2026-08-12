@@ -1,4 +1,5 @@
-import { ClaudeHarness } from './claude.ts';
+import type { AuthSupport } from '../auth/delegated.ts';
+import { ClaudeHarness, claudeSignedIn } from './claude.ts';
 import { CodexHarness } from './codex.ts';
 import type { AgentHarness } from './types.ts';
 
@@ -18,6 +19,13 @@ export interface HarnessRegistration {
   readonly label: string;
   /** Identity used in the `Co-Authored-By` trailer of a `--commit` commit. */
   readonly coAuthor: { readonly name: string; readonly email: string };
+  /** Printed when the CLI is missing. Relay shows it; the user runs it. */
+  readonly installCommand: string;
+  /**
+   * How this vendor answers "are you signed in?" and "sign me in". Relay only
+   * ever delegates to these — it holds no credential of its own.
+   */
+  readonly auth: AuthSupport;
   create(options: HarnessOptions): AgentHarness;
 }
 
@@ -34,12 +42,24 @@ export const AGENT_REGISTRY: readonly HarnessRegistration[] = [
     name: 'claude',
     label: 'Claude Code',
     coAuthor: { name: 'Claude', email: 'noreply@anthropic.com' },
+    installCommand: 'npm install -g @anthropic-ai/claude-code',
+    auth: {
+      // `claude auth status` exits 0 whether or not a session exists, so the
+      // answer is read from its own JSON rather than from the exit code.
+      status: { command: 'claude', args: ['auth', 'status'], signedIn: claudeSignedIn },
+      login: { command: 'claude', args: ['auth', 'login'] },
+    },
     create: (options) => new ClaudeHarness(options),
   },
   {
     name: 'codex',
     label: 'Codex',
     coAuthor: { name: 'Codex', email: 'noreply@openai.com' },
+    installCommand: 'npm install -g @openai/codex',
+    auth: {
+      status: { command: 'codex', args: ['login', 'status'] },
+      login: { command: 'codex', args: ['login'] },
+    },
     create: (options) => new CodexHarness(options),
   },
 ];
