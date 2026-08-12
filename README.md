@@ -120,7 +120,7 @@ Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed a
 ```bash
 npm install
 npm run typecheck
-npm test          # 208 tests, no network, no real agents
+npm test          # 212 tests, no network, no real agents
 npm run build
 ```
 

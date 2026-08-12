@@ -149,15 +149,20 @@ export function codexUsage(raw: Record<string, unknown>): AgentUsage | undefined
   if (usage === null || typeof usage !== 'object') return undefined;
   const record = usage as Record<string, unknown>;
 
-  const inputTokens = finiteNumber(record['input_tokens']);
-  const outputTokens = finiteNumber(record['output_tokens']);
+  const inputTokens = tokenCount(record['input_tokens']);
+  const outputTokens = tokenCount(record['output_tokens']);
   if (inputTokens === 0 && outputTokens === 0) return undefined;
 
   return { inputTokens, outputTokens };
 }
 
-function finiteNumber(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+/**
+ * Totals are summed into persisted run state, so a malformed count would
+ * corrupt them for the life of the run. Anything but a whole, countable
+ * number of tokens is dropped rather than folded in.
+ */
+function tokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
 function normalizeCodexItem(item: CodexItem, agent: string, isStart: boolean): AgentEvent[] {

@@ -115,6 +115,28 @@ describe('run JSON projection', () => {
     assert.equal(json.usage?.total.costUsd, 0.12);
   });
 
+  it('reports an unpriced usage bucket as a null cost, not a missing key', () => {
+    const state = populatedRun(repo.root);
+    // A Codex turn: real tokens, no price. The key must survive as null so a
+    // consumer can tell "not reported" from "free".
+    state.usage = recordTurnUsage(undefined, 'IMPLEMENTING', { inputTokens: 2000, outputTokens: 450 });
+
+    const json = runToJson(state);
+    const total = json.usage?.total;
+    assert.ok(total !== undefined);
+    assert.deepEqual(total, { inputTokens: 2000, outputTokens: 450, costUsd: null, turns: 1 });
+    assert.ok('costUsd' in total);
+    assert.deepEqual(json.usage?.byPhase.IMPLEMENTING, {
+      inputTokens: 2000,
+      outputTokens: 450,
+      costUsd: null,
+      turns: 1,
+    });
+
+    const roundTripped = JSON.parse(JSON.stringify(json)) as typeof json;
+    assert.equal(roundTripped.usage?.total.costUsd, null);
+  });
+
   it('reports absent facts as null rather than dropping the keys', () => {
     const bare = createRunState({
       runId: createRunId(new Date('2026-08-11T09:00:00Z')),

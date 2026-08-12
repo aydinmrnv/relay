@@ -170,6 +170,21 @@ describe('claude usage reporting', () => {
       outputTokens: 7,
     });
   });
+
+  it('drops negative and fractional token counts instead of corrupting the total', () => {
+    assert.equal(claudeUsage({ usage: { input_tokens: -500, output_tokens: 12.7 } }), undefined);
+    assert.deepEqual(claudeUsage({ usage: { input_tokens: 40, cache_read_input_tokens: -30, output_tokens: 1.5 } }), {
+      inputTokens: 40,
+      outputTokens: 0,
+    });
+  });
+
+  it('ignores a negative cost, which would refund the run total', () => {
+    assert.deepEqual(claudeUsage({ usage: { input_tokens: 5, output_tokens: 7 }, total_cost_usd: -1.5 }), {
+      inputTokens: 5,
+      outputTokens: 7,
+    });
+  });
 });
 
 describe('codex command construction', () => {
@@ -351,6 +366,14 @@ describe('codex usage reporting', () => {
     const event = normalizeCodexLine({ type: 'turn.completed' }, 'x')[0];
     assert.equal(event?.type, 'completed');
     assert.equal(event?.type === 'completed' ? event.usage : 'missing', undefined);
+  });
+
+  it('drops negative and fractional token counts instead of corrupting the total', () => {
+    assert.equal(codexUsage({ usage: { input_tokens: -2000, output_tokens: 0.5 } }), undefined);
+    assert.deepEqual(codexUsage({ usage: { input_tokens: 900, output_tokens: -4 } }), {
+      inputTokens: 900,
+      outputTokens: 0,
+    });
   });
 });
 

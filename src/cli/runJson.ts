@@ -2,7 +2,7 @@ import type { Decision } from '../reviews/types.ts';
 import type { Phase } from '../workflow/phases.ts';
 import { isTerminal, phaseLabel } from '../workflow/phases.ts';
 import type { RunState } from '../workflow/state.ts';
-import type { RunUsage } from '../workflow/usage.ts';
+import type { RunUsage, UsageTotals } from '../workflow/usage.ts';
 
 /**
  * The machine-readable shape of a run, for `relay status --json`.
@@ -55,8 +55,25 @@ export interface RunJson {
     at: string;
   } | null;
 
-  usage: RunUsage | null;
+  usage: RunUsageJson | null;
   error: { message: string; phase: Phase; code: string | null } | null;
+}
+
+/**
+ * Usage totals as JSON. `costUsd` is `null`, not an omitted key, for a bucket
+ * nothing priced — Codex publishes no cost, so a Codex-only run has real token
+ * counts and no price. `null` says "not reported" where `0` would say "free".
+ */
+export interface UsageTotalsJson {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null;
+  turns: number;
+}
+
+export interface RunUsageJson {
+  total: UsageTotalsJson;
+  byPhase: Partial<Record<Phase, UsageTotalsJson>>;
 }
 
 /** Projects persisted run state onto the public JSON contract. */
@@ -149,7 +166,26 @@ export function runToJson(state: RunState): RunJson {
             at: tests.at,
           },
 
-    usage: state.usage ?? null,
+    usage: state.usage === undefined ? null : usageToJson(state.usage),
     error: error === undefined ? null : { message: error.message, phase: error.phase, code: error.code ?? null },
+  };
+}
+
+/** Projects usage onto the JSON contract, pinning unpriced buckets to `null`. */
+function usageToJson(usage: RunUsage): RunUsageJson {
+  return {
+    total: totalsToJson(usage.total),
+    byPhase: Object.fromEntries(
+      Object.entries(usage.byPhase).map(([phase, totals]) => [phase, totalsToJson(totals)]),
+    ) as Partial<Record<Phase, UsageTotalsJson>>,
+  };
+}
+
+function totalsToJson(totals: UsageTotals): UsageTotalsJson {
+  return {
+    inputTokens: totals.inputTokens,
+    outputTokens: totals.outputTokens,
+    costUsd: totals.costUsd ?? null,
+    turns: totals.turns,
   };
 }
