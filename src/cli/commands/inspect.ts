@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { RelayError } from '../../util/errors.ts';
 import { formatDuration, oneLine } from '../../util/text.ts';
 import { snapshotDiff, formatDiffStat, formatFileList } from '../../git/diff.ts';
+import { describeLanding, type Landing } from '../../git/commit.ts';
 import { worktreeExists } from '../../git/worktree.ts';
 import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
 import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
@@ -30,6 +31,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
     const summary = isTerminal(state.phase) ? await store.readArtifact(RUN_FILES.summary) : undefined;
     if (summary !== undefined) {
       out(summary.trimEnd());
+      await printLanding(cli.repo.root, state);
       return 0;
     }
 
@@ -58,12 +60,17 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
             : phaseLabel(state.phase);
 
     const issue = state.issue === undefined ? state.issueRef : `#${state.issue.number} ${state.issue.title}`;
-    out(`  ${state.runId}  ${label.padEnd(22)} ${oneLine(issue, 48)}`);
+    const landing = await landingOf(cli.repo.root, state);
+    out(
+      `  ${state.runId}  ${label.padEnd(22)} ${oneLine(issue, 48)}` +
+        (landing === 'unlanded' ? `  ${warning('unlanded')}` : ''),
+    );
     out(
       dim(
         `    ${state.workspace?.branch ?? '(no branch)'}  ·  ${formatDuration(elapsed)}  ·  ` +
           `plan ${state.rounds.planReview}r, code ${state.rounds.codeReview}r` +
-          (state.diff === undefined ? '' : `  ·  +${state.diff.additions} −${state.diff.deletions}`),
+          (state.diff === undefined ? '' : `  ·  +${state.diff.additions} −${state.diff.deletions}`) +
+          (state.commit === undefined ? '' : `  ·  committed ${state.commit.sha.slice(0, 8)}`),
       ),
     );
   }
@@ -79,11 +86,44 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
  */
 async function printStatusJson(repoRoot: string, runRef: string | undefined): Promise<number> {
   if (runRef !== undefined) {
-    out(JSON.stringify(runToJson(await resolveRun(repoRoot, runRef)), null, 2));
+    const state = await resolveRun(repoRoot, runRef);
+    out(JSON.stringify(runToJson(state, { landing: await landingOf(repoRoot, state) }), null, 2));
     return 0;
   }
-  out(JSON.stringify((await listRuns(repoRoot)).map(runToJson), null, 2));
+
+  const runs = await listRuns(repoRoot);
+  const payload = await Promise.all(
+    runs.map(async (state) => runToJson(state, { landing: await landingOf(repoRoot, state) })),
+  );
+  out(JSON.stringify(payload, null, 2));
   return 0;
+}
+
+/**
+ * Where a completed run's work actually is. Relay leaves a staged index behind
+ * unless `--commit` was used, and a staged index is one `git worktree prune`
+ * away from being gone — so the answer is read from git rather than assumed.
+ */
+async function landingOf(repoRoot: string, state: RunState): Promise<Landing> {
+  const workspace = state.workspace;
+  if (state.phase !== 'COMPLETE' || workspace === undefined) return 'unknown';
+
+  return describeLanding(repoRoot, {
+    branch: workspace.branch,
+    baseSha: workspace.baseSha,
+    changedFiles: state.diff?.fileCount ?? 0,
+    ...(state.commit === undefined ? {} : { committedSha: state.commit.sha }),
+  });
+}
+
+/** Warns, after a completed run's summary, that its work is not committed anywhere. */
+async function printLanding(repoRoot: string, state: RunState): Promise<void> {
+  if ((await landingOf(repoRoot, state)) !== 'unlanded') return;
+
+  out();
+  out(warning('Unlanded: this run\'s changes are staged in its worktree but never committed.'));
+  out(dim(`  A \`git worktree prune\` or \`git reset\` would discard them.`));
+  out(dim(`  relay resume ${state.runId} --commit   # commit them to ${state.workspace?.branch ?? 'the run branch'}`));
 }
 
 /** Progress view for a run that has not finished yet. */

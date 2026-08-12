@@ -1,3 +1,4 @@
+import type { Landing } from '../git/commit.ts';
 import type { Decision } from '../reviews/types.ts';
 import type { Phase } from '../workflow/phases.ts';
 import { isTerminal, phaseLabel } from '../workflow/phases.ts';
@@ -44,9 +45,16 @@ export interface RunJson {
     at: string;
   } | null;
 
+  /** Where the run's work currently lives. `unlanded` means "still only staged". */
+  landing: Landing;
+  unlanded: boolean;
+  commit: { sha: string; branch: string; subject: string; at: string } | null;
+
   tests: {
     discovered: boolean;
     command: string[];
+    /** Subdirectory the suite ran in, relative to the worktree; null at the root. */
+    directory: string | null;
     passed: boolean;
     exitCode: number | null;
     durationMs: number;
@@ -76,14 +84,26 @@ export interface RunUsageJson {
   byPhase: Partial<Record<Phase, UsageTotalsJson>>;
 }
 
+export interface RunJsonOptions {
+  /**
+   * Landing verified against git. Omitted, it is inferred from state alone,
+   * which can only report `committed` (Relay committed it), `empty`, or
+   * `unknown` — never `unlanded`, since that claim needs the branch itself.
+   */
+  landing?: Landing;
+}
+
 /** Projects persisted run state onto the public JSON contract. */
-export function runToJson(state: RunState): RunJson {
+export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJson {
   const finishedAt = state.finishedAt ?? null;
   const elapsed = new Date(finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
   const workspace = state.workspace;
   const diff = state.diff;
   const tests = state.tests;
   const error = state.error;
+  const commit = state.commit;
+  const landing =
+    options.landing ?? (commit !== undefined ? 'committed' : (diff?.fileCount ?? 0) === 0 ? 'empty' : 'unknown');
 
   return {
     runId: state.runId,
@@ -152,12 +172,20 @@ export function runToJson(state: RunState): RunJson {
             at: diff.at,
           },
 
+    landing,
+    unlanded: landing === 'unlanded',
+    commit:
+      commit === undefined
+        ? null
+        : { sha: commit.sha, branch: commit.branch, subject: commit.subject, at: commit.at },
+
     tests:
       tests === undefined
         ? null
         : {
             discovered: tests.discovered,
             command: tests.command,
+            directory: tests.directory ?? null,
             passed: tests.passed,
             exitCode: tests.exitCode,
             durationMs: tests.durationMs,

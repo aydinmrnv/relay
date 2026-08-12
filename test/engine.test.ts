@@ -47,7 +47,13 @@ interface Harness {
 
 function buildContext(
   harnesses: Harness,
-  options: { config?: Partial<RelayConfig['workflow']>; state?: RunState; signal?: AbortSignal } = {},
+  options: {
+    config?: Partial<RelayConfig['workflow']>;
+    state?: RunState;
+    signal?: AbortSignal;
+    /** Collects the backoff delays a run would have waited out. */
+    delays?: number[];
+  } = {},
 ): { context: EngineContext; store: RunStore; observer: RecordingObserver; state: RunState } {
   const config = structuredClone(DEFAULT_CONFIG);
   Object.assign(config.workflow, options.config ?? {});
@@ -72,6 +78,11 @@ function buildContext(
     issueProvider: new FakeIssueProvider(),
     observer,
     signal: options.signal ?? new AbortController().signal,
+    // Backoff is recorded rather than waited on: the delay is the unit's
+    // business, and a test should not spend seconds proving it happened.
+    sleep: async (ms: number) => {
+      options.delays?.push(ms);
+    },
   };
 
   return { context, store, observer, state };
@@ -522,6 +533,190 @@ describe('workflow engine — failure handling', () => {
     assert.equal(final.phase, 'FAILED');
     assert.equal(final.error?.phase, 'INITIALIZING');
     assert.match(observer.notes.join(' ') + observer.warnings.join(' '), /Install Claude Code/);
+  });
+});
+
+describe('workflow engine — transient failures', () => {
+  it('retries a rate-limited turn with backoff and finishes the run', async () => {
+    const delays: number[] = [];
+    const harnesses = happyPathHarnesses();
+    harnesses.claude = new FakeAgentHarness('claude', {
+      planner: [
+        { text: '', ok: false, error: 'claude exited with code 1: API Error: 429 rate_limit_error' },
+        { text: '', ok: false, error: 'claude exited with code 1: API Error: 429 rate_limit_error' },
+        { text: planText() },
+      ],
+      codeReviewer: [{ text: approveReview() }],
+    });
+
+    const { context, observer, store } = buildContext(harnesses, { delays });
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.equal(harnesses.claude.calls.filter((call) => call.role === 'planner').length, 3);
+
+    // Backoff grew between attempts, and no retry was silent.
+    assert.equal(delays.length, 2);
+    assert.ok(delays[1]! > delays[0]!);
+    assert.equal(observer.warnings.filter((line) => /transient error/.test(line)).length, 2);
+
+    const events = await store.readEvents();
+    assert.equal(events.filter((event) => event.type === 'notice' && /retrying in/.test(String(event.data?.['text']))).length, 2);
+    assert.equal(events.filter((event) => event.type === 'turn_failed').length, 2);
+  });
+
+  it('does not retry an authentication failure', async () => {
+    const delays: number[] = [];
+    const harnesses: Harness = {
+      claude: new FakeAgentHarness('claude', {
+        planner: [
+          { text: '', ok: false, error: 'claude exited with code 1: 401 Unauthorized' },
+          { text: planText() },
+        ],
+      }),
+      codex: new FakeAgentHarness('codex'),
+    };
+
+    const { context } = buildContext(harnesses, { delays });
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'FAILED');
+    assert.equal(final.error?.phase, 'PLANNING');
+    assert.equal(harnesses.claude.calls.filter((call) => call.role === 'planner').length, 1);
+    assert.deepEqual(delays, []);
+  });
+
+  it('gives up after the configured number of retries', async () => {
+    const delays: number[] = [];
+    const harnesses: Harness = {
+      claude: new FakeAgentHarness('claude', {
+        planner: Array.from({ length: 5 }, () => ({
+          text: '',
+          ok: false,
+          error: 'claude exited with code 1: 503 Service Unavailable',
+        })),
+      }),
+      codex: new FakeAgentHarness('codex'),
+    };
+
+    const { context } = buildContext(harnesses, { delays, config: { maxTransientRetries: 1 } });
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'FAILED');
+    assert.equal(harnesses.claude.calls.filter((call) => call.role === 'planner').length, 2);
+    assert.equal(delays.length, 1);
+    assert.match(final.error?.message ?? '', /after 2 attempts/);
+  });
+
+  it('honours maxTransientRetries = 0', async () => {
+    const harnesses: Harness = {
+      claude: new FakeAgentHarness('claude', {
+        planner: [
+          { text: '', ok: false, error: 'claude exited with code 1: rate limit exceeded' },
+          { text: planText() },
+        ],
+      }),
+      codex: new FakeAgentHarness('codex'),
+    };
+
+    const { context } = buildContext(harnesses, { config: { maxTransientRetries: 0 } });
+    assert.equal((await new WorkflowEngine(context).run()).phase, 'FAILED');
+    assert.equal(harnesses.claude.calls.filter((call) => call.role === 'planner').length, 1);
+  });
+
+  it('resumes the failed session when the CLI reported one, and starts fresh when it did not', async () => {
+    const harnesses = happyPathHarnesses();
+    harnesses.claude = new FakeAgentHarness('claude', {
+      planner: [
+        // Died before the CLI announced a session: there is nothing to resume.
+        { text: '', ok: false, started: false, error: 'claude exited with code 1: ECONNRESET' },
+        { text: '', ok: false, error: 'claude exited with code 1: ECONNRESET' },
+        { text: planText() },
+      ],
+      codeReviewer: [{ text: approveReview() }],
+    });
+
+    const { context } = buildContext(harnesses);
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    const plannerCalls = harnesses.claude.calls.filter((call) => call.role === 'planner');
+    assert.deepEqual(
+      plannerCalls.map((call) => call.resumed),
+      [false, false, true],
+    );
+  });
+
+  it('records the tokens a failed attempt spent as well as the successful one', async () => {
+    const harnesses = happyPathHarnesses();
+    harnesses.claude = new FakeAgentHarness('claude', {
+      planner: [
+        {
+          text: '',
+          ok: false,
+          error: 'claude exited with code 1: 429 rate limit',
+          usage: { inputTokens: 900, outputTokens: 10 },
+        },
+        { text: planText(), usage: { inputTokens: 1000, outputTokens: 200 } },
+      ],
+      codeReviewer: [{ text: approveReview() }],
+    });
+
+    const { context } = buildContext(harnesses);
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.equal(final.usage?.byPhase.PLANNING?.inputTokens, 1900);
+    assert.equal(final.usage?.byPhase.PLANNING?.turns, 2);
+  });
+});
+
+describe('workflow engine — committing the work', () => {
+  it('commits to the run branch when asked, crediting every agent that contributed', async () => {
+    const { context, state } = buildContext(happyPathHarnesses(), { config: { commit: true } });
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.ok(final.commit !== undefined);
+    assert.equal(final.commit?.branch, state.workspace?.branch);
+
+    const worktree = final.workspace!.path;
+    const log = await repo.git('-C', worktree, 'log', '-1', '--format=%H%n%B');
+    assert.ok(log.startsWith(final.commit!.sha));
+    assert.match(log, /Add authentication rate limiting \(#142\)/);
+    assert.match(log, /Co-Authored-By: Claude <noreply@anthropic\.com>/);
+    assert.match(log, /Co-Authored-By: Codex <noreply@openai\.com>/);
+    assert.match(log, /Tests: `npm test` passed/);
+
+    // The commit lands on the run branch only — main is untouched.
+    assert.equal(await repo.git('-C', worktree, 'status', '--porcelain'), '');
+    assert.equal(await repo.git('rev-parse', 'main'), final.workspace!.baseSha);
+  });
+
+  it('leaves the work uncommitted by default, and says so', async () => {
+    const { context, store } = buildContext(happyPathHarnesses());
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.commit, undefined);
+    assert.equal(await repo.git('-C', final.workspace!.path, 'rev-parse', 'HEAD'), final.workspace!.baseSha);
+    assert.match((await store.readArtifact('summary.md')) ?? '', /not committed/);
+  });
+
+  it('does not fail the run when the commit itself fails', async () => {
+    const { context, observer } = buildContext(happyPathHarnesses(), { config: { commit: true } });
+    const engine = new WorkflowEngine(context);
+
+    // The worktree disappears between the last phase and the commit.
+    const original = context.observer.phaseChanged.bind(context.observer);
+    context.observer.phaseChanged = (phase, detail): void => {
+      original(phase, detail);
+      if (phase === 'TESTING') context.state.workspace = { ...context.state.workspace!, path: '/nonexistent/worktree' };
+    };
+
+    const final = await engine.run();
+    assert.equal(final.phase, 'COMPLETE');
+    assert.equal(final.commit, undefined);
+    assert.match(observer.warnings.join(' '), /Could not commit/);
   });
 });
 

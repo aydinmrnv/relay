@@ -1,5 +1,6 @@
 import { RelayError, errorMessage, isRelayError } from '../util/errors.ts';
 import { RUN_FILES } from '../storage/runs.ts';
+import { commitRunWork } from './commitRun.ts';
 import { isTerminal, phaseLabel, type Phase } from './phases.ts';
 import { transition, type RunState } from './state.ts';
 import { renderSummary } from './summary.ts';
@@ -81,6 +82,12 @@ export class WorkflowEngine {
         }
         break;
       }
+    }
+
+    // Opt-in, and only for a run that finished: a commit is how completed work
+    // stops being a staged index nobody would notice losing.
+    if (state.phase === 'COMPLETE' && state.config.workflow.commit) {
+      await commitRunWork(this.context);
     }
 
     await this.writeSummary();
