@@ -49,6 +49,48 @@ issue
 
 Every one of those is a real artifact on disk. Nothing is a chat transcript.
 
+## Wall-clock
+
+Only one thing in that pipeline has to be serial: an agent cannot review work
+that has not been written yet. Everything else Relay overlaps.
+
+```
+                        plan ████████████
+   plan reviewer reads ahead ████████████        ← same wall-clock, no waiting
+                 plan review             ███
+              implementation                ████████████████
+   code reviewer reads ahead                ████████████               ← free
+                 code review                                ████
+                  test suite                                ██████     ← free
+```
+
+**Reviewers read ahead.** Most of a review turn is not judgement, it is opening
+the files the issue touches. That reading does not depend on the artifact under
+review, so it does not wait for it: the plan reviewer reads while the planner
+plans, the code reviewer reads while the code is written, and the review then
+resumes that same session already knowing the codebase. Each reviewer is primed
+on the *issue*, never on the artifact, so it forms its own view first —
+independence and latency point the same way here. A priming turn that fails is
+recorded and forgotten; the review runs cold, exactly as it did before.
+
+**The suite runs during the code review.** Both look at the same tree and
+neither needs the other's verdict, so the only thing that ever serialized them
+was the phase order. A code revision cancels the run in flight and starts a new
+one against the new tree, so nothing is ever reported against code that no
+longer exists.
+
+**Nobody runs the suite twice.** When Relay is running it, the implementer is
+told so, and asked for the targeted checks only it can run instead of a full
+suite whose result is already on its way.
+
+**`--fast` drops the plan stage.** The implementer plans and implements in one
+session — two to four fewer serial turns — and the diff is still reviewed by
+the other model. It is the right trade for a small ticket and the wrong one for
+a change whose approach is the risky part. `plan.md` is still written either way.
+
+`relay run` prints where the time actually went, per phase, when it finishes.
+Tune against that, not against this list.
+
 ## Design
 
 **Relay never calls a model API.** It has no API keys, reads no credentials, and never sees a token. It launches the official CLIs you have already authenticated (`claude`, `codex`, `gh`) as child processes and lets each one own its own auth.
@@ -98,16 +140,23 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 
 `relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests` and `--commit`.
 
+The wall-clock flags: `--fast` (implementer plans in its own session, no
+separate plan review), `--no-prime` (each reviewer reads only once its own turn
+starts) and `--no-parallel-tests` (run the suite after the code review instead
+of during it).
+
 `relay resume <run> --commit` also works on a run that already completed: it commits that run's stranded work and does nothing else.
 
 ## Terminal output
 
-A run takes 10–20 minutes, so `relay run` shows a live checklist: the active
-phase carries a spinner and an elapsed time, review phases show the round being
-consumed (`round 2/3`) rather than a bare "revising", and the run ends with one
-block covering phases, rounds, diff, tests, cost and the next command. When a
-phase fails, that block names the agent that failed, the phase, and the two
-commands worth running next.
+A run takes minutes, so `relay run` shows a live checklist: the active phase
+carries a spinner and an elapsed time, review phases show the round being
+consumed (`round 2/2`) rather than a bare "revising", and the run ends with one
+block covering phases, rounds, diff, tests, cost and the next command — with a
+per-phase duration, which is the number to tune against. A `--fast` run shows
+the five steps it will actually take rather than greying out two it never
+enters. When a phase fails, that block names the agent that failed, the phase,
+and the two commands worth running next.
 
 The display resolves colour, unicode and interactivity once, from the
 environment, and everything routes through those primitives:
@@ -155,9 +204,13 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
     "implementer": "codex",
     "codeReviewer": "claude"
   },
+  "models": { "codeReviewer": "haiku" },
   "workflow": {
-    "maxPlanReviewRounds": 3,
+    "plan": "review",
+    "maxPlanReviewRounds": 2,
     "maxCodeReviewRounds": 2,
+    "primeReviewers": true,
+    "concurrentTests": true,
     "runTests": true,
     "commit": false,
     "maxTransientRetries": 2
@@ -168,6 +221,19 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
 
 Roles are deliberately crossed: whoever plans does not review the plan, and whoever implements does not review the code. Invalid values are rejected at load time rather than silently ignored.
 
+`models` is keyed by role or by provider, and a role wins. That is what puts a
+review on a faster model than the turn it is reviewing even when both seats are
+the same CLI — the cheapest latency lever in the file, and the one worth
+reaching for before turning a review off.
+
+| key | |
+|---|---|
+| `workflow.plan` | `review` (planner + adversarial plan review) or `inline` (the implementer plans in its own session — what `--fast` sets) |
+| `workflow.primeReviewers` | let each reviewer read the repository during the phase it will review |
+| `workflow.concurrentTests` | run the suite during the code review rather than after it |
+| `timeouts.primingMs` | cap on a read-ahead turn, which is speculative and must not stall a run |
+| `timeouts.primeGraceMs` | how long a review waits for a read-ahead that has not landed; past it the reader is abandoned and the review starts cold |
+
 ## Requirements
 
 Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed and already authenticated. Run `relay doctor` to check.
@@ -177,8 +243,8 @@ Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed a
 ```bash
 npm install
 npm run typecheck
-npm test          # 305 tests, no network, no real agents
+npm test          # 356 tests, no network, no real agents
 npm run build
 ```
 
-The test suite uses `FakeAgentHarness` (deterministic scripted responses) and real temporary git repositories, so workflows, review loops, round limits, cancellation and resume are all tested without a model in the loop.
+The test suite uses `FakeAgentHarness` (deterministic scripted responses) and real temporary git repositories, so workflows, review loops, round limits, cancellation and resume are all tested without a model in the loop. The overlapping work is tested for overlap rather than for its effects: the suite writes a marker as it starts, and the code review asserts the marker is already there.

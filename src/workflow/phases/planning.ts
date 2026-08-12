@@ -3,6 +3,7 @@ import {
   buildPlanPrompt,
   buildPlanReviewPrompt,
   buildPlanRevisionPrompt,
+  buildReviewPrimingPrompt,
   discoverInstructionFiles,
   type PromptContext,
 } from '../../agents/prompts.ts';
@@ -11,6 +12,7 @@ import { parseReview, parseFindingResponses, REVIEW_JSON_SCHEMA } from '../../re
 import { isActionable, type ReviewRound } from '../../reviews/types.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import { runAgentTurn, runStructuredTurn } from '../agentRunner.ts';
+import { awaitPriming, startPriming } from '../priming.ts';
 import { providerNameFor, type EngineContext, type PhaseResult } from '../context.ts';
 
 async function promptContext(context: EngineContext): Promise<PromptContext> {
@@ -44,6 +46,14 @@ export async function planning(context: EngineContext): Promise<PhaseResult> {
   const { state, store } = context;
   const prompts = await promptContext(context);
 
+  // The reviewer reads the codebase while the planner plans. Both need the same
+  // reading, and only one of them has to be waited for.
+  startPriming(context, {
+    role: 'planReviewer',
+    prompt: buildReviewPrimingPrompt(prompts, { subject: 'plan' }),
+    phase: 'REVIEWING_PLAN',
+  });
+
   const session = await runAgentTurn(context, {
     role: 'planner',
     prompt: buildPlanPrompt(prompts),
@@ -75,14 +85,17 @@ export async function reviewingPlan(context: EngineContext): Promise<PhaseResult
   const round = state.rounds.planReview + 1;
   const maxRounds = state.config.workflow.maxPlanReviewRounds;
 
+  // Round 1 resumes the session the reviewer built while the planner planned;
+  // later rounds resume the review itself, so the reviewer remembers what it
+  // already objected to and can judge whether the revision addressed it.
+  const primed = await awaitPriming(context, 'planReviewer');
+
   const { value: review, text } = await runStructuredTurn(context, {
     role: 'planReviewer',
-    prompt: buildPlanReviewPrompt({ ...prompts, plan, round, maxRounds }),
+    prompt: buildPlanReviewPrompt({ ...prompts, plan, round, maxRounds, primed }),
     capability: 'read_only',
     timeoutMs: state.config.timeouts.reviewMs,
-    // Later rounds continue the same session so the reviewer remembers what it
-    // already objected to and can judge whether the revision addressed it.
-    resume: round > 1,
+    resume: true,
     outputSchema: REVIEW_JSON_SCHEMA,
     parse: parseReview,
     expectation: REVIEW_EXPECTATION,

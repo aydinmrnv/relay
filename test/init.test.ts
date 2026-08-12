@@ -240,7 +240,7 @@ describe('relay init — guided', () => {
     assert.match(output, /never pushes, merges, or opens a PR/);
     assert.match(output, /plan \(claude\).*implement \(codex\)/s);
     // The round limits are named, not left to be discovered mid-run.
-    assert.match(output, /up to 3 rounds/);
+    assert.match(output, /up to 2 rounds/);
     assert.match(output, /up to 2 rounds/);
   });
 

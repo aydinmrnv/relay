@@ -16,11 +16,33 @@ export type AgentProvider = string;
 export const ROLES = ['planner', 'planReviewer', 'implementer', 'codeReviewer'] as const;
 export type Role = (typeof ROLES)[number];
 
+export function isRole(value: unknown): value is Role {
+  return typeof value === 'string' && (ROLES as readonly string[]).includes(value);
+}
+
+/**
+ * How the plan is produced.
+ *
+ * `review` is the full pipeline: a planner turn, then an adversarial plan review
+ * from the other model, then revisions. `inline` collapses those into the
+ * implementer's own session — it writes the plan and implements it in one turn —
+ * which removes two to four serial agent turns from the run at the cost of the
+ * cross-model critique of the plan. The code review still happens either way.
+ */
+export const PLAN_MODES = ['review', 'inline'] as const;
+export type PlanMode = (typeof PLAN_MODES)[number];
+
 export interface RelayConfig {
   version: 1;
   agents: Record<Role, AgentProvider>;
-  models: Partial<Record<AgentProvider, string>>;
+  /**
+   * Model overrides, keyed by role (`codeReviewer`) or by provider (`claude`).
+   * A role key wins, which is what lets a review run on a faster model than the
+   * turn it is reviewing even when both are the same CLI.
+   */
+  models: Partial<Record<AgentProvider | Role, string>>;
   workflow: {
+    plan: PlanMode;
     maxPlanReviewRounds: number;
     maxCodeReviewRounds: number;
     /** Branch to base worktrees on. Empty means "use the repository default". */
@@ -31,12 +53,23 @@ export interface RelayConfig {
     commit: boolean;
     /** Extra attempts allowed per agent turn after a transient failure. */
     maxTransientRetries: number;
+    /**
+     * Let a reviewer read the repository during the phase it will review, so
+     * its review turn is a judgement rather than a fresh reading of the code.
+     */
+    primeReviewers: boolean;
+    /** Start the test suite as soon as a diff exists, alongside code review. */
+    concurrentTests: boolean;
   };
   timeouts: {
     planningMs: number;
     reviewMs: number;
     implementationMs: number;
     testsMs: number;
+    /** Cap on a priming turn, which is speculative and must not stall a run. */
+    primingMs: number;
+    /** How long a review waits for a read-ahead that has not landed yet. */
+    primeGraceMs: number;
   };
   tests: {
     /** Overrides discovery entirely, e.g. `["npm", "test"]`. */
@@ -59,19 +92,26 @@ export const DEFAULT_CONFIG: RelayConfig = {
   },
   models: {},
   workflow: {
-    maxPlanReviewRounds: 3,
+    plan: 'review',
+    // Two rounds, not three: a round is a review turn plus a revision turn, and
+    // a third round almost never changes the outcome it spends five minutes on.
+    maxPlanReviewRounds: 2,
     maxCodeReviewRounds: 2,
     baseBranch: '',
     branchPrefix: 'relay',
     runTests: true,
     commit: false,
     maxTransientRetries: 2,
+    primeReviewers: true,
+    concurrentTests: true,
   },
   timeouts: {
     planningMs: 20 * 60_000,
     reviewMs: 20 * 60_000,
     implementationMs: 45 * 60_000,
     testsMs: 15 * 60_000,
+    primingMs: 6 * 60_000,
+    primeGraceMs: 60_000,
   },
   tests: {
     command: null,
@@ -141,23 +181,32 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
   const models = raw['models'];
   if (models !== undefined) {
     if (!isRecord(models)) throw new RelayError('config.models must be an object.', { code: 'BAD_CONFIG' });
-    for (const [provider, model] of Object.entries(models)) {
-      if (!isAgentProvider(provider)) {
+    for (const [key, model] of Object.entries(models)) {
+      // A role key and a provider key are both legitimate: the first pins one
+      // seat's model, the second pins every seat that CLI happens to fill.
+      if (!isAgentProvider(key) && !isRole(key)) {
         throw new RelayError(
-          `Unknown agent "${provider}" in config.models. Valid agents: ${AGENT_PROVIDERS.join(', ')}.`,
+          `Unknown key "${key}" in config.models. Valid keys: ${[...ROLES, ...AGENT_PROVIDERS].join(', ')}.`,
           { code: 'BAD_CONFIG' },
         );
       }
       if (typeof model !== 'string') {
-        throw new RelayError(`config.models.${provider} must be a string.`, { code: 'BAD_CONFIG' });
+        throw new RelayError(`config.models.${key} must be a string.`, { code: 'BAD_CONFIG' });
       }
-      config.models[provider] = model;
+      config.models[key] = model;
     }
   }
 
   const workflow = raw['workflow'];
   if (workflow !== undefined) {
     if (!isRecord(workflow)) throw new RelayError('config.workflow must be an object.', { code: 'BAD_CONFIG' });
+    if (workflow['plan'] !== undefined) {
+      const plan = workflow['plan'];
+      if (typeof plan !== 'string' || !(PLAN_MODES as readonly string[]).includes(plan)) {
+        throw new RelayError(`config.workflow.plan must be one of ${PLAN_MODES.join(' | ')}.`, { code: 'BAD_CONFIG' });
+      }
+      config.workflow.plan = plan as PlanMode;
+    }
     config.workflow.maxPlanReviewRounds = readBoundedInt(
       workflow['maxPlanReviewRounds'],
       config.workflow.maxPlanReviewRounds,
@@ -182,7 +231,7 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       }
       config.workflow.branchPrefix = workflow['branchPrefix'];
     }
-    for (const key of ['runTests', 'commit'] as const) {
+    for (const key of ['runTests', 'commit', 'primeReviewers', 'concurrentTests'] as const) {
       if (workflow[key] === undefined) continue;
       if (typeof workflow[key] !== 'boolean') {
         throw new RelayError(`config.workflow.${key} must be a boolean.`, { code: 'BAD_CONFIG' });
@@ -200,9 +249,9 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
   const timeouts = raw['timeouts'];
   if (timeouts !== undefined) {
     if (!isRecord(timeouts)) throw new RelayError('config.timeouts must be an object.', { code: 'BAD_CONFIG' });
-    for (const key of ['planningMs', 'reviewMs', 'implementationMs', 'testsMs'] as const) {
+    for (const key of ['planningMs', 'reviewMs', 'implementationMs', 'testsMs', 'primingMs', 'primeGraceMs'] as const) {
       config.timeouts[key] = readBoundedInt(timeouts[key], config.timeouts[key], `timeouts.${key}`, {
-        min: 1_000,
+        min: key === 'primeGraceMs' ? 0 : 1_000,
         max: 24 * 60 * 60_000,
       });
     }

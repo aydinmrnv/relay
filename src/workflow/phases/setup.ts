@@ -61,8 +61,12 @@ export async function fetchingIssue(context: EngineContext): Promise<PhaseResult
 export async function creatingWorkspace(context: EngineContext): Promise<PhaseResult> {
   const { state, observer, signal } = context;
 
+  // Inline planning has no planner turn to run: the implementer plans in its
+  // own session, so the run goes straight from a worktree to writing code.
+  const next = state.config.workflow.plan === 'inline' ? 'IMPLEMENTING' : 'PLANNING';
+
   if (state.workspace !== undefined && (await worktreeExists(state.workspace.path))) {
-    return { next: 'PLANNING', note: `reusing ${state.workspace.path}` };
+    return { next, note: `reusing ${state.workspace.path}` };
   }
 
   const repo = await discoverRepository(state.repository.root);
@@ -94,5 +98,5 @@ export async function creatingWorkspace(context: EngineContext): Promise<PhaseRe
   observer.note(`Worktree ${worktree.path}`);
   observer.note(`Branch ${worktree.branch} from ${worktree.baseBranch} (${worktree.baseSha.slice(0, 8)})`);
 
-  return { next: 'PLANNING', note: worktree.branch };
+  return { next, note: worktree.branch };
 }

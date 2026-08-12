@@ -317,12 +317,16 @@ async function ensureConfig(repo: RepositoryInfo, deps: StartDeps): Promise<numb
  * usually someone repairing a broken CLI, not someone learning the workflow.
  */
 function showTour(config: RelayConfig): void {
+  const inline = config.workflow.plan === 'inline';
+
   out(dim('  Four agent turns, in order. Each one leaves an artifact you can read afterwards.'));
   out();
   rows(
     [
-      { label: '1. Plan', value: `${config.agents.planner} reads the issue and writes a plan` },
-      {
+      inline
+        ? { label: '1. Plan', value: `${config.agents.implementer} plans in the same turn it implements` }
+        : { label: '1. Plan', value: `${config.agents.planner} reads the issue and writes a plan` },
+      !inline && {
         label: '2. Plan review',
         value: `${config.agents.planReviewer} attacks that plan, up to ${config.workflow.maxPlanReviewRounds} round(s)`,
       },
@@ -333,11 +337,21 @@ function showTour(config: RelayConfig): void {
       },
       {
         label: '5. Tests',
-        value: config.workflow.runTests ? 'your own test command, discovered per run' : dim('disabled in config'),
+        value: config.workflow.runTests
+          ? config.workflow.concurrentTests
+            ? 'your own test command, run during the code review'
+            : 'your own test command, discovered per run'
+          : dim('disabled in config'),
       },
     ],
     '    ',
   );
+
+  if (config.workflow.primeReviewers) {
+    out();
+    hint('Each reviewer reads the repository while the work it reviews is still being written,');
+    hint('so a review turn is spent judging rather than opening files for the first time.');
+  }
 
   out();
   hint(
@@ -365,7 +379,12 @@ function showTour(config: RelayConfig): void {
   out(`  ${bold('What it costs')}`);
   rows(
     [
-      { label: 'Time', value: 'typically 10–20 minutes; a large issue takes longer' },
+      {
+        label: 'Time',
+        value: inline
+          ? 'typically 5–10 minutes; a large issue takes longer'
+          : 'typically 8–15 minutes; `relay run <issue> --fast` skips the plan review',
+      },
       { label: 'Tokens', value: 'billed to your own Claude Code and Codex accounts' },
       { label: 'Reporting', value: '`relay status <run>` shows tokens, and cost when the CLI reports one' },
     ],

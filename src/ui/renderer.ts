@@ -15,6 +15,8 @@ export interface RunRendererOptions {
   subtitle?: string;
   /** Names shown next to each phase, e.g. `{ planner: 'claude' }`. */
   agentNames: Partial<Record<Role, string>>;
+  /** The checklist for this run. Defaults to every phase the full pipeline has. */
+  phases?: readonly Phase[];
   verbose?: boolean;
   stream?: NodeJS.WriteStream;
   theme?: Theme;
@@ -36,6 +38,8 @@ export class RunRenderer implements RunObserver {
   private readonly theme: Theme;
   private readonly options: RunRendererOptions;
   private readonly now: () => number;
+  /** Phases this run will actually enter, in order. */
+  private readonly phases: readonly Phase[];
 
   private readonly status = new Map<Phase, PhaseStatus>();
   /** Round progress for the phase, e.g. `round 2/3`, from the engine. */
@@ -56,7 +60,8 @@ export class RunRenderer implements RunObserver {
     this.stream = options.stream ?? process.stdout;
     this.theme = options.theme ?? detectTheme(this.stream);
     this.now = options.now ?? Date.now;
-    for (const phase of DISPLAY_PHASES) this.status.set(phase, 'waiting');
+    this.phases = options.phases ?? DISPLAY_PHASES;
+    for (const phase of this.phases) this.status.set(phase, 'waiting');
   }
 
   start(): void {
@@ -81,7 +86,7 @@ export class RunRenderer implements RunObserver {
     if (display === undefined) return;
 
     // Everything before the new phase is settled; mark it done and stop its clock.
-    for (const candidate of DISPLAY_PHASES) {
+    for (const candidate of this.phases) {
       if (candidate === display) break;
       const status = this.status.get(candidate);
       if (status === 'waiting' || status === 'active') {
@@ -108,7 +113,7 @@ export class RunRenderer implements RunObserver {
   }
 
   roleStatus(role: Role, status: string): void {
-    for (const phase of DISPLAY_PHASES) {
+    for (const phase of this.phases) {
       if (phaseRole(phase) === role && this.status.get(phase) === 'active') {
         this.roleDetail.set(phase, status);
       }
@@ -151,7 +156,7 @@ export class RunRenderer implements RunObserver {
   }
 
   finish(finalPhase: Phase): void {
-    for (const phase of DISPLAY_PHASES) {
+    for (const phase of this.phases) {
       const status = this.status.get(phase);
       if (status === 'active') {
         this.status.set(phase, finalPhase === 'COMPLETE' ? 'done' : 'failed');
@@ -217,7 +222,7 @@ export class RunRenderer implements RunObserver {
     const marks = glyphs(this.theme);
     const lines: string[] = [];
 
-    for (const phase of DISPLAY_PHASES) {
+    for (const phase of this.phases) {
       const status = this.status.get(phase) ?? 'waiting';
       const role = phaseRole(phase);
       const agent = role === undefined ? undefined : this.options.agentNames[role];
