@@ -57,10 +57,18 @@ export function renderSummary(state: RunState): string {
       lines.push(`- Tests: not run (${state.tests.skippedReason ?? state.tests.reason})`);
     } else {
       lines.push(
-        `- Tests: \`${state.tests.command.join(' ')}\` → ${state.tests.passed ? 'passed' : `FAILED (exit ${String(state.tests.exitCode)})`}` +
+        `- Tests: \`${state.tests.command.join(' ')}\`` +
+          (state.tests.directory === undefined ? '' : ` in \`${state.tests.directory}/\``) +
+          ` → ${state.tests.passed ? 'passed' : `FAILED (exit ${String(state.tests.exitCode)})`}` +
           ` in ${formatDuration(state.tests.durationMs)}`,
       );
     }
+  }
+
+  if (state.commit !== undefined) {
+    lines.push(`- Commit: \`${state.commit.sha.slice(0, 8)}\` on \`${state.commit.branch}\` (local; never pushed)`);
+  } else if (state.phase === 'COMPLETE' && (state.diff?.fileCount ?? 0) > 0) {
+    lines.push('- Commit: none — the work is staged in the worktree but **not committed**');
   }
 
   const usage = state.usage;
@@ -121,6 +129,9 @@ export function renderSummary(state: RunState): string {
   if (state.workspace !== undefined) {
     lines.push('```bash');
     lines.push(`relay diff ${state.runId}          # review the full diff`);
+    if (state.commit === undefined && (state.diff?.fileCount ?? 0) > 0) {
+      lines.push(`relay resume ${state.runId} --commit   # commit it to the run branch`);
+    }
     lines.push(`cd ${state.workspace.path}`);
     lines.push(`git log --oneline ${state.workspace.baseBranch}..HEAD`);
     lines.push('```');

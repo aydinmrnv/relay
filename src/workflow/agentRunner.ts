@@ -1,12 +1,14 @@
 import { RelayError } from '../util/errors.ts';
 import { oneLine } from '../util/text.ts';
 import { buildRepairPrompt } from '../agents/prompts.ts';
+import { makeEvent } from '../agents/types.ts';
 import type { AgentCapability, AgentEvent, AgentSession } from '../agents/types.ts';
 import type { Role } from '../storage/config.ts';
 import type { ParseResult } from '../reviews/parse.ts';
 import { harnessFor, providerNameFor, type EngineContext } from './context.ts';
 import { recordAgentSession } from './state.ts';
 import { recordTurnUsage } from './usage.ts';
+import { canResumeAfterFailure, classifyFailure, retryDelayMs, sleep } from './retry.ts';
 
 export interface AgentTurnOptions {
   role: Role;
@@ -22,6 +24,11 @@ export interface AgentTurnOptions {
  * Runs one agent turn: streams normalized events into the observer and the
  * audit log, persists the session id for resume, and treats a non-zero exit as
  * a failure regardless of what the agent said.
+ *
+ * A process-level failure that looks transient (a rate limit, a dropped
+ * connection, a 5xx) is retried with backoff rather than taking down a run that
+ * may already hold twenty minutes of successful work. Everything else fails
+ * immediately: retrying a real error only spends tokens to reach it again.
  */
 export async function runAgentTurn(context: EngineContext, options: AgentTurnOptions): Promise<AgentSession> {
   const { state, store, observer, signal } = context;
@@ -40,63 +47,94 @@ export async function runAgentTurn(context: EngineContext, options: AgentTurnOpt
     // turn returns, so a slow disk never stalls the agent's output.
     pending.push(store.logAgentEvent(state.phase, event, { role: options.role, provider }));
   };
-
-  const existingSessionId = state.agents[options.role]?.sessionId;
-  const shouldResume = options.resume === true && existingSessionId !== undefined;
-
-  observer.roleStatus(options.role, shouldResume ? 'resuming' : 'running');
-
-  const runOptions = {
-    prompt: options.prompt,
-    cwd: workspace.path,
-    role: options.role,
-    capability: options.capability,
-    timeoutMs: options.timeoutMs,
-    signal,
-    onEvent,
-    ...(state.config.models[provider] === undefined ? {} : { model: state.config.models[provider]! }),
-    ...(options.outputSchema === undefined ? {} : { outputSchema: options.outputSchema }),
+  const flush = async (): Promise<void> => {
+    await Promise.allSettled(pending.splice(0));
   };
 
+  const maxRetries = state.config.workflow.maxTransientRetries;
+  const pause = context.sleep ?? sleep;
+  let resumeNext = options.resume === true;
+  let attempt = 0;
   let session: AgentSession;
-  try {
-    session = shouldResume
-      ? await harness.resume(existingSessionId, options.prompt, runOptions)
-      : await harness.start(runOptions);
-  } finally {
-    await Promise.allSettled(pending);
+
+  for (;;) {
+    const existingSessionId = state.agents[options.role]?.sessionId;
+    const shouldResume = resumeNext && existingSessionId !== undefined;
+
+    observer.roleStatus(options.role, shouldResume ? 'resuming' : 'running');
+
+    const runOptions = {
+      prompt: options.prompt,
+      cwd: workspace.path,
+      role: options.role,
+      capability: options.capability,
+      timeoutMs: options.timeoutMs,
+      signal,
+      onEvent,
+      ...(state.config.models[provider] === undefined ? {} : { model: state.config.models[provider]! }),
+      ...(options.outputSchema === undefined ? {} : { outputSchema: options.outputSchema }),
+    };
+
+    try {
+      session = shouldResume
+        ? await harness.resume(existingSessionId!, options.prompt, runOptions)
+        : await harness.start(runOptions);
+    } finally {
+      await flush();
+    }
+
+    recordAgentSession(state, options.role, session.sessionId);
+
+    // A failed turn still spent tokens, so usage is recorded before the throw
+    // below rather than only on the happy path.
+    if (session.usage !== undefined) {
+      state.usage = recordTurnUsage(state.usage, state.phase, session.usage);
+    }
+
+    await store.logEvent({
+      timestamp: new Date().toISOString(),
+      runId: state.runId,
+      phase: state.phase,
+      agent: options.role,
+      type: session.ok ? 'turn_completed' : 'turn_failed',
+      ...(session.ok || session.error === undefined ? {} : { message: session.error }),
+      data: {
+        provider,
+        resumed: shouldResume,
+        attempt: attempt + 1,
+        sessionId: session.sessionId,
+        exitCode: session.exitCode,
+        durationMs: session.durationMs,
+        ...(session.usage === undefined ? {} : { usage: session.usage }),
+        // The exact argv is part of the audit trail; it contains no secrets.
+        invocation: `${session.invocation.command} ${session.invocation.args.join(' ')}`,
+      },
+    });
+
+    if (session.ok) break;
+    if (attempt >= maxRetries || signal.aborted || classifyFailure(session) === 'terminal') break;
+
+    attempt += 1;
+    const delayMs = retryDelayMs(attempt);
+    const notice =
+      `${provider} (${options.role}) failed with a transient error: ${oneLine(session.error ?? 'unknown error', 200)}` +
+      ` — retrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt} of ${maxRetries}).`;
+
+    // A retry is never silent: it goes to the terminal and to events.jsonl.
+    observer.warn(notice);
+    onEvent(makeEvent('notice', options.role, { text: notice }));
+    await flush();
+
+    await pause(delayMs, signal);
+    // Continuing the conversation keeps the work the agent already did, but
+    // only when the CLI actually reported a session to continue.
+    resumeNext = canResumeAfterFailure(session);
   }
-
-  recordAgentSession(state, options.role, session.sessionId);
-
-  // A failed turn still spent tokens, so usage is recorded before the throw
-  // below rather than only on the happy path.
-  if (session.usage !== undefined) {
-    state.usage = recordTurnUsage(state.usage, state.phase, session.usage);
-  }
-
-  await store.logEvent({
-    timestamp: new Date().toISOString(),
-    runId: state.runId,
-    phase: state.phase,
-    agent: options.role,
-    type: session.ok ? 'turn_completed' : 'turn_failed',
-    ...(session.ok || session.error === undefined ? {} : { message: session.error }),
-    data: {
-      provider,
-      resumed: shouldResume,
-      sessionId: session.sessionId,
-      exitCode: session.exitCode,
-      durationMs: session.durationMs,
-      ...(session.usage === undefined ? {} : { usage: session.usage }),
-      // The exact argv is part of the audit trail; it contains no secrets.
-      invocation: `${session.invocation.command} ${session.invocation.args.join(' ')}`,
-    },
-  });
 
   if (!session.ok) {
     observer.roleStatus(options.role, 'failed');
-    throw new RelayError(`${provider} (${options.role}) failed: ${session.error ?? 'unknown error'}`, {
+    const attempts = attempt === 0 ? '' : ` after ${attempt + 1} attempts`;
+    throw new RelayError(`${provider} (${options.role}) failed${attempts}: ${session.error ?? 'unknown error'}`, {
       code: session.timedOut ? 'AGENT_TIMEOUT' : session.aborted ? 'AGENT_CANCELLED' : 'AGENT_FAILED',
       ...(session.aborted || session.timedOut
         ? {}

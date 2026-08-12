@@ -2,17 +2,33 @@ import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
-import { RunStore, resolveRun } from '../../storage/runs.ts';
+import { RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
 import type { RelayConfig } from '../../storage/config.ts';
 import { WorkflowEngine } from '../../workflow/engine.ts';
+import { commitRunWork } from '../../workflow/commitRun.ts';
+import type { RunObserver } from '../../workflow/observer.ts';
+import { renderSummary } from '../../workflow/summary.ts';
 import { createRunState, type RunState } from '../../workflow/state.ts';
-import { isTerminal } from '../../workflow/phases.ts';
+import { isTerminal, phaseLabel, phaseRole } from '../../workflow/phases.ts';
+import { failedPhase, phaseTimings } from '../../workflow/timeline.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import type { EngineContext } from '../../workflow/context.ts';
 import { RunRenderer } from '../../ui/renderer.ts';
 import { formatDuration } from '../../util/text.ts';
 import { createCliContext, type CliContext } from '../context.ts';
-import { dim, failure, out, success, warning } from '../output.ts';
+import {
+  changeCount,
+  command,
+  dim,
+  failure,
+  hint,
+  out,
+  rows,
+  section,
+  success,
+  warning,
+  type Row,
+} from '../output.ts';
 
 export interface RunOptions {
   verbose?: boolean;
@@ -22,6 +38,7 @@ export interface RunOptions {
   maxPlanRounds?: string;
   maxCodeRounds?: string;
   tests?: boolean;
+  commit?: boolean;
 }
 
 /** Applies `relay run` flags over the repository config for this run only. */
@@ -30,6 +47,7 @@ function applyOverrides(config: RelayConfig, options: RunOptions): RelayConfig {
 
   if (options.base !== undefined) merged.workflow.baseBranch = options.base;
   if (options.tests === false) merged.workflow.runTests = false;
+  if (options.commit === true) merged.workflow.commit = true;
 
   if (options.planner !== undefined) {
     assertProvider(options.planner, '--planner');
@@ -102,8 +120,14 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
   const cli = await createCliContext();
   const previous = await resolveRun(cli.repo.root, runRef);
 
+  // The rest of the run's config is a snapshot and stays untouched, but a
+  // resume is exactly when a user decides the work should not strand again.
+  if (options.commit === true) previous.config.workflow.commit = true;
+
   if (isTerminal(previous.phase)) {
     if (previous.phase === 'COMPLETE') {
+      // Nothing left to run, but its work may still be stranded in the worktree.
+      if (options.commit === true) return commitCompletedRun(previous);
       out(`Run ${previous.runId} already completed.`);
       return 0;
     }
@@ -123,6 +147,38 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
 
   return executeRun(cli, previous, options);
 }
+
+/**
+ * Commits a finished run's work after the fact, for the case the issue is
+ * really about: a run that completed days ago whose diff is still only a staged
+ * index. Nothing else about the run is re-run or changed.
+ */
+async function commitCompletedRun(state: RunState): Promise<number> {
+  const store = new RunStore(state.repository.root, state.runId);
+
+  if (state.commit !== undefined) {
+    out(`Run ${state.runId} is already committed as ${state.commit.sha.slice(0, 8)} on ${state.commit.branch}.`);
+    return 0;
+  }
+
+  const committed = await commitRunWork({ state, store, observer: cliObserver });
+  if (!committed) return 1;
+
+  // The summary is the run's record, so it has to learn about the commit too.
+  await store.writeArtifact(RUN_FILES.summary, renderSummary(state));
+  await store.saveState(state);
+  out(dim('Nothing was pushed or merged: the commit is local to the run branch.'));
+  return 0;
+}
+
+/** Minimal observer for commands that run outside the live renderer. */
+const cliObserver: RunObserver = {
+  phaseChanged() {},
+  roleStatus() {},
+  agentEvent() {},
+  note: (text) => out(`  ${text}`),
+  warn: (text) => out(warning(text)),
+};
 
 async function executeRun(cli: CliContext, state: RunState, options: RunOptions): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
@@ -173,7 +229,12 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
   }
 }
 
-function printOutcome(state: RunState, store: RunStore): void {
+/**
+ * The one block a finished run prints: what it did, what it produced, and the
+ * single most useful next command. Without it the run simply stops and the user
+ * has to go find `relay status` to learn how it went.
+ */
+export function printOutcome(state: RunState, store: RunStore): void {
   const elapsed = new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
 
   out();
@@ -182,34 +243,107 @@ function printOutcome(state: RunState, store: RunStore): void {
   } else if (state.phase === 'CANCELLED') {
     out(warning('Run cancelled') + dim(` after ${formatDuration(elapsed)}`));
   } else {
-    out(failure('Run failed') + dim(` after ${formatDuration(elapsed)}`));
-    if (state.error !== undefined) out(`  ${state.error.message}`);
+    printFailure(state);
   }
 
-  out();
-  if (state.workspace !== undefined) {
-    out(`  Branch     ${state.workspace.branch}`);
-    out(`  Worktree   ${state.workspace.path}`);
-  }
-  if (state.diff !== undefined) {
-    out(`  Changes    ${state.diff.fileCount} file(s), +${state.diff.additions} −${state.diff.deletions}`);
-  }
-  if (state.tests !== undefined) {
-    out(
-      `  Tests      ${
-        state.tests.discovered
-          ? `${state.tests.command.join(' ')} → ${state.tests.passed ? success('passed') : failure('failed')}`
-          : dim(`not run (${state.tests.skippedReason ?? state.tests.reason})`)
-      }`,
-    );
-  }
-  out(`  Reviews    plan ${state.rounds.planReview} round(s), code ${state.rounds.codeReview} round(s)`);
-  if (state.usage !== undefined) out(`  Usage      ${formatUsage(state.usage.total)}`);
-  out(`  Run state  ${store.dir}`);
+  printPhases(state);
 
-  out();
-  out(dim('Nothing was pushed or merged. To review:'));
-  out(`  relay diff ${state.runId}`);
-  out(`  ${store.path('summary.md')}`);
+  section('Result');
+  rows([
+    state.workspace !== undefined && { label: 'Branch', value: state.workspace.branch },
+    state.workspace !== undefined && { label: 'Worktree', value: state.workspace.path },
+    state.diff !== undefined && {
+      label: 'Changes',
+      value: `${state.diff.fileCount} file(s), ${changeCount(state.diff.additions, state.diff.deletions)}`,
+    },
+    state.tests !== undefined && { label: 'Tests', value: testsLine(state) },
+    { label: 'Reviews', value: `plan ${state.rounds.planReview} round(s), code ${state.rounds.codeReview} round(s)` },
+    commitRow(state),
+    state.usage !== undefined && { label: 'Usage', value: formatUsage(state.usage.total) },
+    { label: 'Run state', value: store.dir },
+  ]);
+
+  printNextSteps(state, store);
+}
+
+/**
+ * Failure is the moment the UI matters most: name the agent that failed, say
+ * why, and give the two commands that do something about it.
+ */
+function printFailure(state: RunState): void {
+  const elapsed = new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
+  const phase = failedPhase(state);
+  const role = phase === undefined ? undefined : phaseRole(phase);
+  const agent = role === undefined ? undefined : state.config.agents[role];
+
+  const where = phase === undefined ? '' : ` during ${phaseLabel(phase)}`;
+  out(failure(`Run failed${where}`) + dim(` after ${formatDuration(elapsed)}`));
+
+  if (agent !== undefined && role !== undefined) out(`  ${agent} ${dim(`(${role})`)} did not finish its turn.`);
+  if (state.error !== undefined) out(`  ${state.error.message}`);
+}
+
+/** Where the run spent its time, folded so revision rounds count as review time. */
+function printPhases(state: RunState): void {
+  const timings = phaseTimings(state);
+  if (timings.length === 0) return;
+
+  section('Phases');
+  rows(
+    timings.map(({ phase, ms, visits }) => ({
+      label: phaseLabel(phase),
+      value: formatDuration(ms) + (visits > 1 ? dim(`  ${visits} rounds`) : ''),
+    })),
+  );
+}
+
+function testsLine(state: RunState): string {
+  const tests = state.tests;
+  if (tests === undefined) return dim('not run');
+  if (!tests.discovered) return dim(`not run (${tests.skippedReason ?? tests.reason})`);
+  return `${tests.command.join(' ')} → ${tests.passed ? success('passed') : failure('failed')}`;
+}
+
+function commitRow(state: RunState): Row | false {
+  if (state.commit !== undefined) {
+    return {
+      label: 'Commit',
+      value: `${state.commit.sha.slice(0, 8)} on ${state.commit.branch} ${dim('(local only)')}`,
+    };
+  }
+  // Uncommitted work in a throwaway worktree is one `git worktree prune` from
+  // being gone, so the run says so rather than reporting a clean success.
+  if (state.phase === 'COMPLETE' && (state.diff?.fileCount ?? 0) > 0) {
+    return { label: 'Commit', value: warning('none — the work is staged but uncommitted') };
+  }
+  return false;
+}
+
+function printNextSteps(state: RunState, store: RunStore): void {
+  section('Next');
+
+  if (state.phase === 'FAILED') {
+    hint('Nothing was pushed or merged. To diagnose and continue:');
+    command(`relay logs ${state.runId}`);
+    command(`relay resume ${state.runId}`);
+    out();
+    return;
+  }
+
+  hint('Nothing was pushed or merged. To review:');
+  command(`relay diff ${state.runId}`);
+  command(store.path('summary.md'));
+
+  if (state.phase === 'CANCELLED') {
+    out();
+    hint('To pick up where it stopped:');
+    command(`relay resume ${state.runId}`);
+  }
+
+  if (state.commit === undefined && state.phase === 'COMPLETE' && (state.diff?.fileCount ?? 0) > 0) {
+    out();
+    hint('To keep the work, commit it to the run branch:');
+    command(`relay resume ${state.runId} --commit`);
+  }
   out();
 }

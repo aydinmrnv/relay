@@ -1,4 +1,5 @@
 import type {
+  AgentEvent,
   AgentHarness,
   AgentRunOptions,
   AgentSession,
@@ -13,6 +14,8 @@ export interface ScriptedTurn {
   text: string;
   ok?: boolean;
   error?: string;
+  /** Set false for a turn that dies before the CLI reports a live session. */
+  started?: boolean;
   /** Side effect on the worktree, so `git diff` sees real changes. */
   effect?: (cwd: string) => Promise<void>;
   /** Token counts this turn reports, as a real CLI would. */
@@ -105,23 +108,37 @@ export class FakeAgentHarness implements AgentHarness {
     if (turn.effect !== undefined) await turn.effect(options.cwd);
 
     const billing = turn.usage === undefined ? {} : { usage: turn.usage };
+    // Events are both streamed and retained, as the real harnesses do: whether a
+    // failed turn can be resumed is decided from what it managed to emit.
+    const events: AgentEvent[] = [];
+    const emit = (event: AgentEvent): void => {
+      events.push(event);
+      options.onEvent?.(event);
+    };
 
-    options.onEvent?.(makeEvent('started', options.role, { sessionId }));
-    options.onEvent?.(makeEvent('message', options.role, { text: turn.text }));
+    if (turn.started !== false) emit(makeEvent('started', options.role, { sessionId }));
+    if (turn.text.length > 0) emit(makeEvent('message', options.role, { text: turn.text }));
 
     if (turn.ok === false) {
-      options.onEvent?.(makeEvent('failed', options.role, { error: turn.error ?? 'scripted failure', ...billing }));
-      return this.session(options, sessionId, { ok: false, error: turn.error ?? 'scripted failure', ...billing });
+      emit(makeEvent('failed', options.role, { error: turn.error ?? 'scripted failure', ...billing }));
+      return this.session(options, sessionId, { ok: false, error: turn.error ?? 'scripted failure', events, ...billing });
     }
 
-    options.onEvent?.(makeEvent('completed', options.role, { result: turn.text, ...billing }));
-    return this.session(options, sessionId, { ok: true, text: turn.text, ...billing });
+    emit(makeEvent('completed', options.role, { result: turn.text, ...billing }));
+    return this.session(options, sessionId, { ok: true, text: turn.text, events, ...billing });
   }
 
   private session(
     options: AgentRunOptions,
     sessionId: string,
-    overrides: { ok: boolean; text?: string; error?: string; aborted?: boolean; usage?: AgentUsage },
+    overrides: {
+      ok: boolean;
+      text?: string;
+      error?: string;
+      aborted?: boolean;
+      usage?: AgentUsage;
+      events?: AgentEvent[];
+    },
   ): AgentSession {
     return {
       provider: this.name,
@@ -129,7 +146,7 @@ export class FakeAgentHarness implements AgentHarness {
       sessionId,
       ok: overrides.ok,
       text: overrides.text ?? '',
-      events: [],
+      events: overrides.events ?? [],
       ...(overrides.error === undefined ? {} : { error: overrides.error }),
       exitCode: overrides.ok ? 0 : 1,
       durationMs: 1,

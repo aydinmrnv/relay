@@ -152,20 +152,25 @@ export function claudeUsage(raw: Record<string, unknown>): AgentUsage | undefine
   const record = usage !== null && typeof usage === 'object' ? (usage as Record<string, unknown>) : {};
 
   const inputTokens =
-    finiteNumber(record['input_tokens']) +
-    finiteNumber(record['cache_creation_input_tokens']) +
-    finiteNumber(record['cache_read_input_tokens']);
-  const outputTokens = finiteNumber(record['output_tokens']);
+    tokenCount(record['input_tokens']) +
+    tokenCount(record['cache_creation_input_tokens']) +
+    tokenCount(record['cache_read_input_tokens']);
+  const outputTokens = tokenCount(record['output_tokens']);
 
   const cost = raw['total_cost_usd'];
-  const costUsd = typeof cost === 'number' && Number.isFinite(cost) ? cost : undefined;
+  const costUsd = typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
 
   if (inputTokens === 0 && outputTokens === 0 && costUsd === undefined) return undefined;
   return { inputTokens, outputTokens, ...(costUsd === undefined ? {} : { costUsd }) };
 }
 
-function finiteNumber(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+/**
+ * Totals are summed into persisted run state, so a malformed count would
+ * corrupt them for the life of the run. Anything but a whole, countable
+ * number of tokens is dropped rather than folded in.
+ */
+function tokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
 /** Maps Claude tool names onto the richer event types Relay renders specially. */

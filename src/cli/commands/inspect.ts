@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { RelayError } from '../../util/errors.ts';
 import { formatDuration, oneLine } from '../../util/text.ts';
 import { snapshotDiff, formatDiffStat, formatFileList } from '../../git/diff.ts';
+import { describeLanding, type Landing } from '../../git/commit.ts';
 import { worktreeExists } from '../../git/worktree.ts';
 import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
 import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
@@ -10,7 +11,20 @@ import type { RunState } from '../../workflow/state.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import { createCliContext } from '../context.ts';
 import { runToJson } from '../runJson.ts';
-import { dim, failure, heading, out, success, warning } from '../output.ts';
+import {
+  changeCount,
+  dim,
+  emptyState,
+  facts,
+  failure,
+  heading,
+  hint,
+  out,
+  raw,
+  rows,
+  success,
+  warning,
+} from '../output.ts';
 
 export interface StatusOptions {
   json?: boolean;
@@ -30,6 +44,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
     const summary = isTerminal(state.phase) ? await store.readArtifact(RUN_FILES.summary) : undefined;
     if (summary !== undefined) {
       out(summary.trimEnd());
+      await printLanding(cli.repo.root, state);
       return 0;
     }
 
@@ -39,7 +54,10 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
 
   const runs = await listRuns(cli.repo.root);
   if (runs.length === 0) {
-    out('No runs yet. Start one with `relay run <issue>`.');
+    emptyState('No runs yet. A run plans, reviews, implements and tests one GitHub issue.', [
+      'relay run <issue-number>',
+      'relay doctor              # check that your agents are ready first',
+    ]);
     return 0;
   }
 
@@ -58,12 +76,21 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
             : phaseLabel(state.phase);
 
     const issue = state.issue === undefined ? state.issueRef : `#${state.issue.number} ${state.issue.title}`;
-    out(`  ${state.runId}  ${label.padEnd(22)} ${oneLine(issue, 48)}`);
+    const landing = await landingOf(cli.repo.root, state);
+    out(
+      `  ${state.runId}  ${label.padEnd(22)} ${oneLine(issue, 48)}` +
+        (landing === 'unlanded' ? `  ${warning('unlanded')}` : ''),
+    );
     out(
       dim(
-        `    ${state.workspace?.branch ?? '(no branch)'}  ·  ${formatDuration(elapsed)}  ·  ` +
-          `plan ${state.rounds.planReview}r, code ${state.rounds.codeReview}r` +
-          (state.diff === undefined ? '' : `  ·  +${state.diff.additions} −${state.diff.deletions}`),
+        `    ` +
+          facts([
+            state.workspace?.branch ?? '(no branch)',
+            formatDuration(elapsed),
+            `plan ${state.rounds.planReview}r, code ${state.rounds.codeReview}r`,
+            state.diff !== undefined && changeCount(state.diff.additions, state.diff.deletions),
+            state.commit !== undefined && `committed ${state.commit.sha.slice(0, 8)}`,
+          ]),
       ),
     );
   }
@@ -79,11 +106,44 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
  */
 async function printStatusJson(repoRoot: string, runRef: string | undefined): Promise<number> {
   if (runRef !== undefined) {
-    out(JSON.stringify(runToJson(await resolveRun(repoRoot, runRef)), null, 2));
+    const state = await resolveRun(repoRoot, runRef);
+    raw(JSON.stringify(runToJson(state, { landing: await landingOf(repoRoot, state) }), null, 2));
     return 0;
   }
-  out(JSON.stringify((await listRuns(repoRoot)).map(runToJson), null, 2));
+
+  const runs = await listRuns(repoRoot);
+  const payload = await Promise.all(
+    runs.map(async (state) => runToJson(state, { landing: await landingOf(repoRoot, state) })),
+  );
+  raw(JSON.stringify(payload, null, 2));
   return 0;
+}
+
+/**
+ * Where a completed run's work actually is. Relay leaves a staged index behind
+ * unless `--commit` was used, and a staged index is one `git worktree prune`
+ * away from being gone — so the answer is read from git rather than assumed.
+ */
+async function landingOf(repoRoot: string, state: RunState): Promise<Landing> {
+  const workspace = state.workspace;
+  if (state.phase !== 'COMPLETE' || workspace === undefined) return 'unknown';
+
+  return describeLanding(repoRoot, {
+    branch: workspace.branch,
+    baseSha: workspace.baseSha,
+    changedFiles: state.diff?.fileCount ?? 0,
+    ...(state.commit === undefined ? {} : { committedSha: state.commit.sha }),
+  });
+}
+
+/** Warns, after a completed run's summary, that its work is not committed anywhere. */
+async function printLanding(repoRoot: string, state: RunState): Promise<void> {
+  if ((await landingOf(repoRoot, state)) !== 'unlanded') return;
+
+  out();
+  out(warning('Unlanded: this run\'s changes are staged in its worktree but never committed.'));
+  hint('A `git worktree prune` or `git reset` would discard them.');
+  hint(`relay resume ${state.runId} --commit   # commit them to ${state.workspace?.branch ?? 'the run branch'}`);
 }
 
 /** Progress view for a run that has not finished yet. */
@@ -92,29 +152,33 @@ async function printLiveStatus(state: RunState, store: RunStore): Promise<void> 
   heading(`${state.runId}  ${phaseLabel(state.phase)}`);
   out();
 
-  if (issue !== undefined) out(`  Issue      #${issue.number} ${issue.title}`);
-  if (state.workspace !== undefined) {
-    out(`  Branch     ${state.workspace.branch}`);
-    out(`  Worktree   ${state.workspace.path}`);
-  }
-  out(
-    `  Agents     planner=${state.config.agents.planner}, plan reviewer=${state.config.agents.planReviewer}, ` +
-      `implementer=${state.config.agents.implementer}, code reviewer=${state.config.agents.codeReviewer}`,
-  );
-  out(
-    `  Rounds     plan ${state.rounds.planReview}/${state.config.workflow.maxPlanReviewRounds}, ` +
-      `code ${state.rounds.codeReview}/${state.config.workflow.maxCodeReviewRounds}` +
-      (state.planApproved ? dim('  (plan approved)') : ''),
-  );
-  if (state.diff !== undefined) {
-    out(`  Changes    ${state.diff.fileCount} file(s), +${state.diff.additions} −${state.diff.deletions}`);
-  }
-  if (state.usage !== undefined) out(`  Usage      ${formatUsage(state.usage.total)}`);
-  if (state.error !== undefined) out(`  ${failure('Error')}      ${state.error.message}`);
-
   const elapsed = Date.now() - new Date(state.createdAt).getTime();
-  out(`  Elapsed    ${formatDuration(elapsed)}`);
-  if (state.pid !== undefined) out(dim(`  Driven by process ${state.pid}`));
+  rows([
+    issue !== undefined && { label: 'Issue', value: `#${issue.number} ${issue.title}` },
+    state.workspace !== undefined && { label: 'Branch', value: state.workspace.branch },
+    state.workspace !== undefined && { label: 'Worktree', value: state.workspace.path },
+    {
+      label: 'Agents',
+      value:
+        `planner=${state.config.agents.planner}, plan reviewer=${state.config.agents.planReviewer}, ` +
+        `implementer=${state.config.agents.implementer}, code reviewer=${state.config.agents.codeReviewer}`,
+    },
+    {
+      label: 'Rounds',
+      value:
+        `plan ${state.rounds.planReview}/${state.config.workflow.maxPlanReviewRounds}, ` +
+        `code ${state.rounds.codeReview}/${state.config.workflow.maxCodeReviewRounds}` +
+        (state.planApproved ? dim('  (plan approved)') : ''),
+    },
+    state.diff !== undefined && {
+      label: 'Changes',
+      value: `${state.diff.fileCount} file(s), ${changeCount(state.diff.additions, state.diff.deletions)}`,
+    },
+    state.usage !== undefined && { label: 'Usage', value: formatUsage(state.usage.total) },
+    state.error !== undefined && { label: 'Error', value: failure(state.error.message) },
+    { label: 'Elapsed', value: formatDuration(elapsed) },
+  ]);
+  if (state.pid !== undefined) hint(`Driven by process ${state.pid}`);
 
   const events = await store.readEvents();
   const recent = events.slice(-8);
@@ -128,7 +192,7 @@ async function printLiveStatus(state: RunState, store: RunStore): Promise<void> 
   }
 
   out();
-  out(dim(`  relay watch ${state.runId}`));
+  hint(`relay watch ${state.runId}`);
 }
 
 /**
@@ -154,14 +218,17 @@ export async function diffCommand(runRef: string, options: { stat?: boolean }): 
       });
     }
     out(dim(`Worktree is gone; showing the patch captured during the run (${state.diff?.patchFile}).`));
-    out(stored);
+    raw(stored);
     return 0;
   }
 
   const snapshot = await snapshotDiff(workspace.path, workspace.baseSha);
 
   if (snapshot.isEmpty) {
-    out('No changes in this run.');
+    emptyState(`Run ${state.runId} changed no files (${phaseLabel(state.phase)}).`, [
+      `relay status ${state.runId}`,
+      `relay logs ${state.runId}`,
+    ]);
     return 0;
   }
 
@@ -172,7 +239,7 @@ export async function diffCommand(runRef: string, options: { stat?: boolean }): 
     return 0;
   }
 
-  out(snapshot.patch);
+  raw(snapshot.patch);
   return 0;
 }
 
@@ -183,7 +250,10 @@ export async function logsCommand(runRef: string, options: { limit?: string; all
 
   const events = await store.readEvents();
   if (events.length === 0) {
-    out(`No events recorded for ${state.runId}.`);
+    emptyState(
+      `No events recorded for ${state.runId} — it is ${phaseLabel(state.phase)} and no agent has taken a turn yet.`,
+      [`relay status ${state.runId}`, `relay watch ${state.runId}`],
+    );
     return 0;
   }
 
@@ -232,13 +302,13 @@ export async function stopCommand(runRef: string): Promise<number> {
     try {
       // SIGINT so the owning process runs the same clean shutdown as Ctrl-C.
       process.kill(state.pid, 'SIGINT');
-      out(dim(`Signalled process ${state.pid}.`));
+      hint(`Signalled process ${state.pid}.`, '');
     } catch {
-      out(dim('The run process is no longer alive; the cancellation flag has been recorded.'));
+      hint('The run process is no longer alive; the cancellation flag has been recorded.', '');
     }
   }
 
-  out(dim('Work completed so far is preserved on the run branch.'));
+  hint('Work completed so far is preserved on the run branch.', '');
   return 0;
 }
 
@@ -284,7 +354,7 @@ export async function planCommand(runRef: string): Promise<number> {
   if (plan === undefined) {
     throw new RelayError(`Run ${state.runId} has no plan yet.`, { code: 'NO_PLAN' });
   }
-  out(plan.trimEnd());
+  raw(plan.trimEnd());
   return 0;
 }
 

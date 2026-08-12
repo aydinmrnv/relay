@@ -27,6 +27,10 @@ export interface RelayConfig {
     baseBranch: string;
     branchPrefix: string;
     runTests: boolean;
+    /** Commit the finished work to the run branch. Never pushes or merges. */
+    commit: boolean;
+    /** Extra attempts allowed per agent turn after a transient failure. */
+    maxTransientRetries: number;
   };
   timeouts: {
     planningMs: number;
@@ -60,6 +64,8 @@ export const DEFAULT_CONFIG: RelayConfig = {
     baseBranch: '',
     branchPrefix: 'relay',
     runTests: true,
+    commit: false,
+    maxTransientRetries: 2,
   },
   timeouts: {
     planningMs: 20 * 60_000,
@@ -176,12 +182,19 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       }
       config.workflow.branchPrefix = workflow['branchPrefix'];
     }
-    if (workflow['runTests'] !== undefined) {
-      if (typeof workflow['runTests'] !== 'boolean') {
-        throw new RelayError('config.workflow.runTests must be a boolean.', { code: 'BAD_CONFIG' });
+    for (const key of ['runTests', 'commit'] as const) {
+      if (workflow[key] === undefined) continue;
+      if (typeof workflow[key] !== 'boolean') {
+        throw new RelayError(`config.workflow.${key} must be a boolean.`, { code: 'BAD_CONFIG' });
       }
-      config.workflow.runTests = workflow['runTests'];
+      config.workflow[key] = workflow[key];
     }
+    config.workflow.maxTransientRetries = readBoundedInt(
+      workflow['maxTransientRetries'],
+      config.workflow.maxTransientRetries,
+      'workflow.maxTransientRetries',
+      { min: 0, max: 5 },
+    );
   }
 
   const timeouts = raw['timeouts'];

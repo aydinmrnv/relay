@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { runToJson, type RunJson } from '../src/cli/runJson.ts';
 import { logsCommand, statusCommand } from '../src/cli/commands/inspect.ts';
+import { printOutcome } from '../src/cli/commands/run.ts';
 import { RunStore } from '../src/storage/runs.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunId } from '../src/util/ids.ts';
@@ -113,6 +114,28 @@ describe('run JSON projection', () => {
     assert.deepEqual(json.rounds, { planReview: 2, codeReview: 1, maxPlanReview: 3, maxCodeReview: 2 });
     assert.equal(json.reviews[0]?.findings, 1);
     assert.equal(json.usage?.total.costUsd, 0.12);
+  });
+
+  it('reports an unpriced usage bucket as a null cost, not a missing key', () => {
+    const state = populatedRun(repo.root);
+    // A Codex turn: real tokens, no price. The key must survive as null so a
+    // consumer can tell "not reported" from "free".
+    state.usage = recordTurnUsage(undefined, 'IMPLEMENTING', { inputTokens: 2000, outputTokens: 450 });
+
+    const json = runToJson(state);
+    const total = json.usage?.total;
+    assert.ok(total !== undefined);
+    assert.deepEqual(total, { inputTokens: 2000, outputTokens: 450, costUsd: null, turns: 1 });
+    assert.ok('costUsd' in total);
+    assert.deepEqual(json.usage?.byPhase.IMPLEMENTING, {
+      inputTokens: 2000,
+      outputTokens: 450,
+      costUsd: null,
+      turns: 1,
+    });
+
+    const roundTripped = JSON.parse(JSON.stringify(json)) as typeof json;
+    assert.equal(roundTripped.usage?.total.costUsd, null);
   });
 
   it('reports absent facts as null rather than dropping the keys', () => {
@@ -249,6 +272,53 @@ describe('relay status --json', () => {
     assert.ok(!output.includes('\u001B'));
   });
 
+  it('marks a completed run whose diff was never committed as unlanded', async () => {
+    // A real branch, still pointing at the commit the run branched from: the
+    // shape of every finished run Relay has not committed.
+    const baseSha = await repo.git('rev-parse', 'HEAD');
+    const state = populatedRun(repo.root);
+    state.workspace = { ...state.workspace!, branch: 'relay/142-aaa111', baseSha };
+    transition(state, 'FETCHING_ISSUE');
+    for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'COMPLETE'] as const) {
+      transition(state, phase);
+    }
+    await repo.git('branch', 'relay/142-aaa111', baseSha);
+    await persist(state);
+
+    const parsed = JSON.parse(await captureStatus([state.shortId, { json: true }])) as RunJson;
+    assert.equal(parsed.landing, 'unlanded');
+    assert.equal(parsed.unlanded, true);
+    assert.equal(parsed.commit, null);
+
+    // The human listing flags it too, rather than reporting a clean success.
+    assert.match(await captureStatus([undefined, {}]), /unlanded/);
+
+    // Once something is committed on the branch, it is no longer stranded.
+    await repo.writeFile('landed.txt', 'work\n');
+    await repo.git('add', '-A');
+    await repo.git('commit', '-q', '-m', 'work');
+    await repo.git('branch', '-f', 'relay/142-aaa111', 'HEAD');
+
+    const landed = JSON.parse(await captureStatus([state.shortId, { json: true }])) as RunJson;
+    assert.equal(landed.landing, 'committed');
+    assert.equal(landed.unlanded, false);
+  });
+
+  it('reports a commit Relay made without having to ask git', async () => {
+    const state = populatedRun(repo.root);
+    state.commit = {
+      sha: 'f'.repeat(40),
+      branch: 'relay/142-aaa111',
+      subject: 'Add authentication rate limiting (#142)',
+      at: '2026-08-11T10:07:00Z',
+    };
+
+    const json = runToJson(state);
+    assert.equal(json.landing, 'committed');
+    assert.equal(json.unlanded, false);
+    assert.equal(json.commit?.subject, 'Add authentication rate limiting (#142)');
+  });
+
   it('keeps the human table as the default', async () => {
     const state = populatedRun(repo.root);
     await persist(state);
@@ -256,6 +326,132 @@ describe('relay status --json', () => {
     const output = await captureStatus([undefined, {}]);
     assert.ok(output.includes('Relay runs in'));
     assert.throws(() => JSON.parse(output));
+  });
+});
+
+describe('empty states', () => {
+  it('tells a new user how to start instead of printing a bare header', async () => {
+    const output = await captureStatus([undefined, {}]);
+
+    assert.match(output, /No runs yet/);
+    assert.match(output, /relay run <issue-number>/);
+    assert.match(output, /relay doctor/);
+    assert.ok(!output.includes('Relay runs in'), 'an empty listing has no table to head');
+  });
+
+  it('says why a run has no events and what to do about it', async () => {
+    const state = populatedRun(repo.root);
+    await persist(state);
+
+    const output = await capture(() => logsCommand(state.shortId, {}));
+    assert.match(output, /No events recorded/);
+    assert.match(output, /no agent has taken a turn yet/);
+    assert.match(output, /relay watch/);
+  });
+});
+
+describe('run outcome summary', () => {
+  /** Walks a run to COMPLETE, ten seconds per phase. */
+  function completed(root: string): RunState {
+    const state = populatedRun(root);
+    let at = new Date(state.createdAt).getTime();
+    const step = (phase: Parameters<typeof transition>[1]): void => {
+      at += 10_000;
+      transition(state, phase, { now: new Date(at) });
+    };
+    for (const phase of [
+      'FETCHING_ISSUE',
+      'CREATING_WORKSPACE',
+      'PLANNING',
+      'REVIEWING_PLAN',
+      'REVISING_PLAN',
+      'REVIEWING_PLAN',
+      'IMPLEMENTING',
+      'REVIEWING_CODE',
+      'TESTING',
+      'COMPLETE',
+    ] as const) {
+      step(phase);
+    }
+    return state;
+  }
+
+  it('prints one block with phases, result and the next command', async () => {
+    const state = completed(repo.root);
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+
+    assert.match(output, /Run complete/);
+    // Where the time went, with revision rounds folded into their review.
+    assert.match(output, /Phases/);
+    assert.match(output, /Planning\s+10\.0s/);
+    assert.match(output, /Plan review\s+30\.0s\s+3 rounds/);
+    // What it produced.
+    assert.match(output, /Changes\s+2 file\(s\), \+40 [−-]7/);
+    assert.match(output, /Tests\s+npm test → passed/);
+    assert.match(output, /Reviews\s+plan 2 round\(s\), code 1 round\(s\)/);
+    assert.match(output, /Usage\s+1\.5k in \/ 300 out · \$0\.12 · 1 turn/);
+    // And what to do next.
+    assert.match(output, new RegExp(`relay diff ${state.runId}`));
+  });
+
+  it('warns that completed work is uncommitted and gives the command that keeps it', async () => {
+    const state = completed(repo.root);
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+    assert.match(output, /Commit\s+none — the work is staged but uncommitted/);
+    assert.match(output, new RegExp(`relay resume ${state.runId} --commit`));
+  });
+
+  it('says nothing about committing when the run already committed', async () => {
+    const state = completed(repo.root);
+    state.commit = {
+      sha: 'a'.repeat(40),
+      branch: 'relay/142-aaa111',
+      subject: 'Add authentication rate limiting (#142)',
+      at: '2026-08-11T10:07:00Z',
+    };
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+    assert.match(output, /Commit\s+aaaaaaaa on relay\/142-aaa111/);
+    assert.ok(!output.includes('--commit'), output);
+  });
+
+  it('names the agent that failed, the phase, and the two useful commands', async () => {
+    const state = populatedRun(repo.root);
+    transition(state, 'FETCHING_ISSUE');
+    for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING'] as const) {
+      transition(state, phase);
+    }
+    state.error = { message: 'codex exited with status 1', phase: 'IMPLEMENTING', code: 'AGENT_FAILED' };
+    transition(state, 'FAILED');
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+
+    assert.match(output, /Run failed during Implementation/);
+    // The implementer is codex by default: the report names it rather than
+    // blaming "the run".
+    assert.match(output, /codex \(implementer\) did not finish its turn\./);
+    assert.match(output, /codex exited with status 1/);
+    assert.match(output, new RegExp(`relay logs ${state.runId}`));
+    assert.match(output, new RegExp(`relay resume ${state.runId}`));
+    // A failed run has no diff worth reviewing, so it does not offer one.
+    assert.ok(!output.includes(`relay diff ${state.runId}`), output);
+  });
+
+  it('offers a resume for a cancelled run', async () => {
+    const state = populatedRun(repo.root);
+    transition(state, 'FETCHING_ISSUE');
+    transition(state, 'CANCELLED');
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+    assert.match(output, /Run cancelled/);
+    assert.match(output, new RegExp(`relay resume ${state.runId}`));
   });
 });
 
