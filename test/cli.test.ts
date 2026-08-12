@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { runToJson, type RunJson } from '../src/cli/runJson.ts';
 import { logsCommand, statusCommand } from '../src/cli/commands/inspect.ts';
+import { printOutcome } from '../src/cli/commands/run.ts';
 import { RunStore } from '../src/storage/runs.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunId } from '../src/util/ids.ts';
@@ -325,6 +326,132 @@ describe('relay status --json', () => {
     const output = await captureStatus([undefined, {}]);
     assert.ok(output.includes('Relay runs in'));
     assert.throws(() => JSON.parse(output));
+  });
+});
+
+describe('empty states', () => {
+  it('tells a new user how to start instead of printing a bare header', async () => {
+    const output = await captureStatus([undefined, {}]);
+
+    assert.match(output, /No runs yet/);
+    assert.match(output, /relay run <issue-number>/);
+    assert.match(output, /relay doctor/);
+    assert.ok(!output.includes('Relay runs in'), 'an empty listing has no table to head');
+  });
+
+  it('says why a run has no events and what to do about it', async () => {
+    const state = populatedRun(repo.root);
+    await persist(state);
+
+    const output = await capture(() => logsCommand(state.shortId, {}));
+    assert.match(output, /No events recorded/);
+    assert.match(output, /no agent has taken a turn yet/);
+    assert.match(output, /relay watch/);
+  });
+});
+
+describe('run outcome summary', () => {
+  /** Walks a run to COMPLETE, ten seconds per phase. */
+  function completed(root: string): RunState {
+    const state = populatedRun(root);
+    let at = new Date(state.createdAt).getTime();
+    const step = (phase: Parameters<typeof transition>[1]): void => {
+      at += 10_000;
+      transition(state, phase, { now: new Date(at) });
+    };
+    for (const phase of [
+      'FETCHING_ISSUE',
+      'CREATING_WORKSPACE',
+      'PLANNING',
+      'REVIEWING_PLAN',
+      'REVISING_PLAN',
+      'REVIEWING_PLAN',
+      'IMPLEMENTING',
+      'REVIEWING_CODE',
+      'TESTING',
+      'COMPLETE',
+    ] as const) {
+      step(phase);
+    }
+    return state;
+  }
+
+  it('prints one block with phases, result and the next command', async () => {
+    const state = completed(repo.root);
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+
+    assert.match(output, /Run complete/);
+    // Where the time went, with revision rounds folded into their review.
+    assert.match(output, /Phases/);
+    assert.match(output, /Planning\s+10\.0s/);
+    assert.match(output, /Plan review\s+30\.0s\s+3 rounds/);
+    // What it produced.
+    assert.match(output, /Changes\s+2 file\(s\), \+40 [−-]7/);
+    assert.match(output, /Tests\s+npm test → passed/);
+    assert.match(output, /Reviews\s+plan 2 round\(s\), code 1 round\(s\)/);
+    assert.match(output, /Usage\s+1\.5k in \/ 300 out · \$0\.12 · 1 turn/);
+    // And what to do next.
+    assert.match(output, new RegExp(`relay diff ${state.runId}`));
+  });
+
+  it('warns that completed work is uncommitted and gives the command that keeps it', async () => {
+    const state = completed(repo.root);
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+    assert.match(output, /Commit\s+none — the work is staged but uncommitted/);
+    assert.match(output, new RegExp(`relay resume ${state.runId} --commit`));
+  });
+
+  it('says nothing about committing when the run already committed', async () => {
+    const state = completed(repo.root);
+    state.commit = {
+      sha: 'a'.repeat(40),
+      branch: 'relay/142-aaa111',
+      subject: 'Add authentication rate limiting (#142)',
+      at: '2026-08-11T10:07:00Z',
+    };
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+    assert.match(output, /Commit\s+aaaaaaaa on relay\/142-aaa111/);
+    assert.ok(!output.includes('--commit'), output);
+  });
+
+  it('names the agent that failed, the phase, and the two useful commands', async () => {
+    const state = populatedRun(repo.root);
+    transition(state, 'FETCHING_ISSUE');
+    for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING'] as const) {
+      transition(state, phase);
+    }
+    state.error = { message: 'codex exited with status 1', phase: 'IMPLEMENTING', code: 'AGENT_FAILED' };
+    transition(state, 'FAILED');
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+
+    assert.match(output, /Run failed during Implementation/);
+    // The implementer is codex by default: the report names it rather than
+    // blaming "the run".
+    assert.match(output, /codex \(implementer\) did not finish its turn\./);
+    assert.match(output, /codex exited with status 1/);
+    assert.match(output, new RegExp(`relay logs ${state.runId}`));
+    assert.match(output, new RegExp(`relay resume ${state.runId}`));
+    // A failed run has no diff worth reviewing, so it does not offer one.
+    assert.ok(!output.includes(`relay diff ${state.runId}`), output);
+  });
+
+  it('offers a resume for a cancelled run', async () => {
+    const state = populatedRun(repo.root);
+    transition(state, 'FETCHING_ISSUE');
+    transition(state, 'CANCELLED');
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+    assert.match(output, /Run cancelled/);
+    assert.match(output, new RegExp(`relay resume ${state.runId}`));
   });
 });
 

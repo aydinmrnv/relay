@@ -66,7 +66,7 @@ export class WorkflowEngine {
         break;
       }
 
-      observer.phaseChanged(state.phase);
+      observer.phaseChanged(state.phase, roundDetail(state));
       await this.logPhase('phase_started');
 
       try {
@@ -145,6 +145,29 @@ export class WorkflowEngine {
       // A summary that cannot be written must not mask the run's real outcome.
       this.context.observer.warn(`Could not write summary.md: ${errorMessage(error)}`);
     }
+  }
+}
+
+/**
+ * Round progress for the phase about to run. Plan review can consume three
+ * rounds and code review two; a display that only ever says "revising" hides a
+ * limit while it is being spent.
+ *
+ * The counters hold *completed* rounds, so the round about to start is one more.
+ */
+function roundDetail(state: RunState): string | undefined {
+  const { maxPlanReviewRounds, maxCodeReviewRounds } = state.config.workflow;
+  switch (state.phase) {
+    case 'REVIEWING_PLAN':
+      return `round ${state.rounds.planReview + 1}/${maxPlanReviewRounds}`;
+    case 'REVISING_PLAN':
+      return `revising · round ${state.rounds.planReview}/${maxPlanReviewRounds}`;
+    case 'REVIEWING_CODE':
+      return `round ${state.rounds.codeReview + 1}/${maxCodeReviewRounds}`;
+    case 'REVISING_CODE':
+      return `revising · round ${state.rounds.codeReview}/${maxCodeReviewRounds}`;
+    default:
+      return undefined;
   }
 }
 

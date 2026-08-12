@@ -1,3 +1,5 @@
+import type { Role } from '../storage/config.ts';
+
 export const PHASES = [
   'INITIALIZING',
   'FETCHING_ISSUE',
@@ -110,4 +112,22 @@ export function displayPhaseFor(phase: Phase): Phase | undefined {
   if (phase === 'REVISING_PLAN') return 'REVIEWING_PLAN';
   if (phase === 'REVISING_CODE') return 'REVIEWING_CODE';
   return DISPLAY_PHASES.includes(phase) ? phase : undefined;
+}
+
+/**
+ * Which agent role drives a phase. The progress display uses it for the status
+ * column, and a failure report uses it to name the agent that actually failed
+ * rather than blaming "the run".
+ */
+const PHASE_ROLES: Partial<Record<Phase, Role>> = {
+  PLANNING: 'planner',
+  REVIEWING_PLAN: 'planReviewer',
+  REVISING_PLAN: 'planner',
+  IMPLEMENTING: 'implementer',
+  REVIEWING_CODE: 'codeReviewer',
+  REVISING_CODE: 'implementer',
+};
+
+export function phaseRole(phase: Phase): Role | undefined {
+  return PHASE_ROLES[phase];
 }

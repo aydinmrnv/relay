@@ -5,9 +5,14 @@ Relay takes a GitHub issue and coordinates the coding agents you already have in
 It is not "run several agents in parallel". The point is that **specialized agents review and challenge each other's actual engineering work**, and that every claim they make is checked against git rather than taken at face value.
 
 ```bash
-relay init
+relay init        # guided: detects the repo, checks your agents, assigns roles
 relay run 142
 ```
+
+`relay init` walks through setup on a terminal and asks the one question that
+actually shapes a run — which model reviews the work another model produced.
+`relay init --yes` skips every prompt and writes the detected defaults, which is
+what CI and scripts should use.
 
 ## What actually happens
 
@@ -58,7 +63,7 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 
 | Command | |
 |---|---|
-| `relay init` | write `.relay/config.json` |
+| `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo and auth |
 | `relay run <issue>` | run the full workflow |
 | `relay status [run]` | list runs, or print one run's summary (`--json` for machine-readable output) |
@@ -72,6 +77,29 @@ Every one of those is a real artifact on disk. Nothing is a chat transcript.
 `relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests` and `--commit`.
 
 `relay resume <run> --commit` also works on a run that already completed: it commits that run's stranded work and does nothing else.
+
+## Terminal output
+
+A run takes 10–20 minutes, so `relay run` shows a live checklist: the active
+phase carries a spinner and an elapsed time, review phases show the round being
+consumed (`round 2/3`) rather than a bare "revising", and the run ends with one
+block covering phases, rounds, diff, tests, cost and the next command. When a
+phase fails, that block names the agent that failed, the phase, and the two
+commands worth running next.
+
+The display resolves colour, unicode and interactivity once, from the
+environment, and everything routes through those primitives:
+
+| | effect |
+|---|---|
+| not a TTY (a pipe, a redirect) | append-only lines, no colour, no cursor control |
+| `CI=1` | same as a pipe, even on an allocated TTY |
+| `NO_COLOR=1` | colour off; the display is otherwise unchanged |
+| `TERM=dumb` | append-only, no colour, ASCII only |
+| `RELAY_ASCII=1` | ASCII glyphs and punctuation, colour kept |
+
+Content Relay only passes through — a patch, a `--json` payload, an agent's
+plan — is never rewritten by any of that.
 
 ## Run state
 
@@ -127,7 +155,7 @@ Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed a
 ```bash
 npm install
 npm run typecheck
-npm test          # 250 tests, no network, no real agents
+npm test          # 305 tests, no network, no real agents
 npm run build
 ```
 

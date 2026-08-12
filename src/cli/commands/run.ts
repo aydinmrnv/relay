@@ -9,13 +9,26 @@ import { commitRunWork } from '../../workflow/commitRun.ts';
 import type { RunObserver } from '../../workflow/observer.ts';
 import { renderSummary } from '../../workflow/summary.ts';
 import { createRunState, type RunState } from '../../workflow/state.ts';
-import { isTerminal } from '../../workflow/phases.ts';
+import { isTerminal, phaseLabel, phaseRole } from '../../workflow/phases.ts';
+import { failedPhase, phaseTimings } from '../../workflow/timeline.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import type { EngineContext } from '../../workflow/context.ts';
 import { RunRenderer } from '../../ui/renderer.ts';
 import { formatDuration } from '../../util/text.ts';
 import { createCliContext, type CliContext } from '../context.ts';
-import { dim, failure, out, success, warning } from '../output.ts';
+import {
+  changeCount,
+  command,
+  dim,
+  failure,
+  hint,
+  out,
+  rows,
+  section,
+  success,
+  warning,
+  type Row,
+} from '../output.ts';
 
 export interface RunOptions {
   verbose?: boolean;
@@ -216,7 +229,12 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
   }
 }
 
-function printOutcome(state: RunState, store: RunStore): void {
+/**
+ * The one block a finished run prints: what it did, what it produced, and the
+ * single most useful next command. Without it the run simply stops and the user
+ * has to go find `relay status` to learn how it went.
+ */
+export function printOutcome(state: RunState, store: RunStore): void {
   const elapsed = new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
 
   out();
@@ -225,45 +243,107 @@ function printOutcome(state: RunState, store: RunStore): void {
   } else if (state.phase === 'CANCELLED') {
     out(warning('Run cancelled') + dim(` after ${formatDuration(elapsed)}`));
   } else {
-    out(failure('Run failed') + dim(` after ${formatDuration(elapsed)}`));
-    if (state.error !== undefined) out(`  ${state.error.message}`);
+    printFailure(state);
   }
 
-  out();
-  if (state.workspace !== undefined) {
-    out(`  Branch     ${state.workspace.branch}`);
-    out(`  Worktree   ${state.workspace.path}`);
-  }
-  if (state.diff !== undefined) {
-    out(`  Changes    ${state.diff.fileCount} file(s), +${state.diff.additions} −${state.diff.deletions}`);
-  }
-  if (state.tests !== undefined) {
-    out(
-      `  Tests      ${
-        state.tests.discovered
-          ? `${state.tests.command.join(' ')} → ${state.tests.passed ? success('passed') : failure('failed')}`
-          : dim(`not run (${state.tests.skippedReason ?? state.tests.reason})`)
-      }`,
-    );
-  }
-  out(`  Reviews    plan ${state.rounds.planReview} round(s), code ${state.rounds.codeReview} round(s)`);
+  printPhases(state);
+
+  section('Result');
+  rows([
+    state.workspace !== undefined && { label: 'Branch', value: state.workspace.branch },
+    state.workspace !== undefined && { label: 'Worktree', value: state.workspace.path },
+    state.diff !== undefined && {
+      label: 'Changes',
+      value: `${state.diff.fileCount} file(s), ${changeCount(state.diff.additions, state.diff.deletions)}`,
+    },
+    state.tests !== undefined && { label: 'Tests', value: testsLine(state) },
+    { label: 'Reviews', value: `plan ${state.rounds.planReview} round(s), code ${state.rounds.codeReview} round(s)` },
+    commitRow(state),
+    state.usage !== undefined && { label: 'Usage', value: formatUsage(state.usage.total) },
+    { label: 'Run state', value: store.dir },
+  ]);
+
+  printNextSteps(state, store);
+}
+
+/**
+ * Failure is the moment the UI matters most: name the agent that failed, say
+ * why, and give the two commands that do something about it.
+ */
+function printFailure(state: RunState): void {
+  const elapsed = new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
+  const phase = failedPhase(state);
+  const role = phase === undefined ? undefined : phaseRole(phase);
+  const agent = role === undefined ? undefined : state.config.agents[role];
+
+  const where = phase === undefined ? '' : ` during ${phaseLabel(phase)}`;
+  out(failure(`Run failed${where}`) + dim(` after ${formatDuration(elapsed)}`));
+
+  if (agent !== undefined && role !== undefined) out(`  ${agent} ${dim(`(${role})`)} did not finish its turn.`);
+  if (state.error !== undefined) out(`  ${state.error.message}`);
+}
+
+/** Where the run spent its time, folded so revision rounds count as review time. */
+function printPhases(state: RunState): void {
+  const timings = phaseTimings(state);
+  if (timings.length === 0) return;
+
+  section('Phases');
+  rows(
+    timings.map(({ phase, ms, visits }) => ({
+      label: phaseLabel(phase),
+      value: formatDuration(ms) + (visits > 1 ? dim(`  ${visits} rounds`) : ''),
+    })),
+  );
+}
+
+function testsLine(state: RunState): string {
+  const tests = state.tests;
+  if (tests === undefined) return dim('not run');
+  if (!tests.discovered) return dim(`not run (${tests.skippedReason ?? tests.reason})`);
+  return `${tests.command.join(' ')} → ${tests.passed ? success('passed') : failure('failed')}`;
+}
+
+function commitRow(state: RunState): Row | false {
   if (state.commit !== undefined) {
-    out(`  Commit     ${state.commit.sha.slice(0, 8)} on ${state.commit.branch} ${dim('(local only)')}`);
-  } else if (state.phase === 'COMPLETE' && (state.diff?.fileCount ?? 0) > 0) {
-    // Uncommitted work in a throwaway worktree is one `git worktree prune` from
-    // being gone, so the run says so rather than reporting a clean success.
-    out(`  Commit     ${warning('none — the work is staged but uncommitted')}`);
+    return {
+      label: 'Commit',
+      value: `${state.commit.sha.slice(0, 8)} on ${state.commit.branch} ${dim('(local only)')}`,
+    };
   }
-  if (state.usage !== undefined) out(`  Usage      ${formatUsage(state.usage.total)}`);
-  out(`  Run state  ${store.dir}`);
+  // Uncommitted work in a throwaway worktree is one `git worktree prune` from
+  // being gone, so the run says so rather than reporting a clean success.
+  if (state.phase === 'COMPLETE' && (state.diff?.fileCount ?? 0) > 0) {
+    return { label: 'Commit', value: warning('none — the work is staged but uncommitted') };
+  }
+  return false;
+}
 
-  out();
-  out(dim('Nothing was pushed or merged. To review:'));
-  out(`  relay diff ${state.runId}`);
-  out(`  ${store.path('summary.md')}`);
+function printNextSteps(state: RunState, store: RunStore): void {
+  section('Next');
+
+  if (state.phase === 'FAILED') {
+    hint('Nothing was pushed or merged. To diagnose and continue:');
+    command(`relay logs ${state.runId}`);
+    command(`relay resume ${state.runId}`);
+    out();
+    return;
+  }
+
+  hint('Nothing was pushed or merged. To review:');
+  command(`relay diff ${state.runId}`);
+  command(store.path('summary.md'));
+
+  if (state.phase === 'CANCELLED') {
+    out();
+    hint('To pick up where it stopped:');
+    command(`relay resume ${state.runId}`);
+  }
+
   if (state.commit === undefined && state.phase === 'COMPLETE' && (state.diff?.fileCount ?? 0) > 0) {
-    out(dim('To keep the work, re-run with --commit or commit it yourself:'));
-    out(`  git -C ${state.workspace?.path ?? '<worktree>'} commit -m "…"`);
+    out();
+    hint('To keep the work, commit it to the run branch:');
+    command(`relay resume ${state.runId} --commit`);
   }
   out();
 }

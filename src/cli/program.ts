@@ -50,8 +50,9 @@ export function buildProgram(): Command {
 
   program
     .command('init')
-    .description('create .relay/config.json in the current repository')
+    .description('set up .relay/config.json in the current repository')
     .option('-f, --force', 'overwrite an existing config')
+    .option('-y, --yes', 'skip the guided setup and write the detected defaults')
     .action(wrap(initCommand));
 
   program
