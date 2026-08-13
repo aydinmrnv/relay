@@ -759,3 +759,11 @@ npm run build
 ```
 
 The test suite uses `FakeAgentHarness` (deterministic scripted responses) and real temporary git repositories, so workflows, review loops, round limits, cancellation and resume are all tested without a model in the loop. The overlapping work is tested for overlap rather than for its effects: the suite writes a marker as it starts, and the code review asserts the marker is already there.
+## Shell completion and manual
+
+Generate completion definitions with `relay completion bash`, `relay completion zsh`, or
+`relay completion fish`; `relay completion --help` shows installation paths. The npm package
+also installs `relay(1)`, available with `man relay`.
+
+Relay observes `RELAY_HOME` for its data directory, `RELAY_ASCII` for an ASCII-only interface,
+and the standard `NO_COLOR` variable.

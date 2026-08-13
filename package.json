@@ -14,18 +14,22 @@
   "bin": {
     "relay": "./bin/relay.mjs"
   },
+  "man": ["./man/relay.1"],
   "files": [
     "bin",
     "dist",
     "eval",
-    "README.md"
+    "README.md",
+    "man"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --experimental-strip-types \"test/**/*.test.ts\"",
     "test:watch": "node --test --watch --experimental-strip-types \"test/**/*.test.ts\"",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "generate:man": "node scripts/generate-man.mjs",
+    "prepack": "npm run build && npm run generate:man && npm pack --dry-run --ignore-scripts"
   },
   "dependencies": {
     "commander": "^12.1.0"
