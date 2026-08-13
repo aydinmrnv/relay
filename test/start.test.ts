@@ -7,6 +7,7 @@ import { AGENT_REGISTRY } from '../src/agents/index.ts';
 import { describeCommand, type AuthState, type AuthSupport } from '../src/auth/delegated.ts';
 import type { AgentCheck } from '../src/cli/checks.ts';
 import { runStart, type StartDeps, type StartOptions } from '../src/cli/commands/start.ts';
+import { EXIT } from '../src/cli/exit.ts';
 import { loadOnboarding, onboardingPath } from '../src/cli/onboarding.ts';
 import { setTheme } from '../src/cli/output.ts';
 import { DEFAULT_CONFIG, writeConfig } from '../src/storage/config.ts';
@@ -183,7 +184,8 @@ describe('relay start — non-interactive', () => {
   it('reports instead of prompting, and exits non-zero when something is missing', async () => {
     const { output, exitCode, world } = await start([], {}, { interactive: false, installed: ['claude'] });
 
-    assert.equal(exitCode, 1);
+    // Not a Relay error: this machine is not set up, which is exit code 3.
+    assert.equal(exitCode, EXIT.preconditions);
     assert.deepEqual(world.prompter.asked, [], 'a non-TTY run must not ask a single question');
     assert.deepEqual(world.logins, [], 'a non-TTY run must not attempt a login');
     assert.match(output, /Not a terminal/);
@@ -204,7 +206,7 @@ describe('relay start — non-interactive', () => {
     await alreadyOnboarded();
     const { output, exitCode } = await start([], {}, { interactive: false, auth: { codex: 'unauthenticated' } });
 
-    assert.equal(exitCode, 1);
+    assert.equal(exitCode, EXIT.preconditions);
     assert.match(output, /Codex sign-in\s+not signed in/);
     assert.match(output, /Run `codex login`\./);
   });
@@ -221,7 +223,7 @@ describe('relay start — non-interactive', () => {
     await alreadyOnboarded();
     const { output, exitCode, world } = await start([], { check: true }, { auth: { codex: 'unauthenticated' } });
 
-    assert.equal(exitCode, 1);
+    assert.equal(exitCode, EXIT.preconditions);
     assert.deepEqual(world.logins, []);
     assert.deepEqual(world.prompter.asked, []);
     assert.match(output, /Reporting only/);
@@ -283,7 +285,7 @@ describe('relay start — guided flow', () => {
   it('does not offer a real first run while a dependency is still missing', async () => {
     const { output, exitCode, world } = await start([], {}, { installed: ['claude', 'gh'] });
 
-    assert.equal(exitCode, 1);
+    assert.equal(exitCode, EXIT.preconditions);
     assert.equal(world.runs.length, 0);
     assert.match(output, /Fix those, then run `relay start` again/);
   });

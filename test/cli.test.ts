@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { SCHEMA_VERSION, type JsonDocument } from '../src/cli/json.ts';
 import { runToJson, type RunJson } from '../src/cli/runJson.ts';
 import { logsCommand, statusCommand } from '../src/cli/commands/inspect.ts';
 import { applyOverrides, printNextSteps, printOutcome } from '../src/cli/commands/run.ts';
@@ -315,42 +316,48 @@ describe('relay status --json', () => {
     delete process.env['NO_COLOR'];
   });
 
-  it('prints a JSON array of every run', async () => {
+  it('prints every run under `runs`, newest first', async () => {
     const older = populatedRun(repo.root, new Date('2026-08-11T10:00:00Z'));
     const newer = populatedRun(repo.root, new Date('2026-08-11T11:00:00Z'));
     newer.shortId = 'ccc333';
 
     for (const state of [older, newer]) await persist(state);
 
-    const parsed = JSON.parse(await captureStatus([undefined, { json: true }])) as RunJson[];
-    assert.ok(Array.isArray(parsed));
-    assert.equal(parsed.length, 2);
+    const parsed = JSON.parse(await captureStatus([undefined, { json: true }])) as JsonDocument<{
+      runs: RunJson[];
+    }>;
+    assert.equal(parsed.schema, SCHEMA_VERSION);
+    assert.ok(Array.isArray(parsed.runs));
+    assert.equal(parsed.runs.length, 2);
     // Newest first, matching the human listing.
-    assert.equal(parsed[0]?.runId, newer.runId);
-    assert.equal(parsed[1]?.runId, older.runId);
+    assert.equal(parsed.runs[0]?.runId, newer.runId);
+    assert.equal(parsed.runs[1]?.runId, older.runId);
   });
 
-  it('prints an empty array when there are no runs, not prose', async () => {
-    assert.deepEqual(JSON.parse(await captureStatus([undefined, { json: true }])), []);
+  it('prints an empty list when there are no runs, not prose', async () => {
+    assert.deepEqual(JSON.parse(await captureStatus([undefined, { json: true }])), {
+      schema: SCHEMA_VERSION,
+      command: 'status',
+      runs: [],
+    });
   });
 
-  it('prints a single object for a named run', async () => {
+  it('prints a single run under `run` for a named run', async () => {
     const state = populatedRun(repo.root);
     await persist(state);
 
-    const parsed = JSON.parse(await captureStatus([state.shortId, { json: true }])) as RunJson;
-    assert.ok(!Array.isArray(parsed));
-    assert.equal(parsed.runId, state.runId);
-    assert.equal(parsed.issue?.number, 142);
-    assert.equal(parsed.branch, 'relay/142-aaa111');
+    const parsed = JSON.parse(await captureStatus([state.shortId, { json: true }])) as { run: RunJson };
+    assert.equal(parsed.run.runId, state.runId);
+    assert.equal(parsed.run.issue?.number, 142);
+    assert.equal(parsed.run.branch, 'relay/142-aaa111');
   });
 
   it('resolves "latest" like every other run reference', async () => {
     const state = populatedRun(repo.root);
     await persist(state);
 
-    const parsed = JSON.parse(await captureStatus(['latest', { json: true }])) as RunJson;
-    assert.equal(parsed.runId, state.runId);
+    const parsed = JSON.parse(await captureStatus(['latest', { json: true }])) as { run: RunJson };
+    assert.equal(parsed.run.runId, state.runId);
   });
 
   it('emits nothing but the JSON document', async () => {
@@ -376,7 +383,7 @@ describe('relay status --json', () => {
     await repo.git('branch', 'relay/142-aaa111', baseSha);
     await persist(state);
 
-    const parsed = JSON.parse(await captureStatus([state.shortId, { json: true }])) as RunJson;
+    const parsed = (JSON.parse(await captureStatus([state.shortId, { json: true }])) as { run: RunJson }).run;
     assert.equal(parsed.landing, 'unlanded');
     assert.equal(parsed.unlanded, true);
     assert.equal(parsed.commit, null);
@@ -390,7 +397,7 @@ describe('relay status --json', () => {
     await repo.git('commit', '-q', '-m', 'work');
     await repo.git('branch', '-f', 'relay/142-aaa111', 'HEAD');
 
-    const landed = JSON.parse(await captureStatus([state.shortId, { json: true }])) as RunJson;
+    const landed = (JSON.parse(await captureStatus([state.shortId, { json: true }])) as { run: RunJson }).run;
     assert.equal(landed.landing, 'committed');
     assert.equal(landed.unlanded, false);
   });

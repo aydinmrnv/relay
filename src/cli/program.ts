@@ -8,6 +8,7 @@ import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
 import { resumeCommand, type RunOptions } from './commands/run.ts';
+import { homeCommand } from './commands/home.ts';
 import { statsCommand } from './commands/stats.ts';
 import { homeSession, runSession } from './session.ts';
 import {
@@ -19,23 +20,47 @@ import {
   watchCommand,
 } from './commands/inspect.ts';
 import { reportError, theme } from './output.ts';
+import { EXIT, exitCodeFor, isCommanderError } from './exit.ts';
+import { enterJsonMode } from './json.ts';
 
 /** Help text names whichever CLIs are registered, not whichever shipped first. */
 const AGENT_LABELS = AGENT_REGISTRY.map((entry) => entry.label).join(', ');
 
+/** The description every `--json` flag carries, so they all read identically. */
+const JSON_FLAG = 'print machine-readable JSON on stdout and nothing else';
+
 /**
- * Wraps a command so every failure exits with a code and an actionable message
- * instead of an unhandled rejection stack.
+ * Commander hands an action handler the parsed options as a plain object, after
+ * the declared arguments and before the Command itself. Finding it by shape
+ * rather than by position lets `wrap` stay one function across commands that
+ * take no argument, one, or two.
+ */
+function optionsOf(args: readonly unknown[]): { json?: unknown } | undefined {
+  return args.find(
+    (arg): arg is { json?: unknown } =>
+      typeof arg === 'object' && arg !== null && Object.getPrototypeOf(arg) === Object.prototype,
+  );
+}
+
+/**
+ * Wraps a command so every failure exits with a code from the published table
+ * and an actionable message, instead of an unhandled rejection stack.
+ *
+ * `--json` is claimed here rather than inside each command: the promise is
+ * about the whole invocation, including the lines a command prints before it
+ * reaches the code that knows the flag exists.
  */
 function wrap<Args extends unknown[]>(
   handler: (...args: Args) => Promise<number>,
 ): (...args: Args) => Promise<void> {
   return async (...args: Args): Promise<void> => {
+    if (optionsOf(args)?.json === true) enterJsonMode();
     try {
       process.exitCode = await handler(...args);
     } catch (error) {
-      reportError(error);
-      process.exitCode = 1;
+      // Commander has already printed its own message and its own help.
+      if (!isCommanderError(error)) reportError(error);
+      process.exitCode = exitCodeFor(error);
     }
   };
 }
@@ -86,9 +111,23 @@ export function buildProgram(version: string): Command {
     )
     .version(version)
     .option('--update', 'update Relay itself to the latest version')
+    .option('--json', JSON_FLAG)
     .showHelpAfterError();
 
   program.configureHelp({ formatHelp: groupedHelp });
+
+  // The root and every subcommand declare their own `--json`, and by default
+  // Commander resolves a repeated flag against the parent — which would silently
+  // hand `relay status --json` to the home screen's option and leave `status`
+  // printing its human table. Positional parsing puts each option where it was
+  // typed: before the subcommand it is the program's, after it the subcommand's.
+  program.enablePositionalOptions();
+
+  // Commander exits the process itself, with 1 for every kind of usage error.
+  // Taking that over is what lets a caller tell "you typed it wrong" (2) from
+  // "Relay could not do it" (1) — and the setting is inherited by every
+  // subcommand declared below, so a bad flag anywhere lands in the same place.
+  program.exitOverride();
 
   // `--update` is an option rather than a command because it is about Relay
   // itself and not about a run: it is the one thing here that needs no
@@ -99,15 +138,20 @@ export function buildProgram(version: string): Command {
   // there. Both of the behaviours it was doing for us are restored below, so a
   // bare `relay` still prints help and a typo is still a typo.
   program.action(
-    wrap(async (options: { update?: boolean }, command: Command): Promise<number> => {
+    wrap(async (options: { update?: boolean; json?: boolean }, command: Command): Promise<number> => {
       const [unrecognized] = command.args;
       if (unrecognized !== undefined) {
         command.error(`error: unknown command '${unrecognized}'`, { code: 'commander.unknownCommand' });
       }
       if (options.update === true) return updateCommand();
+      // `--json` is a request for the home screen's facts, so it answers with
+      // them wherever it runs — behind a pipe it no longer means "print help".
+      // It never opens a session: the next question is for a person, and
+      // whatever is parsing this is not one.
+      if (options.json === true) return homeCommand({ json: true });
       if (theme().interactive) return homeSession();
       process.stderr.write(defaultHelp(command, process.stderr.isTTY ? process.stderr.columns : undefined));
-      return 1;
+      return EXIT.error;
     }),
   );
 
@@ -117,6 +161,7 @@ export function buildProgram(version: string): Command {
     .option('--check', 'report what is missing and exit, without prompting or signing in')
     .option('--tour', 'replay the explanation of what a run does')
     .option('--dry-run', 'walk the whole pipeline without calling a single agent')
+    .option('--json', `${JSON_FLAG} (implies --check: a guided walkthrough has no JSON form)`)
     .action(wrap(startCommand));
 
   program
@@ -124,11 +169,13 @@ export function buildProgram(version: string): Command {
     .description('set up .relay/config.json in the current repository')
     .option('-f, --force', 'overwrite an existing config')
     .option('-y, --yes', 'skip the guided setup and write the detected defaults')
+    .option('--json', `${JSON_FLAG} (implies --yes)`)
     .action(wrap(initCommand));
 
   program
     .command('doctor')
     .description(`check that git, gh, ${AGENT_LABELS} and the repo are installed and authenticated`)
+    .option('--json', JSON_FLAG)
     .action(wrap(doctorCommand));
 
   program
@@ -156,6 +203,7 @@ export function buildProgram(version: string): Command {
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
+    .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
     .action(wrap(runSession));
 
   program
@@ -172,6 +220,7 @@ export function buildProgram(version: string): Command {
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .option('--tuff', 'write the pull request and commits with typos, like a human')
+    .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
     .action(wrap(resumeCommand));
 
   program
@@ -179,13 +228,14 @@ export function buildProgram(version: string): Command {
     .argument('[run-id]', 'run id, short id, or "latest"', 'latest')
     .description('run a finished run\'s delivery again: commit, push, pull request, merge')
     .option('--to <policy>', `how far to take it (${DELIVERY_POLICIES.join('|')})`)
+    .option('--json', JSON_FLAG)
     .action(wrap(deliverCommand));
 
   program
     .command('status')
     .argument('[run-id]', 'run id, short id, or "latest"')
     .description('list runs, or show one run\'s summary')
-    .option('--json', 'print machine-readable JSON instead of the formatted table')
+    .option('--json', JSON_FLAG)
     .action(wrap(statusCommand));
 
   program
@@ -193,6 +243,7 @@ export function buildProgram(version: string): Command {
     .argument('[run-id]', 'run id, short id, or "latest"', 'latest')
     .description('follow a run\'s events as they happen')
     .option('-i, --interval <ms>', 'poll interval in milliseconds', '1000')
+    .option('--json', `${JSON_FLAG} — one object per line, as each event arrives`)
     .action(wrap(watchCommand));
 
   program
@@ -200,12 +251,14 @@ export function buildProgram(version: string): Command {
     .argument('[run-id]', 'run id, short id, or "latest"', 'latest')
     .description('show the git diff produced by a run')
     .option('-s, --stat', 'show a file summary instead of the full patch')
+    .option('--json', JSON_FLAG)
     .action(wrap(diffCommand));
 
   program
     .command('plan')
     .argument('[run-id]', 'run id, short id, or "latest"', 'latest')
     .description('print a run\'s approved plan')
+    .option('--json', JSON_FLAG)
     .action(wrap(planCommand));
 
   program
@@ -214,18 +267,20 @@ export function buildProgram(version: string): Command {
     .description('print a run\'s event log')
     .option('-n, --limit <n>', 'number of events to show', '80')
     .option('-a, --all', 'show every event')
+    .option('--json', JSON_FLAG)
     .action(wrap(logsCommand));
 
   program
     .command('stats')
     .description('what this repository\'s runs have cost, taken, and caught')
-    .option('--json', 'print machine-readable JSON instead of the formatted tables')
+    .option('--json', JSON_FLAG)
     .action(wrap(statsCommand));
 
   program
     .command('stop')
     .argument('[run-id]', 'run id, short id, or "latest"', 'latest')
     .description('cancel a running workflow')
+    .option('--json', JSON_FLAG)
     .action(wrap(stopCommand));
 
   return program;

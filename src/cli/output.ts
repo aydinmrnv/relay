@@ -6,7 +6,7 @@ import { relayLogo } from '../ui/logo.ts';
 let cachedTheme: Theme | undefined;
 
 export function theme(): Theme {
-  cachedTheme ??= detectTheme(process.stdout);
+  cachedTheme ??= detectTheme(humanStream);
   return cachedTheme;
 }
 
@@ -16,12 +16,29 @@ export function setTheme(next: Theme | undefined): void {
 }
 
 /**
+ * Where everything meant for a person goes. Stdout, until `--json` claims it:
+ * a document being piped into `jq` cannot share a stream with the prose, frames
+ * and advice printed around it, and diverting the sink once — here — is the
+ * only version of that promise every existing call site keeps for free.
+ */
+let humanStream: NodeJS.WriteStream = process.stdout;
+
+export function divertHumanOutput(): void {
+  humanStream = process.stderr;
+}
+
+/** Tests run both modes in one process; the real CLI never goes back. */
+export function restoreHumanOutput(): void {
+  humanStream = process.stdout;
+}
+
+/**
  * Relay's own chrome: headings, rows, prose, hints. Downgraded to ASCII when
  * the terminal cannot show typographic characters, so `RELAY_ASCII=1` and
  * `TERM=dumb` really are ASCII without every sentence having to remember.
  */
 export function out(text = ''): void {
-  process.stdout.write(`${asciiSafe(text, theme())}\n`);
+  humanStream.write(`${asciiSafe(text, theme())}\n`);
 }
 
 /**
@@ -30,7 +47,7 @@ export function out(text = ''): void {
  * apply and rewritten JSON does not parse.
  */
 export function raw(text: string): void {
-  process.stdout.write(`${text}\n`);
+  humanStream.write(`${text}\n`);
 }
 
 // ---------------------------------------------------------------------------

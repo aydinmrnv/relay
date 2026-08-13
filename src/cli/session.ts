@@ -4,6 +4,7 @@ import { Prompter, isPromptCancelled, type PromptSession } from '../ui/prompt.ts
 import { errorMessage } from '../util/errors.ts';
 import { showHome, type HomeScreen } from './commands/home.ts';
 import { runCommand, type RunOptions } from './commands/run.ts';
+import { jsonMode } from './json.ts';
 import { hint, out, reportError } from './output.ts';
 
 /**
@@ -68,7 +69,10 @@ export async function relaySession(
   let code = seed.code ?? 0;
   let screen = seed.screen;
 
-  if (!deps.prompter.interactive) return code;
+  // A terminal nobody is watching, or one where the output is being parsed:
+  // either way there is no next issue to be named, and the question would be a
+  // hang. `--json` reaches here on a real TTY, so the theme cannot answer this.
+  if (jsonMode() || !deps.prompter.interactive) return code;
 
   try {
     for (;;) {

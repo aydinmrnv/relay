@@ -6,6 +6,9 @@ import { DEFAULT_CONFIG, ROLES, configPath, loadConfig, writeConfig, type RelayC
 import { discoverTestCommand } from '../../testing/discovery.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
 import { agentChecks, type AgentCheck } from '../checks.ts';
+import { EXIT } from '../exit.ts';
+import { configToJson, type InitJson } from '../homeJson.ts';
+import { emitJson } from '../json.ts';
 import { ensureRelayIgnored } from '../onboarding.ts';
 import { statusMark } from './doctor.ts';
 import { bullet, dim, heading, hint, out, rows, section, success, warning } from '../output.ts';
@@ -16,6 +19,8 @@ export interface InitOptions {
   force?: boolean;
   /** Skips every prompt and writes the detected defaults. Required for CI. */
   yes?: boolean;
+  /** Reports the config as JSON. Implies `--yes`: a form has no JSON form. */
+  json?: boolean;
 }
 
 /**
@@ -51,22 +56,31 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
 export async function runInit(options: InitOptions, deps: InitDeps): Promise<number> {
   const repo = await discoverRepository(process.cwd());
   const path = configPath(repo.root);
+  const json = options.json === true;
 
   const existing = await loadConfig(repo.root);
   const alreadyConfigured = (await readFileOrUndefined(path)) !== undefined;
 
   if (alreadyConfigured && options.force !== true) {
+    // Refusing to overwrite is not a failure, so this reports the config that
+    // is already there and says, in `written`, that it wrote nothing.
+    if (json) return reportConfig(repo, path, existing, deps, { written: false });
     out(warning(`${path} already exists.`));
     out(dim('Re-run with --force to overwrite it.'));
     out();
     printConfig(existing);
-    return 0;
+    return EXIT.success;
   }
 
   const config = structuredClone(alreadyConfigured ? existing : DEFAULT_CONFIG);
 
-  // `--yes` forces the scripted path even on a TTY; everywhere else the
-  // prompter has already decided from stdin and the theme.
+  // `--yes` and `--json` force the scripted path even on a TTY; everywhere else
+  // the prompter has already decided from stdin and the theme.
+  if (json) {
+    await writeConfig(repo.root, config);
+    await ensureGitignore(repo.root);
+    return reportConfig(repo, path, config, deps, { written: true });
+  }
   if (options.yes === true || !deps.prompter.interactive) {
     return writeDetectedConfig(repo, path, config, deps);
   }
@@ -77,10 +91,54 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<num
     if (!isPromptCancelled(error)) throw error;
     out();
     out(warning('Setup cancelled. Nothing was written.'));
-    return 130;
+    return EXIT.cancelled;
   } finally {
     deps.prompter.close();
   }
+}
+
+/**
+ * The same facts `writeDetectedConfig` prints, as a document: what was written,
+ * where, what discovery found, and which agents are actually usable.
+ */
+async function reportConfig(
+  repo: RepositoryInfo,
+  path: string,
+  config: RelayConfig,
+  deps: InitDeps,
+  outcome: { written: boolean },
+): Promise<number> {
+  const discovery = await discoverTestCommand(repo.root, null);
+  const agents = await deps.checkAgents();
+
+  const payload: InitJson = {
+    repository: {
+      root: repo.root,
+      owner: repo.owner,
+      name: repo.name,
+      slug: repo.owner !== null && repo.name !== null ? `${repo.owner}/${repo.name}` : null,
+      defaultBranch: repo.defaultBranch,
+    },
+    configPath: path,
+    written: outcome.written,
+    config: configToJson(config),
+    tests: {
+      discovered: discovery.found,
+      command: discovery.found ? discovery.command.command : null,
+      reason: discovery.found ? discovery.command.reason : discovery.reason,
+    },
+    agents: agents.map(({ entry, check }) => ({
+      name: entry.name,
+      label: entry.label,
+      available: check.status === 'ok',
+      detail: check.detail,
+    })),
+  };
+
+  emitJson('init', payload);
+  // An unusable agent is a precondition nobody has met yet, and a script that
+  // has just configured a repository is exactly who needs to hear that.
+  return payload.agents.every((agent) => agent.available) ? EXIT.success : EXIT.preconditions;
 }
 
 /**

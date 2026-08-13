@@ -21,7 +21,7 @@ import {
 import { WorkflowEngine } from '../../workflow/engine.ts';
 import { resolveCeiling, shortfall } from '../../workflow/delivery.ts';
 import { delivering } from '../../workflow/phases/delivery.ts';
-import type { RunObserver } from '../../workflow/observer.ts';
+import type { RunDisplay, RunObserver } from '../../workflow/observer.ts';
 import { renderSummary } from '../../workflow/summary.ts';
 import { createRunState, type DeliveryStep, type RunState } from '../../workflow/state.ts';
 import { displayPhasesFor, isTerminal, phaseLabel, phaseRole } from '../../workflow/phases.ts';
@@ -35,6 +35,11 @@ import { glyphs } from '../../ui/theme.ts';
 import { formatDuration } from '../../util/text.ts';
 import { createCliContext, type CliContext } from '../context.ts';
 import { offerDelivery } from '../mergeOffer.ts';
+import { EXIT, exitCodeForRun } from '../exit.ts';
+import { emitJson } from '../json.ts';
+import { runToJson } from '../runJson.ts';
+import { RunJsonStream } from '../runStream.ts';
+import { landingOf } from './inspect.ts';
 import {
   changeCount,
   command,
@@ -77,6 +82,8 @@ export interface RunOptions {
   parallelTests?: boolean;
   /** `--tuff`: write this run's pull request, commits and comments like a human. */
   tuff?: boolean;
+  /** `--json`: stream the run as JSON lines instead of drawing a dashboard. */
+  json?: boolean;
   /** `--max-cost <usd>`: stop the run at the first phase boundary past this. */
   maxCost?: string;
   /** `--prompt <text>`: the task itself, with no tracker in the way. */
@@ -302,7 +309,7 @@ export async function runCommand(issueRef: string | undefined, options: RunOptio
     now,
   });
 
-  return executeRun(cli, state, options);
+  return executeRun(cli, state, options, 'run');
 }
 
 /**
@@ -437,7 +444,7 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
       // Nothing left to run, but delivery may still have something to do:
       // a push that failed, or a policy that has been raised since.
       out(`Run ${previous.runId} already completed.`);
-      return deliverRun(previous);
+      return deliverRun(previous, { command: 'resume', ...(options.json === true ? { json: true } : {}) });
     }
     // A failed or cancelled run resumes from the phase it died in, keeping its
     // worktree, sessions and review history.
@@ -455,7 +462,7 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
     out(dim(`Resuming ${previous.runId} from ${previous.phase}.`));
   }
 
-  return executeRun(cli, previous, options);
+  return executeRun(cli, previous, options, 'resume');
 }
 
 /**
@@ -466,9 +473,13 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
  * push, or the policy was `branch` on Friday and is `pr` on Monday. It is the
  * same phase, with the same gates, driven from outside the engine.
  */
-export async function deliverRun(state: RunState, options: { policy?: DeliveryPolicy } = {}): Promise<number> {
+export async function deliverRun(
+  state: RunState,
+  options: { policy?: DeliveryPolicy; json?: boolean; command?: string } = {},
+): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   if (options.policy !== undefined) state.config.workflow.deliver = options.policy;
+  const json = options.json === true;
 
   await delivering({ state, store, observer: cliObserver, signal: new AbortController().signal });
   await store.writeArtifact(RUN_FILES.summary, renderSummary(state));
@@ -477,9 +488,17 @@ export async function deliverRun(state: RunState, options: { policy?: DeliveryPo
   // Reported after the fact, so the ledger describes what just happened rather
   // than what the last run left behind.
   printOutcome(state, store);
-  await offerDelivery(state, store, { observer: cliObserver });
+  // The one interactive step there is. Whatever is parsing a document is not at
+  // a terminal by definition, so `--json` never asks and never blocks on it.
+  if (!json) await offerDelivery(state, store, { observer: cliObserver });
   printNextSteps(state, store);
-  return state.delivery?.steps.some((step) => step.status === 'failed') === true ? 1 : 0;
+
+  // Read from git rather than assumed: delivery may have committed the work, or
+  // may have been unable to, and only the branch itself can say which.
+  const landing = await landingOf(state.repository.root, state);
+  const code = exitCodeForRun(state, landing);
+  if (json) emitJson(options.command ?? 'deliver', { exitCode: code, run: runToJson(state, { landing }) });
+  return code;
 }
 
 /** Minimal observer for the phases run outside the live renderer. */
@@ -491,58 +510,71 @@ const cliObserver: RunObserver = {
   warn: (text) => out(warning(`  ${text}`)),
 };
 
-async function executeRun(cli: CliContext, state: RunState, options: RunOptions): Promise<number> {
+async function executeRun(
+  cli: CliContext,
+  state: RunState,
+  options: RunOptions,
+  command: 'run' | 'resume',
+): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   const controller = new AbortController();
+  const json = options.json === true;
 
-  const renderer = new RunRenderer({
-    // The renderer supplies the mark; this is only what the run is about. A task
-    // with no number is named after where it came from — `./spec.md`, `--prompt`
-    // — because `Issue undefined` says less than nothing.
-    title:
-      state.issue !== undefined && state.issue.number !== null
-        ? `Issue #${state.issue.number}`
-        : state.task !== undefined
-          ? state.task.origin
-          : `Issue ${state.issueRef}`,
-    subtitle: state.issue?.title ?? state.task?.title ?? `run ${state.runId}`,
-    agentNames: {
-      planner: state.config.agents.planner,
-      planReviewer: state.config.agents.planReviewer,
-      implementer: state.config.agents.implementer,
-      codeReviewer: state.config.agents.codeReviewer,
-    },
-    phases: displayPhasesFor(state.config.workflow),
-    ...(options.verbose === true ? { verbose: true } : {}),
-  });
+  // Both displays watch the same engine through the same interface, so nothing
+  // downstream of here knows or cares which one is attached.
+  const stream = json
+    ? new RunJsonStream({ state, command, ...(options.verbose === true ? { verbose: true } : {}) })
+    : undefined;
+  const display: RunDisplay =
+    stream ??
+    new RunRenderer({
+      // The renderer supplies the mark; this is only what the run is about. A
+      // task with no number is named after where it came from — `./spec.md`,
+      // `--prompt` — because `Issue undefined` says less than nothing.
+      title:
+        state.issue !== undefined && state.issue.number !== null
+          ? `Issue #${state.issue.number}`
+          : state.task !== undefined
+            ? state.task.origin
+            : `Issue ${state.issueRef}`,
+      subtitle: state.issue?.title ?? state.task?.title ?? `run ${state.runId}`,
+      agentNames: {
+        planner: state.config.agents.planner,
+        planReviewer: state.config.agents.planReviewer,
+        implementer: state.config.agents.implementer,
+        codeReviewer: state.config.agents.codeReviewer,
+      },
+      phases: displayPhasesFor(state.config.workflow),
+      ...(options.verbose === true ? { verbose: true } : {}),
+    });
 
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight.
   let interrupted = false;
   const onSigint = (): void => {
-    if (interrupted) process.exit(130);
+    if (interrupted) process.exit(EXIT.cancelled);
     interrupted = true;
-    renderer.warn('Cancelling… (press Ctrl-C again to force quit)');
+    display.warn('Cancelling… (press Ctrl-C again to force quit)');
     controller.abort();
     void Promise.all(Object.values(cli.harnesses).map((harness) => harness.cancel()));
   };
   process.on('SIGINT', onSigint);
 
-  renderer.start();
+  display.start();
 
   const context: EngineContext = {
     state,
     store,
     harnesses: cli.harnesses,
     issueProvider: issueProviderFor(cli, state),
-    observer: renderer,
+    observer: display,
     signal: controller.signal,
   };
 
   let finalState: RunState;
   try {
     finalState = await new WorkflowEngine(context).run();
-    renderer.finish(finalState.phase);
+    display.finish(finalState.phase);
   } finally {
     process.off('SIGINT', onSigint);
   }
@@ -550,15 +582,15 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
   printOutcome(finalState, store);
 
   // Delivery took it as far as the policy allows on its own. Landing it is the
-  // one call left, and this is the moment its author is still watching.
-  await offerDelivery(finalState, store);
+  // one call left, and this is the moment its author is still watching — which
+  // a run being piped into something is not, so `--json` never asks.
+  if (!json) await offerDelivery(finalState, store);
   printNextSteps(finalState, store);
 
-  if (finalState.phase === 'CANCELLED') return 130;
-  if (finalState.phase !== 'COMPLETE') return 1;
-  // The run worked; a delivery step that broke did not. That distinction is
-  // invisible to a script unless the exit code carries it.
-  return finalState.delivery?.steps.some((step) => step.status === 'failed') === true ? 1 : 0;
+  const landing = await landingOf(state.repository.root, finalState);
+  const code = exitCodeForRun(finalState, landing);
+  stream?.summary(runToJson(finalState, { landing }), code);
+  return code;
 }
 
 /**

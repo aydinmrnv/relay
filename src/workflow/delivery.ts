@@ -321,7 +321,7 @@ export function resolveCeiling(
 }
 
 /** Blocking code-review findings the implementer did not accept. */
-function unresolvedBlockingFindings(state: RunState): number {
+export function unresolvedBlockingFindings(state: RunState): number {
   let count = 0;
   for (const review of state.reviews) {
     if (review.kind !== 'code') continue;

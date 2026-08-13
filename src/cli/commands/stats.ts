@@ -4,7 +4,9 @@ import { phaseLabel, type Phase } from '../../workflow/phases.ts';
 import { repositoryStats, type RepositoryStats } from '../../workflow/stats.ts';
 import { formatCost } from '../../workflow/usage.ts';
 import { createCliContext } from '../context.ts';
-import { box, dim, emptyState, facts, gridLines, hint, out, raw, rows, section } from '../output.ts';
+import { EXIT } from '../exit.ts';
+import { emitJson } from '../json.ts';
+import { box, dim, emptyState, facts, gridLines, hint, out, rows, section } from '../output.ts';
 
 export interface StatsOptions {
   json?: boolean;
@@ -26,8 +28,8 @@ export async function statsCommand(options: StatsOptions = {}): Promise<number> 
   const stats = repositoryStats(runs);
 
   if (options.json === true) {
-    raw(JSON.stringify(statsToJson(cli.repo.root, stats), null, 2));
-    return 0;
+    emitJson('stats', statsToJson(cli.repo.root, stats));
+    return EXIT.success;
   }
 
   if (stats.runs === 0) {
