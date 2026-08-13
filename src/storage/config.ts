@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import { AGENT_PROVIDERS, isAgentProvider } from '../agents/index.ts';
+import { MERGE_METHODS, type MergeMethod } from '../github/pullRequest.ts';
 import { RelayError } from '../util/errors.ts';
 import { readJsonFile, atomicWriteJson } from './atomic.ts';
 
@@ -32,6 +33,32 @@ export function isRole(value: unknown): value is Role {
 export const PLAN_MODES = ['review', 'inline'] as const;
 export type PlanMode = (typeof PLAN_MODES)[number];
 
+/**
+ * How far a finished run carries its own work, without being asked.
+ *
+ * Delivery is a phase of the run like any other: the pipeline that planned,
+ * reviewed, implemented and tested the change also takes it as far as this
+ * setting allows, and reports each step it took or skipped. The policy is a
+ * ceiling, not a demand — a run with no remote stops at `branch` and says so,
+ * and every step below the ceiling still has to pass its own gate.
+ *
+ * `pr` is the default because it is the end of the work Relay can be
+ * accountable for: the change reaches a place a human reviews it, and no
+ * shared branch has moved.
+ */
+export const DELIVERY_POLICIES = ['none', 'branch', 'push', 'pr', 'merge'] as const;
+export type DeliveryPolicy = (typeof DELIVERY_POLICIES)[number];
+
+export function isDeliveryPolicy(value: unknown): value is DeliveryPolicy {
+  return typeof value === 'string' && (DELIVERY_POLICIES as readonly string[]).includes(value);
+}
+
+export { MERGE_METHODS, type MergeMethod };
+
+function isMergeMethod(value: unknown): value is MergeMethod {
+  return typeof value === 'string' && (MERGE_METHODS as readonly string[]).includes(value);
+}
+
 export interface RelayConfig {
   version: 1;
   agents: Record<Role, AgentProvider>;
@@ -49,8 +76,16 @@ export interface RelayConfig {
     baseBranch: string;
     branchPrefix: string;
     runTests: boolean;
-    /** Commit the finished work to the run branch. Never pushes or merges. */
-    commit: boolean;
+    /** How far the run delivers its own work: commit, push, pull request, merge. */
+    deliver: DeliveryPolicy;
+    /** How `deliver: merge` lands a pull request. Repositories disallow methods. */
+    mergeMethod: MergeMethod;
+    /**
+     * Ask, once, at the end of a run that delivered short of a merge. It is the
+     * only question Relay asks: everything before it is mechanical, and merging
+     * is the step that turns a proposal into the branch other people pull.
+     */
+    offerMerge: boolean;
     /** Extra attempts allowed per agent turn after a transient failure. */
     maxTransientRetries: number;
     /**
@@ -100,7 +135,9 @@ export const DEFAULT_CONFIG: RelayConfig = {
     baseBranch: '',
     branchPrefix: 'relay',
     runTests: true,
-    commit: false,
+    deliver: 'pr',
+    mergeMethod: 'squash',
+    offerMerge: true,
     maxTransientRetries: 2,
     primeReviewers: true,
     concurrentTests: true,
@@ -225,13 +262,29 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       }
       config.workflow.baseBranch = workflow['baseBranch'];
     }
+    if (workflow['deliver'] !== undefined) {
+      if (!isDeliveryPolicy(workflow['deliver'])) {
+        throw new RelayError(`config.workflow.deliver must be one of ${DELIVERY_POLICIES.join(' | ')}.`, {
+          code: 'BAD_CONFIG',
+        });
+      }
+      config.workflow.deliver = workflow['deliver'];
+    }
+    if (workflow['mergeMethod'] !== undefined) {
+      if (!isMergeMethod(workflow['mergeMethod'])) {
+        throw new RelayError(`config.workflow.mergeMethod must be one of ${MERGE_METHODS.join(' | ')}.`, {
+          code: 'BAD_CONFIG',
+        });
+      }
+      config.workflow.mergeMethod = workflow['mergeMethod'];
+    }
     if (workflow['branchPrefix'] !== undefined) {
       if (typeof workflow['branchPrefix'] !== 'string' || workflow['branchPrefix'].length === 0) {
         throw new RelayError('config.workflow.branchPrefix must be a non-empty string.', { code: 'BAD_CONFIG' });
       }
       config.workflow.branchPrefix = workflow['branchPrefix'];
     }
-    for (const key of ['runTests', 'commit', 'primeReviewers', 'concurrentTests'] as const) {
+    for (const key of ['runTests', 'primeReviewers', 'concurrentTests', 'offerMerge'] as const) {
       if (workflow[key] === undefined) continue;
       if (typeof workflow[key] !== 'boolean') {
         throw new RelayError(`config.workflow.${key} must be a boolean.`, { code: 'BAD_CONFIG' });

@@ -11,6 +11,7 @@ export const PHASES = [
   'REVIEWING_CODE',
   'REVISING_CODE',
   'TESTING',
+  'DELIVERING',
   'COMPLETE',
   'FAILED',
   'CANCELLED',
@@ -40,7 +41,10 @@ const FORWARD_TRANSITIONS: Record<Phase, readonly Phase[]> = {
   // Code review either accepts (test) or sends blocking findings back.
   REVIEWING_CODE: ['REVISING_CODE', 'TESTING'],
   REVISING_CODE: ['REVIEWING_CODE'],
-  TESTING: ['COMPLETE'],
+  // Delivery is the last thing the pipeline does, and it is a phase rather than
+  // an epilogue: it is displayed, logged, resumable and recorded like the rest.
+  TESTING: ['DELIVERING'],
+  DELIVERING: ['COMPLETE'],
   COMPLETE: [],
   FAILED: [],
   CANCELLED: [],
@@ -87,6 +91,8 @@ export function phaseLabel(phase: Phase): string {
       return 'Code revision';
     case 'TESTING':
       return 'Tests';
+    case 'DELIVERING':
+      return 'Delivery';
     case 'COMPLETE':
       return 'Complete';
     case 'FAILED':
@@ -108,6 +114,7 @@ export const DISPLAY_PHASES: readonly Phase[] = [
   'IMPLEMENTING',
   'REVIEWING_CODE',
   'TESTING',
+  'DELIVERING',
 ];
 
 export function displayPhaseFor(phase: Phase): Phase | undefined {

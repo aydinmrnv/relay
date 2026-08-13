@@ -253,9 +253,31 @@ function explainRun(config: RelayConfig): void {
     'tests',
   ];
   bullet(sequence.join(' → '));
-  bullet('All of it inside a throwaway git worktree. Relay never pushes, merges, or opens a PR.');
+  bullet('All of it inside a throwaway git worktree — your own branch, index and files are untouched.');
   bullet('A run typically takes 10–20 minutes and spends real tokens on your own CLI accounts.');
-  bullet('`relay stop <run>` cancels one; `relay run <issue> --commit` keeps the work on its branch.');
+  bullet(`It then delivers the work itself: ${deliverySentence(config)}.`);
+  bullet('Delivery never goes past `workflow.deliver`, and every step it skips is reported with the reason.');
+  bullet(
+    config.workflow.deliver === 'merge'
+      ? 'Merging happens automatically, because this repository asked for it.'
+      : 'Merging is the one thing it asks about, once, at the end — and Enter means no.',
+  );
+}
+
+/** What the delivery phase would do in this repository, spelled out. */
+function deliverySentence(config: RelayConfig): string {
+  switch (config.workflow.deliver) {
+    case 'none':
+      return 'nothing — the diff stays in the worktree (workflow.deliver: none)';
+    case 'branch':
+      return 'commits it to the run branch, and stops there';
+    case 'push':
+      return 'commits and pushes the run branch';
+    case 'pr':
+      return 'commits, pushes and opens a pull request';
+    case 'merge':
+      return `commits, pushes, opens a pull request and merges it (${config.workflow.mergeMethod})`;
+  }
 }
 
 function tokenize(input: string): string[] {

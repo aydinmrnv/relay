@@ -11,6 +11,7 @@ import { creatingWorkspace, fetchingIssue, initializing } from './phases/setup.t
 import { planning, reviewingPlan, revisingPlan } from './phases/planning.ts';
 import { implementing, reviewingCode, revisingCode } from './phases/implementation.ts';
 import { testing } from './phases/testing.ts';
+import { delivering } from './phases/delivery.ts';
 
 type PhaseHandler = (context: EngineContext) => Promise<PhaseResult>;
 
@@ -30,6 +31,7 @@ const HANDLERS: Partial<Record<Phase, PhaseHandler>> = {
   REVIEWING_CODE: reviewingCode,
   REVISING_CODE: revisingCode,
   TESTING: testing,
+  DELIVERING: delivering,
 };
 
 /**
@@ -94,9 +96,11 @@ export class WorkflowEngine {
       await cancelBackgroundTests(this.context);
     }
 
-    // Opt-in, and only for a run that finished: a commit is how completed work
-    // stops being a staged index nobody would notice losing.
-    if (state.phase === 'COMPLETE' && state.config.workflow.commit) {
+    // A run that never reached DELIVERING still produced a diff, and that diff
+    // is one `git worktree prune` from being gone. Committing it publishes
+    // nothing and loses nothing — the branch stays local and unpushed, which is
+    // as far as a run that failed or was cancelled has any business going.
+    if (state.phase !== 'COMPLETE' && state.config.workflow.deliver !== 'none' && (state.diff?.fileCount ?? 0) > 0) {
       await commitRunWork(this.context);
     }
 

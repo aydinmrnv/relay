@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { runToJson, type RunJson } from '../src/cli/runJson.ts';
 import { logsCommand, statusCommand } from '../src/cli/commands/inspect.ts';
-import { printOutcome } from '../src/cli/commands/run.ts';
+import { printNextSteps, printOutcome } from '../src/cli/commands/run.ts';
 import { RunStore } from '../src/storage/runs.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunId } from '../src/util/ids.ts';
@@ -279,7 +279,7 @@ describe('relay status --json', () => {
     const state = populatedRun(repo.root);
     state.workspace = { ...state.workspace!, branch: 'relay/142-aaa111', baseSha };
     transition(state, 'FETCHING_ISSUE');
-    for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'COMPLETE'] as const) {
+    for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'DELIVERING', 'COMPLETE'] as const) {
       transition(state, phase);
     }
     await repo.git('branch', 'relay/142-aaa111', baseSha);
@@ -369,6 +369,7 @@ describe('run outcome summary', () => {
       'IMPLEMENTING',
       'REVIEWING_CODE',
       'TESTING',
+      'DELIVERING',
       'COMPLETE',
     ] as const) {
       step(phase);
@@ -380,7 +381,10 @@ describe('run outcome summary', () => {
     const state = completed(repo.root);
     const store = await persist(state);
 
-    const output = await capture(async () => printOutcome(state, store));
+    const output = await capture(async () => {
+      printOutcome(state, store);
+      printNextSteps(state, store);
+    });
 
     assert.match(output, /Run complete/);
     // Where the time went, with revision rounds folded into their review.
@@ -400,9 +404,13 @@ describe('run outcome summary', () => {
     const state = completed(repo.root);
     const store = await persist(state);
 
-    const output = await capture(async () => printOutcome(state, store));
+    const output = await capture(async () => {
+      printOutcome(state, store);
+      printNextSteps(state, store);
+    });
     assert.match(output, /Commit\s+none — the work is staged but uncommitted/);
-    assert.match(output, new RegExp(`relay resume ${state.runId} --commit`));
+    // Delivery is idempotent, so the way out of this state is to run it again.
+    assert.match(output, new RegExp(`relay deliver ${state.runId}`));
   });
 
   it('says nothing about committing when the run already committed', async () => {
@@ -415,9 +423,16 @@ describe('run outcome summary', () => {
     };
     const store = await persist(state);
 
-    const output = await capture(async () => printOutcome(state, store));
+    const output = await capture(async () => {
+      printOutcome(state, store);
+      printNextSteps(state, store);
+    });
     assert.match(output, /Commit\s+aaaaaaaa on relay\/142-aaa111/);
     assert.ok(!output.includes('--commit'), output);
+    // Nothing recorded a shortfall, so the closing line offers the next stage
+    // rather than explaining a blocker that does not exist.
+    assert.match(output, /The work is on relay\/142-aaa111/);
+    assert.match(output, new RegExp(`relay deliver ${state.runId} --to pr`));
   });
 
   it('names the agent that failed, the phase, and the two useful commands', async () => {
@@ -430,7 +445,10 @@ describe('run outcome summary', () => {
     transition(state, 'FAILED');
     const store = await persist(state);
 
-    const output = await capture(async () => printOutcome(state, store));
+    const output = await capture(async () => {
+      printOutcome(state, store);
+      printNextSteps(state, store);
+    });
 
     assert.match(output, /Run failed during Implementation/);
     // The implementer is codex by default: the report names it rather than
@@ -449,7 +467,10 @@ describe('run outcome summary', () => {
     transition(state, 'CANCELLED');
     const store = await persist(state);
 
-    const output = await capture(async () => printOutcome(state, store));
+    const output = await capture(async () => {
+      printOutcome(state, store);
+      printNextSteps(state, store);
+    });
     assert.match(output, /Run cancelled/);
     assert.match(output, new RegExp(`relay resume ${state.runId}`));
   });

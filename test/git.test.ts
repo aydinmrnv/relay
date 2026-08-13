@@ -1,7 +1,9 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { rm, writeFile, mkdir } from 'node:fs/promises';
+import { rm, readFile, writeFile, mkdir } from 'node:fs/promises';
+
+import { runProcess } from '../src/process/runner.ts';
 
 import {
   assertRemovableWorktreePath,
@@ -16,6 +18,7 @@ import {
 import { discoverRepository, resolveBaseRef } from '../src/git/repository.ts';
 import { snapshotDiff, formatDiffStat } from '../src/git/diff.ts';
 import { buildCommitMessage, commitWorktree, describeLanding } from '../src/git/commit.ts';
+import { hasRemote, mergeBranch, mergeReadiness, pushBranch } from '../src/git/publish.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
@@ -254,5 +257,136 @@ describe('git integration', () => {
     // The branch survives: it holds the only copy of the run's work.
     const branches = await repo.git('branch', '--list', 'relay/500-rm0001');
     assert.match(branches, /relay\/500-rm0001/);
+  });
+});
+
+/**
+ * Publishing, against real git and a real remote.
+ *
+ * These are the operations that move something outside the run's worktree, so
+ * they are worth testing against git itself: a push either updates a ref in
+ * another repository or it does not, and a merge either lands in the user's
+ * checkout or leaves it exactly as it was.
+ */
+describe('publishing a run branch', () => {
+  let repo: TempRepo;
+  let remote: string;
+
+  before(async () => {
+    repo = await createTempRepo();
+    process.env['RELAY_HOME'] = repo.relayHome;
+
+    remote = join(repo.relayHome, 'origin.git');
+    await mkdir(remote, { recursive: true });
+    await runProcess('git', ['init', '--bare', '-q', '-b', 'main', remote], { cwd: repo.root });
+    await repo.git('remote', 'add', 'origin', remote);
+    await repo.git('push', '-q', 'origin', 'main');
+  });
+
+  after(async () => {
+    delete process.env['RELAY_HOME'];
+    await repo.cleanup();
+  });
+
+  it('pushes the run branch and sets its upstream', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issueNumber: 700, runShortId: 'push01' });
+    await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 700;\n', 'utf8');
+    await commitWorktree(worktree.path, { subject: 'work for 700' });
+
+    assert.equal(await hasRemote(repo.root), true);
+    const result = await pushBranch(repo.root, worktree.branch);
+
+    assert.equal(result.remote, 'origin');
+    const remoteRefs = await repo.git('ls-remote', '--heads', 'origin', worktree.branch);
+    assert.match(remoteRefs, new RegExp(result.sha));
+    assert.equal(await repo.git('rev-parse', `${worktree.branch}@{upstream}`), result.sha);
+  });
+
+  it('refuses to merge into a branch the user is not on, or a dirty tree', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issueNumber: 701, runShortId: 'mrg001' });
+    await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 701;\n', 'utf8');
+    await commitWorktree(worktree.path, { subject: 'work for 701' });
+
+    assert.deepEqual(await mergeReadiness(repo.root, 'main'), { ok: true });
+
+    // A branch other than the base is the common case: it is the reason the
+    // option carries its reason instead of failing halfway through a merge.
+    await repo.git('checkout', '-q', '-b', 'sidetrack');
+    const elsewhere = await mergeReadiness(repo.root, 'main');
+    assert.equal(elsewhere.ok, false);
+    assert.match(elsewhere.reason ?? '', /sidetrack/);
+    await repo.git('checkout', '-q', 'main');
+
+    await writeFile(join(repo.root, 'untracked.txt'), 'in the way\n', 'utf8');
+    const dirty = await mergeReadiness(repo.root, 'main');
+    assert.equal(dirty.ok, false);
+    assert.match(dirty.reason ?? '', /uncommitted/);
+    await rm(join(repo.root, 'untracked.txt'));
+
+    const merged = await mergeBranch(repo.root, { branch: worktree.branch, into: 'main', message: 'Merge 701' });
+    assert.equal(merged.into, 'main');
+    assert.equal(merged.fastForward, true);
+    assert.equal(await repo.git('rev-parse', 'HEAD'), merged.sha);
+    // The work is in the user's own files afterwards, which is the point.
+    assert.match(await readFile(join(repo.root, 'src', 'app.ts'), 'utf8'), /701/);
+  });
+
+  it('refuses to merge into whatever branch happens to be checked out', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issueNumber: 703, runShortId: 'grd001' });
+    await writeFile(join(worktree.path, 'src', 'guard.ts'), 'export const guarded = true;\n', 'utf8');
+    await commitWorktree(worktree.path, { subject: 'work for 703' });
+
+    // The check is not the caller's job: `git merge` merges into HEAD, so a
+    // merge asked for while standing somewhere else must not quietly land there.
+    await repo.git('checkout', '-q', '-b', 'somewhere-else');
+    await assert.rejects(
+      () => mergeBranch(repo.root, { branch: worktree.branch, into: 'main' }),
+      (error: unknown) => error instanceof RelayError && error.code === 'MERGE_BLOCKED',
+    );
+    assert.equal(await repo.git('rev-parse', '--abbrev-ref', 'HEAD'), 'somewhere-else');
+    await repo.git('checkout', '-q', 'main');
+
+    // Same refusal for a tree with work in it that the merge would disturb.
+    await writeFile(join(repo.root, 'in-progress.txt'), 'mine\n', 'utf8');
+    await assert.rejects(
+      () => mergeBranch(repo.root, { branch: worktree.branch, into: 'main' }),
+      (error: unknown) => error instanceof RelayError && error.code === 'MERGE_BLOCKED',
+    );
+    await rm(join(repo.root, 'in-progress.txt'));
+  });
+
+  it('does not count Relay\'s own run record as the user\'s uncommitted work', async () => {
+    // `.relay/` is written by the run that is asking. A repository that never
+    // gitignored it would otherwise be permanently unmergeable, blocked by the
+    // evidence of the very work it is trying to merge.
+    await mkdir(join(repo.root, '.relay', 'runs', '20260812T210000-abc123'), { recursive: true });
+    await writeFile(join(repo.root, '.relay', 'runs', '20260812T210000-abc123', 'state.json'), '{}\n', 'utf8');
+
+    assert.deepEqual(await mergeReadiness(repo.root, 'main'), { ok: true });
+    await rm(join(repo.root, '.relay'), { recursive: true, force: true });
+  });
+
+  it('restores the checkout when a merge conflicts instead of leaving markers behind', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issueNumber: 702, runShortId: 'cnf001' });
+    await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 702;\n', 'utf8');
+    await commitWorktree(worktree.path, { subject: 'work for 702' });
+
+    // The same line, changed differently on the base branch.
+    await writeFile(join(repo.root, 'src', 'app.ts'), 'export const value = 999;\n', 'utf8');
+    await repo.commit('conflicting change on main');
+    const before = await repo.git('rev-parse', 'HEAD');
+
+    await assert.rejects(
+      () => mergeBranch(repo.root, { branch: worktree.branch, into: 'main' }),
+      (error: unknown) => error instanceof RelayError && error.code === 'MERGE_FAILED',
+    );
+
+    assert.equal(await repo.git('rev-parse', 'HEAD'), before);
+    assert.equal(await repo.git('status', '--porcelain'), '');
+    assert.match(await readFile(join(repo.root, 'src', 'app.ts'), 'utf8'), /999/);
   });
 });

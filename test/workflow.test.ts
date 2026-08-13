@@ -56,6 +56,8 @@ describe('phase machine', () => {
       'IMPLEMENTING',
       'REVIEWING_CODE',
       'TESTING',
+      // Delivery is the last phase, not an epilogue after the run.
+      'DELIVERING',
       'COMPLETE',
     ];
     for (let i = 0; i < path.length - 1; i += 1) {

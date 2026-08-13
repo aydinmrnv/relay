@@ -174,7 +174,7 @@ async function printLanding(repoRoot: string, state: RunState): Promise<void> {
   out();
   out(warning('Unlanded: this run\'s changes are staged in its worktree but never committed.'));
   hint('A `git worktree prune` or `git reset` would discard them.');
-  hint(`relay resume ${state.runId} --commit   # commit them to ${state.workspace?.branch ?? 'the run branch'}`);
+  hint(`relay deliver ${state.runId}   # run the delivery again: commit, push, pull request, merge`);
 }
 
 /** Progress view for a run that has not finished yet. */

@@ -1,4 +1,6 @@
 import type { Landing } from '../git/commit.ts';
+import type { DeliveryPolicy } from '../storage/config.ts';
+import type { DeliveryStep } from '../workflow/state.ts';
 import type { Decision } from '../reviews/types.ts';
 import type { Phase } from '../workflow/phases.ts';
 import { isTerminal, phaseLabel } from '../workflow/phases.ts';
@@ -49,6 +51,21 @@ export interface RunJson {
   landing: Landing;
   unlanded: boolean;
   commit: { sha: string; branch: string; subject: string; at: string } | null;
+
+  /**
+   * Where the work went. Each is `null` until the delivery phase took that step,
+   * and `delivery` explains the gaps: which steps ran, which did not, and why.
+   */
+  push: { remote: string; branch: string; sha: string; at: string } | null;
+  pullRequest: { url: string; number: number | null; base: string; head: string; at: string } | null;
+  merge: { into: string; via: 'local' | 'pull-request'; sha?: string; fastForward?: boolean; url?: string; at: string } | null;
+  /** Every delivery step, including the ones that were skipped and why. */
+  delivery: {
+    policy: DeliveryPolicy;
+    reached: DeliveryPolicy;
+    steps: Array<{ step: DeliveryStep; status: 'done' | 'skipped' | 'failed'; detail: string; at: string }>;
+    at: string;
+  } | null;
 
   tests: {
     discovered: boolean;
@@ -178,6 +195,11 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
       commit === undefined
         ? null
         : { sha: commit.sha, branch: commit.branch, subject: commit.subject, at: commit.at },
+
+    push: state.push ?? null,
+    pullRequest: state.pullRequest ?? null,
+    merge: state.merge ?? null,
+    delivery: state.delivery ?? null,
 
     tests:
       tests === undefined

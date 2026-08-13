@@ -5,6 +5,10 @@ import { parseIssueRef, normalizeGhIssue, GitHubIssueProvider } from '../src/git
 import { renderIssueMarkdown } from '../src/github/types.ts';
 import { parseRemoteUrl } from '../src/git/repository.ts';
 import { RelayError } from '../src/util/errors.ts';
+import { pullRequestNumber } from '../src/github/pullRequest.ts';
+import { pullRequestDraft } from '../src/workflow/publishRun.ts';
+import { DEFAULT_CONFIG } from '../src/storage/config.ts';
+import { createRunState, type RunState } from '../src/workflow/state.ts';
 
 describe('issue reference parsing', () => {
   it('accepts a bare number, a hash number, and owner/repo#number', () => {
@@ -144,5 +148,67 @@ describe('git remote parsing', () => {
 
   it('returns null for something that is not a remote URL', () => {
     assert.equal(parseRemoteUrl('not a url'), null);
+  });
+});
+
+describe('pull request drafts', () => {
+  /** A finished run with everything the body reports. */
+  function run(): RunState {
+    const state = createRunState({
+      runId: '20260812T203625-bg6pcf',
+      shortId: 'bg6pcf',
+      issueRef: '13',
+      repository: { root: '/repo', owner: 'acme', name: 'widgets', defaultBranch: 'main' },
+      config: structuredClone(DEFAULT_CONFIG),
+      now: new Date('2026-08-12T10:00:00Z'),
+    });
+    state.issue = { number: 13, title: 'Give the CLI a framed interface', url: 'https://x/13', state: 'open' };
+    state.workspace = {
+      path: '/worktree',
+      branch: 'relay/13-ce2ubs',
+      baseSha: 'b'.repeat(40),
+      baseRef: 'refs/heads/main',
+      baseBranch: 'main',
+    };
+    state.diff = { fileCount: 3, additions: 40, deletions: 7, files: [], patchFile: 'p', at: '2026-08-12T10:05:00Z' };
+    state.rounds = { planReview: 2, codeReview: 1 };
+    state.planApproved = true;
+    state.tests = {
+      discovered: true,
+      command: ['npm', 'test'],
+      reason: 'package.json',
+      exitCode: 0,
+      passed: true,
+      durationMs: 12_000,
+      timedOut: false,
+      at: '2026-08-12T10:04:00Z',
+    };
+    return state;
+  }
+
+  it('describes the run from its own evidence, and closes the issue', () => {
+    const draft = pullRequestDraft(run());
+
+    assert.equal(draft.title, 'Give the CLI a framed interface (#13)');
+    assert.equal(draft.base, 'main');
+    assert.equal(draft.head, 'relay/13-ce2ubs');
+    assert.equal(draft.repo, 'acme/widgets');
+    assert.match(draft.body, /Plan review: 2 round\(s\), plan approved/);
+    assert.match(draft.body, /Code review: 1 round\(s\) by claude/);
+    assert.match(draft.body, /Changes: 3 file\(s\), \+40 −7/);
+    assert.match(draft.body, /Tests: `npm test` passed/);
+    assert.match(draft.body, /Closes #13/);
+  });
+
+  it('says a test suite failed rather than leaving it out', () => {
+    const state = run();
+    state.tests = { ...state.tests!, passed: false, exitCode: 1 };
+
+    assert.match(pullRequestDraft(state).body, /Tests: `npm test` FAILED \(exit 1\)/);
+  });
+
+  it('reads the number out of the URL gh reports', () => {
+    assert.equal(pullRequestNumber('https://github.com/acme/widgets/pull/21'), 21);
+    assert.equal(pullRequestNumber('https://github.com/acme/widgets'), null);
   });
 });

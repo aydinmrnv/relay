@@ -360,7 +360,16 @@ describe('inline planning', () => {
     assert.equal(final.phase, 'COMPLETE');
     assert.deepEqual(
       final.history.map((entry) => entry.phase),
-      ['INITIALIZING', 'FETCHING_ISSUE', 'CREATING_WORKSPACE', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'COMPLETE'],
+      [
+        'INITIALIZING',
+        'FETCHING_ISSUE',
+        'CREATING_WORKSPACE',
+        'IMPLEMENTING',
+        'REVIEWING_CODE',
+        'TESTING',
+        'DELIVERING',
+        'COMPLETE',
+      ],
     );
     assert.equal(final.rounds.planReview, 0);
     assert.equal(workTurns(harnesses.claude, 'planner').length, 0);
@@ -407,6 +416,7 @@ describe('inline planning', () => {
       'IMPLEMENTING',
       'REVIEWING_CODE',
       'TESTING',
+      'DELIVERING',
     ]);
     assert.ok(displayPhasesFor('review').includes('PLANNING'));
   });

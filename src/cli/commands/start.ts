@@ -394,17 +394,35 @@ function showTour(config: RelayConfig): void {
   );
 
   out();
+  out(`  ${bold('How a run ends')}  ${dim(`workflow.deliver: ${config.workflow.deliver}`)}`);
+  rows(
+    [
+      { label: 'Delivery', value: `${deliveryStep(config)} — a phase of the run, not a question afterwards` },
+      { label: 'Gated', value: 'each step runs only if the one it depends on did; skipped steps say why' },
+      { label: 'Honest', value: 'failed tests or unanswered blocking findings open the pull request as a draft' },
+      {
+        label: 'Merging',
+        value: config.workflow.offerMerge
+          ? 'asked once at the end, and only when it is possible — Enter is no'
+          : dim('never asked (workflow.offerMerge: false)'),
+      },
+      { label: 'Again', value: '`relay deliver <run>` re-runs it; steps already done are skipped, not repeated' },
+    ],
+    '    ',
+  );
+
+  out();
   out(`  ${bold('What Relay never does')}`);
   rows(
     [
-      { label: 'Publish', value: 'never pushes, never merges, never opens a PR' },
+      { label: 'Past the policy', value: `nothing beyond \`${config.workflow.deliver}\` — no merge unless you set one` },
       { label: 'Your tree', value: `untouched — a run works in a throwaway worktree under ${workspacesRoot()}` },
       { label: 'Credentials', value: 'never read, never prompted for, never stored — each CLI owns its own' },
     ],
     '    ',
   );
   out();
-  hint('`relay stop <run>` cancels a run; `relay run <issue> --commit` keeps the work on its branch.');
+  hint('`relay stop <run>` cancels a run; `relay run <issue> --deliver branch` keeps the work local.');
 }
 
 /** Step 6 — the run itself, or a rehearsal of one that spends nothing. */
@@ -503,10 +521,8 @@ function rehearseRun(repo: RepositoryInfo, config: RelayConfig, issueRef: string
           : dim('skipped (workflow.runTests is false)'),
       },
       {
-        label: 'Finish',
-        value: config.workflow.commit
-          ? 'commit the work to the run branch (still never pushed)'
-          : `leave the work staged in the worktree  ${dim('(--commit keeps it on the branch)')}`,
+        label: 'Deliver',
+        value: `${deliveryStep(config)}  ${dim(`(workflow.deliver: ${config.workflow.deliver})`)}`,
       },
     ],
     '    ',
@@ -517,6 +533,22 @@ function rehearseRun(repo: RepositoryInfo, config: RelayConfig, issueRef: string
   command(`relay run ${issueRef}`);
   out();
   return 0;
+}
+
+/** What the last phase of a run would actually do, in this repository's config. */
+function deliveryStep(config: RelayConfig): string {
+  switch (config.workflow.deliver) {
+    case 'none':
+      return 'leave the work staged in the worktree';
+    case 'branch':
+      return 'commit to the run branch';
+    case 'push':
+      return 'commit and push the run branch';
+    case 'pr':
+      return 'commit, push and open a pull request';
+    case 'merge':
+      return `commit, push, open a pull request and merge it (${config.workflow.mergeMethod})`;
+  }
 }
 
 function agentStep(agent: string, capability: string, timeoutMs: number, produces: string): string {

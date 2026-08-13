@@ -68,10 +68,26 @@ describe('config', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxPlanReviewRounds: 1.5 } }), RelayError);
   });
 
-  it('keeps committing opt-in and validates the flag', () => {
-    assert.equal(DEFAULT_CONFIG.workflow.commit, false);
-    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { commit: true } }).workflow.commit, true);
-    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { commit: 'yes' } }), RelayError);
+  it('delivers as far as a pull request by default, and validates the policy', () => {
+    // The default is the end of the work Relay can be accountable for: the
+    // change reaches review, and no shared branch has moved.
+    assert.equal(DEFAULT_CONFIG.workflow.deliver, 'pr');
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { deliver: 'merge' } }).workflow.deliver, 'merge');
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { deliver: 'none' } }).workflow.deliver, 'none');
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { deliver: 'yolo' } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { deliver: true } }), RelayError);
+  });
+
+  it('offers the merge by default, and lets a repository turn the question off', () => {
+    assert.equal(DEFAULT_CONFIG.workflow.offerMerge, true);
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { offerMerge: false } }).workflow.offerMerge, false);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { offerMerge: 'sometimes' } }), RelayError);
+  });
+
+  it('validates the merge method, which repositories are allowed to forbid', () => {
+    assert.equal(DEFAULT_CONFIG.workflow.mergeMethod, 'squash');
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { mergeMethod: 'rebase' } }).workflow.mergeMethod, 'rebase');
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { mergeMethod: 'fast-forward' } }), RelayError);
   });
 
   it('bounds the transient retry count', () => {

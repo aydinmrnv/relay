@@ -66,9 +66,28 @@ export function renderSummary(state: RunState): string {
   }
 
   if (state.commit !== undefined) {
-    lines.push(`- Commit: \`${state.commit.sha.slice(0, 8)}\` on \`${state.commit.branch}\` (local; never pushed)`);
+    lines.push(
+      `- Commit: \`${state.commit.sha.slice(0, 8)}\` on \`${state.commit.branch}\`` +
+        (state.push === undefined ? ' (local only)' : ''),
+    );
   } else if (state.phase === 'COMPLETE' && (state.diff?.fileCount ?? 0) > 0) {
     lines.push('- Commit: none — the work is staged in the worktree but **not committed**');
+  }
+
+  // Where the work went. The delivery phase writes these; nothing else can.
+  if (state.push !== undefined) {
+    lines.push(`- Pushed: \`${state.push.branch}\` to \`${state.push.remote}\` at ${state.push.at}`);
+  }
+  if (state.pullRequest !== undefined) {
+    lines.push(`- Pull request: ${state.pullRequest.url} (into \`${state.pullRequest.base}\`)`);
+  }
+  if (state.merge !== undefined) {
+    lines.push(
+      state.merge.via === 'pull-request'
+        ? `- Merged: ${state.merge.url ?? 'the pull request'} into \`${state.merge.into}\``
+        : `- Merged: into \`${state.merge.into}\` at \`${state.merge.sha?.slice(0, 8) ?? 'HEAD'}\`` +
+            `${state.merge.fastForward === true ? ' (fast-forward)' : ''}`,
+    );
   }
 
   const usage = state.usage;
@@ -122,15 +141,39 @@ export function renderSummary(state: RunState): string {
     lines.push('');
   }
 
+  const delivery = state.delivery;
+  if (delivery !== undefined) {
+    // The ledger, including the steps that did not run: a pull request that was
+    // never opened and one that could not be are different outcomes.
+    lines.push('## Delivery');
+    lines.push('');
+    lines.push(
+      `Policy \`${delivery.policy}\`, reached \`${delivery.reached}\`.` +
+        (delivery.reached === delivery.policy ? '' : ' It did not get as far as it was asked to.'),
+    );
+    lines.push('');
+    for (const step of delivery.steps) {
+      const mark = step.status === 'done' ? 'x' : ' ';
+      lines.push(`- [${mark}] **${step.step}** — ${step.status === 'done' ? step.detail : `${step.status}: ${step.detail}`}`);
+    }
+    lines.push('');
+  }
+
   lines.push('## Next steps');
   lines.push('');
-  lines.push('Relay does not push, merge, or open pull requests. The work is on its branch only.');
+  lines.push(
+    state.pullRequest !== undefined
+      ? `Review it at ${state.pullRequest.url}.`
+      : state.merge !== undefined
+        ? `Merged into \`${state.merge.into}\`.`
+        : 'The work is on its own branch and has not been published.',
+  );
   lines.push('');
   if (state.workspace !== undefined) {
     lines.push('```bash');
-    lines.push(`relay diff ${state.runId}          # review the full diff`);
-    if (state.commit === undefined && (state.diff?.fileCount ?? 0) > 0) {
-      lines.push(`relay resume ${state.runId} --commit   # commit it to the run branch`);
+    lines.push(`relay diff ${state.runId}            # review the full diff`);
+    if (state.merge === undefined) {
+      lines.push(`relay deliver ${state.runId}         # take the delivery further`);
     }
     lines.push(`cd ${state.workspace.path}`);
     lines.push(`git log --oneline ${state.workspace.baseBranch}..HEAD`);

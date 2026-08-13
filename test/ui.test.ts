@@ -517,6 +517,7 @@ describe('phase timings', () => {
     'IMPLEMENTING',
     'REVIEWING_CODE',
     'TESTING',
+    'DELIVERING',
     'COMPLETE',
   ];
 
@@ -543,6 +544,7 @@ describe('phase timings', () => {
         'IMPLEMENTING',
         'REVIEWING_CODE',
         'TESTING',
+        'DELIVERING',
         'COMPLETE',
       ],
       5_000,
