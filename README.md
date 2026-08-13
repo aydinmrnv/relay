@@ -652,7 +652,13 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
     "maxCostUsd": null,
     "confirmAboveUsd": null
   },
-  "tests": { "command": null }
+  "tests": { "command": null },
+  "tracking": {
+    "enabled": false,
+    "plugin": "relay/<version> relay-wakatime/<version>",
+    "project": null,
+    "includeAgentPhases": true
+  }
 }
 ```
 
@@ -679,6 +685,19 @@ reaching for before turning a review off.
 | `workflow.concurrentTests` | run the suite during the code review rather than after it |
 | `timeouts.primingMs` | cap on a read-ahead turn, which is speculative and must not stall a run |
 | `timeouts.primeGraceMs` | how long a review waits for a read-ahead that has not landed; past it the reader is abandoned and the review starts cold |
+| `tracking.enabled` | opt in to WakaTime-compatible reporting of Relay orchestration (default `false`) |
+| `tracking.includeAgentPhases` | report during agent-driven phases too (default `true`); disable to reduce overlap with agent CLIs |
+
+Tracking invokes `~/.wakatime/wakatime-cli`, which owns its endpoint and
+authentication. Relay never reads or writes `~/.wakatime.cfg`, accepts no
+tracker API key, and passes no key in process arguments. Each heartbeat sends
+the project name (the repository name unless overridden), absolute worktree
+path as the entity, run branch, plugin string, `coding` category, and heartbeat
+timestamp. A missing or failing CLI produces one notice and cannot fail a run.
+
+Agent CLIs and editor extensions may report overlapping activity; Relay neither
+relabels nor suppresses it. Users with shell-level tracking may add
+`~/.relay/workspaces/` to the `exclude` patterns in `~/.wakatime.cfg`.
 
 ## Requirements
 

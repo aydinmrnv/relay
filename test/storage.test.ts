@@ -12,6 +12,14 @@ import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
 describe('config', () => {
+  it('validates tracking configuration', () => {
+    assert.equal(DEFAULT_CONFIG.tracking.enabled, false);
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { tracking: { enabled: true } }).tracking.enabled, true);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { tracking: true }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { tracking: { enabled: 'yes' } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { tracking: { plugin: '' } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { tracking: { project: 42 } }), RelayError);
+  });
   it('returns defaults when no config file exists', async () => {
     const repo = await createTempRepo();
     try {

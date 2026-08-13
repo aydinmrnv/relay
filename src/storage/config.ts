@@ -153,6 +153,12 @@ export interface RelayConfig {
     /** Overrides discovery entirely, e.g. `["npm", "test"]`. */
     command: string[] | null;
   };
+  tracking: {
+    enabled: boolean;
+    plugin: string;
+    project: string | null;
+    includeAgentPhases: boolean;
+  };
 }
 
 /**
@@ -207,6 +213,12 @@ export const DEFAULT_CONFIG: RelayConfig = {
   },
   tests: {
     command: null,
+  },
+  tracking: {
+    enabled: false,
+    plugin: 'relay/<version> relay-wakatime/<version>',
+    project: null,
+    includeAgentPhases: true,
   },
 };
 
@@ -442,6 +454,30 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       config.tests.command = command as string[];
     } else if (command === null) {
       config.tests.command = null;
+    }
+  }
+
+  const tracking = raw['tracking'];
+  if (tracking !== undefined) {
+    if (!isRecord(tracking)) throw new RelayError('config.tracking must be an object.', { code: 'BAD_CONFIG' });
+    for (const key of ['enabled', 'includeAgentPhases'] as const) {
+      if (tracking[key] === undefined) continue;
+      if (typeof tracking[key] !== 'boolean') {
+        throw new RelayError(`config.tracking.${key} must be a boolean.`, { code: 'BAD_CONFIG' });
+      }
+      config.tracking[key] = tracking[key];
+    }
+    if (tracking['plugin'] !== undefined) {
+      if (typeof tracking['plugin'] !== 'string' || tracking['plugin'].trim().length === 0) {
+        throw new RelayError('config.tracking.plugin must be a non-empty string.', { code: 'BAD_CONFIG' });
+      }
+      config.tracking.plugin = tracking['plugin'];
+    }
+    if (tracking['project'] !== undefined) {
+      if (tracking['project'] !== null && typeof tracking['project'] !== 'string') {
+        throw new RelayError('config.tracking.project must be a string or null.', { code: 'BAD_CONFIG' });
+      }
+      config.tracking.project = tracking['project'] as string | null;
     }
   }
 

@@ -22,6 +22,7 @@ export interface ConfigJson {
   };
   /** `null` means "discovered per run", which is not the same as "none". */
   tests: { command: string[] | null };
+  tracking: { enabled: boolean; includeAgentPhases: boolean };
 }
 
 export function configToJson(config: RelayConfig): ConfigJson {
@@ -44,6 +45,10 @@ export function configToJson(config: RelayConfig): ConfigJson {
       baseBranch: config.workflow.baseBranch.length > 0 ? config.workflow.baseBranch : null,
     },
     tests: { command: config.tests.command },
+    tracking: {
+      enabled: config.tracking.enabled,
+      includeAgentPhases: config.tracking.includeAgentPhases,
+    },
   };
 }
 
