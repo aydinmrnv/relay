@@ -305,6 +305,21 @@ describe('the delivery phase', () => {
     assert.match((await store.readArtifact('summary.md')) ?? '', /## Delivery/);
   });
 
+  it('writes the commit message with typos under --tuff, and the trailers without', async () => {
+    const { state, store, observer } = await realRun('branch', 'del002');
+    state.config.workflow.typos = true;
+    // The typos are seeded on the run id, so the test pins one rather than
+    // asserting against whichever id this run happened to be given.
+    state.runId = '20260812T100000-tuff06';
+
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+
+    const message = await repo.git('log', '-1', '--format=%B', state.workspace!.branch);
+    assert.equal(state.commit?.subject, 'Take the serial waitnig out of a run (#13)');
+    assert.match(message, /#13/, 'the issue number is not the orchestrator\'s to mistype');
+    assert.match(message, /^Issue: https:\/\/x\/13$/m);
+  });
+
   it('stops at the commit when there is nowhere to push, and says so out loud', async () => {
     const { state, store, observer } = await realRun('pr');
 

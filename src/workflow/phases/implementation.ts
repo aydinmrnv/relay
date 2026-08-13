@@ -13,6 +13,7 @@ import { beginMarker, endMarker, extractSection } from '../../reviews/protocol.t
 import { parseReview, parseFindingResponses, REVIEW_JSON_SCHEMA } from '../../reviews/parse.ts';
 import { isBlocking, type ReviewRound } from '../../reviews/types.ts';
 import { discoverTestCommand } from '../../testing/discovery.ts';
+import { reviewsCode } from '../../storage/config.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import { runAgentTurn, runStructuredTurn } from '../agentRunner.ts';
 import { cancelBackgroundTests, startBackgroundTests } from '../backgroundTests.ts';
@@ -84,25 +85,31 @@ export async function implementing(context: EngineContext): Promise<PhaseResult>
     observer.warn('Implementing a plan that was not approved by the reviewer.');
   }
 
+  const reviewed = reviewsCode(state.config);
   const discovery = await discoverTestCommand(prompts.worktreePath, state.config.tests.command);
   const relayRunsTests = state.config.workflow.runTests && state.config.workflow.concurrentTests;
   const promptOptions = {
     ...prompts,
     plan: plan ?? '',
     relayRunsTests,
+    reviewed,
+    typos: state.config.workflow.typos,
     ...(discovery.found ? { testCommand: discovery.command.command } : {}),
   };
 
   // The code reviewer reads the issue and the plan while the code is written,
-  // so its review turn is spent on the diff rather than on the codebase.
-  startPriming(context, {
-    role: 'codeReviewer',
-    prompt: buildReviewPrimingPrompt(prompts, {
-      subject: 'implementation',
-      ...(plan === undefined ? {} : { plan }),
-    }),
-    phase: 'REVIEWING_CODE',
-  });
+  // so its review turn is spent on the diff rather than on the codebase. A run
+  // with no review turn has nothing to read ahead for.
+  if (reviewed) {
+    startPriming(context, {
+      role: 'codeReviewer',
+      prompt: buildReviewPrimingPrompt(prompts, {
+        subject: 'implementation',
+        ...(plan === undefined ? {} : { plan }),
+      }),
+      phase: 'REVIEWING_CODE',
+    });
+  }
 
   const session = await runAgentTurn(context, {
     role: 'implementer',
@@ -139,6 +146,13 @@ export async function implementing(context: EngineContext): Promise<PhaseResult>
   startBackgroundTests(context);
 
   observer.note(`Implementation: ${formatDiffStat(snapshot)}`);
+  if (!reviewed) {
+    // Said out loud every time. A skipped review is the one thing about a fast
+    // run that changes what its diff is worth, and a run that stayed quiet
+    // about it looks exactly like a run that was reviewed and approved.
+    observer.warn('No code review on this run: the diff was read by nobody but its author.');
+    return { next: 'TESTING', note: `${formatDiffStat(snapshot)} · no code review` };
+  }
   return { next: 'REVIEWING_CODE', note: formatDiffStat(snapshot) };
 }
 
@@ -242,6 +256,7 @@ export async function revisingCode(context: EngineContext): Promise<PhaseResult>
       maxRounds: state.config.workflow.maxCodeReviewRounds,
       reviewerName: providerNameFor(context, 'codeReviewer'),
       relayRunsTests: state.config.workflow.runTests && state.config.workflow.concurrentTests,
+      typos: state.config.workflow.typos,
       ...(lastReview.summary === undefined ? {} : { reviewSummary: lastReview.summary }),
     }),
     capability: 'write',

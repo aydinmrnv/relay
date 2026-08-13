@@ -410,7 +410,7 @@ describe('inline planning', () => {
   });
 
   it('leaves the two plan steps off the progress checklist', () => {
-    assert.deepEqual(displayPhasesFor('inline'), [
+    assert.deepEqual(displayPhasesFor({ plan: 'inline' }), [
       'FETCHING_ISSUE',
       'CREATING_WORKSPACE',
       'IMPLEMENTING',
@@ -418,7 +418,89 @@ describe('inline planning', () => {
       'TESTING',
       'DELIVERING',
     ]);
-    assert.ok(displayPhasesFor('review').includes('PLANNING'));
+    assert.ok(displayPhasesFor({ plan: 'review' }).includes('PLANNING'));
+  });
+
+  it('goes straight from the diff to the tests when both reviews are off', async () => {
+    const harnesses = inlineHarnesses();
+    const { context, observer, store } = buildContext(harnesses, {
+      config: { plan: 'inline', reviewCode: false },
+    });
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.deepEqual(
+      final.history.map((entry) => entry.phase),
+      [
+        'INITIALIZING',
+        'FETCHING_ISSUE',
+        'CREATING_WORKSPACE',
+        'IMPLEMENTING',
+        'TESTING',
+        'DELIVERING',
+        'COMPLETE',
+      ],
+    );
+
+    // No review turn, and no read-ahead for a review that never happens.
+    assert.deepEqual(harnesses.claude.calls, []);
+    assert.equal(final.rounds.codeReview, 0);
+    assert.equal(final.reviews.length, 0);
+
+    // The tests still ran, and the run says out loud what it skipped.
+    assert.equal(final.tests?.passed, true);
+    assert.match(observer.warnings.join(' '), /No code review on this run/);
+    assert.match((await store.readArtifact('summary.md')) ?? '', /Code review: skipped/);
+  });
+
+  it('tells the implementer that nothing downstream will read its diff', async () => {
+    const harnesses = inlineHarnesses();
+    const { context } = buildContext(harnesses, { config: { plan: 'inline', reviewCode: false } });
+    await new WorkflowEngine(context).run();
+
+    const implement = workTurns(harnesses.codex, 'implementer')[0];
+    assert.match(implement?.prompt ?? '', /no plan reviewer and no code reviewer on this run/);
+  });
+
+  it('asks the implementer for human-looking comments only under --tuff', async () => {
+    const plain = inlineHarnesses();
+    await new WorkflowEngine(buildContext(plain, { config: { plan: 'inline' } }).context).run();
+    assert.ok(!/Writing style for this run/.test(workTurns(plain.codex, 'implementer')[0]?.prompt ?? ''));
+
+    const tuff = inlineHarnesses();
+    await new WorkflowEngine(buildContext(tuff, { config: { plan: 'inline', typos: true } }).context).run();
+    const prompt = workTurns(tuff.codex, 'implementer')[0]?.prompt ?? '';
+
+    assert.match(prompt, /Writing style for this run/);
+    assert.match(prompt, /occasional typo left in rather than corrected/);
+    // The boundary matters more than the instruction: a typo in an identifier
+    // is a bug, and the prompt has to say so.
+    assert.match(prompt, /Identifiers, string literals, API names, file paths/);
+  });
+
+  it('treats a run recorded before the flag existed as reviewed', async () => {
+    const harnesses = inlineHarnesses();
+    const { context, state } = buildContext(harnesses, { config: { plan: 'inline' } });
+    // What `state.json` looks like for a run that predates `workflow.reviewCode`.
+    delete (state.config.workflow as { reviewCode?: boolean }).reviewCode;
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.rounds.codeReview, 1);
+    assert.equal(workTurns(harnesses.claude, 'codeReviewer').length, 1);
+  });
+
+  it('leaves the code review off the checklist when it is skipped too', () => {
+    assert.deepEqual(displayPhasesFor({ plan: 'inline', reviewCode: false }), [
+      'FETCHING_ISSUE',
+      'CREATING_WORKSPACE',
+      'IMPLEMENTING',
+      'TESTING',
+      'DELIVERING',
+    ]);
+    assert.ok(displayPhasesFor({ plan: 'review', reviewCode: false }).includes('PLANNING'));
+    assert.ok(!displayPhasesFor({ plan: 'review', reviewCode: false }).includes('REVIEWING_CODE'));
   });
 });
 

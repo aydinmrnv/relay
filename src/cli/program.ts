@@ -140,17 +140,18 @@ export function buildProgram(version: string): Command {
     .option('--implementer <agent>', `agent that implements and reviews the plan (${AGENT_PROVIDERS.join('|')})`)
     .option('--max-plan-rounds <n>', 'maximum plan review rounds')
     .option('--max-code-rounds <n>', 'maximum code review rounds')
-    .option('-f, --fast', 'let the implementer plan in its own session: no separate plan review')
+    .option('-f, --fast', 'one agent plans and implements: no plan review, no code review')
     .option('--no-prime', 'do not let reviewers read the repository ahead of their turn')
     .option('--no-parallel-tests', 'run the test suite after the code review instead of during it')
     .option('--no-tests', 'skip the test phase')
     .option('--commit', 'deliver no further than a commit on the run branch')
     .option('--push', 'push the run branch')
     .option('--pr', 'push and open a pull request')
-    .option('--merge', 'push, open and merge a pull request')
+    .option('-m, --merge', 'push, open and merge a pull request')
     .option('--merge-method <method>', 'merge method (squash|merge|rebase)')
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
+    .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
     .action(wrap(runCommand));
 
   program
@@ -161,10 +162,11 @@ export function buildProgram(version: string): Command {
     .option('--commit', 'deliver no further than a commit on the run branch')
     .option('--push', 'push the run branch')
     .option('--pr', 'push and open a pull request')
-    .option('--merge', 'push, open and merge a pull request')
+    .option('-m, --merge', 'push, open and merge a pull request')
     .option('--merge-method <method>', 'merge method (squash|merge|rebase)')
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
+    .option('--tuff', 'write the pull request and commits with typos, like a human')
     .action(wrap(resumeCommand));
 
   program

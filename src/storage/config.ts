@@ -71,6 +71,14 @@ export interface RelayConfig {
   models: Partial<Record<AgentProvider | Role, string>>;
   workflow: {
     plan: PlanMode;
+    /**
+     * Whether the diff is reviewed by the other model before it is tested.
+     *
+     * On by default: a diff nobody but its author read is the thing Relay
+     * exists to avoid. `relay run --fast` turns it off, together with the plan
+     * review, for a ticket where the wall-clock matters more than the critique.
+     */
+    reviewCode: boolean;
     maxPlanReviewRounds: number;
     maxCodeReviewRounds: number;
     /** Branch to base worktrees on. Empty means "use the repository default". */
@@ -96,6 +104,13 @@ export interface RelayConfig {
     primeReviewers: boolean;
     /** Start the test suite as soon as a diff exists, alongside code review. */
     concurrentTests: boolean;
+    /**
+     * Write everything this run publishes the way a person types it: with
+     * typos. What `relay run --tuff` sets. It reaches the pull request, the
+     * commit messages, and the comments the agents leave in the code — and
+     * nothing a machine reads back, which is checked in `src/util/typos.ts`.
+     */
+    typos: boolean;
   };
   github: {
     autoPush: boolean;
@@ -137,6 +152,7 @@ export const DEFAULT_CONFIG: RelayConfig = {
   models: {},
   workflow: {
     plan: 'review',
+    reviewCode: true,
     // Two rounds, not three: a round is a review turn plus a revision turn, and
     // a third round almost never changes the outcome it spends five minutes on.
     maxPlanReviewRounds: 2,
@@ -150,6 +166,7 @@ export const DEFAULT_CONFIG: RelayConfig = {
     maxTransientRetries: 2,
     primeReviewers: true,
     concurrentTests: true,
+    typos: false,
   },
   github: {
     autoPush: false,
@@ -171,6 +188,18 @@ export const DEFAULT_CONFIG: RelayConfig = {
     command: null,
   },
 };
+
+/**
+ * Whether a run reviews its own diff.
+ *
+ * Read through a function rather than straight off the object because a run
+ * recorded before `reviewCode` existed has no such key in its config snapshot,
+ * and absent there means the run *did* review its code. Reporting those as
+ * skipped would rewrite the history of every run already on disk.
+ */
+export function reviewsCode(config: RelayConfig): boolean {
+  return config.workflow.reviewCode !== false;
+}
 
 export function relayDir(repoRoot: string): string {
   return join(repoRoot, '.relay');
@@ -312,7 +341,7 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       }
       config.workflow.branchPrefix = workflow['branchPrefix'];
     }
-    for (const key of ['runTests', 'primeReviewers', 'concurrentTests', 'offerMerge'] as const) {
+    for (const key of ['runTests', 'reviewCode', 'primeReviewers', 'concurrentTests', 'offerMerge', 'typos'] as const) {
       if (workflow[key] === undefined) continue;
       if (typeof workflow[key] !== 'boolean') {
         throw new RelayError(`config.workflow.${key} must be a boolean.`, { code: 'BAD_CONFIG' });
