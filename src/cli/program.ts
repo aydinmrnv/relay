@@ -81,7 +81,7 @@ export function buildProgram(version: string): Command {
     .name('relay')
     .description(
       `Coordinate locally installed coding agents (${AGENT_LABELS}) to plan, review, implement\n` +
-        'and critique work on a GitHub issue inside an isolated git worktree.',
+        'and critique work on an issue, a spec file or a prompt, inside an isolated git worktree.',
     )
     .version(version)
     .option('--update', 'update Relay itself to the latest version')
@@ -132,8 +132,10 @@ export function buildProgram(version: string): Command {
 
   program
     .command('run')
-    .argument('<issue>', 'issue number, owner/repo#number, or issue URL')
-    .description('run the full workflow for a GitHub issue, and deliver the result')
+    .argument('[issue]', 'issue number, owner/repo#number, issue URL, or a path to a markdown file')
+    .description('run the full workflow for an issue, a spec file or a prompt, and deliver the result')
+    .option('--prompt <text>', 'work from a description instead of a tracker issue')
+    .option('--editor', 'write the task in $EDITOR, the way `git commit` does')
     .option('-v, --verbose', 'stream raw agent events')
     .option('-b, --base <branch>', 'branch to base the worktree on')
     .option('--planner <agent>', `agent that plans and reviews code (${AGENT_PROVIDERS.join('|')})`)

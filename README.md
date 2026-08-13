@@ -1,12 +1,13 @@
 # Relay
 
-Relay takes a GitHub issue and coordinates the coding agents you already have installed — Claude Code and Codex — to plan, critique, implement, review and verify the work inside an isolated git worktree, then delivers the result as far as you let it: a commit, a pushed branch, a pull request, or a merge.
+Relay takes a GitHub issue — or a spec file, or a one-line prompt — and coordinates the coding agents you already have installed — Claude Code and Codex — to plan, critique, implement, review and verify the work inside an isolated git worktree, then delivers the result as far as you let it: a commit, a pushed branch, a pull request, or a merge.
 
 It is not "run several agents in parallel". The point is that **specialized agents review and challenge each other's actual engineering work**, and that every claim they make is checked against git rather than taken at face value.
 
 ```bash
 relay start       # one command: dependencies, sign-in, config, and a first run
 relay run 142
+relay run --prompt "Fix the flaky timeout in the retry test"   # no ticket needed
 ```
 
 `relay start` is the whole path from a fresh clone to a run you understand. It
@@ -133,7 +134,7 @@ Tune against that, not against this list.
 | `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth |
-| `relay run <issue>` | run the full workflow |
+| `relay run <issue\|file>` | run the full workflow, on a tracker issue or on work that has no ticket |
 | `relay status [run]` | list runs, or print one run's summary (`--json` for machine-readable output) |
 | `relay watch [run]` | follow a run's events live |
 | `relay diff [run]` | show the diff a run produced (`--stat` for a file list) |
@@ -144,7 +145,7 @@ Tune against that, not against this list.
 | `relay stop [run]` | cancel a run at its next phase boundary |
 | `relay --update` | update Relay itself to the latest version |
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
 
 The three worth typing by hand:
 
@@ -162,6 +163,58 @@ instead of during it).
 lands anyway. The merge still has to pass its own gates — the tests must have
 verifiably passed, and a protected base branch is still refused — so what `-f`
 removes is the critique, never the evidence.
+
+### Work that has no ticket
+
+A great deal of real work has no issue behind it: a bug someone just found, a
+refactor described in a Slack message, a spec in a markdown file, a task you want
+to try this on before asking your team to adopt it. Relay does not need a
+tracker — it needs a title and a description.
+
+```bash
+relay run ./spec.md                                     # the file is the issue
+relay run --prompt "Fix the flaky timeout in the retry test"
+relay run --editor                                      # write it in $EDITOR
+```
+
+A markdown file's first heading is the title and the rest is the description.
+Front matter is honoured when it is there (`title`, `number` or `issue`,
+`labels`), and a `#123` in the filename is used as the number — so
+`spec-#123.md` still closes issue 123. `--editor` opens `$VISUAL` or `$EDITOR`
+on a template, the way `git commit` does; saving an empty file aborts and starts
+nothing.
+
+Everything downstream is unchanged, because everything downstream never cared:
+the plan, the reviews, the diff, the tests, `issue.md`, the commit, the push and
+the pull request all happen exactly as they do for a GitHub issue.
+
+**Identity without a number.** A run's branch and worktree are named after the
+issue number when there is one and after the title when there is not, with the
+run's short id keeping them collision-safe either way:
+
+| | |
+|---|---|
+| `relay run 142` | `relay/142-x7f2q3` |
+| `relay run ./spec.md` | `relay/fix-the-flaky-timeout-x7f2q3` |
+
+**Delivery still works.** A local task produces a branch, a push and a pull
+request exactly as an issue does. The one thing it cannot produce is a
+`Closes #142` line, and that is recorded as a skipped step with its reason
+rather than quietly dropped:
+
+```
+Delivery
+  policy pr
+  ✓ Commit         4f2ab8c1 on relay/fix-the-flaky-timeout-x7f2q3
+  ✓ Push           origin/relay/fix-the-flaky-timeout-x7f2q3
+  ✓ Pull request   https://github.com/acme/widgets/pull/318
+  ·  Merge         not requested (deliver: pr)
+  ·  Issue link    ./spec.md has no tracker issue to close
+```
+
+**Onboarding needs none of it.** `gh` is a warning rather than a blocker in
+`relay start` and `relay doctor`: someone with no GitHub CLI at all can still
+complete the flow and finish a real run.
 
 ### `--tuff`
 
