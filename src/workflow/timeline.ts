@@ -1,5 +1,6 @@
 import { DISPLAY_PHASES, displayPhaseFor, isTerminal, type Phase } from './phases.ts';
 import type { RunState } from './state.ts';
+import { unpricedTurns } from './usage.ts';
 
 export interface PhaseTiming {
   phase: Phase;
@@ -43,6 +44,39 @@ export function phaseTimings(state: RunState): PhaseTiming[] {
     const total = totals.get(phase);
     return total === undefined ? [] : [{ phase, ms: total.ms, visits: total.visits }];
   });
+}
+
+export interface PhaseCost {
+  /** Reported cost, absent when nothing in the phase published a price. */
+  usd?: number;
+  /** Turns in the phase that reported none, so `usd` is a floor. */
+  unpriced: number;
+}
+
+/**
+ * What each phase cost, folded the same way its duration is: a revision round
+ * is part of the review that asked for it. Keyed by display phase, so a caller
+ * comparing two runs is comparing the same buckets whatever rounds each took.
+ */
+export function phaseCosts(state: RunState): Map<Phase, PhaseCost> {
+  const totals = new Map<Phase, PhaseCost>();
+  for (const [phase, usage] of Object.entries(state.usage?.byPhase ?? {})) {
+    const display = displayPhaseFor(phase as Phase);
+    if (display === undefined || usage === undefined) continue;
+
+    const current = totals.get(display) ?? { unpriced: 0 };
+    const usd = usage.costUsd === undefined ? current.usd : (current.usd ?? 0) + usage.costUsd;
+    totals.set(display, {
+      ...(usd === undefined ? {} : { usd }),
+      unpriced: current.unpriced + unpricedTurns(usage),
+    });
+  }
+  return totals;
+}
+
+/** Wall-clock time a run has been alive, finished or not. */
+export function runElapsedMs(state: RunState): number {
+  return new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
 }
 
 /** The phase a failed run died in, or undefined when it did not fail. */

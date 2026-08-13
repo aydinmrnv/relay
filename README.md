@@ -1,12 +1,14 @@
 # Relay
 
-Relay takes a GitHub issue and coordinates the coding agents you already have installed — Claude Code and Codex — to plan, critique, implement, review and verify the work inside an isolated git worktree, then delivers the result as far as you let it: a commit, a pushed branch, a pull request, or a merge.
+Relay takes a GitHub issue — or a spec file, or a one-line prompt — and coordinates the coding agents you already have installed — Claude Code and Codex — to plan, critique, implement, review and verify the work inside an isolated git worktree, then delivers the result as far as you let it: a commit, a pushed branch, a pull request, or a merge.
 
 It is not "run several agents in parallel". The point is that **specialized agents review and challenge each other's actual engineering work**, and that every claim they make is checked against git rather than taken at face value.
 
 ```bash
 relay start       # one command: dependencies, sign-in, config, and a first run
+relay             # the home screen, and a prompt for the next issue
 relay run 142
+relay run --prompt "Fix the flaky timeout in the retry test"   # no ticket needed
 ```
 
 `relay start` is the whole path from a fresh clone to a run you understand. It
@@ -130,15 +132,17 @@ Tune against that, not against this list.
 
 | Command | |
 |---|---|
+| `relay` | the home screen: what is configured, what has run, and a prompt for the next issue |
 | `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth |
-| `relay run <issue>` | run the full workflow |
+| `relay run <issue\|file>` | run the full workflow on a tracker issue or on work that has no ticket, deliver the result, then wait for the next issue |
 | `relay status [run]` | list runs, or print one run's summary |
 | `relay watch [run]` | follow a run's events live |
 | `relay diff [run]` | show the diff a run produced (`--stat` for a file list) |
 | `relay plan [run]` | print the approved plan |
 | `relay logs [run]` | print the event log |
+| `relay stats` | what this repository's runs have cost, taken, and caught |
 | `relay resume <run>` | continue an interrupted or failed run |
 | `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
 | `relay stop [run]` | cancel a run at its next phase boundary |
@@ -148,7 +152,7 @@ Every command above except `--update` takes `--json`, and exits with a code from
 a documented table. Both are below, under [Machine-readable
 output](#machine-readable-output) and [Exit codes](#exit-codes).
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
 
 The three worth typing by hand:
 
@@ -167,6 +171,58 @@ lands anyway. The merge still has to pass its own gates — the tests must have
 verifiably passed, and a protected base branch is still refused — so what `-f`
 removes is the critique, never the evidence.
 
+### Work that has no ticket
+
+A great deal of real work has no issue behind it: a bug someone just found, a
+refactor described in a Slack message, a spec in a markdown file, a task you want
+to try this on before asking your team to adopt it. Relay does not need a
+tracker — it needs a title and a description.
+
+```bash
+relay run ./spec.md                                     # the file is the issue
+relay run --prompt "Fix the flaky timeout in the retry test"
+relay run --editor                                      # write it in $EDITOR
+```
+
+A markdown file's first heading is the title and the rest is the description.
+Front matter is honoured when it is there (`title`, `number` or `issue`,
+`labels`), and a `#123` in the filename is used as the number — so
+`spec-#123.md` still closes issue 123. `--editor` opens `$VISUAL` or `$EDITOR`
+on a template, the way `git commit` does; saving an empty file aborts and starts
+nothing.
+
+Everything downstream is unchanged, because everything downstream never cared:
+the plan, the reviews, the diff, the tests, `issue.md`, the commit, the push and
+the pull request all happen exactly as they do for a GitHub issue.
+
+**Identity without a number.** A run's branch and worktree are named after the
+issue number when there is one and after the title when there is not, with the
+run's short id keeping them collision-safe either way:
+
+| | |
+|---|---|
+| `relay run 142` | `relay/142-x7f2q3` |
+| `relay run ./spec.md` | `relay/fix-the-flaky-timeout-x7f2q3` |
+
+**Delivery still works.** A local task produces a branch, a push and a pull
+request exactly as an issue does. The one thing it cannot produce is a
+`Closes #142` line, and that is recorded as a skipped step with its reason
+rather than quietly dropped:
+
+```
+Delivery
+  policy pr
+  ✓ Commit         4f2ab8c1 on relay/fix-the-flaky-timeout-x7f2q3
+  ✓ Push           origin/relay/fix-the-flaky-timeout-x7f2q3
+  ✓ Pull request   https://github.com/acme/widgets/pull/318
+  ·  Merge         not requested (deliver: pr)
+  ·  Issue link    ./spec.md has no tracker issue to close
+```
+
+**Onboarding needs none of it.** `gh` is a warning rather than a blocker in
+`relay start` and `relay doctor`: someone with no GitHub CLI at all can still
+complete the flow and finish a real run.
+
 ### `--tuff`
 
 Relay's writing reads like a machine wrote it, because one did. `--tuff` makes
@@ -181,13 +237,56 @@ mistyped issue reference does not look human — it looks broken. The transform 
 seeded on the run id, so `relay deliver <run>` re-opens the same pull request
 rather than a differently-mistyped one.
 
+## Cost
+
+A run spends money on your account, so Relay says what it will probably cost
+before it starts, stops itself if you give it a ceiling, and reports what runs
+here have actually cost afterwards. Every number comes from runs that happened
+in this repository — there is no pricing table and no token model anywhere in
+Relay, and a repository with no completed runs is told exactly that.
+
+```
+Estimate
+  Fetching issue → Creating workspace → Planning → Plan review → Implementation → Code review → Tests → Delivery
+  Duration  ~11m 20s  ·  worst 24m 3s  ·  from 7 completed runs
+  Cost      ~$1.12    ·  worst $2.80   ·  from 5 of 7 runs that reported one
+```
+
+The estimate is built per phase and summed, so a flag's effect on it is the
+flag's cost: `-f` drops the planning and review phases from the total and
+`--no-tests` drops the suite. Phases no previous run ever entered are named
+rather than guessed at, and the sample size is part of the estimate — "about
+four minutes, from two runs" and "from thirty" are different claims.
+
+**A budget stops the run.** `--max-cost 2.50`, or `workflow.maxCostUsd`, unset
+by default. The accumulator is checked at every phase boundary: past the
+ceiling, the run ends the way a cancellation does — the phase that spent it
+finishes, the work is committed to its branch, nothing is published, and
+`state.json`, `summary.md` and `relay status --json` all record why. Turns that
+report no price count as unknown and never as zero, so a ceiling can only ever
+stop a run over money that was actually reported — and where some of the bill
+was never published, every number that comes from it says so.
+
+**A confirmation above a threshold.** `workflow.confirmAboveUsd` asks once,
+before the first agent turn, when the estimate exceeds it. On a terminal that is
+a `[y/N]` where Enter is no. Anywhere else it is a refusal with a non-zero exit,
+because a question nobody can answer is a hang, not a safeguard.
+
+**`relay stats`** is the same evidence over every run in the repository: success
+rate, median and p90 duration, cost by phase, rounds consumed by each review,
+and how often plan review changed the plan and code review blocked a diff. That
+last pair is the product's own claim, measured on your work — a repository where
+plan review never changes anything is a repository that should turn it off, and
+this is where you would find that out. `--json` for the machine-readable form.
+
 ## Delivery
 
 The pipeline does not stop at a diff. Delivery is the last phase of a run — it
 commits the work, pushes the branch, opens the pull request, and merges it if
-that is what the repository asked for. No question at the end, because a
-question at the end of a twenty-minute run is answered by an empty terminal as
-often as by a person.
+that is what the repository asked for. Whatever the policy authorizes needs no
+question, because a question at the end of a twenty-minute run is answered by an
+empty terminal as often as by a person. What it did *not* authorize is offered
+to whoever is still watching — see [delivery consent](#delivery-consent).
 
 ```
 Delivery
@@ -241,17 +340,25 @@ nothing is published.
 
 ### Delivery consent
 
-On an interactive terminal Relay offers each unpublished step in order: push,
-pull request, then merge. Every question defaults to no, and declining a
-prerequisite ends the sequence. A command-line flag or `github.auto*` setting
-is already consent and skips that step's prompt. The merge prompt looks like:
+On an interactive terminal a run ends with the questions its policy left
+unanswered — at most two, in dependency order:
 
 ```
+  relay/13-ce2ubs is pushed to origin first.
+  Open a pull request into main now? [y/N]
   Merge https://github.com/acme/widgets/pull/21 into main now? (squash) [y/N]
 ```
 
+The push is not a question of its own. It is the first half of opening a pull
+request, and splitting one intention into two prompts is friction rather than
+safety — so a repository Relay can open a pull request against is asked exactly
+that, and the push happens as part of it. Only a repository with no GitHub side
+to it is asked about the push by itself, because there the push *is* the step.
+
 **Enter is no.** A yes raises the ceiling and re-runs the idempotent delivery
-phase. Non-interactive runs never prompt and publish only what flags or config
+phase. Declining a prerequisite ends the sequence. A command-line flag or
+`github.auto*` setting is already consent and skips that step's prompt.
+Non-interactive runs never prompt and publish only what flags or config
 explicitly authorized.
 
 It is never asked when the answer could only be no: work the run could not
@@ -260,6 +367,33 @@ same reasons the pull request opened as a draft), a checkout that cannot take a
 local merge, `deliver: merge` (which already merged it), or a terminal nobody is
 watching, which gets `relay deliver <run> --to merge` instead. `--no-offer-merge`
 or `workflow.offerMerge: false` turns it off.
+
+## The session
+
+Answering those questions is not the end of the work — the next issue is. So on
+a terminal Relay does not exit when a run finishes: it draws the home screen
+again, with the run that just finished on it, and waits.
+
+```
+╭─ acme/widgets ─────────────────────────────── configured ─╮
+│ Delivery       branch                                     │
+│ Tests          npm test                                   │
+│                                                           │
+│ Recent runs                                               │
+│ 20260812-100000-a1  Complete  8m 2s  +40 −7               │
+├───────────────────────────────────────────────────────────┤
+│ Next  relay run <issue>                                   │
+╰───────────────────────────────────────────────────────────╯
+  Next issue? (number, owner/repo#number, or URL — Enter to exit)
+```
+
+`relay` on its own opens there, `relay run <issue>` and the first run of `relay
+start` come back to it, and Enter — or `q` — leaves. The flags the session was
+opened with carry into every run in it, a run that fails is reported without
+ending the session, and the exit code is the last run's.
+
+Nothing changes behind a pipe or in CI: there is nobody there to ask, so a run
+ends the process exactly as it always did.
 
 ## Terminal output
 
@@ -340,13 +474,14 @@ jq` works while the run is still printing.
 | `relay doctor --json` | every readiness check with its status, detail and remedy |
 | `relay start --json` | the same checks (implies `--check`: a guided walkthrough has no JSON form) |
 | `relay init --json` | the config it wrote, the test command it detected, the agents it found (implies `--yes`) |
-| `relay run --json` | one object per line as phases complete, then a summary |
+| `relay run <issue\|file> --json` | one object per line as phases complete, then a summary |
 | `relay resume --json` | the same stream |
 | `relay status [run] --json` | `runs` for the listing, `run` for one — unabridged, unlike the table |
 | `relay watch [run] --json` | one object per line, as each event arrives |
 | `relay diff [run] --json` | the file list, the counts, and the patch (`--stat` drops the patch, keeps the files) |
 | `relay plan [run] --json` | the approved plan as markdown |
 | `relay logs [run] --json` | the event log, with `data` as recorded, plus usage by phase |
+| `relay stats --json` | what this repository's runs have cost, taken, and caught |
 | `relay deliver [run] --json` | the run after delivery, ledger included |
 | `relay stop [run] --json` | what was signalled, and whether the process was still alive |
 
@@ -367,7 +502,8 @@ is the one shape that is useless while it matters. It emits `run_started`, then
 plan revision appears even though the dashboard folds it into the review row —
 then `note` and `warning` lines, and finally one `summary` object carrying the
 whole run and the code the command is about to exit with. Agent events are in
-the stream only under `--verbose`.
+the stream only under `--verbose`, and `--json` never opens the session that
+otherwise asks for the next issue — a question nobody is reading is a hang.
 
 ```console
 $ relay run 142 --json | jq -r 'select(.type == "phase_completed") | "\(.phaseLabel) \(.durationMs)ms"'
@@ -454,7 +590,9 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
     "deliver": "pr",
     "mergeMethod": "squash",
     "offerMerge": true,
-    "maxTransientRetries": 2
+    "maxTransientRetries": 2,
+    "maxCostUsd": null,
+    "confirmAboveUsd": null
   },
   "tests": { "command": null }
 }
@@ -477,6 +615,8 @@ reaching for before turning a review off.
 | `github.deleteBranchOnMerge` | delete the remote run branch and guarded worktree after merge (default `false`) |
 | `github.protectedBranches` | base branches Relay refuses to merge into (default `[]`) |
 | `workflow.offerMerge` | ask once, at the end of a run that delivered short of a merge (default `true`) |
+| `workflow.maxCostUsd` | dollars a run may report before it stops itself at the next phase boundary (default `null`, no ceiling; `--max-cost`) |
+| `workflow.confirmAboveUsd` | ask before starting a run whose estimate exceeds this (default `null`; non-interactively an exceeded threshold is a refusal) |
 | `workflow.primeReviewers` | let each reviewer read the repository during the phase it will review |
 | `workflow.concurrentTests` | run the suite during the code review rather than after it |
 | `timeouts.primingMs` | cap on a read-ahead turn, which is speculative and must not stall a run |

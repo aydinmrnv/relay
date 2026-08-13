@@ -1,5 +1,6 @@
 import { RelayError } from '../../util/errors.ts';
 import { renderIssueMarkdown } from '../../github/types.ts';
+import { issueHeadline, issueIdentity } from '../../issues/identity.ts';
 import { createWorktree, worktreeExists } from '../../git/worktree.ts';
 import { discoverRepository } from '../../git/repository.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
@@ -40,17 +41,17 @@ export async function fetchingIssue(context: EngineContext): Promise<PhaseResult
   await store.writeArtifact(RUN_FILES.issue, markdown);
   context.issueMarkdown = markdown;
 
-  state.issue = { number: issue.number, title: issue.title, url: issue.url, state: issue.state };
+  state.issue = { id: issue.id, number: issue.number, title: issue.title, url: issue.url, state: issue.state };
   if (issue.repository !== null) {
     state.repository.owner ??= issue.repository.owner;
     state.repository.name ??= issue.repository.name;
   }
 
   if (issue.state === 'closed') {
-    context.observer.warn(`Issue #${issue.number} is closed. Continuing anyway.`);
+    context.observer.warn(`${issueHeadline(issue)} is closed. Continuing anyway.`);
   }
 
-  return { next: 'CREATING_WORKSPACE', note: `#${issue.number} ${issue.title}` };
+  return { next: 'CREATING_WORKSPACE', note: issueHeadline(issue) };
 }
 
 /**
@@ -78,8 +79,8 @@ export async function creatingWorkspace(context: EngineContext): Promise<PhaseRe
     );
   }
 
-  const issueNumber = state.issue?.number;
-  if (issueNumber === undefined) {
+  const issue = state.issue;
+  if (issue === undefined) {
     throw new RelayError('Cannot create a workspace before the issue has been fetched.', { code: 'NO_ISSUE' });
   }
 
@@ -87,7 +88,9 @@ export async function creatingWorkspace(context: EngineContext): Promise<PhaseRe
 
   const worktree = await createWorktree({
     repo,
-    issueNumber,
+    // A numbered issue names its branch after the number, exactly as before; a
+    // task without one names it after the title.
+    issue: issueIdentity(issue),
     runShortId: state.shortId,
     baseBranch,
     branchPrefix: state.config.workflow.branchPrefix,

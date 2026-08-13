@@ -7,8 +7,10 @@ import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
+import { resumeCommand, type RunOptions } from './commands/run.ts';
 import { homeCommand } from './commands/home.ts';
-import { runCommand, resumeCommand, type RunOptions } from './commands/run.ts';
+import { statsCommand } from './commands/stats.ts';
+import { homeSession, runSession } from './session.ts';
 import {
   diffCommand,
   logsCommand,
@@ -72,7 +74,7 @@ export function defaultHelp(command: Command, width?: number): string {
 const HELP_GROUPS = [
   ['Setup', ['start', 'init', 'doctor']],
   ['Run', ['run', 'resume', 'stop']],
-  ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs']],
+  ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats']],
   ['Deliver', ['deliver']],
 ] as const;
 
@@ -105,7 +107,7 @@ export function buildProgram(version: string): Command {
     .name('relay')
     .description(
       `Coordinate locally installed coding agents (${AGENT_LABELS}) to plan, review, implement\n` +
-        'and critique work on a GitHub issue inside an isolated git worktree.',
+        'and critique work on an issue, a spec file or a prompt, inside an isolated git worktree.',
     )
     .version(version)
     .option('--update', 'update Relay itself to the latest version')
@@ -144,8 +146,10 @@ export function buildProgram(version: string): Command {
       if (options.update === true) return updateCommand();
       // `--json` is a request for the home screen's facts, so it answers with
       // them wherever it runs — behind a pipe it no longer means "print help".
+      // It never opens a session: the next question is for a person, and
+      // whatever is parsing this is not one.
       if (options.json === true) return homeCommand({ json: true });
-      if (theme().interactive) return homeCommand();
+      if (theme().interactive) return homeSession();
       process.stderr.write(defaultHelp(command, process.stderr.isTTY ? process.stderr.columns : undefined));
       return EXIT.error;
     }),
@@ -176,14 +180,17 @@ export function buildProgram(version: string): Command {
 
   program
     .command('run')
-    .argument('<issue>', 'issue number, owner/repo#number, or issue URL')
-    .description('run the full workflow for a GitHub issue, and deliver the result')
+    .argument('[issue]', 'issue number, owner/repo#number, issue URL, or a path to a markdown file')
+    .description('run the full workflow for an issue, a spec file or a prompt, deliver the result, and wait for the next issue')
+    .option('--prompt <text>', 'work from a description instead of a tracker issue')
+    .option('--editor', 'write the task in $EDITOR, the way `git commit` does')
     .option('-v, --verbose', 'stream raw agent events')
     .option('-b, --base <branch>', 'branch to base the worktree on')
     .option('--planner <agent>', `agent that plans and reviews code (${AGENT_PROVIDERS.join('|')})`)
     .option('--implementer <agent>', `agent that implements and reviews the plan (${AGENT_PROVIDERS.join('|')})`)
     .option('--max-plan-rounds <n>', 'maximum plan review rounds')
     .option('--max-code-rounds <n>', 'maximum code review rounds')
+    .option('--max-cost <usd>', 'stop the run at the first phase boundary past this many dollars')
     .option('-f, --fast', 'one agent plans and implements: no plan review, no code review')
     .option('--no-prime', 'do not let reviewers read the repository ahead of their turn')
     .option('--no-parallel-tests', 'run the test suite after the code review instead of during it')
@@ -197,13 +204,14 @@ export function buildProgram(version: string): Command {
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
     .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
-    .action(wrap(runCommand));
+    .action(wrap(runSession));
 
   program
     .command('resume')
     .argument('<run-id>', 'run id, short id, or "latest"')
     .description('continue an interrupted or failed run')
     .option('-v, --verbose', 'stream raw agent events')
+    .option('--max-cost <usd>', 'stop the run at the first phase boundary past this many dollars')
     .option('--commit', 'deliver no further than a commit on the run branch')
     .option('--push', 'push the run branch')
     .option('--pr', 'push and open a pull request')
@@ -261,6 +269,12 @@ export function buildProgram(version: string): Command {
     .option('-a, --all', 'show every event')
     .option('--json', JSON_FLAG)
     .action(wrap(logsCommand));
+
+  program
+    .command('stats')
+    .description('what this repository\'s runs have cost, taken, and caught')
+    .option('--json', JSON_FLAG)
+    .action(wrap(statsCommand));
 
   program
     .command('stop')

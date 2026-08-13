@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunId } from '../src/util/ids.ts';
 import { createRunState, transition, type RunState } from '../src/workflow/state.ts';
 import { recordTurnUsage } from '../src/workflow/usage.ts';
+import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
 let repo: TempRepo;
@@ -30,6 +31,25 @@ describe('delivery CLI flags', () => {
     assert.equal(applyOverrides(DEFAULT_CONFIG, { pr: true }).workflow.deliver, 'pr');
     assert.equal(applyOverrides(DEFAULT_CONFIG, { merge: true }).workflow.deliver, 'merge');
     assert.equal(applyOverrides(DEFAULT_CONFIG, { deliver: 'pr' }).workflow.deliver, 'pr');
+  });
+});
+
+describe('the cost flags', () => {
+  it('reads --max-cost as dollars, with or without the sign', () => {
+    assert.equal(applyOverrides(DEFAULT_CONFIG, {}).workflow.maxCostUsd, null);
+    assert.equal(applyOverrides(DEFAULT_CONFIG, { maxCost: '2.50' }).workflow.maxCostUsd, 2.5);
+    assert.equal(applyOverrides(DEFAULT_CONFIG, { maxCost: '$2.50' }).workflow.maxCostUsd, 2.5);
+  });
+
+  it('refuses a ceiling that is not a positive amount', () => {
+    for (const value of ['0', '-1', 'cheap', '']) {
+      assert.throws(() => applyOverrides(DEFAULT_CONFIG, { maxCost: value }), RelayError, `accepted "${value}"`);
+    }
+  });
+
+  it('leaves the repository config alone', () => {
+    applyOverrides(DEFAULT_CONFIG, { maxCost: '5' });
+    assert.equal(DEFAULT_CONFIG.workflow.maxCostUsd, null);
   });
 });
 
@@ -171,13 +191,16 @@ describe('run JSON projection', () => {
     const json = runToJson(state);
     const total = json.usage?.total;
     assert.ok(total !== undefined);
-    assert.deepEqual(total, { inputTokens: 2000, outputTokens: 450, costUsd: null, turns: 1 });
+    assert.deepEqual(total, { inputTokens: 2000, outputTokens: 450, costUsd: null, turns: 1, pricedTurns: 0 });
     assert.ok('costUsd' in total);
     assert.deepEqual(json.usage?.byPhase.IMPLEMENTING, {
       inputTokens: 2000,
       outputTokens: 450,
       costUsd: null,
       turns: 1,
+      // The turn happened and priced nothing, which is what makes the null
+      // above "not reported" rather than "free".
+      pricedTurns: 0,
     });
 
     const roundTripped = JSON.parse(JSON.stringify(json)) as typeof json;
@@ -194,7 +217,7 @@ describe('run JSON projection', () => {
     });
 
     const json = runToJson(bare);
-    for (const key of ['issue', 'branch', 'workspace', 'diff', 'tests', 'usage', 'error', 'finishedAt'] as const) {
+    for (const key of ['issue', 'branch', 'workspace', 'diff', 'tests', 'usage', 'stopped', 'error', 'finishedAt'] as const) {
       assert.equal(json[key], null, `${key} should be null`);
     }
     assert.deepEqual(json.reviews, []);
@@ -209,6 +232,29 @@ describe('run JSON projection', () => {
       implementer: 'codex',
       codeReviewer: 'claude',
     });
+  });
+
+  it('says why a run stopped, and tells a budget apart from a person', () => {
+    const state = populatedRun(repo.root);
+    state.stopped = {
+      reason: 'budget',
+      detail: 'budget exceeded: $1.24 spent of $1.00',
+      at: '2026-08-11T10:06:00Z',
+      spentUsd: 1.24,
+      maxCostUsd: 1,
+    };
+    transition(state, 'CANCELLED');
+
+    const json = runToJson(state);
+    assert.equal(json.stopped?.reason, 'budget');
+    assert.equal(json.stopped?.spentUsd, 1.24);
+    assert.equal(json.stopped?.maxCostUsd, 1);
+    assert.equal(json.error, null);
+
+    const bySomeone = populatedRun(repo.root);
+    bySomeone.stopped = { reason: 'user', detail: 'cancelled by user', at: '2026-08-11T10:06:00Z' };
+    // A person stopping a run reports no numbers, rather than zeroes.
+    assert.equal(runToJson(bySomeone).stopped?.spentUsd, null);
   });
 
   it('surfaces a failure and marks the run terminal', () => {
@@ -485,6 +531,41 @@ describe('run outcome summary', () => {
     // rather than explaining a blocker that does not exist.
     assert.match(output, /The work is on relay\/142-aaa111/);
     assert.match(output, new RegExp(`relay deliver ${state.runId} --to pr`));
+  });
+
+  it('says a budget stopped the run, not that somebody cancelled it', async () => {
+    const state = populatedRun(repo.root);
+    transition(state, 'FETCHING_ISSUE');
+    for (const phase of ['CREATING_WORKSPACE', 'PLANNING'] as const) transition(state, phase);
+    state.stopped = {
+      reason: 'budget',
+      detail: 'budget exceeded: $1.24 spent of $1.00',
+      at: '2026-08-11T10:06:00Z',
+      spentUsd: 1.24,
+      maxCostUsd: 1,
+    };
+    transition(state, 'CANCELLED');
+    const store = await persist(state);
+
+    const output = await capture(async () => {
+      printOutcome(state, store);
+      printNextSteps(state, store);
+    });
+
+    assert.match(output, /Run stopped by its budget/);
+    assert.match(output, /\$1\.24 spent of \$1\.00/);
+    assert.match(output, /Nothing was published/);
+    // It is still a run to pick up, so the resume is offered like any other.
+    assert.match(output, new RegExp(`relay resume ${state.runId}`));
+  });
+
+  it('marks a cost as a floor when some turns reported no price', async () => {
+    const state = completed(repo.root);
+    state.usage = recordTurnUsage(state.usage, 'IMPLEMENTING', { inputTokens: 2000, outputTokens: 450 });
+    const store = await persist(state);
+
+    const output = await capture(async () => printOutcome(state, store));
+    assert.match(output, /Usage\s+.*1 turn\(s\) reported no cost/);
   });
 
   it('names the agent that failed, the phase, and the two useful commands', async () => {

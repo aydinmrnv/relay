@@ -6,6 +6,7 @@ import {
   type DeliveryRecord,
   type DeliveryStep,
   type DeliveryStepRecord,
+  type IssueLinkRecord,
   type RunState,
 } from './state.ts';
 
@@ -240,6 +241,25 @@ export function shortfall(delivery: DeliveryRecord | undefined): DeliveryStepRec
         !record.detail.startsWith('already') &&
         !record.detail.startsWith('not requested')),
   );
+}
+
+/**
+ * Whether the pull request this run opened closes an issue.
+ *
+ * Not a delivery step: it is one line in a body, it gates nothing, and it can
+ * never be the reason a run stopped short. It is recorded the way a skipped step
+ * is because it fails the same way — quietly, and identically to success —
+ * unless something says out loud that there was no issue to close.
+ */
+export function issueLinkFor(state: RunState): Omit<IssueLinkRecord, 'at'> | undefined {
+  if (state.pullRequest === undefined) return undefined;
+
+  const issue = state.issue;
+  if (issue === undefined) return { status: 'skipped', detail: 'this run has no issue' };
+  if (issue.number === null) {
+    return { status: 'skipped', detail: `${state.issueRef} has no tracker issue to close` };
+  }
+  return { status: 'done', detail: `closes #${issue.number}` };
 }
 
 /**

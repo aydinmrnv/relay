@@ -66,6 +66,42 @@ export interface MergeOfferDeps {
   observer?: RunObserver;
 }
 
+const POLICY_RANK = { none: 0, branch: 1, push: 2, pr: 3, merge: 4 } as const;
+
+interface PublishingRung {
+  policy: 'push' | 'pr';
+  question: string;
+  /** What answering yes also does, when that is more than the question says. */
+  note?: string;
+}
+
+/**
+ * What is left to authorize, as questions.
+ *
+ * A push on its own is not a decision anybody makes — it is the first half of
+ * opening a pull request, and asking about it separately turns one intention
+ * into two prompts at the end of a twenty-minute run. So a repository Relay can
+ * open a pull request against is asked exactly that, once, and the push happens
+ * as part of it. Only a repository with no GitHub side to it is asked about the
+ * push by itself, because there the push *is* the whole step.
+ */
+function publishingRungs(state: RunState): PublishingRung[] {
+  const branch = state.workspace?.branch ?? 'the run branch';
+  const base = state.workspace?.baseBranch ?? state.repository.defaultBranch;
+
+  if (state.repository.owner === null || state.repository.name === null) {
+    return [{ policy: 'push', question: `  Push ${branch} to origin now?` }];
+  }
+
+  return [
+    {
+      policy: 'pr',
+      question: `  Open a pull request into ${base} now?`,
+      ...(state.push === undefined ? { note: `${branch} is pushed to origin first.` } : {}),
+    },
+  ];
+}
+
 /** Offers each still-unauthorized publishing rung in dependency order. */
 export async function offerDelivery(
   state: RunState,
@@ -76,17 +112,14 @@ export async function offerDelivery(
   const owned = deps.prompter === undefined;
   const prompter = deps.prompter ?? new Prompter();
   try {
-    const rungs = [
-      { policy: 'push' as const, question: `  Push ${state.workspace?.branch ?? 'the run branch'} to origin now?` },
-      { policy: 'pr' as const, question: `  Open a pull request into ${state.workspace?.baseBranch ?? state.repository.defaultBranch} now?` },
-    ];
-    for (const rung of rungs) {
-      const rank = { none: 0, branch: 1, push: 2, pr: 3, merge: 4 } as const;
-      if (rank[reachedPolicy(state)] >= rank[rung.policy]) continue;
+    for (const rung of publishingRungs(state)) {
+      if (POLICY_RANK[reachedPolicy(state)] >= POLICY_RANK[rung.policy]) continue;
       if (!prompter.interactive) {
         hint(`Not a terminal, so nothing was published. To continue: relay deliver ${state.runId} --to ${rung.policy}`);
         return;
       }
+      out();
+      if (rung.note !== undefined) out(dim(`  ${rung.note}`));
       if (!(await prompter.confirm(rung.question, false))) return;
       state.config.workflow.deliver = rung.policy;
       await delivering({ state, store, observer: deps.observer ?? printingObserver, signal: new AbortController().signal });

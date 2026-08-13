@@ -237,12 +237,13 @@ describe('relay init — guided', () => {
     const { output } = await runFlow(ALL_DEFAULTS);
 
     assert.match(output, /10–20 minutes/);
-    // The end of a run is part of its shape: it delivers the work itself, and
-    // never past the policy in config.
-    assert.match(output, /delivers the work itself: commits, pushes and opens a pull request/);
+    // The end of a run is part of its shape: it delivers as far as the policy
+    // in config, and never past it.
+    assert.match(output, /delivers the work itself: commits it to the run branch/);
     assert.match(output, /never goes past `workflow.deliver`/);
-    // The one decision it does not make for you.
-    assert.match(output, /Merging is the one thing it asks about, once, at the end/);
+    // The decisions it does not make for you, and where it leaves you after.
+    assert.match(output, /asked at the end, once each: the pull request, then the merge/);
+    assert.match(output, /back to its home screen and waits for the next issue/);
     assert.match(output, /plan \(claude\).*implement \(codex\)/s);
     // The round limits are named, not left to be discovered mid-run.
     assert.match(output, /up to 2 rounds/);

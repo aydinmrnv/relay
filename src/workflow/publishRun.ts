@@ -1,5 +1,6 @@
 import { mergeBranch, pushBranch } from '../git/publish.ts';
 import { createPullRequest, mergePullRequest } from '../github/pullRequest.ts';
+import { issueTitle } from '../issues/identity.ts';
 import { draftReasons } from './delivery.ts';
 import { reviewsCode } from '../storage/config.ts';
 import { RUN_FILES, type RunStore } from '../storage/runs.ts';
@@ -9,6 +10,7 @@ import { RelayError } from '../util/errors.ts';
 import { commitRunWork } from './commitRun.ts';
 import type { RunObserver } from './observer.ts';
 import { renderSummary } from './summary.ts';
+import { formatUsage, unpricedTurns } from './usage.ts';
 import type { MergeRecord, PullRequestRecord, PushRecord, RunState } from './state.ts';
 
 export interface PublishContext {
@@ -225,7 +227,22 @@ export function pullRequestDraft(state: RunState, approvedPlan?: string): {
     );
   }
 
-  if (issue !== undefined) {
+  // What the change cost to produce. It is the honest footer on machine-made
+  // work: a reviewer deciding how much of this to trust is entitled to know
+  // that it took nine turns and two dollars of somebody's account.
+  const usage = state.usage;
+  if (usage !== undefined) {
+    const unpriced = unpricedTurns(usage.total);
+    lines.push(
+      `- Cost: ${formatUsage(usage.total)}` +
+        (unpriced === 0 ? '' : ` — ${unpriced} turn(s) reported no price, so this is a floor`),
+    );
+  }
+
+  // Only a tracker that numbers its issues has something GitHub can close. A
+  // task written on this machine simply has no such line, and the delivery
+  // ledger records that as a skip rather than leaving a gap.
+  if (issue?.number != null) {
     lines.push('', `Closes #${issue.number}`);
   }
 
@@ -240,9 +257,7 @@ export function pullRequestDraft(state: RunState, approvedPlan?: string): {
     state.config.workflow.typos ? typoize(text, { seed: state.runId }) : text;
 
   return {
-    title: write(
-      issue === undefined ? `Relay: work for issue ${state.issueRef}` : `${issue.title} (#${issue.number})`,
-    ),
+    title: write(issue === undefined ? `Relay: work for issue ${state.issueRef}` : issueTitle(issue)),
     body: `${write(lines.join('\n'))}\n`,
     base: workspace.baseBranch,
     head: workspace.branch,
@@ -256,7 +271,7 @@ function mergeMessage(state: RunState): string {
   const subject =
     state.issue === undefined
       ? `Merge ${branch} (Relay run ${state.runId})`
-      : `Merge ${branch}: ${state.issue.title} (#${state.issue.number})`;
+      : `Merge ${branch}: ${issueTitle(state.issue)}`;
   const message = `${subject}\n\nImplemented by Relay run ${state.runId}.\n`;
   return state.config.workflow.typos ? typoize(message, { seed: state.runId }) : message;
 }

@@ -4,6 +4,7 @@ import { RelayError } from '../../util/errors.ts';
 import { formatDuration, oneLine } from '../../util/text.ts';
 import { snapshotDiff, formatDiffStat, formatFileList } from '../../git/diff.ts';
 import { describeLanding, type Landing } from '../../git/commit.ts';
+import { issueHeadline } from '../../issues/identity.ts';
 import { worktreeExists } from '../../git/worktree.ts';
 import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
 import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
@@ -73,7 +74,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
   const listed = await Promise.all(
     shown.map(async (state) => {
       const elapsed = runDuration(state);
-      const issue = state.issue === undefined ? state.issueRef : `#${state.issue.number} ${state.issue.title}`;
+      const issue = state.issue === undefined ? state.issueRef : issueHeadline(state.issue);
       const landing = await landingOf(cli.repo.root, state);
 
       return {
@@ -194,7 +195,7 @@ async function printLiveStatus(state: RunState, store: RunStore): Promise<void> 
 
   const elapsed = Date.now() - new Date(state.createdAt).getTime();
   rows([
-    issue !== undefined && { label: 'Issue', value: `#${issue.number} ${issue.title}` },
+    issue !== undefined && { label: 'Issue', value: issueHeadline(issue) },
     state.workspace !== undefined && { label: 'Branch', value: state.workspace.branch },
     state.workspace !== undefined && { label: 'Worktree', value: state.workspace.path },
     {

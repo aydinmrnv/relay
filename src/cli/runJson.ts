@@ -27,7 +27,13 @@ export interface RunJson {
   durationMs: number | null;
 
   issueRef: string;
-  issue: { number: number; title: string; url: string; state: string } | null;
+  /**
+   * `number` is null for a tracker that does not number its issues, and for a
+   * task that came from a file or a prompt. `id` is the provider-scoped identity
+   * — `github:acme/widgets#142`, `local:fix-flaky-timeout` — and is null only on
+   * runs recorded before there was more than one provider.
+   */
+  issue: { id: string | null; number: number | null; title: string; url: string; state: string } | null;
 
   repository: { owner: string | null; name: string | null; defaultBranch: string };
   branch: string | null;
@@ -65,6 +71,8 @@ export interface RunJson {
     reached: DeliveryPolicy;
     steps: Array<{ step: DeliveryStep; status: 'done' | 'skipped' | 'failed'; detail: string; at: string }>;
     at: string;
+    /** Whether the pull request closes an issue, or why it closes none. */
+    issueLink?: { status: 'done' | 'skipped'; detail: string; at: string };
   } | null;
 
   tests: {
@@ -81,6 +89,17 @@ export interface RunJson {
   } | null;
 
   usage: RunUsageJson | null;
+  /**
+   * Why a run ended before its work did, when the reason was not a failure:
+   * a person stopped it, or it spent past `workflow.maxCostUsd`.
+   */
+  stopped: {
+    reason: 'user' | 'budget';
+    detail: string;
+    at: string;
+    spentUsd: number | null;
+    maxCostUsd: number | null;
+  } | null;
   error: { message: string; phase: Phase; code: string | null } | null;
 }
 
@@ -94,6 +113,11 @@ export interface UsageTotalsJson {
   outputTokens: number;
   costUsd: number | null;
   turns: number;
+  /**
+   * Turns that reported a price. `null` for a run recorded before Relay
+   * counted them — which is not the same as zero.
+   */
+  pricedTurns: number | null;
 }
 
 export interface RunUsageJson {
@@ -137,7 +161,13 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
     issue:
       state.issue === undefined
         ? null
-        : { number: state.issue.number, title: state.issue.title, url: state.issue.url, state: state.issue.state },
+        : {
+            id: state.issue.id ?? null,
+            number: state.issue.number,
+            title: state.issue.title,
+            url: state.issue.url,
+            state: state.issue.state,
+          },
 
     repository: {
       owner: state.repository.owner,
@@ -217,6 +247,16 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
           },
 
     usage: state.usage === undefined ? null : usageToJson(state.usage),
+    stopped:
+      state.stopped === undefined
+        ? null
+        : {
+            reason: state.stopped.reason,
+            detail: state.stopped.detail,
+            at: state.stopped.at,
+            spentUsd: state.stopped.spentUsd ?? null,
+            maxCostUsd: state.stopped.maxCostUsd ?? null,
+          },
     error: error === undefined ? null : { message: error.message, phase: error.phase, code: error.code ?? null },
   };
 }
@@ -237,5 +277,6 @@ function totalsToJson(totals: UsageTotals): UsageTotalsJson {
     outputTokens: totals.outputTokens,
     costUsd: totals.costUsd ?? null,
     turns: totals.turns,
+    pricedTurns: totals.pricedTurns ?? null,
   };
 }

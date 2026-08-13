@@ -22,6 +22,22 @@ export function pluralize(count: number, singular: string, plural = `${singular}
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+/**
+ * Reduces arbitrary text to something safe as both a path component and a git
+ * ref component: lowercase, no spaces, no `..`, and no leading or trailing
+ * punctuation. Empty input — or input with nothing left after stripping — falls
+ * back rather than producing a nameless directory or a bare `relay/`.
+ */
+export function slugify(value: string, fallback: string, maxLength = 40): string {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/\.{2,}/g, '.')
+    .slice(0, maxLength)
+    .replace(/^[-.]+|[-.]+$/g, '');
+  return slug.length > 0 ? slug : fallback;
+}
+
 export function indent(text: string, prefix = '  '): string {
   return text
     .split('\n')

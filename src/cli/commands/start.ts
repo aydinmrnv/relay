@@ -9,15 +9,14 @@ import {
 } from '../../auth/delegated.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
 import { workspacesRoot } from '../../git/worktree.ts';
-import { parseIssueRef } from '../../github/provider.ts';
 import {
-  ISSUE_PROVIDER_REGISTRY,
-  issueProviderRegistration,
-  type IssueProviderRegistration,
+  ISSUE_TRACKER_REGISTRY,
+  issueTrackerRegistration,
+  type IssueTrackerRegistration,
 } from '../../issues/registry.ts';
 import { resolveExecutable } from '../../process/runner.ts';
 import { configPath, loadConfig, type RelayConfig } from '../../storage/config.ts';
-import { errorMessage, RelayError } from '../../util/errors.ts';
+import { RelayError } from '../../util/errors.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
 import { agentChecks, authStateCheck, type AgentCheck, type Check } from '../checks.ts';
 import { checksToJson } from '../doctorJson.ts';
@@ -41,9 +40,10 @@ import {
   warn,
   warning,
 } from '../output.ts';
+import { runSession, validateIssueRef } from '../session.ts';
 import { initCommand, type InitOptions } from './init.ts';
 import { statusMark } from './doctor.ts';
-import { runCommand, type RunOptions } from './run.ts';
+import type { RunOptions } from './run.ts';
 
 export interface StartOptions {
   /** Report what is missing and exit, without prompting or signing anything in. */
@@ -73,7 +73,7 @@ export interface StartDeps {
   login: (support: AuthSupport, cwd: string) => Promise<boolean>;
   installed: (binary: string) => Promise<boolean>;
   providerCheck: (
-    registration: IssueProviderRegistration,
+    registration: IssueTrackerRegistration,
     cwd: string,
   ) => Promise<{ available: boolean; detail: string; hint?: string }>;
   init: (options: InitOptions) => Promise<number>;
@@ -102,7 +102,9 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
     installed: async (binary) => (await resolveExecutable(binary)) !== null,
     providerCheck: (registration, cwd) => registration.create({ cwd }).checkAvailability(),
     init: initCommand,
-    run: runCommand,
+    // The first run ends on the home screen rather than on a shell prompt: what
+    // follows a run is the next issue, and onboarding is where that starts.
+    run: runSession,
     now: () => new Date(),
   });
 }
@@ -209,28 +211,37 @@ async function ensureAgents(repo: RepositoryInfo, deps: StartDeps): Promise<stri
   return blockers;
 }
 
-/** Step 3 — where the issues come from, and whether that tracker is usable. */
+/**
+ * Step 3 — where the issues come from, and whether that tracker is usable.
+ *
+ * A tracker that is missing or signed out is a warning rather than a blocker,
+ * because it no longer stops a first run: `relay run ./spec.md` and
+ * `relay run --prompt "…"` need nothing installed and nothing signed into. The
+ * person deciding whether this tool is worth adopting can find that out before
+ * they file anything.
+ */
 async function ensureIssueProvider(repo: RepositoryInfo, deps: StartDeps): Promise<string[]> {
   section('3. Issues');
 
-  let chosen = ISSUE_PROVIDER_REGISTRY[0]!;
-  if (ISSUE_PROVIDER_REGISTRY.length > 1) {
-    const choices: Array<Choice<string>> = ISSUE_PROVIDER_REGISTRY.map((entry) => ({
+  let chosen = ISSUE_TRACKER_REGISTRY[0]!;
+  if (ISSUE_TRACKER_REGISTRY.length > 1) {
+    const choices: Array<Choice<string>> = ISSUE_TRACKER_REGISTRY.map((entry) => ({
       value: entry.name,
       label: entry.label,
     }));
     const name = await deps.prompter.choice('  Where do your issues live?', choices, chosen.name);
-    chosen = issueProviderRegistration(name) ?? chosen;
+    chosen = issueTrackerRegistration(name) ?? chosen;
   } else {
     // Naming the one supported tracker beats a question with a single answer.
     out(dim(`  Issues come from ${chosen.label}, the only tracker Relay supports today.`));
   }
 
   if (!(await deps.installed(chosen.binary))) {
-    fail(`${chosen.label}  ${dim(`${chosen.binary} not found`)}`);
-    hint('Install it, then run `relay start` again:', '    ');
+    warn(`${chosen.label}  ${dim(`${chosen.binary} not found`)}`);
+    hint('Install it if your issues live there:', '    ');
     command(chosen.installCommand, '    ');
-    return [`${chosen.binary} is not installed.`];
+    withoutATracker();
+    return [];
   }
 
   let status = await deps.providerCheck(chosen, repo.root);
@@ -244,7 +255,18 @@ async function ensureIssueProvider(repo: RepositoryInfo, deps: StartDeps): Promi
     ok(`${chosen.label}  ${dim(status.detail)}`);
     return [];
   }
-  return [`${chosen.label} is not authenticated.`];
+
+  warn(`${chosen.label}  ${dim(status.detail)}`);
+  withoutATracker();
+  return [];
+}
+
+/** The other half of step 3: work that has no ticket, which needs no tracker. */
+function withoutATracker(): void {
+  hint('You can still run Relay on work that has no ticket:', '    ');
+  command('relay run ./spec.md          # the file is the issue', '    ');
+  command('relay run --prompt "Fix the flaky timeout in the retry test"', '    ');
+  command('relay run --editor           # write it in $EDITOR', '    ');
 }
 
 /**
@@ -409,15 +431,11 @@ function showTour(config: RelayConfig): void {
   out(`  ${bold('How a run ends')}  ${dim(`workflow.deliver: ${config.workflow.deliver}`)}`);
   rows(
     [
-      { label: 'Delivery', value: `${deliveryStep(config)} — a phase of the run, not a question afterwards` },
+      { label: 'Delivery', value: `${deliveryStep(config)} — the run does that much itself` },
+      { label: 'Asked', value: askedStep(config) },
       { label: 'Gated', value: 'each step runs only if the one it depends on did; skipped steps say why' },
       { label: 'Honest', value: 'failed tests or unanswered blocking findings open the pull request as a draft' },
-      {
-        label: 'Merging',
-        value: config.workflow.offerMerge
-          ? 'asked once at the end, and only when it is possible — Enter is no'
-          : dim('never asked (workflow.offerMerge: false)'),
-      },
+      { label: 'Then', value: 'back to the Relay home screen, waiting for the next issue' },
       { label: 'Again', value: '`relay deliver <run>` re-runs it; steps already done are skipped, not repeated' },
     ],
     '    ',
@@ -470,7 +488,11 @@ async function firstRun(
     return blockers.length > 0 ? EXIT.preconditions : EXIT.success;
   }
 
-  const ref = await deps.prompter.text('  Which issue? (number, owner/repo#number, or URL)', '', validateIssueRef);
+  const ref = await deps.prompter.text(
+    '  Which issue? (number, owner/repo#number, URL, or a path to a markdown file)',
+    '',
+    validateIssueRef,
+  );
   if (ref.trim().length === 0) {
     out();
     hint('No issue given, so nothing was started.');
@@ -563,6 +585,19 @@ function deliveryStep(config: RelayConfig): string {
   }
 }
 
+/**
+ * What the run asks once it is done. Everything the policy did not authorize is
+ * a question at the end rather than a setting decided weeks earlier — and every
+ * one of those questions defaults to no.
+ */
+function askedStep(config: RelayConfig): string {
+  if (!config.workflow.offerMerge) return dim('nothing (workflow.offerMerge: false)');
+  if (config.workflow.deliver === 'merge') return dim('nothing — this repository asked for the merge up front');
+  return config.workflow.deliver === 'pr'
+    ? 'the merge, once, and only when it is possible — Enter is no'
+    : 'the pull request, then the merge — once each, and Enter is no';
+}
+
 function agentStep(agent: string, capability: string, timeoutMs: number, produces: string): string {
   return `${agent}  ${dim(`${capability}, up to ${Math.round(timeoutMs / 60_000)}m`)}  ${dim(`→ ${produces}`)}`;
 }
@@ -609,21 +644,24 @@ async function reportReadiness(
     checks.push(authStateCheck(`${entry.label} sign-in`, entry.auth, await deps.authState(entry.auth, repo.root)));
   }
 
-  const provider = ISSUE_PROVIDER_REGISTRY[0]!;
+  // A tracker is a warning, not a failure: a run can start from a file or a
+  // prompt without one, so `--check` must not claim Relay is unusable.
+  const provider = ISSUE_TRACKER_REGISTRY[0]!;
+  const withoutIt = 'Or work without a tracker: `relay run ./spec.md`, `relay run --prompt "…"`.';
   if (!(await deps.installed(provider.binary))) {
     checks.push({
       label: provider.label,
-      status: 'fail',
+      status: 'warn',
       detail: `${provider.binary} not found`,
-      hint: provider.installCommand,
+      hint: `${provider.installCommand}\n${withoutIt}`,
     });
   } else {
     const status = await deps.providerCheck(provider, repo.root);
     checks.push({
       label: provider.label,
-      status: status.available ? 'ok' : 'fail',
+      status: status.available ? 'ok' : 'warn',
       detail: status.detail,
-      ...(status.available ? {} : { hint: `Run \`${describeCommand(provider.auth.login)}\`.` }),
+      ...(status.available ? {} : { hint: `Run \`${describeCommand(provider.auth.login)}\`.\n${withoutIt}` }),
     });
   }
 
@@ -644,11 +682,14 @@ async function reportReadiness(
   const width = Math.max(...checks.map((check) => check.label.length));
   for (const check of checks) out(`  ${statusMark(check)} ${check.label.padEnd(width)}  ${dim(check.detail)}`);
 
-  if (failed.length > 0) {
+  // Warnings get their advice printed too — a tracker Relay could not reach is
+  // worth explaining even though it no longer stops a run.
+  const imperfect = checks.filter((check) => check.status !== 'ok');
+  if (imperfect.length > 0) {
     out();
-    for (const check of failed) {
+    for (const check of imperfect) {
       out(`  ${check.label}:`);
-      hint(check.hint ?? 'Run `relay doctor` for details.', '    ');
+      for (const line of (check.hint ?? 'Run `relay doctor` for details.').split('\n')) hint(line, '    ');
     }
   }
 
@@ -671,19 +712,9 @@ function printNextSteps(dry: boolean): void {
   out();
   hint('When you are ready:');
   command('relay run <issue-number>');
+  command(`relay run --prompt "…"   ${dim('# work that has no ticket')}`);
   if (!dry) command(`relay start --dry-run   ${dim('# the same pipeline, without spending anything')}`);
   out();
-}
-
-/** Rejects a malformed reference at the prompt, but lets an empty answer through. */
-function validateIssueRef(value: string): string | undefined {
-  if (value.trim().length === 0) return undefined;
-  try {
-    parseIssueRef(value);
-    return undefined;
-  } catch (error) {
-    return errorMessage(error);
-  }
 }
 
 async function rememberTour(repo: RepositoryInfo, deps: StartDeps): Promise<void> {

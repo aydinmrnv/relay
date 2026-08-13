@@ -380,11 +380,13 @@ describe('relay start — the tour', () => {
     assert.match(output, /billed to your own Claude Code and Codex accounts/);
     assert.match(output, /never read, never prompted for, never stored/);
     // Delivery is part of the tour because it is part of the run: the tour says
-    // how far this repository's policy goes, and that it goes no further.
-    assert.match(output, /commit, push and open a pull request — a phase of the run/);
+    // how far this repository's policy goes, what it will ask about the rest,
+    // and that a finished run leaves you back on the home screen.
+    assert.match(output, /commit to the run branch — the run does that much itself/);
     assert.match(output, /no merge unless you set one/);
     assert.match(output, /relay deliver <run>/);
-    assert.match(output, /asked once at the end, and only when it is possible — Enter is no/);
+    assert.match(output, /the pull request, then the merge — once each, and Enter is no/);
+    assert.match(output, /back to the Relay home screen, waiting for the next issue/);
   });
 });
 

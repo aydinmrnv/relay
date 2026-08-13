@@ -315,11 +315,19 @@ function explainRun(config: RelayConfig): void {
   bullet('A run typically takes 10–20 minutes and spends real tokens on your own CLI accounts.');
   bullet(`It then delivers the work itself: ${deliverySentence(config)}.`);
   bullet('Delivery never goes past `workflow.deliver`, and every step it skips is reported with the reason.');
-  bullet(
-    config.workflow.deliver === 'merge'
-      ? 'Merging happens automatically, because this repository asked for it.'
-      : 'Merging is the one thing it asks about, once, at the end — and Enter means no.',
-  );
+  bullet(endingSentence(config));
+  bullet('Then Relay goes back to its home screen and waits for the next issue, rather than exiting.');
+}
+
+/** The questions a run ends on, which is everything the policy left undone. */
+function endingSentence(config: RelayConfig): string {
+  if (!config.workflow.offerMerge) return 'Nothing is asked afterwards (workflow.offerMerge: false).';
+  if (config.workflow.deliver === 'merge') {
+    return 'Merging happens automatically, because this repository asked for it.';
+  }
+  return config.workflow.deliver === 'pr'
+    ? 'Merging is the one thing it asks about, once, at the end — and Enter means no.'
+    : 'What the policy left undone is asked at the end, once each: the pull request, then the merge — and Enter means no.';
 }
 
 /** What the delivery phase would do in this repository, spelled out. */

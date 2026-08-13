@@ -68,7 +68,27 @@ export interface HomeOptions {
   json?: boolean;
 }
 
+export interface HomeScreen {
+  /**
+   * Whether a run can start from here: a configured repository. Everything
+   * else — no repository, no config — has already been told what to do instead,
+   * and asking it for an issue number on top of that would be noise.
+   */
+  ready: boolean;
+}
+
+/**
+ * `relay --json`: the screen's facts as one document, and nothing after it. A
+ * session asks for the next issue, and whatever is parsing this is not there to
+ * answer.
+ */
 export async function homeCommand(options: HomeOptions = {}): Promise<number> {
+  await showHome(options);
+  return EXIT.success;
+}
+
+/** Draws the home screen, and reports whether the next issue can start here. */
+export async function showHome(options: HomeOptions = {}): Promise<HomeScreen> {
   let repo;
   try {
     repo = await discoverRepository(process.cwd());
@@ -81,7 +101,7 @@ export async function homeCommand(options: HomeOptions = {}): Promise<number> {
     out('Relay coordinates your coding agents to plan, review, implement and deliver GitHub issues.');
     out('Run it inside the repository you want Relay to work on.');
     command('relay start');
-    return EXIT.success;
+    return { ready: false };
   }
 
   const configured = await configExists(repo.root);
@@ -107,7 +127,7 @@ export async function homeCommand(options: HomeOptions = {}): Promise<number> {
       next: chooseNextCommand(configured, runs),
     };
     emitJson('home', payload);
-    return EXIT.success;
+    return { ready: configured };
   }
 
   const repository = slug ?? repo.root;
@@ -135,5 +155,6 @@ export async function homeCommand(options: HomeOptions = {}): Promise<number> {
     ],
     footer: [`Next  ${chooseNextCommand(configured, runs)}`],
   });
-  return EXIT.success;
+  return { ready: configured };
 }
+

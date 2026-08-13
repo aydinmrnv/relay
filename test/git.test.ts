@@ -148,7 +148,7 @@ describe('git integration', () => {
 
   it('creates an isolated worktree without touching the user branch', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 142, runShortId: 'test01' });
+    const worktree = await createWorktree({ repo: info, issue: 142, runShortId: 'test01' });
 
     assert.equal(worktree.branch, 'relay/142-test01');
     assert.equal(await worktreeExists(worktree.path), true);
@@ -165,14 +165,14 @@ describe('git integration', () => {
 
   it('reuses an existing worktree instead of failing', async () => {
     const info = await discoverRepository(repo.root);
-    const first = await createWorktree({ repo: info, issueNumber: 200, runShortId: 'reuse1' });
-    const second = await createWorktree({ repo: info, issueNumber: 200, runShortId: 'reuse1' });
+    const first = await createWorktree({ repo: info, issue: 200, runShortId: 'reuse1' });
+    const second = await createWorktree({ repo: info, issue: 200, runShortId: 'reuse1' });
     assert.equal(first.path, second.path);
   });
 
   it('computes a diff from git, including new and deleted files', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 300, runShortId: 'diff01' });
+    const worktree = await createWorktree({ repo: info, issue: 300, runShortId: 'diff01' });
 
     await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
     await mkdir(join(worktree.path, 'src', 'new'), { recursive: true });
@@ -190,14 +190,14 @@ describe('git integration', () => {
 
   it('reports an empty diff when nothing changed', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 400, runShortId: 'empty1' });
+    const worktree = await createWorktree({ repo: info, issue: 400, runShortId: 'empty1' });
     const snapshot = await snapshotDiff(worktree.path, worktree.baseSha);
     assert.equal(snapshot.isEmpty, true);
   });
 
   it('commits a run\'s work to its own branch and leaves every other ref alone', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 600, runShortId: 'cmt001' });
+    const worktree = await createWorktree({ repo: info, issue: 600, runShortId: 'cmt001' });
     await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 42;\n', 'utf8');
 
     const result = await commitWorktree(worktree.path, {
@@ -221,13 +221,13 @@ describe('git integration', () => {
 
   it('commits nothing when a run changed nothing', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 601, runShortId: 'cmt002' });
+    const worktree = await createWorktree({ repo: info, issue: 601, runShortId: 'cmt002' });
     assert.equal(await commitWorktree(worktree.path, { subject: 'nothing to see' }), undefined);
   });
 
   it('reports whether a run\'s work is committed or still only staged', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 602, runShortId: 'lnd001' });
+    const worktree = await createWorktree({ repo: info, issue: 602, runShortId: 'lnd001' });
     const subject = { branch: worktree.branch, baseSha: worktree.baseSha, changedFiles: 3 };
 
     // A run that changed nothing has nothing to strand.
@@ -246,7 +246,7 @@ describe('git integration', () => {
 
   it('removes only worktrees git knows about, and only inside the workspaces root', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 500, runShortId: 'rm0001' });
+    const worktree = await createWorktree({ repo: info, issue: 500, runShortId: 'rm0001' });
 
     await assert.rejects(() => removeWorktree(repo.root, repo.root), RelayError);
     await assert.rejects(() => removeWorktree(repo.root, join(repo.relayHome, 'workspaces')), RelayError);
@@ -290,7 +290,7 @@ describe('publishing a run branch', () => {
 
   it('pushes the run branch and sets its upstream', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 700, runShortId: 'push01' });
+    const worktree = await createWorktree({ repo: info, issue: 700, runShortId: 'push01' });
     await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 700;\n', 'utf8');
     await commitWorktree(worktree.path, { subject: 'work for 700' });
 
@@ -305,7 +305,7 @@ describe('publishing a run branch', () => {
 
   it('deletes a remote branch idempotently without force pushing', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 704, runShortId: 'del001' });
+    const worktree = await createWorktree({ repo: info, issue: 704, runShortId: 'del001' });
     await writeFile(join(worktree.path, 'src', 'delete.ts'), 'export const deleted = true;\n', 'utf8');
     await commitWorktree(worktree.path, { subject: 'work for 704' });
     await pushBranch(repo.root, worktree.branch);
@@ -317,7 +317,7 @@ describe('publishing a run branch', () => {
 
   it('refuses to merge into a branch the user is not on, or a dirty tree', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 701, runShortId: 'mrg001' });
+    const worktree = await createWorktree({ repo: info, issue: 701, runShortId: 'mrg001' });
     await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 701;\n', 'utf8');
     await commitWorktree(worktree.path, { subject: 'work for 701' });
 
@@ -347,7 +347,7 @@ describe('publishing a run branch', () => {
 
   it('refuses to merge into whatever branch happens to be checked out', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 703, runShortId: 'grd001' });
+    const worktree = await createWorktree({ repo: info, issue: 703, runShortId: 'grd001' });
     await writeFile(join(worktree.path, 'src', 'guard.ts'), 'export const guarded = true;\n', 'utf8');
     await commitWorktree(worktree.path, { subject: 'work for 703' });
 
@@ -383,7 +383,7 @@ describe('publishing a run branch', () => {
 
   it('restores the checkout when a merge conflicts instead of leaving markers behind', async () => {
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 702, runShortId: 'cnf001' });
+    const worktree = await createWorktree({ repo: info, issue: 702, runShortId: 'cnf001' });
     await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 702;\n', 'utf8');
     await commitWorktree(worktree.path, { subject: 'work for 702' });
 

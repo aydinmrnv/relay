@@ -9,7 +9,9 @@ import { buildProgram } from '../src/cli/program.ts';
 import { checksToJson } from '../src/cli/doctorJson.ts';
 import { homeCommand } from '../src/cli/commands/home.ts';
 import { diffCommand, logsCommand, planCommand, statusCommand, stopCommand } from '../src/cli/commands/inspect.ts';
+import { statsCommand } from '../src/cli/commands/stats.ts';
 import { RunJsonStream, type RunStreamLine } from '../src/cli/runStream.ts';
+import { relaySession, type SessionDeps } from '../src/cli/session.ts';
 import { RunStore, RUN_FILES } from '../src/storage/runs.ts';
 import { DEFAULT_CONFIG, writeConfig } from '../src/storage/config.ts';
 import { runToJson } from '../src/cli/runJson.ts';
@@ -19,6 +21,7 @@ import { WorkflowEngine } from '../src/workflow/engine.ts';
 import { createRunState, transition, type RunState } from '../src/workflow/state.ts';
 import { buildEngineContext, happyPathHarnesses, writesFile } from './helpers/engine.ts';
 import { FakeAgentHarness, approveReview, section } from './helpers/fakeHarness.ts';
+import { ScriptedPrompter } from './helpers/scriptedPrompter.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
 let repo: TempRepo;
@@ -149,7 +152,7 @@ describe('the JSON contract', () => {
 
     // Not an allowlist of what happens to exist — the list from the issue, so
     // a new reporting command without `--json` fails here rather than shipping.
-    for (const name of ['start', 'init', 'doctor', 'run', 'resume', 'deliver', 'status', 'watch', 'diff', 'plan', 'logs', 'stop']) {
+    for (const name of ['start', 'init', 'doctor', 'run', 'resume', 'deliver', 'status', 'watch', 'diff', 'plan', 'logs', 'stats', 'stop']) {
       assert.ok(named.includes(name), `${name} should be a command`);
       const command = program.commands.find((entry) => entry.name() === name);
       const flags = command?.options.map((option) => option.long) ?? [];
@@ -238,6 +241,19 @@ describe('the JSON contract', () => {
     assert.equal((home['runs'] as unknown[]).length, 1);
   });
 
+  it('carries the schema version on stats, which arrived with its own --json', async () => {
+    await persist(runState(repo.root, 'COMPLETE'));
+    await writeConfig(repo.root, structuredClone(DEFAULT_CONFIG));
+
+    // `relay stats` shipped a `--json` that wrote through `raw()`. That is the
+    // human sink, which this contract diverts to stderr — so an unconverted
+    // command prints nothing at all rather than printing the wrong thing.
+    const captured = await capture(() => statsCommand({ json: true }));
+    const parsed = documentOf(captured.stdout, 'stats');
+    assert.equal(parsed['runs'], 1);
+    assert.ok(!captured.stdout.includes('\u001B'));
+  });
+
   it('drops the patch under --stat but keeps the files it summarizes', async () => {
     const state = runState(repo.root);
     const store = await persist(state);
@@ -265,7 +281,7 @@ describe('the JSON contract', () => {
     assert.equal(payload.checks[0]?.hint, null);
     assert.equal(payload.checks[1]?.hint, 'npm install -g @openai/codex');
     const serialized = JSON.stringify(payload);
-    assert.ok(!serialized.includes(''));
+    assert.ok(!serialized.includes('\u001B'));
     for (const glyph of ['✓', '✗', '●', '○']) assert.ok(!serialized.includes(glyph), `no ${glyph} in JSON`);
   });
 });
@@ -289,7 +305,7 @@ describe('stdout carries the JSON and nothing else', () => {
     for (const [name, action] of invocations) {
       const result = await capture(action);
       assert.doesNotThrow(() => JSON.parse(result.stdout), `relay ${name} --json wrote non-JSON to stdout`);
-      assert.ok(!result.stdout.includes(''), `relay ${name} --json wrote an escape sequence to stdout`);
+      assert.ok(!result.stdout.includes('\u001B'), `relay ${name} --json wrote an escape sequence to stdout`);
     }
   });
 
@@ -608,5 +624,46 @@ describe('relay run --json', () => {
     stream.phaseChanged('IMPLEMENTING');
     stream.finish('COMPLETE');
     assert.deepEqual(seen, ['resume', 'resume', 'resume']);
+  });
+});
+
+describe('--json and the session loop', () => {
+  /** The session, driven against a terminal that would happily answer. */
+  async function session(options: { json: boolean }): Promise<{ asked: string[]; homes: number }> {
+    const prompter = new ScriptedPrompter(['12', ''], true);
+    let homes = 0;
+
+    const deps: SessionDeps = {
+      prompter,
+      home: async () => {
+        homes += 1;
+        return { ready: true };
+      },
+      run: async () => 0,
+    };
+
+    if (options.json) enterJsonMode();
+    try {
+      await relaySession(deps, {}, { code: 0 });
+    } finally {
+      exitJsonMode();
+    }
+    return { asked: prompter.asked, homes };
+  }
+
+  it('does not ask for the next issue when the output is being parsed', async () => {
+    // The prompter is genuinely interactive here — `relay run --json` on a real
+    // terminal is the case that matters, and the theme cannot tell it apart. A
+    // question nobody is reading is a hang, and a home screen drawn after a
+    // JSON document is a second document that was never promised.
+    const streamed = await session({ json: true });
+    assert.deepEqual(streamed.asked, []);
+    assert.equal(streamed.homes, 0);
+  });
+
+  it('still comes back for the next issue when a person is reading it', async () => {
+    const human = await session({ json: false });
+    assert.equal(human.asked.length, 2);
+    assert.ok(human.homes > 0);
   });
 });
