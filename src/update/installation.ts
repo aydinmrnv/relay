@@ -50,6 +50,12 @@ export async function describeInstallation(from: string = fileURLToPath(import.m
   };
 }
 
+/** Reads the installed package version without also probing git for its install kind. */
+export async function packageVersion(from: string = fileURLToPath(import.meta.url)): Promise<string> {
+  const root = await findPackageRoot(dirname(from));
+  return (await readManifest(root)).version ?? 'unknown';
+}
+
 /**
  * The version recorded in an installed copy, or null when it cannot be read.
  * Called after an update, where a missing answer is worth reporting plainly
