@@ -14,6 +14,7 @@ import { RunJsonStream, type RunStreamLine } from '../src/cli/runStream.ts';
 import { relaySession, type SessionDeps } from '../src/cli/session.ts';
 import { RunStore, RUN_FILES } from '../src/storage/runs.ts';
 import { DEFAULT_CONFIG, writeConfig } from '../src/storage/config.ts';
+import { configToJson } from '../src/cli/homeJson.ts';
 import { runToJson } from '../src/cli/runJson.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { createRunId } from '../src/util/ids.ts';
@@ -26,6 +27,13 @@ import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
 let repo: TempRepo;
 let originalCwd: string;
+
+it('projects tracking privacy choices into config JSON', () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.tracking.enabled = true;
+  config.tracking.includeAgentPhases = false;
+  assert.deepEqual(configToJson(config).tracking, { enabled: true, includeAgentPhases: false });
+});
 
 beforeEach(async () => {
   originalCwd = process.cwd();

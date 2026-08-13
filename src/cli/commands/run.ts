@@ -40,6 +40,7 @@ import { emitJson } from '../json.ts';
 import { runToJson } from '../runJson.ts';
 import { RunJsonStream } from '../runStream.ts';
 import { landingOf } from './inspect.ts';
+import { createTracking } from '../../tracking/index.ts';
 import {
   changeCount,
   command,
@@ -562,12 +563,14 @@ async function executeRun(
 
   display.start();
 
+  const tracking = await createTracking({ state, store, observer: display, signal: controller.signal });
+
   const context: EngineContext = {
     state,
     store,
     harnesses: cli.harnesses,
     issueProvider: issueProviderFor(cli, state),
-    observer: display,
+    observer: tracking.observer,
     signal: controller.signal,
   };
 
@@ -576,6 +579,7 @@ async function executeRun(
     finalState = await new WorkflowEngine(context).run();
     display.finish(finalState.phase);
   } finally {
+    tracking.stop();
     process.off('SIGINT', onSigint);
   }
 
