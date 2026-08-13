@@ -5,6 +5,7 @@ import type { ReviewRound } from '../reviews/types.ts';
 import type { Phase } from './phases.ts';
 import { canTransition, isTerminal } from './phases.ts';
 import type { RunUsage } from './usage.ts';
+import type { ProjectBrief } from '../agents/brief.ts';
 
 export interface AgentBinding {
   provider: AgentProvider;
@@ -199,6 +200,8 @@ export interface RunState {
 
   repository: { root: string; owner: string | null; name: string | null; defaultBranch: string };
   workspace?: WorkspaceInfo;
+  /** Project instructions snapshotted once when the run worktree is created. */
+  brief?: ProjectBrief;
 
   agents: Partial<Record<Role, AgentBinding>>;
   /** Effective config for this run, snapshotted so later edits cannot rewrite history. */
@@ -321,6 +324,16 @@ export function validateRunState(value: unknown): RunState {
   }
   if (state.config === undefined || state.repository === undefined) {
     throw new RelayError('Run state is missing its config or repository snapshot.', { code: 'BAD_RUN_STATE' });
+  }
+  if (state.brief !== undefined) {
+    const brief = state.brief as Partial<ProjectBrief>;
+    const validRoles = brief.roles !== null && typeof brief.roles === 'object' &&
+      Object.entries(brief.roles).every(([role, text]) =>
+        ['planner', 'implementer', 'reviewer'].includes(role) && typeof text === 'string');
+    if (!Array.isArray(brief.sources) || !brief.sources.every((source) => typeof source === 'string') ||
+        typeof brief.common !== 'string' || typeof brief.truncated !== 'boolean' || !validRoles) {
+      throw new RelayError('Run state contains an invalid project brief.', { code: 'BAD_RUN_STATE' });
+    }
   }
   return state as RunState;
 }

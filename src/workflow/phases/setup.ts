@@ -5,6 +5,14 @@ import { createWorktree, worktreeExists } from '../../git/worktree.ts';
 import { discoverRepository } from '../../git/repository.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import type { EngineContext, PhaseResult } from '../context.ts';
+import { assembleBrief, renderBriefArtifact } from '../../agents/brief.ts';
+
+async function ensureBrief(context: EngineContext, worktreePath: string): Promise<void> {
+  if (context.state.brief === undefined) context.state.brief = await assembleBrief(worktreePath);
+  if (await context.store.readArtifact(RUN_FILES.brief) === undefined) {
+    await context.store.writeArtifact(RUN_FILES.brief, renderBriefArtifact(context.state.brief));
+  }
+}
 
 /** Resolves roles to installed harnesses before anything expensive happens. */
 export async function initializing(context: EngineContext): Promise<PhaseResult> {
@@ -67,6 +75,7 @@ export async function creatingWorkspace(context: EngineContext): Promise<PhaseRe
   const next = state.config.workflow.plan === 'inline' ? 'IMPLEMENTING' : 'PLANNING';
 
   if (state.workspace !== undefined && (await worktreeExists(state.workspace.path))) {
+    await ensureBrief(context, state.workspace.path);
     return { next, note: `reusing ${state.workspace.path}` };
   }
 
@@ -98,6 +107,7 @@ export async function creatingWorkspace(context: EngineContext): Promise<PhaseRe
   });
 
   state.workspace = worktree;
+  await ensureBrief(context, worktree.path);
   observer.note(`Worktree ${worktree.path}`);
   observer.note(`Branch ${worktree.branch} from ${worktree.baseBranch} (${worktree.baseSha.slice(0, 8)})`);
 
