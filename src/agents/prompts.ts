@@ -1,37 +1,13 @@
-import { access } from 'node:fs/promises';
-import { join } from 'node:path';
-
 import { formatFindingLine, type ReviewFinding } from '../reviews/types.ts';
 import { beginMarker, endMarker } from '../reviews/protocol.ts';
-
-/** Instruction files worth pointing an agent at, if the repository has them. */
-const INSTRUCTION_FILES = [
-  'AGENTS.md',
-  'CLAUDE.md',
-  'CONTRIBUTING.md',
-  '.github/CONTRIBUTING.md',
-  'README.md',
-  'docs/architecture.md',
-];
-
-export async function discoverInstructionFiles(worktreePath: string): Promise<string[]> {
-  const found: string[] = [];
-  for (const candidate of INSTRUCTION_FILES) {
-    try {
-      await access(join(worktreePath, candidate));
-      found.push(candidate);
-    } catch {
-      continue;
-    }
-  }
-  return found;
-}
+import { briefForRole, type ProjectBrief } from './brief.ts';
+import type { Role } from '../storage/config.ts';
 
 export interface PromptContext {
   worktreePath: string;
   branch: string;
   issueMarkdown: string;
-  instructionFiles: readonly string[];
+  brief?: ProjectBrief;
 }
 
 /**
@@ -39,7 +15,7 @@ export interface PromptContext {
  * deny lists; stating them here keeps the agent from wasting a turn attempting
  * something that will be refused anyway.
  */
-function groundRules(context: PromptContext, capability: 'read_only' | 'write'): string {
+function groundRules(context: PromptContext, capability: 'read_only' | 'write', role: Role): string {
   const lines = [
     'You are one agent in a multi-agent engineering workflow orchestrated by Relay.',
     '',
@@ -58,12 +34,8 @@ function groundRules(context: PromptContext, capability: 'read_only' | 'write'):
     lines.push('- Do not commit unless asked; Relay reads your changes directly from the working tree.');
   }
 
-  if (context.instructionFiles.length > 0) {
-    lines.push(
-      '',
-      `This repository has project instructions you must read and follow: ${context.instructionFiles.join(', ')}.`,
-    );
-  }
+  const projectContext = briefForRole(context.brief, role);
+  if (projectContext.length > 0) lines.push('', projectContext);
 
   return lines.join('\n');
 }
@@ -124,7 +96,7 @@ const PLAN_TEMPLATE = [
 
 export function buildPlanPrompt(context: PromptContext): string {
   return [
-    groundRules(context, 'read_only'),
+    groundRules(context, 'read_only', 'planner'),
     '',
     '# Task: produce an implementation plan',
     '',
@@ -171,7 +143,7 @@ export function buildReviewPrimingPrompt(
       : 'another agent is implementing this issue right now';
 
   return [
-    groundRules(context, 'read_only'),
+    groundRules(context, 'read_only', 'planReviewer'),
     '',
     '# Task: read ahead, so your review does not have to',
     '',
@@ -215,7 +187,7 @@ export interface PlanReviewPromptOptions extends PromptContext {
 
 export function buildPlanReviewPrompt(options: PlanReviewPromptOptions): string {
   return [
-    groundRules(options, 'read_only'),
+    groundRules(options, 'read_only', 'planReviewer'),
     '',
     `# Task: adversarially review an implementation plan (round ${options.round} of ${options.maxRounds})`,
     '',
@@ -433,7 +405,7 @@ function verificationInstruction(options: ImplementationPromptOptions): string[]
 
 export function buildImplementationPrompt(options: ImplementationPromptOptions): string {
   return [
-    groundRules(options, 'write'),
+    groundRules(options, 'write', 'implementer'),
     '',
     '# Task: implement the approved plan',
     '',
@@ -484,7 +456,7 @@ export function buildImplementationPrompt(options: ImplementationPromptOptions):
  */
 export function buildInlinePlanPrompt(options: ImplementationPromptOptions): string {
   return [
-    groundRules(options, 'write'),
+    groundRules(options, 'write', 'implementer'),
     '',
     '# Task: plan this issue and implement it, in one pass',
     '',
@@ -558,7 +530,7 @@ export interface CodeReviewPromptOptions extends PromptContext {
 
 export function buildCodeReviewPrompt(options: CodeReviewPromptOptions): string {
   return [
-    groundRules(options, 'read_only'),
+    groundRules(options, 'read_only', 'codeReviewer'),
     '',
     `# Task: review an implementation diff (round ${options.round} of ${options.maxRounds})`,
     '',

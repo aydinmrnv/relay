@@ -26,6 +26,7 @@ export interface LoggedEvent {
 export const RUN_FILES = {
   state: 'state.json',
   issue: 'issue.md',
+  brief: 'brief.md',
   plan: 'plan.md',
   summary: 'summary.md',
   events: 'events.jsonl',

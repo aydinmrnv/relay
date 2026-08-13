@@ -1,8 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { AGENT_REGISTRY } from '../../agents/index.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
-import { DEFAULT_CONFIG, ROLES, configPath, loadConfig, writeConfig, type RelayConfig, type Role } from '../../storage/config.ts';
+import { DEFAULT_CONFIG, ROLES, configPath, loadConfig, relayDir, writeConfig, type RelayConfig, type Role } from '../../storage/config.ts';
+import { detectInstructionFiles } from '../../agents/brief.ts';
 import { discoverTestCommand } from '../../testing/discovery.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
 import { agentChecks, type AgentCheck } from '../checks.ts';
@@ -11,6 +13,23 @@ import { statusMark } from './doctor.ts';
 import { bullet, dim, heading, hint, out, rows, section, success, warning } from '../output.ts';
 
 const RUNS_ENTRY = '.relay/runs/';
+const STARTER_RULES = `# Relay rules
+
+## What this project is
+<!-- Briefly describe the project and its architecture. -->
+
+## What a reviewer here always checks
+<!-- Name the conventions and quality gates reviewers enforce. -->
+
+## What must never change
+<!-- Record invariants and compatibility promises agents must preserve. -->
+`;
+
+async function reportProjectContext(repoRoot: string): Promise<string[]> {
+  const files = await detectInstructionFiles(repoRoot);
+  out(`  Project context ${files.length > 0 ? files.join(', ') : 'none — agents will only see the issue'}`);
+  return files;
+}
 
 export interface InitOptions {
   force?: boolean;
@@ -104,6 +123,7 @@ async function writeDetectedConfig(
 
   const discovery = await discoverTestCommand(repo.root, null);
   out(`  Tests       ${discovery.found ? discovery.command.command.join(' ') : dim(`none detected (${discovery.reason})`)}`);
+  await reportProjectContext(repo.root);
 
   const agents = await deps.checkAgents();
   const labelWidth = Math.max(11, ...AGENT_REGISTRY.map((entry) => entry.label.length));
@@ -130,7 +150,16 @@ async function guidedInit(repo: RepositoryInfo, path: string, config: RelayConfi
   await assignRoles(config, agents, deps.prompter);
   explainRun(config);
 
+  const instructionFiles = await reportProjectContext(repo.root);
+  const createRules = !instructionFiles.includes('.relay/rules.md') &&
+    await deps.prompter.confirm('  Write a starter .relay/rules.md?', true);
+
   await writeConfig(repo.root, config);
+  if (createRules) {
+    await mkdir(relayDir(repo.root), { recursive: true });
+    await writeFile(join(relayDir(repo.root), 'rules.md'), STARTER_RULES, 'utf8');
+    out(dim('  Wrote .relay/rules.md'));
+  }
   await ensureGitignore(repo.root);
 
   section('Done');

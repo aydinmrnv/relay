@@ -4,9 +4,9 @@ import {
   buildPlanReviewPrompt,
   buildPlanRevisionPrompt,
   buildReviewPrimingPrompt,
-  discoverInstructionFiles,
   type PromptContext,
 } from '../../agents/prompts.ts';
+import { assembleBrief, renderBriefArtifact } from '../../agents/brief.ts';
 import { extractSection, beginMarker, endMarker } from '../../reviews/protocol.ts';
 import { parseReview, parseFindingResponses, REVIEW_JSON_SCHEMA } from '../../reviews/parse.ts';
 import { isActionable, type ReviewRound } from '../../reviews/types.ts';
@@ -26,11 +26,16 @@ async function promptContext(context: EngineContext): Promise<PromptContext> {
   }
   context.issueMarkdown = issueMarkdown;
 
+  if (state.brief === undefined) state.brief = await assembleBrief(workspace.path);
+  if (await context.store.readArtifact(RUN_FILES.brief) === undefined) {
+    await context.store.writeArtifact(RUN_FILES.brief, renderBriefArtifact(state.brief));
+  }
+
   return {
     worktreePath: workspace.path,
     branch: workspace.branch,
     issueMarkdown,
-    instructionFiles: await discoverInstructionFiles(workspace.path),
+    brief: state.brief,
   };
 }
 
