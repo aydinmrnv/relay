@@ -17,6 +17,7 @@ import type { EngineContext } from '../../workflow/context.ts';
 import { RunRenderer } from '../../ui/renderer.ts';
 import { glyphs } from '../../ui/theme.ts';
 import { formatDuration } from '../../util/text.ts';
+import { createRunTracker, type TrackerFactory } from '../../tracking/tracker.ts';
 import { createCliContext, type CliContext } from '../context.ts';
 import { offerMerge } from '../mergeOffer.ts';
 import {
@@ -221,7 +222,12 @@ const cliObserver: RunObserver = {
   warn: (text) => out(warning(`  ${text}`)),
 };
 
-async function executeRun(cli: CliContext, state: RunState, options: RunOptions): Promise<number> {
+export async function executeRun(
+  cli: CliContext,
+  state: RunState,
+  options: RunOptions,
+  trackerFactory: TrackerFactory = createRunTracker,
+): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   const controller = new AbortController();
 
@@ -261,6 +267,15 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
     observer: renderer,
     signal: controller.signal,
   };
+  if (state.config.tracking.enabled) {
+    try {
+      context.tracker = trackerFactory(state.config.tracking, state, renderer, store);
+    } catch (error) {
+      // Construction is deliberately synchronous and inert, but a custom
+      // factory must still never be able to fail a run.
+      renderer.note(`WakaTime tracking disabled for this run: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   let finalState: RunState;
   try {

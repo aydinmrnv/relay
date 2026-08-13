@@ -103,6 +103,27 @@ describe('config', () => {
     assert.deepEqual(mergeConfig(DEFAULT_CONFIG, { tests: { command: ['npm', 'test'] } }).tests.command, ['npm', 'test']);
   });
 
+  it('defaults and validates WakaTime tracking', () => {
+    assert.deepEqual(DEFAULT_CONFIG.tracking, {
+      enabled: false,
+      plugin: null,
+      project: null,
+      includeAgentPhases: true,
+    });
+    assert.deepEqual(
+      mergeConfig(DEFAULT_CONFIG, {
+        tracking: { enabled: true, plugin: 'relay/test', project: 'widgets', includeAgentPhases: false },
+      }).tracking,
+      { enabled: true, plugin: 'relay/test', project: 'widgets', includeAgentPhases: false },
+    );
+    for (const tracking of [{ enabled: 'yes' }, { plugin: 42 }, 'enabled']) {
+      assert.throws(
+        () => mergeConfig(DEFAULT_CONFIG, { tracking }),
+        (error: unknown) => error instanceof RelayError && error.code === 'BAD_CONFIG',
+      );
+    }
+  });
+
   it('rejects a non-object config file', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, ['nope']), RelayError);
   });

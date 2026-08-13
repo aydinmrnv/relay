@@ -9,6 +9,7 @@ import type { RunState } from './state.ts';
 import type { Phase } from './phases.ts';
 import type { PrimingTask } from './priming.ts';
 import type { BackgroundTestRun } from './backgroundTests.ts';
+import type { Tracker } from '../tracking/tracker.ts';
 
 export interface EngineContext {
   state: RunState;
@@ -26,6 +27,8 @@ export interface EngineContext {
   priming?: Partial<Record<Role, PrimingTask>>;
   /** The project's suite, running against the current diff while review happens. */
   backgroundTests?: BackgroundTestRun | undefined;
+  /** Best-effort reporting of Relay's own orchestration activity. */
+  tracker?: Tracker;
 }
 
 /** Outcome of a phase handler: the phase to move to, plus an optional note. */
