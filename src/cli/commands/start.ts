@@ -9,7 +9,6 @@ import {
 } from '../../auth/delegated.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
 import { workspacesRoot } from '../../git/worktree.ts';
-import { parseIssueRef } from '../../github/provider.ts';
 import {
   ISSUE_PROVIDER_REGISTRY,
   issueProviderRegistration,
@@ -17,7 +16,7 @@ import {
 } from '../../issues/registry.ts';
 import { resolveExecutable } from '../../process/runner.ts';
 import { configPath, loadConfig, type RelayConfig } from '../../storage/config.ts';
-import { errorMessage, RelayError } from '../../util/errors.ts';
+import { RelayError } from '../../util/errors.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
 import { agentChecks, authStateCheck, type AgentCheck, type Check } from '../checks.ts';
 import { ensureRelayIgnored, loadOnboarding, saveOnboarding } from '../onboarding.ts';
@@ -38,9 +37,10 @@ import {
   warn,
   warning,
 } from '../output.ts';
+import { runSession, validateIssueRef } from '../session.ts';
 import { initCommand, type InitOptions } from './init.ts';
 import { statusMark } from './doctor.ts';
-import { runCommand, type RunOptions } from './run.ts';
+import type { RunOptions } from './run.ts';
 
 export interface StartOptions {
   /** Report what is missing and exit, without prompting or signing anything in. */
@@ -94,7 +94,9 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
     installed: async (binary) => (await resolveExecutable(binary)) !== null,
     providerCheck: (registration, cwd) => registration.create({ cwd }).checkAvailability(),
     init: initCommand,
-    run: runCommand,
+    // The first run ends on the home screen rather than on a shell prompt: what
+    // follows a run is the next issue, and onboarding is where that starts.
+    run: runSession,
     now: () => new Date(),
   });
 }
@@ -397,15 +399,11 @@ function showTour(config: RelayConfig): void {
   out(`  ${bold('How a run ends')}  ${dim(`workflow.deliver: ${config.workflow.deliver}`)}`);
   rows(
     [
-      { label: 'Delivery', value: `${deliveryStep(config)} — a phase of the run, not a question afterwards` },
+      { label: 'Delivery', value: `${deliveryStep(config)} — the run does that much itself` },
+      { label: 'Asked', value: askedStep(config) },
       { label: 'Gated', value: 'each step runs only if the one it depends on did; skipped steps say why' },
       { label: 'Honest', value: 'failed tests or unanswered blocking findings open the pull request as a draft' },
-      {
-        label: 'Merging',
-        value: config.workflow.offerMerge
-          ? 'asked once at the end, and only when it is possible — Enter is no'
-          : dim('never asked (workflow.offerMerge: false)'),
-      },
+      { label: 'Then', value: 'back to the Relay home screen, waiting for the next issue' },
       { label: 'Again', value: '`relay deliver <run>` re-runs it; steps already done are skipped, not repeated' },
     ],
     '    ',
@@ -551,6 +549,19 @@ function deliveryStep(config: RelayConfig): string {
   }
 }
 
+/**
+ * What the run asks once it is done. Everything the policy did not authorize is
+ * a question at the end rather than a setting decided weeks earlier — and every
+ * one of those questions defaults to no.
+ */
+function askedStep(config: RelayConfig): string {
+  if (!config.workflow.offerMerge) return dim('nothing (workflow.offerMerge: false)');
+  if (config.workflow.deliver === 'merge') return dim('nothing — this repository asked for the merge up front');
+  return config.workflow.deliver === 'pr'
+    ? 'the merge, once, and only when it is possible — Enter is no'
+    : 'the pull request, then the merge — once each, and Enter is no';
+}
+
 function agentStep(agent: string, capability: string, timeoutMs: number, produces: string): string {
   return `${agent}  ${dim(`${capability}, up to ${Math.round(timeoutMs / 60_000)}m`)}  ${dim(`→ ${produces}`)}`;
 }
@@ -649,17 +660,6 @@ function printNextSteps(dry: boolean): void {
   command('relay run <issue-number>');
   if (!dry) command(`relay start --dry-run   ${dim('# the same pipeline, without spending anything')}`);
   out();
-}
-
-/** Rejects a malformed reference at the prompt, but lets an empty answer through. */
-function validateIssueRef(value: string): string | undefined {
-  if (value.trim().length === 0) return undefined;
-  try {
-    parseIssueRef(value);
-    return undefined;
-  } catch (error) {
-    return errorMessage(error);
-  }
 }
 
 async function rememberTour(repo: RepositoryInfo, deps: StartDeps): Promise<void> {
