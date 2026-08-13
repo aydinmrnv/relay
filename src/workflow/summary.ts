@@ -3,7 +3,7 @@ import { reviewsCode } from '../storage/config.ts';
 import { formatDuration } from '../util/text.ts';
 import { PHASES, phaseLabel } from './phases.ts';
 import type { RunState } from './state.ts';
-import { formatUsage } from './usage.ts';
+import { formatUsage, unpricedTurns } from './usage.ts';
 
 /**
  * Renders `summary.md`: the record of what each agent decided and why. It is
@@ -39,6 +39,19 @@ export function renderSummary(state: RunState): string {
     lines.push('## Failure');
     lines.push('');
     lines.push(`Failed during **${phaseLabel(state.error.phase)}**: ${state.error.message}`);
+    lines.push('');
+  }
+
+  // A run that was stopped and one that failed are different stories, and the
+  // budget is the one a reader is most likely to have forgotten they set.
+  if (state.stopped !== undefined) {
+    lines.push('## Stopped');
+    lines.push('');
+    lines.push(
+      state.stopped.reason === 'budget'
+        ? `Stopped at a phase boundary — ${state.stopped.detail}. The work is on its branch and nothing was published.`
+        : `Stopped — ${state.stopped.detail}.`,
+    );
     lines.push('');
   }
 
@@ -99,7 +112,8 @@ export function renderSummary(state: RunState): string {
 
   const usage = state.usage;
   if (usage !== undefined) {
-    lines.push(`- Usage: ${formatUsage(usage.total)}`);
+    const unpriced = unpricedTurns(usage.total);
+    lines.push(`- Usage: ${formatUsage(usage.total)}` + (unpriced === 0 ? '' : ` (${unpriced} turn(s) reported no cost)`));
   }
   lines.push('');
 

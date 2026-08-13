@@ -2,7 +2,7 @@ import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
-import { RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
+import { listRuns, RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
 import {
   DELIVERY_POLICIES,
   isDeliveryPolicy,
@@ -18,9 +18,11 @@ import { renderSummary } from '../../workflow/summary.ts';
 import { createRunState, type DeliveryStep, type RunState } from '../../workflow/state.ts';
 import { displayPhasesFor, isTerminal, phaseLabel, phaseRole } from '../../workflow/phases.ts';
 import { failedPhase, phaseTimings } from '../../workflow/timeline.ts';
-import { formatUsage } from '../../workflow/usage.ts';
+import { estimateRun, exceedsThreshold, type RunEstimate } from '../../workflow/estimate.ts';
+import { formatCost, formatUsage, unpricedTurns } from '../../workflow/usage.ts';
 import type { EngineContext } from '../../workflow/context.ts';
 import { RunRenderer } from '../../ui/renderer.ts';
+import { Prompter, isPromptCancelled, type PromptSession } from '../../ui/prompt.ts';
 import { glyphs } from '../../ui/theme.ts';
 import { formatDuration } from '../../util/text.ts';
 import { createCliContext, type CliContext } from '../context.ts';
@@ -30,6 +32,7 @@ import {
   command,
   theme,
   dim,
+  facts,
   failure,
   hint,
   out,
@@ -66,6 +69,8 @@ export interface RunOptions {
   parallelTests?: boolean;
   /** `--tuff`: write this run's pull request, commits and comments like a human. */
   tuff?: boolean;
+  /** `--max-cost <usd>`: stop the run at the first phase boundary past this. */
+  maxCost?: string;
 }
 
 /** Applies `relay run` flags over the repository config for this run only. */
@@ -124,6 +129,7 @@ export function applyOverrides(config: RelayConfig, options: RunOptions): RelayC
   if (options.maxCodeRounds !== undefined) {
     merged.workflow.maxCodeReviewRounds = parseRounds(options.maxCodeRounds, '--max-code-rounds');
   }
+  if (options.maxCost !== undefined) merged.workflow.maxCostUsd = parseCost(options.maxCost, '--max-cost');
 
   if (merged.workflow.plan === 'review' && merged.agents.planner === merged.agents.planReviewer) {
     // Not fatal — the user may only have one CLI installed — but it removes the
@@ -157,6 +163,17 @@ function parseRounds(value: string, flag: string): number {
   return parsed;
 }
 
+/** A dollar amount from the command line. `$2.50` and `2.50` both mean $2.50. */
+export function parseCost(value: string, flag: string): number {
+  const parsed = Number.parseFloat(value.trim().replace(/^\$/, ''));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new RelayError(`${flag} must be a positive number of US dollars, e.g. ${flag} 2.50 (got "${value}").`, {
+      code: 'BAD_FLAG',
+    });
+  }
+  return parsed;
+}
+
 export async function runCommand(issueRef: string, options: RunOptions): Promise<number> {
   const cli = await createCliContext();
 
@@ -164,6 +181,16 @@ export async function runCommand(issueRef: string, options: RunOptions): Promise
   parseIssueRef(issueRef);
 
   const config = applyOverrides(cli.config, options);
+
+  // What this run will do and what runs of its shape have cost here before —
+  // said before the first agent turn, which is the only time it is useful.
+  const estimate = estimateRun(await listRuns(cli.repo.root), config.workflow);
+  printEstimate(estimate, config.workflow.maxCostUsd);
+  if (!(await confirmEstimate(estimate, config.workflow.confirmAboveUsd))) {
+    out(dim('  Not started.'));
+    return 130;
+  }
+
   const now = new Date();
   const state = createRunState({
     runId: createRunId(now),
@@ -182,6 +209,114 @@ export async function runCommand(issueRef: string, options: RunOptions): Promise
   return executeRun(cli, state, options);
 }
 
+/**
+ * What the run will do, and what it has cost to do it here before.
+ *
+ * The sample size is part of the estimate rather than a footnote: "about four
+ * minutes, from two runs" and "about four minutes, from thirty" are different
+ * claims, and only the reader can decide which one to plan around. A
+ * repository with no completed runs is told exactly that — an invented number
+ * would be worse than none, because it would be believed.
+ */
+export function printEstimate(estimate: RunEstimate, maxCostUsd: number | null = null): void {
+  section('Estimate');
+  out(dim(`  ${estimate.phases.map(phaseLabel).join(' → ')}`));
+
+  if (estimate.sampleSize === 0) {
+    hint(
+      estimate.unfinished === 0
+        ? 'No previous runs in this repository, so there is nothing to estimate from — this is the first.'
+        : `No completed runs in this repository (${estimate.unfinished} unfinished), so there is nothing to estimate from.`,
+    );
+    if (maxCostUsd !== null) hint(`It will stop itself past ${formatCost(maxCostUsd)}.`);
+    return;
+  }
+
+  const sample = `from ${estimate.sampleSize} completed run${estimate.sampleSize === 1 ? '' : 's'}`;
+  rows([
+    estimate.duration !== undefined && {
+      label: 'Duration',
+      value: facts([
+        `~${formatDuration(estimate.duration.median)}`,
+        `worst ${formatDuration(estimate.duration.worst)}`,
+        dim(sample),
+      ]),
+    },
+    {
+      label: 'Cost',
+      value:
+        estimate.cost === undefined
+          ? dim('no previous run reported one — the agents in this repository publish no price')
+          : facts([
+              `~${formatCost(estimate.cost.median)}`,
+              `worst ${formatCost(estimate.cost.worst)}`,
+              dim(
+                estimate.cost.sampleSize === estimate.sampleSize
+                  ? sample
+                  : `from ${estimate.cost.sampleSize} of ${estimate.sampleSize} runs that reported one`,
+              ),
+            ]),
+    },
+    maxCostUsd !== null && { label: 'Budget', value: `stops itself past ${formatCost(maxCostUsd)}` },
+  ]);
+
+  if (estimate.cost !== undefined && estimate.cost.unpriced > 0) {
+    hint(`${estimate.cost.unpriced} turn(s) in that sample reported no price, so the cost is a floor.`);
+  }
+  if (estimate.unobserved.length > 0) {
+    hint(`No history for ${estimate.unobserved.map(phaseLabel).join(', ')} — the estimate leaves them out.`);
+  }
+}
+
+/**
+ * The one question asked before a run, and only when the user asked for it.
+ *
+ * `workflow.confirmAboveUsd` means "never start a run above this without me",
+ * so a terminal nobody is watching is a refusal rather than a prompt — the
+ * same rule the merge offer follows, for the same reason.
+ */
+export async function confirmEstimate(
+  estimate: RunEstimate,
+  thresholdUsd: number | null,
+  deps: { prompter?: PromptSession } = {},
+): Promise<boolean> {
+  const cost = estimate.cost;
+  if (cost === undefined || thresholdUsd === null || !exceedsThreshold(estimate, thresholdUsd)) return true;
+
+  const owned = deps.prompter === undefined;
+  const prompter = deps.prompter ?? new Prompter();
+
+  try {
+    if (!prompter.interactive) {
+      throw new RelayError(
+        `Runs of this shape cost ${formatCost(cost.median)} here, above the ` +
+          `${formatCost(thresholdUsd)} you asked to be consulted about — and this is not a terminal, ` +
+          'so there is nobody to ask.',
+        {
+          code: 'COST_NOT_CONFIRMED',
+          hint:
+            'Start it from a terminal, or raise workflow.confirmAboveUsd in .relay/config.json ' +
+            '(null removes the question entirely).',
+        },
+      );
+    }
+
+    out();
+    // Enter is "no": the threshold exists because this run is expensive enough
+    // that its author wanted to be stopped, not nudged.
+    return await prompter.confirm(
+      `  Runs of this shape cost about ${formatCost(cost.median)} here, worst ` +
+        `${formatCost(cost.worst)}. Start it?`,
+      false,
+    );
+  } catch (error) {
+    if (isPromptCancelled(error)) return false;
+    throw error;
+  } finally {
+    if (owned) prompter.close();
+  }
+}
+
 export async function resumeCommand(runRef: string, options: RunOptions): Promise<number> {
   const cli = await createCliContext();
   const previous = await resolveRun(cli.repo.root, runRef);
@@ -194,6 +329,9 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
   }
   if (options.deliver !== undefined) previous.config.workflow.deliver = parseDeliver(options.deliver);
   if (options.offerMerge === false) previous.config.workflow.offerMerge = false;
+  // A budget applies from here on, and the cost already spent counts against
+  // it: resuming past a cap the run has already breached would defeat it.
+  if (options.maxCost !== undefined) previous.config.workflow.maxCostUsd = parseCost(options.maxCost, '--max-cost');
   // The phases this run will take are already decided, but what it writes on
   // its way out is not: a resume is allowed to change the voice.
   if (options.tuff === true) previous.config.workflow.typos = true;
@@ -215,6 +353,8 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
     previous.phase = retryFrom;
     delete previous.error;
     delete previous.finishedAt;
+    // Whatever stopped it last time is history; this attempt records its own.
+    delete previous.stopped;
   } else {
     out(dim(`Resuming ${previous.runId} from ${previous.phase}.`));
   }
@@ -330,7 +470,12 @@ export function printOutcome(state: RunState, store: RunStore): void {
   if (state.phase === 'COMPLETE') {
     out(success('Run complete') + dim(` in ${formatDuration(elapsed)}`));
   } else if (state.phase === 'CANCELLED') {
-    out(warning('Run cancelled') + dim(` after ${formatDuration(elapsed)}`));
+    const stopped = state.stopped;
+    out(
+      warning(stopped?.reason === 'budget' ? 'Run stopped by its budget' : 'Run cancelled') +
+        dim(` after ${formatDuration(elapsed)}`),
+    );
+    if (stopped?.reason === 'budget') out(`  ${stopped.detail}. Nothing was published.`);
   } else {
     printFailure(state);
   }
@@ -353,7 +498,7 @@ export function printOutcome(state: RunState, store: RunStore): void {
         (reviewsCode(state.config) ? `code ${state.rounds.codeReview} round(s)` : warning('code review skipped')),
     },
     commitRow(state),
-    state.usage !== undefined && { label: 'Usage', value: formatUsage(state.usage.total) },
+    state.usage !== undefined && { label: 'Usage', value: usageLine(state) },
     { label: 'Run state', value: store.dir },
   ]);
 
@@ -485,6 +630,18 @@ function printPhases(state: RunState): void {
       value: formatDuration(ms) + (visits > 1 ? dim(`  ${visits} rounds`) : ''),
     })),
   );
+}
+
+/**
+ * Tokens, cost and the caveat that goes with them. A run whose Codex turns
+ * published no price has a real cost that is higher than the one printed, and
+ * a number presented without that is a number read as the bill.
+ */
+function usageLine(state: RunState): string {
+  const usage = state.usage;
+  if (usage === undefined) return dim('none reported');
+  const unpriced = unpricedTurns(usage.total);
+  return formatUsage(usage.total) + (unpriced === 0 ? '' : dim(`  (${unpriced} turn(s) reported no cost)`));
 }
 
 function testsLine(state: RunState): string {

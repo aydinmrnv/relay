@@ -98,6 +98,25 @@ export interface RelayConfig {
     /** Extra attempts allowed per agent turn after a transient failure. */
     maxTransientRetries: number;
     /**
+     * Dollars this run is allowed to report before it stops itself.
+     *
+     * Unset by default, because a ceiling nobody chose is a run that dies
+     * halfway through for a reason the user never asked for. When it is set,
+     * the accumulator is checked at every phase boundary and an exceeded
+     * budget ends the run the way a cancellation does: the work is committed
+     * to its branch, nothing is published, and the reason is recorded.
+     */
+    maxCostUsd: number | null;
+    /**
+     * Ask, once, before starting a run whose *estimate* exceeds this.
+     *
+     * Unset by default. It is a question about money that has not been spent
+     * yet, so it is answered before the first agent turn or not at all: on a
+     * terminal it prompts, and anywhere else an exceeded threshold is a
+     * refusal, never a prompt nobody can answer.
+     */
+    confirmAboveUsd: number | null;
+    /**
      * Let a reviewer read the repository during the phase it will review, so
      * its review turn is a judgement rather than a fresh reading of the code.
      */
@@ -164,6 +183,8 @@ export const DEFAULT_CONFIG: RelayConfig = {
     mergeMethod: 'squash',
     offerMerge: true,
     maxTransientRetries: 2,
+    maxCostUsd: null,
+    confirmAboveUsd: null,
     primeReviewers: true,
     concurrentTests: true,
     typos: false,
@@ -354,6 +375,10 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       'workflow.maxTransientRetries',
       { min: 0, max: 5 },
     );
+    for (const key of ['maxCostUsd', 'confirmAboveUsd'] as const) {
+      if (workflow[key] === undefined) continue;
+      config.workflow[key] = readMoney(workflow[key], `workflow.${key}`);
+    }
   }
 
   // Legacy workflow delivery keys remain readable. Explicit github values
@@ -421,6 +446,21 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
   }
 
   return config;
+}
+
+/**
+ * A dollar amount, or `null` for "no limit". Zero and negatives are rejected
+ * rather than read as "never spend anything": a run that cannot take a single
+ * turn is a configuration mistake, not a budget.
+ */
+function readMoney(value: unknown, label: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new RelayError(`config.${label} must be a positive number of US dollars, or null for no limit.`, {
+      code: 'BAD_CONFIG',
+    });
+  }
+  return value;
 }
 
 function readBoundedInt(

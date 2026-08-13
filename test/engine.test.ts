@@ -812,3 +812,107 @@ describe('run artifacts', () => {
     assert.match(summary, new RegExp(`relay deliver ${final.runId}`));
   });
 });
+
+describe('workflow engine — the cost budget', () => {
+  /** A run whose implementer reports a price, so the ceiling has something to see. */
+  function costlyHarnesses(costUsd: number): Harness {
+    const harnesses = happyPathHarnesses();
+    harnesses.codex = new FakeAgentHarness('codex', {
+      planReviewer: [{ text: approveReview('Plan is sound.') }],
+      implementer: [
+        {
+          text: section('NOTES', 'Edited src/app.ts'),
+          effect: writesFile('src/app.ts', 'export const value = 2;\n'),
+          usage: { inputTokens: 1000, outputTokens: 100, costUsd },
+        },
+      ],
+    });
+    return harnesses;
+  }
+
+  it('stops at the next phase boundary, commits the work, and publishes nothing', async () => {
+    const { context, store } = buildContext(costlyHarnesses(5), { config: { maxCostUsd: 1, deliver: 'pr' } });
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'CANCELLED');
+    assert.equal(final.stopped?.reason, 'budget');
+    assert.equal(final.stopped?.spentUsd, 5);
+    assert.equal(final.stopped?.maxCostUsd, 1);
+
+    // The work survives on its branch; nothing left the machine.
+    assert.ok(final.commit !== undefined, 'the work should be committed');
+    assert.equal(final.push, undefined);
+    assert.equal(final.pullRequest, undefined);
+    assert.equal(final.delivery, undefined);
+
+    const summary = await store.readArtifact('summary.md');
+    assert.match(summary ?? '', /## Stopped/);
+    assert.match(summary ?? '', /budget exceeded/);
+  });
+
+  it('lets the phase that spent it finish before stopping', async () => {
+    const harnesses = happyPathHarnesses();
+    harnesses.claude = new FakeAgentHarness('claude', {
+      planner: [{ text: planText(), usage: { inputTokens: 1000, outputTokens: 100, costUsd: 5 } }],
+    });
+    const { context, store } = buildContext(harnesses, { config: { maxCostUsd: 1 } });
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'CANCELLED');
+    // Planning completed and left its artifact; the review it would have paid
+    // for next never started.
+    assert.ok((await store.readArtifact('plan.md')) !== undefined);
+    assert.equal(
+      harnesses.codex.calls.filter((call) => call.role === 'planReviewer' && call.purpose === undefined).length,
+      0,
+    );
+  });
+
+  it('runs to completion when the spend stays under the ceiling', async () => {
+    const { context } = buildContext(costlyHarnesses(0.25), { config: { maxCostUsd: 1 } });
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.equal(final.stopped, undefined);
+  });
+
+  it('never stops a run over a cost nobody reported', async () => {
+    // Codex publishes no price: the accumulator has tokens and no cost, and a
+    // ceiling with nothing to compare against must not intervene.
+    const { context } = buildContext(happyPathHarnesses(), { config: { maxCostUsd: 0.01 } });
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.equal(final.usage?.total.costUsd, undefined);
+  });
+
+  it('does nothing at all without a ceiling', async () => {
+    const { context } = buildContext(costlyHarnesses(500), {});
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.equal(final.usage?.total.costUsd, 500);
+  });
+
+  it('records a user cancellation as its own kind of stop', async () => {
+    const harnesses = happyPathHarnesses();
+    const { context, store } = buildContext(harnesses);
+
+    const original = context.observer.phaseChanged.bind(context.observer);
+    context.observer.phaseChanged = (phase, detail): void => {
+      original(phase, detail);
+      if (phase === 'PLANNING') void store.requestCancel('test');
+    };
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'CANCELLED');
+    assert.equal(final.stopped?.reason, 'user');
+    assert.equal(final.stopped?.spentUsd, undefined);
+  });
+});

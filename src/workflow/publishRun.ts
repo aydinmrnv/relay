@@ -9,6 +9,7 @@ import { RelayError } from '../util/errors.ts';
 import { commitRunWork } from './commitRun.ts';
 import type { RunObserver } from './observer.ts';
 import { renderSummary } from './summary.ts';
+import { formatUsage, unpricedTurns } from './usage.ts';
 import type { MergeRecord, PullRequestRecord, PushRecord, RunState } from './state.ts';
 
 export interface PublishContext {
@@ -222,6 +223,18 @@ export function pullRequestDraft(state: RunState, approvedPlan?: string): {
         ? `- Tests: \`${tests.command.join(' ')}\` ${tests.passed ? 'passed' : `FAILED (exit ${String(tests.exitCode)})`}` +
             ` in ${formatDuration(tests.durationMs)}`
         : `- Tests: not run (${tests.skippedReason ?? tests.reason})`,
+    );
+  }
+
+  // What the change cost to produce. It is the honest footer on machine-made
+  // work: a reviewer deciding how much of this to trust is entitled to know
+  // that it took nine turns and two dollars of somebody's account.
+  const usage = state.usage;
+  if (usage !== undefined) {
+    const unpriced = unpricedTurns(usage.total);
+    lines.push(
+      `- Cost: ${formatUsage(usage.total)}` +
+        (unpriced === 0 ? '' : ` — ${unpriced} turn(s) reported no price, so this is a floor`),
     );
   }
 

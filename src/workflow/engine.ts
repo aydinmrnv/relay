@@ -4,7 +4,8 @@ import { commitRunWork } from './commitRun.ts';
 import { cancelBackgroundTests } from './backgroundTests.ts';
 import { cancelPriming } from './priming.ts';
 import { isTerminal, phaseLabel, type Phase } from './phases.ts';
-import { transition, type RunState } from './state.ts';
+import { transition, type RunState, type StopRecord } from './state.ts';
+import { budgetBreach, formatCost, type BudgetBreach } from './usage.ts';
 import { renderSummary } from './summary.ts';
 import type { EngineContext, PhaseResult } from './context.ts';
 import { creatingWorkspace, fetchingIssue, initializing } from './phases/setup.ts';
@@ -61,7 +62,16 @@ export class WorkflowEngine {
     try {
       while (!isTerminal(state.phase)) {
         if (await this.shouldCancel()) {
-          await this.finish('CANCELLED', 'cancelled by user');
+          await this.stop({ reason: 'user', detail: 'cancelled by user', at: new Date().toISOString() });
+          break;
+        }
+
+        // The budget is enforced here, between phases, for the same reason a
+        // cancellation is: it is the only point in a run where no agent is
+        // mid-turn and the work so far is a complete thought.
+        const breach = budgetBreach(state.usage, state.config.workflow.maxCostUsd);
+        if (breach !== undefined) {
+          await this.stop(budgetStop(breach));
           break;
         }
 
@@ -81,7 +91,7 @@ export class WorkflowEngine {
           await store.saveState(state);
         } catch (error) {
           if (this.context.signal.aborted || isCancellation(error)) {
-            await this.finish('CANCELLED', 'cancelled');
+            await this.stop({ reason: 'user', detail: 'cancelled', at: new Date().toISOString() });
           } else {
             await this.fail(error);
           }
@@ -125,11 +135,21 @@ export class WorkflowEngine {
     });
   }
 
-  private async finish(phase: 'CANCELLED', note: string): Promise<void> {
+  /**
+   * Ends the run at a phase boundary for a reason that is not a failure.
+   *
+   * A cancellation and an exhausted budget take exactly this path: the phase
+   * that just finished is the last one, the caller commits what was written on
+   * the way out, nothing is published, and the reason is written down where
+   * `relay status` and `summary.md` can both read it back.
+   */
+  private async stop(stopped: StopRecord): Promise<void> {
     const { state, store, observer } = this.context;
-    transition(state, phase, { note });
-    observer.warn(`Run ${phase.toLowerCase()}. Work so far is preserved on ${state.workspace?.branch ?? 'its branch'}.`);
-    await this.logPhase('run_cancelled', note);
+    state.stopped = stopped;
+    transition(state, 'CANCELLED', { note: stopped.detail });
+    const lead = stopped.reason === 'budget' ? `Run stopped — ${stopped.detail}` : 'Run cancelled';
+    observer.warn(`${lead}. Work so far is preserved on ${state.workspace?.branch ?? 'its branch'}.`);
+    await this.logPhase(stopped.reason === 'budget' ? 'budget_exceeded' : 'run_cancelled', stopped.detail);
     await store.saveState(state);
   }
 
@@ -183,6 +203,25 @@ function roundDetail(state: RunState): string | undefined {
     default:
       return undefined;
   }
+}
+
+/**
+ * The stop record for an exceeded budget. The unpriced turns are named in it
+ * because they are the part of the bill the ceiling could not see: a run that
+ * stopped at `$1.02 of $1.00` with four unpriced turns spent more than that.
+ */
+function budgetStop(breach: BudgetBreach): StopRecord {
+  const unpriced =
+    breach.unpriced === 0
+      ? ''
+      : ` (and ${breach.unpriced} turn${breach.unpriced === 1 ? '' : 's'} reported no price, so the real spend is higher)`;
+  return {
+    reason: 'budget',
+    detail: `budget exceeded: ${formatCost(breach.spentUsd)} spent of ${formatCost(breach.maxCostUsd)}${unpriced}`,
+    at: new Date().toISOString(),
+    spentUsd: breach.spentUsd,
+    maxCostUsd: breach.maxCostUsd,
+  };
 }
 
 function isCancellation(error: unknown): boolean {

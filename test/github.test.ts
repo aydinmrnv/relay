@@ -9,6 +9,7 @@ import { pullRequestNumber } from '../src/github/pullRequest.ts';
 import { pullRequestDraft } from '../src/workflow/publishRun.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunState, type RunState } from '../src/workflow/state.ts';
+import { recordTurnUsage } from '../src/workflow/usage.ts';
 
 describe('issue reference parsing', () => {
   it('accepts a bare number, a hash number, and owner/repo#number', () => {
@@ -198,6 +199,30 @@ describe('pull request drafts', () => {
     assert.match(draft.body, /Changes: 3 file\(s\), \+40 −7/);
     assert.match(draft.body, /Tests: `npm test` passed/);
     assert.match(draft.body, /Closes #13/);
+  });
+
+  it('carries what the run consumed, which is the honest footer on machine-made work', () => {
+    const state = run();
+    state.usage = recordTurnUsage(undefined, 'IMPLEMENTING', {
+      inputTokens: 24_000,
+      outputTokens: 8000,
+      costUsd: 1.24,
+    });
+
+    assert.match(pullRequestDraft(state).body, /- Cost: 24\.0k in \/ 8\.0k out · \$1\.24 · 1 turn/);
+  });
+
+  it('says when part of that cost was never reported, rather than passing a floor off as the bill', () => {
+    const state = run();
+    let usage = recordTurnUsage(undefined, 'PLANNING', { inputTokens: 1000, outputTokens: 100, costUsd: 0.5 });
+    usage = recordTurnUsage(usage, 'IMPLEMENTING', { inputTokens: 9000, outputTokens: 900 });
+    state.usage = usage;
+
+    assert.match(pullRequestDraft(state).body, /1 turn\(s\) reported no price, so this is a floor/);
+  });
+
+  it('leaves the cost line out of a run nothing was recorded for', () => {
+    assert.doesNotMatch(pullRequestDraft(run()).body, /- Cost:/);
   });
 
   it('says a test suite failed rather than leaving it out', () => {
