@@ -8,6 +8,7 @@ import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
 import { resumeCommand, type RunOptions } from './commands/run.ts';
+import { statsCommand } from './commands/stats.ts';
 import { homeSession, runSession } from './session.ts';
 import {
   diffCommand,
@@ -48,7 +49,7 @@ export function defaultHelp(command: Command, width?: number): string {
 const HELP_GROUPS = [
   ['Setup', ['start', 'init', 'doctor']],
   ['Run', ['run', 'resume', 'stop']],
-  ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs']],
+  ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats']],
   ['Deliver', ['deliver']],
 ] as const;
 
@@ -142,6 +143,7 @@ export function buildProgram(version: string): Command {
     .option('--implementer <agent>', `agent that implements and reviews the plan (${AGENT_PROVIDERS.join('|')})`)
     .option('--max-plan-rounds <n>', 'maximum plan review rounds')
     .option('--max-code-rounds <n>', 'maximum code review rounds')
+    .option('--max-cost <usd>', 'stop the run at the first phase boundary past this many dollars')
     .option('-f, --fast', 'one agent plans and implements: no plan review, no code review')
     .option('--no-prime', 'do not let reviewers read the repository ahead of their turn')
     .option('--no-parallel-tests', 'run the test suite after the code review instead of during it')
@@ -161,6 +163,7 @@ export function buildProgram(version: string): Command {
     .argument('<run-id>', 'run id, short id, or "latest"')
     .description('continue an interrupted or failed run')
     .option('-v, --verbose', 'stream raw agent events')
+    .option('--max-cost <usd>', 'stop the run at the first phase boundary past this many dollars')
     .option('--commit', 'deliver no further than a commit on the run branch')
     .option('--push', 'push the run branch')
     .option('--pr', 'push and open a pull request')
@@ -212,6 +215,12 @@ export function buildProgram(version: string): Command {
     .option('-n, --limit <n>', 'number of events to show', '80')
     .option('-a, --all', 'show every event')
     .action(wrap(logsCommand));
+
+  program
+    .command('stats')
+    .description('what this repository\'s runs have cost, taken, and caught')
+    .option('--json', 'print machine-readable JSON instead of the formatted tables')
+    .action(wrap(statsCommand));
 
   program
     .command('stop')

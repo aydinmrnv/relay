@@ -142,12 +142,13 @@ Tune against that, not against this list.
 | `relay diff [run]` | show the diff a run produced (`--stat` for a file list) |
 | `relay plan [run]` | print the approved plan |
 | `relay logs [run]` | print the event log |
+| `relay stats` | what this repository's runs have cost, taken, and caught (`--json`) |
 | `relay resume <run>` | continue an interrupted or failed run |
 | `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
 | `relay stop [run]` | cancel a run at its next phase boundary |
 | `relay --update` | update Relay itself to the latest version |
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
 
 The three worth typing by hand:
 
@@ -231,6 +232,48 @@ identifiers are left byte-for-byte alone (`src/util/typos.ts`), because a
 mistyped issue reference does not look human — it looks broken. The transform is
 seeded on the run id, so `relay deliver <run>` re-opens the same pull request
 rather than a differently-mistyped one.
+
+## Cost
+
+A run spends money on your account, so Relay says what it will probably cost
+before it starts, stops itself if you give it a ceiling, and reports what runs
+here have actually cost afterwards. Every number comes from runs that happened
+in this repository — there is no pricing table and no token model anywhere in
+Relay, and a repository with no completed runs is told exactly that.
+
+```
+Estimate
+  Fetching issue → Creating workspace → Planning → Plan review → Implementation → Code review → Tests → Delivery
+  Duration  ~11m 20s  ·  worst 24m 3s  ·  from 7 completed runs
+  Cost      ~$1.12    ·  worst $2.80   ·  from 5 of 7 runs that reported one
+```
+
+The estimate is built per phase and summed, so a flag's effect on it is the
+flag's cost: `-f` drops the planning and review phases from the total and
+`--no-tests` drops the suite. Phases no previous run ever entered are named
+rather than guessed at, and the sample size is part of the estimate — "about
+four minutes, from two runs" and "from thirty" are different claims.
+
+**A budget stops the run.** `--max-cost 2.50`, or `workflow.maxCostUsd`, unset
+by default. The accumulator is checked at every phase boundary: past the
+ceiling, the run ends the way a cancellation does — the phase that spent it
+finishes, the work is committed to its branch, nothing is published, and
+`state.json`, `summary.md` and `relay status --json` all record why. Turns that
+report no price count as unknown and never as zero, so a ceiling can only ever
+stop a run over money that was actually reported — and where some of the bill
+was never published, every number that comes from it says so.
+
+**A confirmation above a threshold.** `workflow.confirmAboveUsd` asks once,
+before the first agent turn, when the estimate exceeds it. On a terminal that is
+a `[y/N]` where Enter is no. Anywhere else it is a refusal with a non-zero exit,
+because a question nobody can answer is a hang, not a safeguard.
+
+**`relay stats`** is the same evidence over every run in the repository: success
+rate, median and p90 duration, cost by phase, rounds consumed by each review,
+and how often plan review changed the plan and code review blocked a diff. That
+last pair is the product's own claim, measured on your work — a repository where
+plan review never changes anything is a repository that should turn it off, and
+this is where you would find that out. `--json` for the machine-readable form.
 
 ## Delivery
 
@@ -458,7 +501,9 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
     "deliver": "pr",
     "mergeMethod": "squash",
     "offerMerge": true,
-    "maxTransientRetries": 2
+    "maxTransientRetries": 2,
+    "maxCostUsd": null,
+    "confirmAboveUsd": null
   },
   "tests": { "command": null }
 }
@@ -481,6 +526,8 @@ reaching for before turning a review off.
 | `github.deleteBranchOnMerge` | delete the remote run branch and guarded worktree after merge (default `false`) |
 | `github.protectedBranches` | base branches Relay refuses to merge into (default `[]`) |
 | `workflow.offerMerge` | ask once, at the end of a run that delivered short of a merge (default `true`) |
+| `workflow.maxCostUsd` | dollars a run may report before it stops itself at the next phase boundary (default `null`, no ceiling; `--max-cost`) |
+| `workflow.confirmAboveUsd` | ask before starting a run whose estimate exceeds this (default `null`; non-interactively an exceeded threshold is a refusal) |
 | `workflow.primeReviewers` | let each reviewer read the repository during the phase it will review |
 | `workflow.concurrentTests` | run the suite during the code review rather than after it |
 | `timeouts.primingMs` | cap on a read-ahead turn, which is speculative and must not stall a run |

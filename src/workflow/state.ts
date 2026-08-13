@@ -157,6 +157,23 @@ export interface DeliveryRecord {
   issueLink?: IssueLinkRecord;
 }
 
+/**
+ * Why a run ended before its work did, when the reason was not a failure.
+ *
+ * A cancelled run and a run that hit its cost ceiling leave the same phase
+ * behind — CANCELLED, at a boundary, committed and unpublished — and the only
+ * thing that tells them apart afterwards is this record.
+ */
+export interface StopRecord {
+  reason: 'user' | 'budget';
+  /** One phrase, reused as the transition note and the terminal line. */
+  detail: string;
+  at: string;
+  /** Reported cost at the moment a budget stopped the run. */
+  spentUsd?: number;
+  maxCostUsd?: number;
+}
+
 export interface RunState {
   version: 1;
   runId: string;
@@ -203,6 +220,8 @@ export interface RunState {
   delivery?: DeliveryRecord;
   /** Tokens and cost the run has spent so far. Absent until a CLI reports any. */
   usage?: RunUsage;
+  /** Why the run stopped short of finishing, when it did. */
+  stopped?: StopRecord;
 
   error?: { message: string; phase: Phase; code?: string };
   /** PID of the process driving the run, so `relay stop` can signal it. */
