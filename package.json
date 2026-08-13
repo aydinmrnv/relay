@@ -4,6 +4,10 @@
   "description": "Local multi-agent software-engineering orchestrator. Coordinates already-installed coding CLIs (Claude Code, Codex) to plan, review, implement and critique work on a GitHub issue inside an isolated git worktree.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aydinmrnv/relay.git"
+  },
   "engines": {
     "node": ">=22.6.0"
   },

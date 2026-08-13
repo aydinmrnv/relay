@@ -138,6 +138,7 @@ Tune against that, not against this list.
 | `relay resume <run>` | continue an interrupted or failed run |
 | `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
 | `relay stop [run]` | cancel a run at its next phase boundary |
+| `relay --update` | update Relay itself to the latest version |
 
 `relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--deliver <policy>` and `--no-offer-merge`.
 
@@ -355,12 +356,30 @@ reaching for before turning a review off.
 
 Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed and already authenticated. Run `relay doctor` to check.
 
+## Updating
+
+```bash
+relay --update
+```
+
+It updates Relay itself, from anywhere: the repository you happen to be
+standing in is never the thing it touches. How depends on how this copy was
+installed — a git checkout is fetched and **fast-forwarded**, an npm-managed
+copy is reinstalled from the repository, and an arrangement Relay does not
+recognize is reported with the command to run instead of being guessed at.
+
+A checkout with local commits of its own is left alone: Relay only
+fast-forwards, so it never merges your work to update itself. Afterwards it
+reinstalls dependencies only if the manifest moved, and rebuilds `dist/` only
+if there is one to go stale — `bin/relay.mjs` runs the sources directly when
+there is not.
+
 ## Development
 
 ```bash
 npm install
 npm run typecheck
-npm test          # 393 tests, no network, no real agents
+npm test          # 448 tests, no network, no real agents
 npm run build
 ```
 

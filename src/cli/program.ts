@@ -6,6 +6,7 @@ import { deliverCommand } from './commands/deliver.ts';
 import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
+import { updateCommand } from './commands/update.ts';
 import { runCommand, resumeCommand, type RunOptions } from './commands/run.ts';
 import {
   diffCommand,
@@ -49,7 +50,27 @@ export function buildProgram(): Command {
         'and critique work on a GitHub issue inside an isolated git worktree.',
     )
     .version(VERSION)
+    .option('--update', 'update Relay itself to the latest version')
     .showHelpAfterError();
+
+  // `--update` is an option rather than a command because it is about Relay
+  // itself and not about a run: it is the one thing here that needs no
+  // repository, no config and no agents.
+  //
+  // Hanging it off the root means the root now has an action handler, and
+  // Commander stops reporting unknown commands once anything is hooked up
+  // there. Both of the behaviours it was doing for us are restored below, so a
+  // bare `relay` still prints help and a typo is still a typo.
+  program.action(
+    wrap(async (options: { update?: boolean }, command: Command): Promise<number> => {
+      const [unrecognized] = command.args;
+      if (unrecognized !== undefined) {
+        command.error(`error: unknown command '${unrecognized}'`, { code: 'commander.unknownCommand' });
+      }
+      if (options.update !== true) program.help({ error: true });
+      return updateCommand();
+    }),
+  );
 
   program
     .command('start')
