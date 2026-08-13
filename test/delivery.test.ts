@@ -251,7 +251,7 @@ describe('the delivery phase', () => {
   ): Promise<{ state: RunState; store: RunStore; observer: RecordingObserver }> {
     process.env['RELAY_HOME'] = repo.relayHome;
     const info = await discoverRepository(repo.root);
-    const worktree = await createWorktree({ repo: info, issueNumber: 13, runShortId });
+    const worktree = await createWorktree({ repo: info, issue: 13, runShortId });
     await writeFile(join(worktree.path, 'src', 'app.ts'), 'export const value = 13;\n', 'utf8');
 
     const state = finishedRun(repo.root, policy);

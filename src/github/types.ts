@@ -5,9 +5,14 @@ export interface IssueComment {
 }
 
 export interface Issue {
-  /** Stable provider-scoped identifier, e.g. `github:owner/repo#142`. */
+  /** Stable provider-scoped identifier, e.g. `github:owner/repo#142`, `local:fix-flaky-timeout`. */
   id: string;
-  number: number;
+  /**
+   * The tracker's own number, or null when the tracker has none to give. A file
+   * on disk and a `--prompt` have no number; neither will Linear's `ENG-142`.
+   * Everything downstream reads identity from `id` and naming from the title.
+   */
+  number: number | null;
   title: string;
   body: string;
   url: string;
@@ -32,9 +37,11 @@ export interface IssueProvider {
 /** Renders an issue as the markdown artifact agents receive and `issue.md` stores. */
 export function renderIssueMarkdown(issue: Issue): string {
   const lines: string[] = [];
-  lines.push(`# Issue #${issue.number}: ${issue.title}`);
+  lines.push(issue.number === null ? `# ${issue.title}` : `# Issue #${issue.number}: ${issue.title}`);
   lines.push('');
-  lines.push(`- URL: ${issue.url}`);
+  // A task written on this machine has no URL to print, and a blank one reads
+  // like a fetch that half-failed.
+  if (issue.url.length > 0) lines.push(`- URL: ${issue.url}`);
   lines.push(`- State: ${issue.state}`);
   if (issue.author !== null) lines.push(`- Author: ${issue.author}`);
   if (issue.labels.length > 0) lines.push(`- Labels: ${issue.labels.join(', ')}`);

@@ -20,7 +20,8 @@ afterEach(() => {
 });
 
 interface Started {
-  issueRef: string;
+  /** Undefined when the run named no reference, as `--prompt` and `--editor` do. */
+  issueRef: string | undefined;
   options: RunOptions;
   /** Whether the prompt had released the terminal by the time the run began. */
   terminalReleased: boolean;
