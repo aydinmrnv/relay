@@ -9,7 +9,7 @@ import { EVAL_COMPARISON_NAMES, EVAL_CONFIG_NAMES } from '../eval/configs.ts';
 import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
-import { resumeCommand, type RunOptions } from './commands/run.ts';
+import { resumeCommand, runDetachedChild, type RunOptions } from './commands/run.ts';
 import { homeCommand } from './commands/home.ts';
 import { statsCommand } from './commands/stats.ts';
 import { homeSession, runSession } from './session.ts';
@@ -207,7 +207,10 @@ export function buildProgram(version: string): Command {
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
     .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
+    .option('--detach', 'start the run in the background and return immediately')
     .action(wrap(runSession));
+
+  program.command('_run-detached <run-id>', { hidden: true }).action(wrap(runDetachedChild));
 
   program
     .command('resume')

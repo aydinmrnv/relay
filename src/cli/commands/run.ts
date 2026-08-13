@@ -1,3 +1,6 @@
+import { spawn } from 'node:child_process';
+import { rm } from 'node:fs/promises';
+
 import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
@@ -58,6 +61,7 @@ import {
 } from '../output.ts';
 
 export interface RunOptions {
+  detach?: boolean;
   verbose?: boolean;
   base?: string;
   planner?: string;
@@ -310,7 +314,41 @@ export async function runCommand(issueRef: string | undefined, options: RunOptio
     now,
   });
 
+  if (options.detach === true) return startDetached(state);
+
   return executeRun(cli, state, options, 'run');
+}
+
+async function startDetached(state: RunState): Promise<number> {
+  const store = new RunStore(state.repository.root, state.runId);
+  await store.init();
+  await store.saveState(state);
+  const entry = process.argv[1];
+  if (entry === undefined) throw new RelayError('Cannot locate the Relay launcher.', { code: 'SPAWN_FAILED' });
+  const child = spawn(process.execPath, [entry, '_run-detached', state.runId], {
+    cwd: state.repository.root, detached: true, stdio: 'ignore', env: process.env, shell: false,
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('detached child launch timed out')), 2_000);
+      child.once('spawn', () => { clearTimeout(timer); resolve(); });
+      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    });
+  } catch (error) {
+    await rm(store.dir, { recursive: true, force: true });
+    throw new RelayError(`Failed to start detached run: ${error instanceof Error ? error.message : String(error)}`, { code: 'SPAWN_FAILED' });
+  }
+  child.unref();
+  out(`Started ${state.runId}`);
+  hint(`relay watch ${state.runId}`);
+  hint(`relay stop ${state.runId}`);
+  return EXIT.success;
+}
+
+export async function runDetachedChild(runRef: string): Promise<number> {
+  const cli = await createCliContext();
+  const state = await resolveRun(cli.repo.root, runRef);
+  return executeRun(cli, state, {}, 'run');
 }
 
 /**
@@ -459,6 +497,7 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
     delete previous.finishedAt;
     // Whatever stopped it last time is history; this attempt records its own.
     delete previous.stopped;
+    if (previous.notification !== undefined) delete previous.notification.completion;
   } else {
     out(dim(`Resuming ${previous.runId} from ${previous.phase}.`));
   }
@@ -517,7 +556,7 @@ const cliObserver: RunObserver = {
   warn: (text) => out(warning(`  ${text}`)),
 };
 
-async function executeRun(
+export async function executeRun(
   cli: CliContext,
   state: RunState,
   options: RunOptions,
@@ -532,28 +571,7 @@ async function executeRun(
   const stream = json
     ? new RunJsonStream({ state, command, ...(options.verbose === true ? { verbose: true } : {}) })
     : undefined;
-  const display: RunDisplay =
-    stream ??
-    new RunRenderer({
-      // The renderer supplies the mark; this is only what the run is about. A
-      // task with no number is named after where it came from — `./spec.md`,
-      // `--prompt` — because `Issue undefined` says less than nothing.
-      title:
-        state.issue !== undefined && state.issue.number !== null
-          ? `Issue #${state.issue.number}`
-          : state.task !== undefined
-            ? state.task.origin
-            : `Issue ${state.issueRef}`,
-      subtitle: state.issue?.title ?? state.task?.title ?? `run ${state.runId}`,
-      agentNames: {
-        planner: state.config.agents.planner,
-        planReviewer: state.config.agents.planReviewer,
-        implementer: state.config.agents.implementer,
-        codeReviewer: state.config.agents.codeReviewer,
-      },
-      phases: displayPhasesFor(state.config.workflow),
-      ...(options.verbose === true ? { verbose: true } : {}),
-    });
+  const display: RunDisplay = stream ?? rendererFor(state, options);
 
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight.
@@ -584,6 +602,7 @@ async function executeRun(
   try {
     finalState = await new WorkflowEngine(context).run();
     display.finish(finalState.phase);
+    if (!json && finalState.config.notify.bell && process.stdout.isTTY) process.stdout.write('\u0007');
   } finally {
     tracking.stop();
     process.off('SIGINT', onSigint);
@@ -601,6 +620,16 @@ async function executeRun(
   const code = exitCodeForRun(finalState, landing);
   stream?.summary(runToJson(finalState, { landing }), code);
   return code;
+}
+
+export function rendererFor(state: RunState, options: Pick<RunOptions, 'verbose'> = {}): RunRenderer {
+  return new RunRenderer({
+    title: state.issue !== undefined && state.issue.number !== null ? `Issue #${state.issue.number}` : state.task?.origin ?? `Issue ${state.issueRef}`,
+    subtitle: state.issue?.title ?? state.task?.title ?? `run ${state.runId}`,
+    agentNames: { planner: state.config.agents.planner, planReviewer: state.config.agents.planReviewer, implementer: state.config.agents.implementer, codeReviewer: state.config.agents.codeReviewer },
+    phases: displayPhasesFor(state.config.workflow),
+    ...(options.verbose === true ? { verbose: true } : {}),
+  });
 }
 
 /**

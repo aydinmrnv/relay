@@ -654,7 +654,7 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
   },
   "tests": { "command": null },
   "delivery": { "comment": false },
-  "notify": { "webhook": null },
+  "notify": { "webhook": null, "bell": false, "system": false, "command": null },
   "tracking": {
     "enabled": false,
     "plugin": "relay/<version> relay-wakatime/<version>",
@@ -691,6 +691,9 @@ reaching for before turning a review off.
 | `tracking.includeAgentPhases` | report during agent-driven phases too (default `true`); disable to reduce overlap with agent CLIs |
 | `delivery.comment` | post one short, idempotent result comment after a run creates a pull request (default `false`) |
 | `notify.webhook` | HTTP(S) endpoint receiving one best-effort JSON POST when any run finishes (default `null`) |
+| `notify.bell` | Ring the terminal bell when an attached run or watch finishes (default `false`) |
+| `notify.system` | Use the platform desktop notifier when available (default `false`) |
+| `notify.command` | Explicit argv template with `{{runId}}`, `{{outcome}}`, and `{{url}}` tokens (default `null`; no shell) |
 
 Webhook documents use the same additive `schema` version as Relay's CLI JSON.
 They contain `runId`, `shortId`, the issue, terminal outcome and stopping reason,
