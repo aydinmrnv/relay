@@ -445,7 +445,7 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
       // Nothing left to run, but delivery may still have something to do:
       // a push that failed, or a policy that has been raised since.
       out(`Run ${previous.runId} already completed.`);
-      return deliverRun(previous, { command: 'resume', ...(options.json === true ? { json: true } : {}) });
+      return deliverRun(previous, { command: 'resume', cli, ...(options.json === true ? { json: true } : {}) });
     }
     // A failed or cancelled run resumes from the phase it died in, keeping its
     // worktree, sessions and review history.
@@ -476,13 +476,19 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
  */
 export async function deliverRun(
   state: RunState,
-  options: { policy?: DeliveryPolicy; json?: boolean; command?: string } = {},
+  options: { policy?: DeliveryPolicy; json?: boolean; command?: string; cli?: CliContext } = {},
 ): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   if (options.policy !== undefined) state.config.workflow.deliver = options.policy;
   const json = options.json === true;
 
-  await delivering({ state, store, observer: cliObserver, signal: new AbortController().signal });
+  await delivering({
+    state,
+    store,
+    observer: cliObserver,
+    signal: new AbortController().signal,
+    ...(options.cli === undefined ? {} : { issueProvider: issueProviderFor(options.cli, state) }),
+  });
   await store.writeArtifact(RUN_FILES.summary, renderSummary(state));
   await store.saveState(state);
 
@@ -676,6 +682,10 @@ export function printDelivery(state: RunState): void {
     link !== undefined && {
       label: `${link.status === 'done' ? success(marks.ok) : dim(marks.bullet)} Issue link`,
       value: link.status === 'done' ? link.detail : dim(link.detail),
+    },
+    delivery.comment !== undefined && {
+      label: `${delivery.comment.status === 'done' ? success(marks.ok) : delivery.comment.status === 'failed' ? failure(marks.failed) : dim(marks.bullet)} Issue comment`,
+      value: delivery.comment.status === 'done' ? delivery.comment.detail : delivery.comment.status === 'failed' ? failure(delivery.comment.detail) : dim(delivery.comment.detail),
     },
   ]);
 }

@@ -153,6 +153,8 @@ export interface RelayConfig {
     /** Overrides discovery entirely, e.g. `["npm", "test"]`. */
     command: string[] | null;
   };
+  delivery: { comment: boolean };
+  notify: { webhook: string | null };
   tracking: {
     enabled: boolean;
     plugin: string;
@@ -214,6 +216,8 @@ export const DEFAULT_CONFIG: RelayConfig = {
   tests: {
     command: null,
   },
+  delivery: { comment: false },
+  notify: { webhook: null },
   tracking: {
     enabled: false,
     plugin: 'relay/<version> relay-wakatime/<version>',
@@ -221,6 +225,11 @@ export const DEFAULT_CONFIG: RelayConfig = {
     includeAgentPhases: true,
   },
 };
+
+/** Old run snapshots predate this outward-facing opt-in. */
+export function commentsIssue(config: RelayConfig): boolean {
+  return config.delivery?.comment === true;
+}
 
 /**
  * Whether a run reviews its own diff.
@@ -478,6 +487,29 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
         throw new RelayError('config.tracking.project must be a string or null.', { code: 'BAD_CONFIG' });
       }
       config.tracking.project = tracking['project'] as string | null;
+    }
+  }
+
+  const delivery = raw['delivery'];
+  if (delivery !== undefined) {
+    if (!isRecord(delivery)) throw new RelayError('config.delivery must be an object.', { code: 'BAD_CONFIG' });
+    if (delivery['comment'] !== undefined) {
+      if (typeof delivery['comment'] !== 'boolean') {
+        throw new RelayError('config.delivery.comment must be a boolean.', { code: 'BAD_CONFIG' });
+      }
+      config.delivery.comment = delivery['comment'];
+    }
+  }
+
+  const notify = raw['notify'];
+  if (notify !== undefined) {
+    if (!isRecord(notify)) throw new RelayError('config.notify must be an object.', { code: 'BAD_CONFIG' });
+    if (notify['webhook'] !== undefined) {
+      const webhook = notify['webhook'];
+      if (webhook !== null && (typeof webhook !== 'string' || !/^https?:\/\/\S+$/i.test(webhook))) {
+        throw new RelayError('config.notify.webhook must be a non-empty http(s) URL or null.', { code: 'BAD_CONFIG' });
+      }
+      config.notify.webhook = webhook as string | null;
     }
   }
 

@@ -12,6 +12,14 @@ import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
 describe('config', () => {
+  it('keeps comments and webhooks off by default and validates their opt-ins', () => {
+    assert.equal(DEFAULT_CONFIG.delivery.comment, false);
+    assert.equal(DEFAULT_CONFIG.notify.webhook, null);
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { delivery: { comment: true }, notify: { webhook: 'https://hooks.example/run' } }).delivery.comment, true);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { delivery: { comment: 'yes' } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { webhook: '' } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { webhook: 'file:///tmp/run' } }), RelayError);
+  });
   it('validates tracking configuration', () => {
     assert.equal(DEFAULT_CONFIG.tracking.enabled, false);
     assert.equal(mergeConfig(DEFAULT_CONFIG, { tracking: { enabled: true } }).tracking.enabled, true);

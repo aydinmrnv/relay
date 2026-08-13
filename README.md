@@ -653,6 +653,8 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
     "confirmAboveUsd": null
   },
   "tests": { "command": null },
+  "delivery": { "comment": false },
+  "notify": { "webhook": null },
   "tracking": {
     "enabled": false,
     "plugin": "relay/<version> relay-wakatime/<version>",
@@ -687,6 +689,32 @@ reaching for before turning a review off.
 | `timeouts.primeGraceMs` | how long a review waits for a read-ahead that has not landed; past it the reader is abandoned and the review starts cold |
 | `tracking.enabled` | opt in to WakaTime-compatible reporting of Relay orchestration (default `false`) |
 | `tracking.includeAgentPhases` | report during agent-driven phases too (default `true`); disable to reduce overlap with agent CLIs |
+| `delivery.comment` | post one short, idempotent result comment after a run creates a pull request (default `false`) |
+| `notify.webhook` | HTTP(S) endpoint receiving one best-effort JSON POST when any run finishes (default `null`) |
+
+Webhook documents use the same additive `schema` version as Relay's CLI JSON.
+They contain `runId`, `shortId`, the issue, terminal outcome and stopping reason,
+phase durations, review rounds, diff counts, test result, cost, delivery steps and
+skip reasons, and `pullRequestUrl`. They deliberately exclude workspace paths,
+file lists, patch paths, agent bindings, and commit metadata. Notifications fire
+for successful, failed, and cancelled runs; timeouts and HTTP failures are
+retried where transient, recorded in run state, and never change the run outcome.
+The document shape is:
+
+```json
+{
+  "schema": 1, "command": "notify", "runId": "...", "shortId": "...",
+  "issue": { "id": "...", "number": 35, "title": "...", "url": "...", "state": "open" },
+  "outcome": { "phase": "COMPLETE", "terminal": true, "stopped": "optional", "error": "optional", "stoppedIn": "optional phase" },
+  "phases": [{ "phase": "PLANNING", "ms": 1200, "visits": 1 }],
+  "rounds": { "planReview": 1, "codeReview": 1 },
+  "diff": { "fileCount": 2, "additions": 40, "deletions": 7 },
+  "tests": { "discovered": true, "command": ["npm", "test"], "passed": true, "exitCode": 0, "durationMs": 900, "timedOut": false, "skippedReason": null },
+  "cost": { "usage": "the RunUsage JSON projection or null", "formatted": "...", "unpricedTurns": 0 },
+  "delivery": { "policy": "pr", "reached": "pr", "steps": [{ "step": "pullRequest", "status": "done", "detail": "..." }], "comment": { "status": "done", "detail": "..." } },
+  "pullRequestUrl": "https://github.com/acme/repo/pull/1"
+}
+```
 
 Tracking invokes `~/.wakatime/wakatime-cli`, which owns its endpoint and
 authentication. Relay never reads or writes `~/.wakatime.cfg`, accepts no
