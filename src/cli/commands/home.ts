@@ -58,7 +58,17 @@ function configLines(config: RelayConfig, configured: boolean): string[] {
   );
 }
 
-export async function homeCommand(): Promise<number> {
+export interface HomeScreen {
+  /**
+   * Whether a run can start from here: a configured repository. Everything
+   * else — no repository, no config — has already been told what to do instead,
+   * and asking it for an issue number on top of that would be noise.
+   */
+  ready: boolean;
+}
+
+/** Draws the home screen, and reports whether the next issue can start here. */
+export async function showHome(): Promise<HomeScreen> {
   let repo;
   try {
     repo = await discoverRepository(process.cwd());
@@ -67,7 +77,7 @@ export async function homeCommand(): Promise<number> {
     out('Relay coordinates your coding agents to plan, review, implement and deliver GitHub issues.');
     out('Run it inside the repository you want Relay to work on.');
     command('relay start');
-    return 0;
+    return { ready: false };
   }
 
   const configured = await configExists(repo.root);
@@ -101,5 +111,6 @@ export async function homeCommand(): Promise<number> {
     ],
     footer: [`Next  ${chooseNextCommand(configured, runs)}`],
   });
-  return 0;
+  return { ready: configured };
 }
+

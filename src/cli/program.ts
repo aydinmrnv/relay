@@ -7,9 +7,9 @@ import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
-import { homeCommand } from './commands/home.ts';
-import { runCommand, resumeCommand, type RunOptions } from './commands/run.ts';
+import { resumeCommand, type RunOptions } from './commands/run.ts';
 import { statsCommand } from './commands/stats.ts';
+import { homeSession, runSession } from './session.ts';
 import {
   diffCommand,
   logsCommand,
@@ -105,7 +105,7 @@ export function buildProgram(version: string): Command {
         command.error(`error: unknown command '${unrecognized}'`, { code: 'commander.unknownCommand' });
       }
       if (options.update === true) return updateCommand();
-      if (theme().interactive) return homeCommand();
+      if (theme().interactive) return homeSession();
       process.stderr.write(defaultHelp(command, process.stderr.isTTY ? process.stderr.columns : undefined));
       return 1;
     }),
@@ -134,7 +134,7 @@ export function buildProgram(version: string): Command {
   program
     .command('run')
     .argument('<issue>', 'issue number, owner/repo#number, or issue URL')
-    .description('run the full workflow for a GitHub issue, and deliver the result')
+    .description('run the full workflow for a GitHub issue, deliver the result, and wait for the next issue')
     .option('-v, --verbose', 'stream raw agent events')
     .option('-b, --base <branch>', 'branch to base the worktree on')
     .option('--planner <agent>', `agent that plans and reviews code (${AGENT_PROVIDERS.join('|')})`)
@@ -154,7 +154,7 @@ export function buildProgram(version: string): Command {
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
-    .action(wrap(runCommand));
+    .action(wrap(runSession));
 
   program
     .command('resume')
