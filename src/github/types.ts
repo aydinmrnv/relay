@@ -31,6 +31,11 @@ export interface IssueProvider {
   readonly name: string;
   /** Accepts whatever the user typed: `142`, `#142`, or a full issue URL. */
   getIssue(ref: string, options?: { signal?: AbortSignal }): Promise<Issue>;
+  comment?(
+    ref: string,
+    body: string,
+    options?: { signal?: AbortSignal; marker?: string },
+  ): Promise<{ url?: string; created: boolean }>;
   checkAvailability(): Promise<{ available: boolean; detail: string; hint?: string }>;
 }
 

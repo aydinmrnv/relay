@@ -3,6 +3,7 @@ import { removeWorktree } from '../../git/worktree.ts';
 import { resolveExecutable } from '../../process/runner.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import type { DeliveryPolicy } from '../../storage/config.ts';
+import { commentsIssue } from '../../storage/config.ts';
 import { errorMessage, isRelayError } from '../../util/errors.ts';
 import type { EngineContext, PhaseResult } from '../context.ts';
 import {
@@ -16,6 +17,7 @@ import {
 } from '../delivery.ts';
 import { commitAndRecord, mergeRunBranch, openRunPullRequest, pushRunBranch } from '../publishRun.ts';
 import { renderSummary } from '../summary.ts';
+import { buildIssueComment, RUN_MARKER } from '../issueComment.ts';
 import type { DeliveryStep, DeliveryStepRecord, RunState } from '../state.ts';
 
 /**
@@ -24,7 +26,8 @@ import type { DeliveryStep, DeliveryStepRecord, RunState } from '../state.ts';
  * also what lets `relay deliver` re-run this phase on its own for a finished
  * run without standing up half an engine.
  */
-export type DeliveryContext = Pick<EngineContext, 'state' | 'store' | 'observer' | 'signal'>;
+export type DeliveryContext = Pick<EngineContext, 'state' | 'store' | 'observer' | 'signal'> &
+  Partial<Pick<EngineContext, 'issueProvider'>>;
 
 /**
  * Delivers the finished work as far as the run is allowed to take it.
@@ -84,6 +87,7 @@ export async function delivering(context: DeliveryContext): Promise<PhaseResult>
 
   const reached = reachedPolicy(state);
   const previousCleanup = state.delivery?.cleanup;
+  const previousComment = state.delivery?.comment;
   const link = issueLinkFor(state);
   state.delivery = {
     policy,
@@ -93,6 +97,34 @@ export async function delivering(context: DeliveryContext): Promise<PhaseResult>
     ...(previousCleanup === undefined ? {} : { cleanup: previousCleanup }),
     ...(link === undefined ? {} : { issueLink: { ...link, at: now() } }),
   };
+
+  if (previousComment?.status === 'done') {
+    state.delivery.comment = previousComment;
+  } else if (!commentsIssue(state.config)) {
+    state.delivery.comment = { status: 'skipped', detail: 'not enabled', at: now() };
+  } else if (state.pullRequest?.url === undefined) {
+    state.delivery.comment = { status: 'skipped', detail: 'no pull request to link', at: now() };
+  } else if (context.issueProvider?.comment === undefined) {
+    state.delivery.comment = { status: 'skipped', detail: 'this provider cannot comment', at: now() };
+  } else if (state.issue?.number == null) {
+    state.delivery.comment = { status: 'skipped', detail: 'this run has no tracker issue', at: now() };
+  } else {
+    try {
+      const result = await context.issueProvider.comment(state.issueRef, buildIssueComment(state), {
+        signal: context.signal,
+        marker: RUN_MARKER(state.runId),
+      });
+      state.delivery.comment = {
+        status: 'done',
+        detail: result.created ? 'commented on the issue' : 'comment already exists',
+        ...(result.url === undefined ? {} : { url: result.url }),
+        at: now(),
+      };
+    } catch (error) {
+      state.delivery.comment = { status: 'failed', detail: errorMessage(error), at: now() };
+      observer.warn(`Could not comment on the issue: ${errorMessage(error)}`);
+    }
+  }
 
   if (state.merge?.via === 'pull-request' && state.pullRequest?.createdByRun === true && state.config.github.deleteBranchOnMerge) {
     await cleanupMergedRun(context);

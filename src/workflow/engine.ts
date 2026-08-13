@@ -13,6 +13,7 @@ import { planning, reviewingPlan, revisingPlan } from './phases/planning.ts';
 import { implementing, reviewingCode, revisingCode } from './phases/implementation.ts';
 import { testing } from './phases/testing.ts';
 import { delivering } from './phases/delivery.ts';
+import { notifyRun } from '../notify/index.ts';
 
 type PhaseHandler = (context: EngineContext) => Promise<PhaseResult>;
 
@@ -115,6 +116,7 @@ export class WorkflowEngine {
     }
 
     await this.writeSummary();
+    await notifyRun(this.context);
     delete state.pid;
     await store.saveState(state);
     return state;

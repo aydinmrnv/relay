@@ -21,6 +21,7 @@ import { delivering } from '../src/workflow/phases/delivery.ts';
 import { RecordingObserver } from '../src/workflow/observer.ts';
 import { pullRequestDraft } from '../src/workflow/publishRun.ts';
 import { createRunState, transition, type DeliveryStep, type RunState } from '../src/workflow/state.ts';
+import type { IssueProvider } from '../src/github/types.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
 let repo: TempRepo;
@@ -357,6 +358,48 @@ describe('the delivery phase', () => {
       state.delivery?.steps.map((step) => step.detail),
       Array(4).fill('not requested (deliver: none)'),
     );
+  });
+
+  it('comments once after a pull request exists and carries the success across re-delivery', async () => {
+    const { state, store, observer } = await realRun('branch', 'del009');
+    state.config.delivery.comment = true;
+    state.pullRequest = {
+      url: 'https://github.com/acme/widgets/pull/9',
+      number: 9,
+      base: 'main',
+      head: state.workspace!.branch,
+      createdByRun: true,
+      at: state.createdAt,
+    };
+    let calls = 0;
+    const provider: IssueProvider = {
+      name: 'stub',
+      getIssue: async () => { throw new Error('not used'); },
+      checkAvailability: async () => ({ available: true, detail: 'available' }),
+      comment: async (_ref, body, options) => {
+        calls += 1;
+        assert.match(body, /pull\/9/);
+        assert.ok(body.includes(options?.marker ?? 'missing marker'));
+        return { created: true, url: 'https://github.com/acme/widgets/issues/13#issuecomment-1' };
+      },
+    };
+
+    await delivering({ state, store, observer, issueProvider: provider, signal: new AbortController().signal });
+    await delivering({ state, store, observer, issueProvider: provider, signal: new AbortController().signal });
+
+    assert.equal(calls, 1);
+    assert.equal(state.delivery?.comment?.status, 'done');
+    assert.match(state.delivery?.comment?.url ?? '', /issuecomment-1/);
+  });
+
+  it('records why an issue comment was not sent', async () => {
+    const run = await realRun('none', 'del010');
+    await delivering({ ...run, signal: new AbortController().signal });
+    assert.equal(run.state.delivery?.comment?.detail, 'not enabled');
+
+    run.state.config.delivery.comment = true;
+    await delivering({ ...run, signal: new AbortController().signal });
+    assert.equal(run.state.delivery?.comment?.detail, 'no pull request to link');
   });
 
   it('is idempotent, so running it again picks up where it stopped', async () => {

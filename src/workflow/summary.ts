@@ -103,6 +103,9 @@ export function renderSummary(state: RunState): string {
   if (state.pullRequest !== undefined) {
     lines.push(`- Pull request: ${state.pullRequest.url} (into \`${state.pullRequest.base}\`)`);
   }
+  if (state.delivery?.comment !== undefined) {
+    lines.push(`- Issue comment: ${state.delivery.comment.status} — ${state.delivery.comment.detail}`);
+  }
   if (state.merge !== undefined) {
     lines.push(
       state.merge.via === 'pull-request'

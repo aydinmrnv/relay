@@ -139,6 +139,17 @@ export interface IssueLinkRecord {
   at: string;
 }
 
+export interface IssueCommentRecord {
+  status: 'done' | 'skipped' | 'failed';
+  detail: string;
+  url?: string;
+  at: string;
+}
+
+export interface NotificationRecord {
+  webhook?: { status: 'done' | 'skipped' | 'failed'; detail: string; at: string };
+}
+
 /**
  * What the delivery phase did, step by step.
  *
@@ -156,6 +167,7 @@ export interface DeliveryRecord {
   cleanup?: CleanupRecord;
   /** Present once a pull request exists: whether it closes an issue, or why not. */
   issueLink?: IssueLinkRecord;
+  comment?: IssueCommentRecord;
 }
 
 /**
@@ -221,6 +233,7 @@ export interface RunState {
   merge?: MergeRecord;
   /** What the delivery phase did with the finished work, and what it skipped. */
   delivery?: DeliveryRecord;
+  notification?: NotificationRecord;
   /** Tokens and cost the run has spent so far. Absent until a CLI reports any. */
   usage?: RunUsage;
   /** Why the run stopped short of finishing, when it did. */

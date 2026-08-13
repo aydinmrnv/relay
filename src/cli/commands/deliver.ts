@@ -33,6 +33,7 @@ export async function deliverCommand(runRef: string, options: DeliverOptions = {
   }
 
   return deliverRun(state, {
+    cli,
     ...(options.to === undefined ? {} : { policy: parseDeliver(options.to) }),
     ...(options.json === true ? { json: true } : {}),
   });

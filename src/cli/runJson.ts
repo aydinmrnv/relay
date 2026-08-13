@@ -73,7 +73,9 @@ export interface RunJson {
     at: string;
     /** Whether the pull request closes an issue, or why it closes none. */
     issueLink?: { status: 'done' | 'skipped'; detail: string; at: string };
+    comment?: { status: 'done' | 'skipped' | 'failed'; detail: string; url?: string; at: string };
   } | null;
+  notification: RunState['notification'] | null;
 
   tests: {
     discovered: boolean;
@@ -230,6 +232,7 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
     pullRequest: state.pullRequest ?? null,
     merge: state.merge ?? null,
     delivery: state.delivery ?? null,
+    notification: state.notification ?? null,
 
     tests:
       tests === undefined

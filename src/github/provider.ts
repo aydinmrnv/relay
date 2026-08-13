@@ -189,6 +189,39 @@ export class GitHubIssueProvider implements IssueProvider {
     return normalizeGhIssue(payload, fallback);
   }
 
+  async comment(
+    ref: string,
+    body: string,
+    options: { signal?: AbortSignal; marker?: string } = {},
+  ): Promise<{ url?: string; created: boolean }> {
+    if (options.marker !== undefined) {
+      const issue = await this.getIssue(ref, options);
+      if (issue.comments.some((entry) => entry.body.includes(options.marker!))) return { created: false };
+    }
+    const parsed = parseIssueRef(ref);
+    const args = ['issue', 'comment', String(parsed.number)];
+    const owner = parsed.owner ?? this.defaultRepo?.owner;
+    const repo = parsed.repo ?? this.defaultRepo?.name;
+    if (owner !== undefined && repo !== undefined) args.push('--repo', `${owner}/${repo}`);
+    args.push('--body-file', '-');
+    const result = await runProcess(this.binary, args, {
+      cwd: this.cwd,
+      timeoutMs: this.timeoutMs,
+      stdin: body,
+      ...(options.signal ? { signal: options.signal } : {}),
+      env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+    });
+    if (!result.ok) {
+      const stderr = result.stderr.trim();
+      if (/auth|logged in|authentication/i.test(stderr)) {
+        throw new RelayError('GitHub CLI is not authenticated.', { code: 'GH_NOT_AUTHENTICATED', hint: 'Run `gh auth login`.' });
+      }
+      throw new RelayError(`Failed to comment on issue #${parsed.number}: ${stderr}`, { code: 'GH_FAILED' });
+    }
+    const url = result.stdout.trim().split(/\s+/).find((part) => /^https?:\/\//.test(part));
+    return { created: true, ...(url === undefined ? {} : { url }) };
+  }
+
   /** Checks auth status without ever reading or printing the token itself. */
   async checkAvailability(): Promise<{ available: boolean; detail: string; hint?: string }> {
     const binaryPath = await resolveExecutable(this.binary);
