@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { SCHEMA_VERSION, type JsonDocument } from '../src/cli/json.ts';
 import { runToJson, type RunJson } from '../src/cli/runJson.ts';
 import { logsCommand, statusCommand } from '../src/cli/commands/inspect.ts';
-import { applyOverrides, printNextSteps, printOutcome } from '../src/cli/commands/run.ts';
+import { applyOverrides, parseLimit, printNextSteps, printOutcome } from '../src/cli/commands/run.ts';
+import { buildProgram } from '../src/cli/program.ts';
 import { RunStore } from '../src/storage/runs.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunId } from '../src/util/ids.ts';
@@ -50,6 +51,22 @@ describe('the cost flags', () => {
   it('leaves the repository config alone', () => {
     applyOverrides(DEFAULT_CONFIG, { maxCost: '5' });
     assert.equal(DEFAULT_CONFIG.workflow.maxCostUsd, null);
+  });
+});
+
+describe('issue picker CLI flags', () => {
+  it('requires a positive integer limit', () => {
+    assert.equal(parseLimit('12'), 12);
+    for (const value of ['0', '-1', '1.5', 'abc']) {
+      assert.throws(() => parseLimit(value), (error: unknown) => error instanceof RelayError && error.code === 'BAD_FLAG');
+    }
+  });
+
+  it('accumulates labels without consuming the explicit issue', () => {
+    const run = buildProgram('test').commands.find((command) => command.name() === 'run')!;
+    const parsed = run.parseOptions(['--label', 'a', '--label', 'b', '142']);
+    assert.deepEqual(run.opts().label, ['a', 'b']);
+    assert.deepEqual(parsed.operands, ['142']);
   });
 });
 

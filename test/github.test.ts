@@ -64,6 +64,16 @@ describe('gh command construction', () => {
     const bare = new GitHubIssueProvider({ cwd: '/tmp' });
     assert.ok(!bare.buildArgs({ number: 1 }).includes('--repo'));
   });
+
+  it('constructs filtered open issue list arguments', () => {
+    const args = provider.buildListArgs({ labels: ['ready', 'ui'], mine: true, limit: 17 });
+    assert.deepEqual(args.slice(0, 2), ['issue', 'list']);
+    assert.equal(args[args.indexOf('--state') + 1], 'open');
+    assert.equal(args[args.indexOf('--limit') + 1], '17');
+    assert.equal(args[args.indexOf('--assignee') + 1], '@me');
+    assert.deepEqual(args.filter((arg) => arg === '--label'), ['--label', '--label']);
+    assert.equal(args[args.indexOf('--repo') + 1], 'acme/widgets');
+  });
 });
 
 describe('issue normalization', () => {

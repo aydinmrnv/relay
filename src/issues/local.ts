@@ -229,6 +229,8 @@ export class LocalIssueProvider implements IssueProvider {
     return taskToIssue(this.task ?? (await readTaskFile(ref, this.cwd)));
   }
 
+  async listIssues(): Promise<null> { return null; }
+
   async checkAvailability(): Promise<{ available: boolean; detail: string }> {
     return { available: true, detail: 'always available — no install, no sign-in' };
   }

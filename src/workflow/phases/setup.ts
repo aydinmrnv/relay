@@ -55,10 +55,6 @@ export async function fetchingIssue(context: EngineContext): Promise<PhaseResult
     state.repository.name ??= issue.repository.name;
   }
 
-  if (issue.state === 'closed') {
-    context.observer.warn(`${issueHeadline(issue)} is closed. Continuing anyway.`);
-  }
-
   return { next: 'CREATING_WORKSPACE', note: issueHeadline(issue) };
 }
 
