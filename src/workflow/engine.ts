@@ -57,6 +57,7 @@ export class WorkflowEngine {
     await store.init();
     await store.clearCancel();
     await store.saveState(state);
+    this.context.tracker?.start(() => state.phase);
 
     try {
       while (!isTerminal(state.phase)) {
@@ -72,6 +73,7 @@ export class WorkflowEngine {
         }
 
         observer.phaseChanged(state.phase, roundDetail(state));
+        this.context.tracker?.heartbeat(state.phase);
         await this.logPhase('phase_started');
 
         try {
@@ -94,6 +96,7 @@ export class WorkflowEngine {
       // however it ended, must not leave either of them alive in its worktree.
       await cancelPriming(this.context);
       await cancelBackgroundTests(this.context);
+      await this.context.tracker?.stop();
     }
 
     // A run that never reached DELIVERING still produced a diff, and that diff

@@ -460,7 +460,13 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
     "offerMerge": true,
     "maxTransientRetries": 2
   },
-  "tests": { "command": null }
+  "tests": { "command": null },
+  "tracking": {
+    "enabled": false,
+    "plugin": null,
+    "project": null,
+    "includeAgentPhases": true
+  }
 }
 ```
 
@@ -485,6 +491,20 @@ reaching for before turning a review off.
 | `workflow.concurrentTests` | run the suite during the code review rather than after it |
 | `timeouts.primingMs` | cap on a read-ahead turn, which is speculative and must not stall a run |
 | `timeouts.primeGraceMs` | how long a review waits for a read-ahead that has not landed; past it the reader is abandoned and the review starts cold |
+
+WakaTime-compatible tracking is always opt-in. With `tracking.enabled: true`,
+Relay invokes `~/.wakatime/wakatime-cli` (or `wakatime-cli` on `PATH`) at phase
+transitions and during long phases. The tracker receives the repository project
+name, worktree path as the entity, run branch, plugin string, and the fixed
+`coding` category. Those fields may be sent to the server configured in
+`~/.wakatime.cfg`; Relay never reads that file or handles its API key. A missing
+or broken tracker is announced once and cannot fail the run.
+
+The default plugin is `relay/<version> relay-wakatime/<version>`. Set `project`
+or `plugin` to override those values. Set `includeAgentPhases` to `false` to
+report setup, testing, and delivery without overlapping the coding agents'
+own reporting. To avoid an additional shell-tracker stream for Relay worktrees,
+consider adding `~/.relay/workspaces/` to `exclude` in `~/.wakatime.cfg`.
 
 ## Requirements
 

@@ -15,6 +15,15 @@ export { AGENT_PROVIDERS };
  */
 export type AgentProvider = string;
 
+export interface TrackingConfig {
+  enabled: boolean;
+  /** Null selects Relay's versioned default plugin string. */
+  plugin: string | null;
+  /** Null selects the repository name, then the worktree directory name. */
+  project: string | null;
+  includeAgentPhases: boolean;
+}
+
 export const ROLES = ['planner', 'planReviewer', 'implementer', 'codeReviewer'] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -134,6 +143,7 @@ export interface RelayConfig {
     /** Overrides discovery entirely, e.g. `["npm", "test"]`. */
     command: string[] | null;
   };
+  tracking: TrackingConfig;
 }
 
 /**
@@ -186,6 +196,12 @@ export const DEFAULT_CONFIG: RelayConfig = {
   },
   tests: {
     command: null,
+  },
+  tracking: {
+    enabled: false,
+    plugin: null,
+    project: null,
+    includeAgentPhases: true,
   },
 };
 
@@ -417,6 +433,25 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       config.tests.command = command as string[];
     } else if (command === null) {
       config.tests.command = null;
+    }
+  }
+
+  const tracking = raw['tracking'];
+  if (tracking !== undefined) {
+    if (!isRecord(tracking)) throw new RelayError('config.tracking must be an object.', { code: 'BAD_CONFIG' });
+    for (const key of ['enabled', 'includeAgentPhases'] as const) {
+      if (tracking[key] === undefined) continue;
+      if (typeof tracking[key] !== 'boolean') {
+        throw new RelayError(`config.tracking.${key} must be a boolean.`, { code: 'BAD_CONFIG' });
+      }
+      config.tracking[key] = tracking[key];
+    }
+    for (const key of ['plugin', 'project'] as const) {
+      if (tracking[key] === undefined) continue;
+      if (tracking[key] !== null && typeof tracking[key] !== 'string') {
+        throw new RelayError(`config.tracking.${key} must be a string or null.`, { code: 'BAD_CONFIG' });
+      }
+      config.tracking[key] = tracking[key];
     }
   }
 
