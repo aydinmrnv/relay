@@ -1,6 +1,6 @@
 import { RelayError } from '../util/errors.ts';
 import { runProcess, resolveExecutable } from '../process/runner.ts';
-import type { Issue, IssueComment, IssueProvider } from './types.ts';
+import type { Issue, IssueComment, IssueListFilters, IssueProvider, IssueSummary } from './types.ts';
 
 export interface ParsedIssueRef {
   number: number;
@@ -103,6 +103,8 @@ export function normalizeGhIssue(
 }
 
 const ISSUE_FIELDS = 'number,title,body,url,state,author,labels,comments';
+const LIST_FIELDS = 'number,title,labels,createdAt,url,author,state';
+const DEFAULT_LIST_LIMIT = 30;
 
 export interface GitHubIssueProviderOptions {
   /** Directory `gh` runs in; determines the repository it resolves against. */
@@ -137,6 +139,48 @@ export class GitHubIssueProvider implements IssueProvider {
       args.push('--repo', `${owner}/${repo}`);
     }
     return args;
+  }
+
+  buildListArgs(filters: IssueListFilters): string[] {
+    const args = ['issue', 'list', '--json', LIST_FIELDS, '--state', 'open', '--limit', String(filters.limit ?? DEFAULT_LIST_LIMIT)];
+    for (const label of filters.labels ?? []) args.push('--label', label);
+    if (filters.mine === true) args.push('--assignee', '@me');
+    else if (filters.assignee !== undefined) args.push('--assignee', filters.assignee);
+    if (this.defaultRepo !== null) args.push('--repo', `${this.defaultRepo.owner}/${this.defaultRepo.name}`);
+    return args;
+  }
+
+  async listIssues(filters: IssueListFilters, options: { signal?: AbortSignal } = {}): Promise<IssueSummary[]> {
+    const result = await runProcess(this.binary, this.buildListArgs(filters), {
+      cwd: this.cwd,
+      timeoutMs: this.timeoutMs,
+      ...(options.signal ? { signal: options.signal } : {}),
+      env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+    });
+    if (!result.ok) {
+      const stderr = result.stderr.trim();
+      if (/auth|logged in|authentication/i.test(stderr)) {
+        throw new RelayError('GitHub CLI is not authenticated.', { code: 'GH_NOT_AUTHENTICATED', hint: 'Run `gh auth login`, then `relay doctor`.' });
+      }
+      throw new RelayError(`Failed to list issues: ${stderr.split('\n').slice(-3).join(' ')}`, { code: 'GH_FAILED', hint: 'Run `relay doctor` to check your GitHub CLI setup.' });
+    }
+    let payload: unknown;
+    try { payload = JSON.parse(result.stdout); } catch (error) {
+      throw new RelayError('GitHub CLI returned output that was not valid JSON.', { code: 'BAD_ISSUE_PAYLOAD', cause: error });
+    }
+    if (!Array.isArray(payload)) throw new RelayError('GitHub returned an unexpected issue list.', { code: 'BAD_ISSUE_PAYLOAD' });
+    return payload.map((entry: unknown) => {
+      const raw = (entry !== null && typeof entry === 'object' ? entry : {}) as GhIssuePayload & { createdAt?: string };
+      return {
+        number: typeof raw.number === 'number' ? raw.number : 0,
+        title: typeof raw.title === 'string' ? raw.title : '',
+        labels: Array.isArray(raw.labels) ? raw.labels.map((label) => label?.name).filter((name): name is string => typeof name === 'string') : [],
+        createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+        url: typeof raw.url === 'string' ? raw.url : '',
+        author: raw.author?.login ?? null,
+        state: typeof raw.state === 'string' ? raw.state.toLowerCase() : 'open',
+      };
+    });
   }
 
   async getIssue(ref: string, options: { signal?: AbortSignal } = {}): Promise<Issue> {

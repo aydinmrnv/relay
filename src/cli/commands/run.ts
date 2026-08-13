@@ -2,7 +2,7 @@ import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
-import type { IssueProvider } from '../../github/types.ts';
+import type { IssueListFilters, IssueProvider } from '../../github/types.ts';
 import {
   LocalIssueProvider,
   composeTaskInEditor,
@@ -35,6 +35,7 @@ import { glyphs } from '../../ui/theme.ts';
 import { formatDuration } from '../../util/text.ts';
 import { createCliContext, type CliContext } from '../context.ts';
 import { offerDelivery } from '../mergeOffer.ts';
+import { confirmClosedIssue, resolvePickedIssue } from '../issuePicker.ts';
 import { EXIT, exitCodeForRun } from '../exit.ts';
 import { emitJson } from '../json.ts';
 import { runToJson } from '../runJson.ts';
@@ -91,6 +92,11 @@ export interface RunOptions {
   prompt?: string;
   /** `--editor`: write the task in `$EDITOR`, the way `git commit` does. */
   editor?: boolean;
+  label?: string[];
+  assignee?: string;
+  mine?: boolean;
+  limit?: string;
+  yes?: boolean;
 }
 
 /**
@@ -269,16 +275,46 @@ export function parseCost(value: string, flag: string): number {
   return parsed;
 }
 
+export function parseLimit(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new RelayError('--limit must be a positive integer.', { code: 'BAD_FLAG' });
+  return parsed;
+}
+
 export async function runCommand(issueRef: string | undefined, options: RunOptions): Promise<number> {
   const cli = await createCliContext();
+  if (options.mine === true && options.assignee !== undefined) {
+    throw new RelayError('Pass --mine or --assignee, not both.', { code: 'BAD_FLAG' });
+  }
+  const filters: IssueListFilters = {
+    ...(options.label === undefined ? {} : { labels: options.label }),
+    ...(options.assignee === undefined ? {} : { assignee: options.assignee }),
+    ...(options.mine === true ? { mine: true } : {}),
+    ...(options.limit === undefined ? {} : { limit: parseLimit(options.limit) }),
+  };
+  const prompter = new Prompter();
+  const explicitlyNamed = issueRef !== undefined && issueRef.trim().length > 0;
+  let resolvedRef = issueRef;
+  if (!explicitlyNamed && options.prompt === undefined && options.editor !== true && prompter.interactive) {
+    resolvedRef = await resolvePickedIssue(cli.issueProvider, filters, prompter);
+  }
 
   // Resolve what the run is about before creating any state on disk: a
   // malformed reference, a missing file and an abandoned editor all cost
   // nothing and leave nothing behind.
-  const source = await resolveIssueSource(issueRef, options, process.cwd());
+  const source = await resolveIssueSource(resolvedRef, options, process.cwd());
   if (source === undefined) {
     out(dim('Nothing written, so nothing was started.'));
     return 0;
+  }
+
+  if (explicitlyNamed && source.kind === 'tracker') {
+    const issue = await cli.issueProvider.getIssue(source.ref);
+    if (!(await confirmClosedIssue(issue, options.yes === true, prompter))) {
+      out(dim('Not started.'));
+      prompter.close();
+      return 130;
+    }
   }
 
   const config = applyOverrides(cli.config, options);
@@ -287,10 +323,12 @@ export async function runCommand(issueRef: string | undefined, options: RunOptio
   // said before the first agent turn, which is the only time it is useful.
   const estimate = estimateRun(await listRuns(cli.repo.root), config.workflow);
   printEstimate(estimate, config.workflow.maxCostUsd);
-  if (!(await confirmEstimate(estimate, config.workflow.confirmAboveUsd))) {
+  if (!(await confirmEstimate(estimate, config.workflow.confirmAboveUsd, { prompter }))) {
     out(dim('  Not started.'));
+    prompter.close();
     return 130;
   }
+  prompter.close();
 
   const now = new Date();
   const state = createRunState({

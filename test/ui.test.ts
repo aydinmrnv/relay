@@ -378,8 +378,20 @@ describe('prompter', () => {
     assert.equal(await prompter.text('Base branch?', 'main'), 'main');
     assert.equal(await prompter.confirm('Proceed?', true), true);
     assert.equal(await prompter.choice('Planner?', [{ value: 'claude', label: 'Claude' }], 'claude'), 'claude');
+    assert.equal(await prompter.select('Issue?', [{ value: 7, label: '#7' }], 0), 7);
     assert.equal(read, false, 'a non-interactive prompter must not consume stdin');
     prompter.close();
+  });
+
+  it('selects from the numbered fallback when raw mode is unavailable', async () => {
+    const io = fake();
+    const value = await answering(io, () => io.prompter.select('Issue?', [
+      { value: 4, label: '#4 First' },
+      { value: 8, label: '#8 Second' },
+    ], 0), ['2']);
+    assert.equal(value, 8);
+    assert.match(io.output.text, /1\) #4 First/);
+    io.prompter.close();
   });
 
   it('accepts a typed answer, and Enter takes the default', async () => {

@@ -23,6 +23,23 @@ export interface Issue {
   comments: IssueComment[];
 }
 
+export interface IssueListFilters {
+  labels?: string[];
+  assignee?: string;
+  mine?: boolean;
+  limit?: number;
+}
+
+export interface IssueSummary {
+  number: number;
+  title: string;
+  labels: string[];
+  createdAt: string;
+  url: string;
+  author: string | null;
+  state: string;
+}
+
 /**
  * The seam Linear (or Jira, or a local file) plugs into later. Nothing above
  * this interface knows that GitHub or the `gh` CLI exist.
@@ -31,6 +48,7 @@ export interface IssueProvider {
   readonly name: string;
   /** Accepts whatever the user typed: `142`, `#142`, or a full issue URL. */
   getIssue(ref: string, options?: { signal?: AbortSignal }): Promise<Issue>;
+  listIssues(filters: IssueListFilters, options?: { signal?: AbortSignal }): Promise<IssueSummary[] | null>;
   comment?(
     ref: string,
     body: string,
