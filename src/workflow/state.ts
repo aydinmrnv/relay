@@ -253,18 +253,20 @@ export interface CreateRunStateOptions {
   repository: RunState['repository'];
   config: RelayConfig;
   now?: Date;
+  queued?: boolean;
 }
 
 export function createRunState(options: CreateRunStateOptions): RunState {
   const at = (options.now ?? new Date()).toISOString();
+  const phase: Phase = options.queued === true ? 'QUEUED' : 'INITIALIZING';
   return {
     version: 1,
     runId: options.runId,
     shortId: options.shortId,
     createdAt: at,
     updatedAt: at,
-    phase: 'INITIALIZING',
-    history: [{ phase: 'INITIALIZING', at }],
+    phase,
+    history: [{ phase, at }],
     issueRef: options.issueRef,
     ...(options.task === undefined ? {} : { task: options.task }),
     repository: options.repository,

@@ -47,9 +47,9 @@ export async function homeSession(): Promise<number> {
 }
 
 /** `relay run <issue>`: the run, and then the screen it came from. */
-export async function runSession(issueRef: string | undefined, options: RunOptions = {}): Promise<number> {
+export async function runSession(issueRef: string[] | undefined, options: RunOptions = {}): Promise<number> {
   const deps = sessionDeps();
-  const code = await deps.run(issueRef, options);
+  const code = await runCommand(issueRef, options);
   return relaySession(deps, options, { code });
 }
 

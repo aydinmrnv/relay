@@ -12,6 +12,7 @@ import { updateCommand } from './commands/update.ts';
 import { resumeCommand, type RunOptions } from './commands/run.ts';
 import { homeCommand } from './commands/home.ts';
 import { statsCommand } from './commands/stats.ts';
+import { cleanCommand } from './commands/clean.ts';
 import { homeSession, runSession } from './session.ts';
 import {
   diffCommand,
@@ -79,6 +80,7 @@ const HELP_GROUPS = [
   ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats']],
   ['Deliver', ['deliver']],
   ['Measure', ['eval']],
+  ['Maintain', ['clean']],
 ] as const;
 
 function groupedHelp(command: Command, helper: Help): string {
@@ -183,7 +185,7 @@ export function buildProgram(version: string): Command {
 
   program
     .command('run')
-    .argument('[issue]', 'issue number, owner/repo#number, issue URL, or a path to a markdown file')
+    .argument('[issue...]', 'issue numbers, owner/repo#number, issue URLs, or paths to markdown files')
     .description('run the full workflow for an issue, a spec file or a prompt, deliver the result, and wait for the next issue')
     .option('--prompt <text>', 'work from a description instead of a tracker issue')
     .option('--editor', 'write the task in $EDITOR, the way `git commit` does')
@@ -208,6 +210,16 @@ export function buildProgram(version: string): Command {
     .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
     .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
     .action(wrap(runSession));
+
+  program
+    .command('clean')
+    .description('remove finished run worktrees (dry run by default)')
+    .option('--all', 'consider every finished run, not only merged runs')
+    .option('--older-than <days>', 'only consider runs older than this many days')
+    .option('--force', 'permit removal of unlanded or unverifiable work')
+    .option('-y, --yes', 'perform removals')
+    .option('--json', JSON_FLAG)
+    .action(wrap(cleanCommand));
 
   program
     .command('resume')

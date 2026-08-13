@@ -98,6 +98,16 @@ describe('phase machine', () => {
 });
 
 describe('run state', () => {
+  it('can be persisted as queued before work starts', () => {
+    const state = createRunState({
+      runId: '20260101-000000-queued', shortId: 'queued', issueRef: '1',
+      repository: { root: '/tmp/repo', owner: null, name: null, defaultBranch: 'main' },
+      config: structuredClone(DEFAULT_CONFIG), queued: true,
+    });
+    assert.equal(state.phase, 'QUEUED');
+    transition(state, 'INITIALIZING');
+    assert.equal(state.phase, 'INITIALIZING');
+  });
   it('starts in INITIALIZING with roles bound from config', () => {
     const state = newState();
     assert.equal(state.phase, 'INITIALIZING');

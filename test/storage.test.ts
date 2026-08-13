@@ -12,6 +12,14 @@ import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
 describe('config', () => {
+  it('validates concurrency and artifact retention limits', () => {
+    const merged = mergeConfig(DEFAULT_CONFIG, { workflow: { maxConcurrentRuns: 2 }, retention: { artifactDays: 90 } });
+    assert.equal(merged.workflow.maxConcurrentRuns, 2);
+    assert.equal(merged.retention.artifactDays, 90);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxConcurrentRuns: 0 } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxConcurrentRuns: 1.5 } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { retention: { artifactDays: -1 } }), RelayError);
+  });
   it('keeps comments and webhooks off by default and validates their opt-ins', () => {
     assert.equal(DEFAULT_CONFIG.delivery.comment, false);
     assert.equal(DEFAULT_CONFIG.notify.webhook, null);

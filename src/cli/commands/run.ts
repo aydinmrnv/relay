@@ -41,6 +41,9 @@ import { runToJson } from '../runJson.ts';
 import { RunJsonStream } from '../runStream.ts';
 import { landingOf } from './inspect.ts';
 import { createTracking } from '../../tracking/index.ts';
+import { runQueue } from '../../workflow/queue.ts';
+import { waitForAdmission } from '../../workflow/admission.ts';
+import { pruneArtifacts } from '../../storage/retention.ts';
 import {
   changeCount,
   command,
@@ -58,6 +61,8 @@ import {
 } from '../output.ts';
 
 export interface RunOptions {
+  /** Internal: batches use line-oriented output because dashboards cannot share a terminal. */
+  compact?: boolean;
   verbose?: boolean;
   base?: string;
   planner?: string;
@@ -269,14 +274,19 @@ export function parseCost(value: string, flag: string): number {
   return parsed;
 }
 
-export async function runCommand(issueRef: string | undefined, options: RunOptions): Promise<number> {
+export async function runCommand(issueRefs: string | string[] | undefined, options: RunOptions): Promise<number> {
   const cli = await createCliContext();
+
+  const refs = Array.isArray(issueRefs) ? (issueRefs.length === 0 ? [undefined] : issueRefs) : [issueRefs];
+  if (refs.length > 1 && (options.prompt !== undefined || options.editor === true)) {
+    throw new RelayError('Batch runs accept issue references only; --prompt and --editor create one task.', { code: 'BAD_FLAG' });
+  }
 
   // Resolve what the run is about before creating any state on disk: a
   // malformed reference, a missing file and an abandoned editor all cost
   // nothing and leave nothing behind.
-  const source = await resolveIssueSource(issueRef, options, process.cwd());
-  if (source === undefined) {
+  const sources = await Promise.all(refs.map((ref) => resolveIssueSource(ref, options, process.cwd())));
+  if (sources.some((source) => source === undefined)) {
     out(dim('Nothing written, so nothing was started.'));
     return 0;
   }
@@ -292,10 +302,11 @@ export async function runCommand(issueRef: string | undefined, options: RunOptio
     return 130;
   }
 
-  const now = new Date();
-  const state = createRunState({
-    runId: createRunId(now),
-    shortId: shortId(),
+  const states = sources.map((resolved, index) => {
+    const source = resolved!;
+    const now = new Date(Date.now() + index);
+    return createRunState({
+    runId: createRunId(now), shortId: shortId(), queued: true,
     // For a local task the reference is where it came from — a path, `--prompt`
     // or `--editor` — which is what `relay status` has to be able to show.
     issueRef: source.kind === 'tracker' ? source.ref : source.task.origin,
@@ -308,9 +319,11 @@ export async function runCommand(issueRef: string | undefined, options: RunOptio
     },
     config,
     now,
+    });
   });
 
-  return executeRun(cli, state, options, 'run');
+  const runOptions = states.length > 1 ? { ...options, compact: true } : options;
+  return runQueue(states, config.workflow.maxConcurrentRuns, (state) => executeRun(cli, state, runOptions, 'run'));
 }
 
 /**
@@ -463,7 +476,10 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
     out(dim(`Resuming ${previous.runId} from ${previous.phase}.`));
   }
 
-  return executeRun(cli, previous, options, 'resume');
+  const store = new RunStore(previous.repository.root, previous.runId);
+  await store.saveState(previous);
+  const admitted = await waitForAdmission(previous.repository.root, previous.runId, previous.config.workflow.maxConcurrentRuns ?? 1);
+  return executeRun(cli, admitted, options, 'resume');
 }
 
 /**
@@ -532,8 +548,16 @@ async function executeRun(
   const stream = json
     ? new RunJsonStream({ state, command, ...(options.verbose === true ? { verbose: true } : {}) })
     : undefined;
+  const compact: RunDisplay = {
+    ...cliObserver,
+    start: () => out(dim(`[${state.shortId}] started ${state.issueRef}`)),
+    finish: (phase) => out(dim(`[${state.shortId}] ${phaseLabel(phase)}`)),
+    phaseChanged: (phase) => out(dim(`[${state.shortId}] ${phaseLabel(phase)}`)),
+    note: (text) => out(`  [${state.shortId}] ${text}`),
+    warn: (text) => out(warning(`  [${state.shortId}] ${text}`)),
+  };
   const display: RunDisplay =
-    stream ??
+    stream ?? (options.compact === true ? compact :
     new RunRenderer({
       // The renderer supplies the mark; this is only what the run is about. A
       // task with no number is named after where it came from — `./spec.md`,
@@ -553,7 +577,7 @@ async function executeRun(
       },
       phases: displayPhasesFor(state.config.workflow),
       ...(options.verbose === true ? { verbose: true } : {}),
-    });
+    }));
 
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight.
@@ -600,6 +624,7 @@ async function executeRun(
   const landing = await landingOf(state.repository.root, finalState);
   const code = exitCodeForRun(finalState, landing);
   stream?.summary(runToJson(finalState, { landing }), code);
+  await pruneArtifacts(state.repository.root, state.config.retention?.artifactDays ?? 30).catch(() => undefined);
   return code;
 }
 
