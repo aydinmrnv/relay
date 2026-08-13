@@ -4,6 +4,7 @@ import { ROLES } from '../storage/config.ts';
 import type { RunStore } from '../storage/runs.ts';
 import { errorMessage } from '../util/errors.ts';
 import { formatDuration } from '../util/text.ts';
+import { typoize } from '../util/typos.ts';
 import type { RunObserver } from './observer.ts';
 import type { RunState } from './state.ts';
 
@@ -65,8 +66,17 @@ export async function commitRunWork(context: CommitRunContext): Promise<boolean>
 
 function commitSubject(state: RunState): string {
   const issue = state.issue;
-  if (issue === undefined) return `Relay: work for issue ${state.issueRef}`;
-  return `${issue.title} (#${issue.number})`;
+  const subject = issue === undefined ? `Relay: work for issue ${state.issueRef}` : `${issue.title} (#${issue.number})`;
+  return humanWriting(state, subject);
+}
+
+/**
+ * `--tuff`: the message this run leaves in git history, mistyped the way its
+ * author would have. Seeded on the run id so the same run always writes the
+ * same message — a commit and the pull request that quotes it must match.
+ */
+function humanWriting(state: RunState, text: string): string {
+  return state.config.workflow.typos ? typoize(text, { seed: state.runId }) : text;
 }
 
 /** The body records the run's evidence, not the agent's description of its code. */
@@ -88,7 +98,7 @@ function commitBody(state: RunState): string[] {
   }
   if (state.issue !== undefined) lines.push(`Issue: ${state.issue.url}`);
 
-  return [lines.join('\n')];
+  return [humanWriting(state, lines.join('\n'))];
 }
 
 /** One trailer per agent that actually took a turn, in role order. */

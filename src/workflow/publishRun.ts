@@ -1,8 +1,10 @@
 import { mergeBranch, pushBranch } from '../git/publish.ts';
 import { createPullRequest, mergePullRequest } from '../github/pullRequest.ts';
 import { draftReasons } from './delivery.ts';
+import { reviewsCode } from '../storage/config.ts';
 import { RUN_FILES, type RunStore } from '../storage/runs.ts';
 import { formatDuration } from '../util/text.ts';
+import { typoize } from '../util/typos.ts';
 import { RelayError } from '../util/errors.ts';
 import { commitRunWork } from './commitRun.ts';
 import type { RunObserver } from './observer.ts';
@@ -185,7 +187,9 @@ export function pullRequestDraft(state: RunState, approvedPlan?: string): {
       ? []
       : [`> **Opened as a draft:** ${drafting.join('; ')}.`, '']),
     `- Plan review: ${state.rounds.planReview} round(s), plan ${state.planApproved ? 'approved' : 'not approved'}`,
-    `- Code review: ${state.rounds.codeReview} round(s) by ${state.config.agents.codeReviewer}`,
+    reviewsCode(state.config)
+      ? `- Code review: ${state.rounds.codeReview} round(s) by ${state.config.agents.codeReviewer}`
+      : '- Code review: **none** — no second model read this diff',
     `- Implemented by: ${state.config.agents.implementer}`,
   ];
 
@@ -230,9 +234,16 @@ export function pullRequestDraft(state: RunState, approvedPlan?: string): {
       ? `${state.repository.owner}/${state.repository.name}`
       : undefined;
 
+  // `--tuff`: seeded on the run id, so re-running delivery for the same run
+  // produces the same pull request rather than a differently-mistyped one.
+  const write = (text: string): string =>
+    state.config.workflow.typos ? typoize(text, { seed: state.runId }) : text;
+
   return {
-    title: issue === undefined ? `Relay: work for issue ${state.issueRef}` : `${issue.title} (#${issue.number})`,
-    body: `${lines.join('\n')}\n`,
+    title: write(
+      issue === undefined ? `Relay: work for issue ${state.issueRef}` : `${issue.title} (#${issue.number})`,
+    ),
+    body: `${write(lines.join('\n'))}\n`,
     base: workspace.baseBranch,
     head: workspace.branch,
     ...(repo === undefined ? {} : { repo }),
@@ -246,7 +257,8 @@ function mergeMessage(state: RunState): string {
     state.issue === undefined
       ? `Merge ${branch} (Relay run ${state.runId})`
       : `Merge ${branch}: ${state.issue.title} (#${state.issue.number})`;
-  return `${subject}\n\nImplemented by Relay run ${state.runId}.\n`;
+  const message = `${subject}\n\nImplemented by Relay run ${state.runId}.\n`;
+  return state.config.workflow.typos ? typoize(message, { seed: state.runId }) : message;
 }
 
 function requireWorkspace(state: RunState, action: string): NonNullable<RunState['workspace']> {

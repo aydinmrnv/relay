@@ -3,7 +3,13 @@ import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
 import { RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
-import { DELIVERY_POLICIES, isDeliveryPolicy, type DeliveryPolicy, type RelayConfig } from '../../storage/config.ts';
+import {
+  DELIVERY_POLICIES,
+  isDeliveryPolicy,
+  reviewsCode,
+  type DeliveryPolicy,
+  type RelayConfig,
+} from '../../storage/config.ts';
 import { WorkflowEngine } from '../../workflow/engine.ts';
 import { resolveCeiling, shortfall } from '../../workflow/delivery.ts';
 import { delivering } from '../../workflow/phases/delivery.ts';
@@ -52,11 +58,14 @@ export interface RunOptions {
   deliver?: string;
   /** `--no-offer-merge`: finish without the one question. */
   offerMerge?: boolean;
+  /** `-f`: no plan review, no code review. */
   fast?: boolean;
   /** `--no-prime`: make each reviewer read only once its turn starts. */
   prime?: boolean;
   /** `--no-parallel-tests`: run the suite after the code review, not during it. */
   parallelTests?: boolean;
+  /** `--tuff`: write this run's pull request, commits and comments like a human. */
+  tuff?: boolean;
 }
 
 /** Applies `relay run` flags over the repository config for this run only. */
@@ -77,13 +86,24 @@ export function applyOverrides(config: RelayConfig, options: RunOptions): RelayC
   if (options.parallelTests === false) merged.workflow.concurrentTests = false;
 
   if (options.fast === true) {
+    // Fast is the whole trade in one flag: no planner turn, no plan review, no
+    // code review. What is left is one agent, its own plan, and the suite —
+    // which is the fastest a run can be and the least it can promise.
     merged.workflow.plan = 'inline';
+    merged.workflow.reviewCode = false;
+    out(dim('Fast: one agent plans and implements, and no reviewer reads either the plan or the diff.'));
     out(
-      dim(
-        'Fast: the implementer plans in its own session and there is no separate plan review. ' +
-          'The diff is still reviewed by the other model.',
+      warning(
+        merged.workflow.runTests
+          ? '  The tests are the only check on this run.'
+          : '  Nothing checks this run: reviews are off and so are the tests.',
       ),
     );
+  }
+
+  if (options.tuff === true) {
+    merged.workflow.typos = true;
+    out(dim('Tuff: the pull request, the commit messages and the comments in the diff are written with typos.'));
   }
 
   if (options.planner !== undefined) {
@@ -174,6 +194,9 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
   }
   if (options.deliver !== undefined) previous.config.workflow.deliver = parseDeliver(options.deliver);
   if (options.offerMerge === false) previous.config.workflow.offerMerge = false;
+  // The phases this run will take are already decided, but what it writes on
+  // its way out is not: a resume is allowed to change the voice.
+  if (options.tuff === true) previous.config.workflow.typos = true;
 
   if (isTerminal(previous.phase)) {
     if (previous.phase === 'COMPLETE') {
@@ -246,7 +269,7 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
       implementer: state.config.agents.implementer,
       codeReviewer: state.config.agents.codeReviewer,
     },
-    phases: displayPhasesFor(state.config.workflow.plan),
+    phases: displayPhasesFor(state.config.workflow),
     ...(options.verbose === true ? { verbose: true } : {}),
   });
 
@@ -323,7 +346,12 @@ export function printOutcome(state: RunState, store: RunStore): void {
       value: `${state.diff.fileCount} file(s), ${changeCount(state.diff.additions, state.diff.deletions)}`,
     },
     state.tests !== undefined && { label: 'Tests', value: testsLine(state) },
-    { label: 'Reviews', value: `plan ${state.rounds.planReview} round(s), code ${state.rounds.codeReview} round(s)` },
+    {
+      label: 'Reviews',
+      value:
+        `plan ${state.rounds.planReview} round(s), ` +
+        (reviewsCode(state.config) ? `code ${state.rounds.codeReview} round(s)` : warning('code review skipped')),
+    },
     commitRow(state),
     state.usage !== undefined && { label: 'Usage', value: formatUsage(state.usage.total) },
     { label: 'Run state', value: store.dir },

@@ -37,7 +37,9 @@ const FORWARD_TRANSITIONS: Record<Phase, readonly Phase[]> = {
   // Plan review either accepts (implement) or sends the plan back for revision.
   REVIEWING_PLAN: ['REVISING_PLAN', 'IMPLEMENTING'],
   REVISING_PLAN: ['REVIEWING_PLAN'],
-  IMPLEMENTING: ['REVIEWING_CODE'],
+  // With `reviewCode: false` there is no reviewer turn between the diff and the
+  // suite, so the tests are the only judgement left and the run goes to them.
+  IMPLEMENTING: ['REVIEWING_CODE', 'TESTING'],
   // Code review either accepts (test) or sends blocking findings back.
   REVIEWING_CODE: ['REVISING_CODE', 'TESTING'],
   REVISING_CODE: ['REVIEWING_CODE'],
@@ -125,12 +127,18 @@ export function displayPhaseFor(phase: Phase): Phase | undefined {
 
 /**
  * The checklist for a particular run. Inline planning never enters the two plan
- * phases, and a checklist that lists steps the run will not take reads as a
- * stall when they never turn green.
+ * phases and a run with no code review never enters that one, and a checklist
+ * that lists steps the run will not take reads as a stall when they never turn
+ * green.
  */
-export function displayPhasesFor(plan: PlanMode): readonly Phase[] {
-  if (plan === 'review') return DISPLAY_PHASES;
-  return DISPLAY_PHASES.filter((phase) => phase !== 'PLANNING' && phase !== 'REVIEWING_PLAN');
+export function displayPhasesFor(workflow: { plan: PlanMode; reviewCode?: boolean }): readonly Phase[] {
+  const skipped = new Set<Phase>();
+  if (workflow.plan !== 'review') {
+    skipped.add('PLANNING');
+    skipped.add('REVIEWING_PLAN');
+  }
+  if (workflow.reviewCode === false) skipped.add('REVIEWING_CODE');
+  return DISPLAY_PHASES.filter((phase) => !skipped.has(phase));
 }
 
 /**

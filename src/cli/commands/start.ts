@@ -337,7 +337,9 @@ function showTour(config: RelayConfig): void {
       { label: '3. Implement', value: `${config.agents.implementer} writes the code in an isolated worktree` },
       {
         label: '4. Code review',
-        value: `${config.agents.codeReviewer} reviews the diff, up to ${config.workflow.maxCodeReviewRounds} round(s)`,
+        value: config.workflow.reviewCode
+          ? `${config.agents.codeReviewer} reviews the diff, up to ${config.workflow.maxCodeReviewRounds} round(s)`
+          : dim('disabled in config'),
       },
       {
         label: '5. Tests',
@@ -387,7 +389,7 @@ function showTour(config: RelayConfig): void {
         label: 'Time',
         value: inline
           ? 'typically 5–10 minutes; a large issue takes longer'
-          : 'typically 8–15 minutes; `relay run <issue> --fast` skips the plan review',
+          : 'typically 8–15 minutes; `relay run <issue> --fast` skips both reviews',
       },
       { label: 'Tokens', value: 'billed to your own Claude Code and Codex accounts' },
       { label: 'Reporting', value: '`relay status <run>` shows tokens, and cost when the CLI reports one' },

@@ -1,4 +1,5 @@
 import { formatFindingLine, type ReviewRound } from '../reviews/types.ts';
+import { reviewsCode } from '../storage/config.ts';
 import { formatDuration } from '../util/text.ts';
 import { PHASES, phaseLabel } from './phases.ts';
 import type { RunState } from './state.ts';
@@ -44,7 +45,13 @@ export function renderSummary(state: RunState): string {
   lines.push('## Outcome');
   lines.push('');
   lines.push(`- Plan review rounds: ${state.rounds.planReview} (plan ${state.planApproved ? 'approved' : 'not approved'})`);
-  lines.push(`- Code review rounds: ${state.rounds.codeReview}`);
+  // A skipped review and a review that found nothing both leave zero rounds
+  // behind, and only one of them means the diff was read by somebody.
+  lines.push(
+    reviewsCode(state.config)
+      ? `- Code review rounds: ${state.rounds.codeReview}`
+      : '- Code review: skipped — this diff was read by nobody but its author',
+  );
 
   if (state.diff !== undefined) {
     lines.push(`- Changes: ${state.diff.fileCount} file(s), +${state.diff.additions} −${state.diff.deletions}`);

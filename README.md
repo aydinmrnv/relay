@@ -84,10 +84,14 @@ longer exists.
 told so, and asked for the targeted checks only it can run instead of a full
 suite whose result is already on its way.
 
-**`--fast` drops the plan stage.** The implementer plans and implements in one
-session — two to four fewer serial turns — and the diff is still reviewed by
-the other model. It is the right trade for a small ticket and the wrong one for
-a change whose approach is the risky part. `plan.md` is still written either way.
+**`-f` / `--fast` drops both reviews.** The implementer plans and implements in
+one session and nothing reviews either artifact: no planner turn, no plan
+review, no code review. That is the whole critique removed, so what is left
+checking the work is the project's own test suite — which is why the run says so
+out loud, the summary records `Code review: skipped`, and the pull request says
+no second model read the diff. It is the right trade for a small ticket and the
+wrong one for anything whose approach is the risky part. `plan.md` is still
+written either way.
 
 `relay run` prints where the time actually went, per phase, when it finishes.
 Tune against that, not against this list.
@@ -142,12 +146,38 @@ Tune against that, not against this list.
 | `relay stop [run]` | cancel a run at its next phase boundary |
 | `relay --update` | update Relay itself to the latest version |
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, and `--no-offer-merge`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
 
-The wall-clock flags: `--fast` (implementer plans in its own session, no
-separate plan review), `--no-prime` (each reviewer reads only once its own turn
-starts) and `--no-parallel-tests` (run the suite after the code review instead
-of during it).
+The three worth typing by hand:
+
+| | |
+|---|---|
+| `-f` | fast: one agent plans and implements, and neither the plan nor the diff is reviewed |
+| `-m` | merge: take the work all the way — commit, push, pull request, merge — without being asked |
+| `--tuff` | write this run's pull request, commit messages and code comments the way a person types them |
+
+The other wall-clock flags: `--no-prime` (each reviewer reads only once its own
+turn starts) and `--no-parallel-tests` (run the suite after the code review
+instead of during it).
+
+`-f -m` is the whole spectrum in four characters: nothing reviews it and it
+lands anyway. The merge still has to pass its own gates — the tests must have
+verifiably passed, and a protected base branch is still refused — so what `-f`
+removes is the critique, never the evidence.
+
+### `--tuff`
+
+Relay's writing reads like a machine wrote it, because one did. `--tuff` makes
+a run's output read like a person instead: the pull request, the commit messages
+and the comments the implementer leaves in the code all carry the ordinary
+typos of someone typing at speed.
+
+The line it does not cross is anything read by something other than a person.
+`Closes #142`, trailers, URLs, file paths, fenced blocks, inline code spans and
+identifiers are left byte-for-byte alone (`src/util/typos.ts`), because a
+mistyped issue reference does not look human — it looks broken. The transform is
+seeded on the run id, so `relay deliver <run>` re-opens the same pull request
+rather than a differently-mistyped one.
 
 ## Delivery
 
@@ -168,8 +198,9 @@ Delivery
 ```
 
 The default ceiling is `branch`: Relay commits locally and publishes nothing.
-`--push`, `--pr`, and `--merge` independently opt in (each higher step implies
-its prerequisites). The legacy `--deliver <policy>` remains available for scripts.
+`--push`, `--pr`, and `-m` / `--merge` independently opt in (each higher step
+implies its prerequisites). The legacy `--deliver <policy>` remains available for
+scripts.
 
 | policy | |
 |---|---|
@@ -365,6 +396,7 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
   "models": { "codeReviewer": "haiku" },
   "workflow": {
     "plan": "review",
+    "reviewCode": true,
     "maxPlanReviewRounds": 2,
     "maxCodeReviewRounds": 2,
     "primeReviewers": true,
@@ -389,6 +421,8 @@ reaching for before turning a review off.
 | key | |
 |---|---|
 | `workflow.plan` | `review` (planner + adversarial plan review) or `inline` (the implementer plans in its own session — what `--fast` sets) |
+| `workflow.reviewCode` | whether the other model reviews the diff (default `true`; `--fast` sets it `false`) |
+| `workflow.typos` | write the pull request, commits and code comments with human typos (default `false`; what `--tuff` sets) |
 | `github.autoPush` / `autoPr` / `autoMerge` | authorize each publishing step without a prompt (all default `false`) |
 | `github.mergeMethod` | how a pull request lands: `squash` (default), `merge`, `rebase` |
 | `github.deleteBranchOnMerge` | delete the remote run branch and guarded worktree after merge (default `false`) |
