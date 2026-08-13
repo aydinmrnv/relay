@@ -8,8 +8,12 @@ import { createLineSplitter } from './lines.ts';
 
 export interface ProcessRunOptions {
   cwd?: string;
-  /** Extra variables layered on top of the inherited environment. */
-  env?: Record<string, string>;
+  /**
+   * Extra variables layered on top of the inherited environment. A value of
+   * `undefined` removes the variable from the child rather than setting it,
+   * which is how a caller sheds something it inherited but must not pass on.
+   */
+  env?: Record<string, string | undefined>;
   /** Text written to the child's stdin, which is then closed. */
   stdin?: string;
   timeoutMs?: number;

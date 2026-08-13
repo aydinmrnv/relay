@@ -1,0 +1,10 @@
+{
+  "title": "Markdown table renderer has no alignment, no escaping, and breaks on ragged rows",
+  "kind": "feature",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The escaping rule and the ragged-row rule are the two the acceptance suite leans on."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/table.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/table.test.js"] }
+}

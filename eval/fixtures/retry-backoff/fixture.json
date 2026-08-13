@@ -1,0 +1,10 @@
+{
+  "title": "Retry helper makes one attempt too many and retries errors it was told not to",
+  "kind": "bug",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. Relay's own retry policy has the same three rules, which is why they are worth measuring."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/retry.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/retry.test.js"] }
+}

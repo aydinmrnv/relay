@@ -113,6 +113,56 @@ Tune against that, not against this list.
 
 **Sessions persist.** Revisions resume the agent's existing session, so the planner still has the codebase reading that produced the plan, and the implementer still has the reasoning behind its own code.
 
+## Measuring the claim
+
+Everything above rests on one empirical claim — that specialized agents
+reviewing each other's work produce better changes than one agent working
+alone — and every design decision downstream of it is a hypothesis about that
+claim: two review rounds and not three, the plan reviewed by a different model,
+`--fast` dropping the plan stage, reviewers primed on the issue rather than the
+artifact. `relay eval` is where those stop being intuitions.
+
+```bash
+relay eval --check-fixtures                 # verify the fixture set — costs nothing
+relay eval --compare second-agent --dry-run # the plan and the cost — costs nothing
+relay eval --compare second-agent           # one agent against the shipped pair
+```
+
+It runs a set of small, self-contained tasks — a bug with a failing test, a
+feature with an acceptance test, a refactor with a behaviour-preserving suite —
+through real `WorkflowEngine` runs under different configurations, and reports
+solve rate, regression rate, cost, wall-clock and review yield.
+
+**The hidden suites are structural, not advisory.** Each fixture keeps the tests
+it is graded on in a directory the harness never materializes, so there is no
+instruction anywhere telling an agent not to read them — there is nothing to
+read. It is then checked rather than assumed: materializing a fixture fails
+closed if a hidden path is present in the tree a run is about to start from.
+Grading happens afterwards, in a separate checkout, with the fixture's own tests
+restored — otherwise the cheapest way to pass a regression suite is to delete
+the assertion that fails.
+
+**Variance is reported, not hidden.** Model calls are not deterministic, so each
+task runs N times and every rate carries a 95% Wilson interval. A comparison
+whose intervals overlap is reported as *inconclusive*, not as "no difference".
+The fixtures are pinned by commit and every session records the CLI version and
+model of each agent, because a result attached to no model version expires
+silently.
+
+**Review yield is measured objectively.** The hidden suite is run against the
+diff as it stood *when code review began* as well as against the delivered diff,
+so a review that turned a failing change into a passing one shows up as a fact
+rather than as a count of findings somebody called important.
+
+The seven configurations, and the five comparisons that use them, are in
+[`eval/README.md`](eval/README.md), along with the fixture format and how to add
+one. Results are written to `.relay/eval/` by default; the published table is
+[`eval/results/RESULTS.md`](eval/results/RESULTS.md).
+
+If the numbers do not support the design, that is the most valuable thing this
+harness can produce. The honest outcome is a changed default and a corrected
+README — not a defended one.
+
 ## Safety
 
 1. Agents only ever run with the worktree as their working directory. Codex gets a real OS sandbox (`--sandbox read-only` / `workspace-write`); Claude gets a tool deny list.
@@ -142,6 +192,7 @@ Tune against that, not against this list.
 | `relay resume <run>` | continue an interrupted or failed run |
 | `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
 | `relay stop [run]` | cancel a run at its next phase boundary |
+| `relay eval` | measure whether cross-model review actually produces better changes |
 | `relay --update` | update Relay itself to the latest version |
 
 `relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.

@@ -4,6 +4,8 @@ import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
 import { DELIVERY_POLICIES } from '../storage/config.ts';
 import { deliverCommand } from './commands/deliver.ts';
 import { doctorCommand } from './commands/doctor.ts';
+import { collect, evalCommand } from './commands/eval.ts';
+import { EVAL_COMPARISON_NAMES, EVAL_CONFIG_NAMES } from '../eval/configs.ts';
 import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
@@ -50,6 +52,7 @@ const HELP_GROUPS = [
   ['Run', ['run', 'resume', 'stop']],
   ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs']],
   ['Deliver', ['deliver']],
+  ['Measure', ['eval']],
 ] as const;
 
 function groupedHelp(command: Command, helper: Help): string {
@@ -210,6 +213,26 @@ export function buildProgram(version: string): Command {
     .option('-n, --limit <n>', 'number of events to show', '80')
     .option('-a, --all', 'show every event')
     .action(wrap(logsCommand));
+
+  program
+    .command('eval')
+    .description('measure whether cross-model review actually produces better changes')
+    .option('--config <name...>', `configuration(s) to run (${EVAL_CONFIG_NAMES.join('|')})`, collect)
+    .option('--compare <name...>', `run the arms of a comparison (${EVAL_COMPARISON_NAMES.join('|')})`, collect)
+    .option('--fixture <id...>', 'run only these fixtures', collect)
+    .option('-n, --repeat <n>', 'runs per fixture per configuration', '3')
+    .option('--concurrency <n>', 'runs in flight at once (above 1, wall-clock is contended)', '1')
+    .option('--agents <a,b>', 'the two agents to compare, e.g. claude,codex')
+    .option('--fixtures <dir>', 'fixture directory to use instead of the shipped set')
+    .option('--out <dir>', 'where results are written')
+    .option('--check-fixtures', 'verify every fixture against its base commit and exit — costs nothing')
+    .option('--report', 'regenerate the results table from recorded sessions and exit')
+    .option('--dry-run', 'print the plan and the cost estimate, and run nothing')
+    .option('-y, --yes', 'do not ask before spending')
+    .option('--keep', 'leave scratch repositories and worktrees behind for inspection')
+    .option('-v, --verbose', 'forward each run\'s own notes')
+    .option('--json', 'print the raw results instead of the table')
+    .action(wrap(evalCommand));
 
   program
     .command('stop')

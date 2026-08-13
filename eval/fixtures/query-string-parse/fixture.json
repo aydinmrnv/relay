@@ -1,0 +1,10 @@
+{
+  "title": "Query string parser handles only the simplest case",
+  "kind": "feature",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The acceptance suite is the behaviour the task specifies, not an implementation."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/query.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/query.test.js"] }
+}

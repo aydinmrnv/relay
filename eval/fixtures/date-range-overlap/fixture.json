@@ -1,0 +1,22 @@
+{
+  "title": "Half-open date ranges treat touching intervals as overlapping",
+  "kind": "bug",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The boundary convention bug is the one every calendar/booking codebase has had at least once."
+  },
+  "acceptance": {
+    "command": [
+      "node",
+      "--test",
+      "tests-hidden/ranges.acceptance.test.js"
+    ]
+  },
+  "regression": {
+    "command": [
+      "node",
+      "--test",
+      "test/ranges.test.js"
+    ]
+  }
+}

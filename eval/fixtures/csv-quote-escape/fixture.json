@@ -1,0 +1,22 @@
+{
+  "title": "CSV writer produces unparseable output for values containing quotes or newlines",
+  "kind": "bug",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness against RFC 4180, which is the spec the task points at."
+  },
+  "acceptance": {
+    "command": [
+      "node",
+      "--test",
+      "tests-hidden/csv.acceptance.test.js"
+    ]
+  },
+  "regression": {
+    "command": [
+      "node",
+      "--test",
+      "test/csv.test.js"
+    ]
+  }
+}

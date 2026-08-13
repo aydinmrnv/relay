@@ -1,0 +1,10 @@
+{
+  "title": "Rate limiter uses a fixed window, so a client gets double the limit across a boundary",
+  "kind": "feature",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. Time is injected rather than mocked, so the acceptance suite is deterministic."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/limiter.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/limiter.test.js"] }
+}

@@ -1,0 +1,10 @@
+{
+  "title": "Environment config loader returns strings for everything and reports nothing",
+  "kind": "feature",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. Collecting every problem instead of throwing on the first is the part that matters in a deploy."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/config.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/config.test.js"] }
+}
