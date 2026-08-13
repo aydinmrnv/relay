@@ -134,7 +134,7 @@ Tune against that, not against this list.
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth |
 | `relay run <issue>` | run the full workflow |
-| `relay status [run]` | list runs, or print one run's summary (`--json` for machine-readable output) |
+| `relay status [run]` | list runs, or print one run's summary |
 | `relay watch [run]` | follow a run's events live |
 | `relay diff [run]` | show the diff a run produced (`--stat` for a file list) |
 | `relay plan [run]` | print the approved plan |
@@ -143,6 +143,10 @@ Tune against that, not against this list.
 | `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
 | `relay stop [run]` | cancel a run at its next phase boundary |
 | `relay --update` | update Relay itself to the latest version |
+
+Every command above except `--update` takes `--json`, and exits with a code from
+a documented table. Both are below, under [Machine-readable
+output](#machine-readable-output) and [Exit codes](#exit-codes).
 
 `relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
 
@@ -322,6 +326,89 @@ different place on every row exactly when colour is on.
 
 Content Relay only passes through — a patch, a `--json` payload, an agent's
 plan — is never rewritten by any of that.
+
+## Machine-readable output
+
+Every command that reports something takes `--json`, and under it **stdout
+carries the JSON document and nothing else**. The banner, the frames, the
+progress, the advice and the errors all move to stderr, so `relay run --json |
+jq` works while the run is still printing.
+
+| | |
+|---|---|
+| `relay --json` | the home screen: repository, config, recent runs, next command |
+| `relay doctor --json` | every readiness check with its status, detail and remedy |
+| `relay start --json` | the same checks (implies `--check`: a guided walkthrough has no JSON form) |
+| `relay init --json` | the config it wrote, the test command it detected, the agents it found (implies `--yes`) |
+| `relay run --json` | one object per line as phases complete, then a summary |
+| `relay resume --json` | the same stream |
+| `relay status [run] --json` | `runs` for the listing, `run` for one — unabridged, unlike the table |
+| `relay watch [run] --json` | one object per line, as each event arrives |
+| `relay diff [run] --json` | the file list, the counts, and the patch (`--stat` drops the patch, keeps the files) |
+| `relay plan [run] --json` | the approved plan as markdown |
+| `relay logs [run] --json` | the event log, with `data` as recorded, plus usage by phase |
+| `relay deliver [run] --json` | the run after delivery, ledger included |
+| `relay stop [run] --json` | what was signalled, and whether the process was still alive |
+
+**Every document carries `schema`.** The moment something parses this output the
+shape is a contract, and a contract needs a version to change under:
+
+```json
+{ "schema": 1, "command": "status", "run": { "runId": "…", "phase": "COMPLETE" } }
+```
+
+`schema` is bumped when a field is removed, renamed, or changes meaning. Adding
+a field is *not* a bump — a consumer that ignores unknown keys survives it, and
+one that does not was never going to survive any change at all.
+
+`relay run --json` is a stream, not a blob, because a single document at the end
+is the one shape that is useless while it matters. It emits `run_started`, then
+`phase_started` / `phase_completed` per phase — the engine's own phases, so a
+plan revision appears even though the dashboard folds it into the review row —
+then `note` and `warning` lines, and finally one `summary` object carrying the
+whole run and the code the command is about to exit with. Agent events are in
+the stream only under `--verbose`.
+
+```console
+$ relay run 142 --json | jq -r 'select(.type == "phase_completed") | "\(.phaseLabel) \(.durationMs)ms"'
+Fetching issue 412ms
+Creating workspace 1203ms
+Planning 64119ms
+```
+
+Serializers live next to `src/cli/runJson.ts` and are built from state, git and
+the event log — never from the strings the terminal view paints. Nothing there
+imports `output.ts`, which is why no payload can carry a colour code, an
+ellipsis, or a column sized to fit a frame.
+
+## Exit codes
+
+| code | |
+|---|---|
+| 0 | success |
+| 1 | a Relay error — the message on stderr says which |
+| 2 | usage error: an unknown command, a missing argument, a bad flag |
+| 3 | preconditions unmet: a missing CLI, a signed-out tool, not a repository |
+| 4 | the run finished, and its work is committed nowhere |
+| 5 | the run failed on its own terms: blocking findings unresolved, tests failed |
+| 130 | cancelled — Ctrl-C, `relay stop`, or an abandoned prompt |
+
+3 and 5 are the ones automation actually needs. *You are not set up* and *the
+work is not good enough* are different answers requiring different responses,
+and collapsing both into 1 makes a CI job page a person for a missing `gh`.
+
+The distinctions worth stating outright. A run that **broke** mid-phase exits 1
+— unless it broke on a precondition it had already named, which exits 3. A run
+that **reached a verdict** and the verdict is bad exits 5: tests that were
+discovered and failed, or blocking review findings the implementer never
+accepted. A repository with no test suite has not failed its tests, so it does
+not exit 5. Exit 4 is reserved for work that came out fine and is sitting
+uncommitted in a throwaway worktree, which one `git worktree prune` would take
+with it. When a run is both condemned and stranded, 5 wins: it is the answer
+that decides whether anything downstream should happen at all.
+
+The table lives in `src/cli/exit.ts`, and the tests assert one invocation per
+code.
 
 ## Run state
 

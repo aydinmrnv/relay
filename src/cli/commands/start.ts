@@ -20,6 +20,9 @@ import { configPath, loadConfig, type RelayConfig } from '../../storage/config.t
 import { errorMessage, RelayError } from '../../util/errors.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
 import { agentChecks, authStateCheck, type AgentCheck, type Check } from '../checks.ts';
+import { checksToJson } from '../doctorJson.ts';
+import { EXIT } from '../exit.ts';
+import { emitJson } from '../json.ts';
 import { ensureRelayIgnored, loadOnboarding, saveOnboarding } from '../onboarding.ts';
 import {
   banner,
@@ -49,6 +52,11 @@ export interface StartOptions {
   tour?: boolean;
   /** Walk the whole pipeline without calling a single agent. */
   dryRun?: boolean;
+  /**
+   * Report readiness as JSON. Implies `--check`: a guided walkthrough is a
+   * conversation, and there is no JSON document that is a conversation.
+   */
+  json?: boolean;
 }
 
 /**
@@ -101,18 +109,20 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
 
 export async function runStart(options: StartOptions, deps: StartDeps): Promise<number> {
   const repo = await preflight();
+  const json = options.json === true;
 
-  if (options.tour === true) {
+  if (options.tour === true && !json) {
     heading('How a Relay run works');
     showTour(await loadConfig(repo.root));
     await rememberTour(repo, deps);
-    return 0;
+    return EXIT.success;
   }
 
-  // A prompt nobody can answer is a hang. Behind a pipe or in CI, `start` is
-  // `--check`: say what is missing, attempt no login, and exit non-zero.
-  if (options.check === true || !deps.prompter.interactive) {
-    return reportReadiness(repo, deps, deps.prompter.interactive);
+  // A prompt nobody can answer is a hang. Behind a pipe, in CI, or under
+  // `--json`, `start` is `--check`: say what is missing, attempt no login, and
+  // exit with the code that means "not set up".
+  if (json || options.check === true || !deps.prompter.interactive) {
+    return reportReadiness(repo, deps, { interactive: deps.prompter.interactive, json });
   }
 
   try {
@@ -121,7 +131,7 @@ export async function runStart(options: StartOptions, deps: StartDeps): Promise<
     if (!isPromptCancelled(error)) throw error;
     out();
     out(warning('Cancelled. Everything already done is kept — re-run `relay start` to continue.'));
-    return 130;
+    return EXIT.cancelled;
   } finally {
     deps.prompter.close();
   }
@@ -444,7 +454,7 @@ async function firstRun(
     if (!dry) {
       hint('Fix those, then run `relay start` again — nothing above needs redoing.');
       out();
-      return 1;
+      return EXIT.preconditions;
     }
     hint('A dry run needs none of them: it calls no agent.');
     out();
@@ -457,7 +467,7 @@ async function firstRun(
   // so it is never what pressing Enter does.
   if (!(await deps.prompter.confirm(question, dry))) {
     printNextSteps(dry);
-    return blockers.length > 0 ? 1 : 0;
+    return blockers.length > 0 ? EXIT.preconditions : EXIT.success;
   }
 
   const ref = await deps.prompter.text('  Which issue? (number, owner/repo#number, or URL)', '', validateIssueRef);
@@ -465,7 +475,7 @@ async function firstRun(
     out();
     hint('No issue given, so nothing was started.');
     printNextSteps(dry);
-    return blockers.length > 0 ? 1 : 0;
+    return blockers.length > 0 ? EXIT.preconditions : EXIT.success;
   }
 
   await markCompleted(repo, deps);
@@ -567,17 +577,23 @@ function testsStep(config: RelayConfig): string {
  * The report `--check`, a pipe and CI all get: what is missing, and nothing
  * else. No question is asked and no login is attempted, so it cannot hang.
  */
-async function reportReadiness(repo: RepositoryInfo, deps: StartDeps, interactive: boolean): Promise<number> {
-  heading('relay start --check');
-  out();
-  out(
-    dim(
-      interactive
-        ? 'Reporting only: nothing is prompted and no login is attempted.'
-        : 'Not a terminal, so this is a report: nothing is prompted and no login is attempted.',
-    ),
-  );
-  out();
+async function reportReadiness(
+  repo: RepositoryInfo,
+  deps: StartDeps,
+  mode: { interactive: boolean; json: boolean },
+): Promise<number> {
+  if (!mode.json) {
+    heading('relay start --check');
+    out();
+    out(
+      dim(
+        mode.interactive
+          ? 'Reporting only: nothing is prompted and no login is attempted.'
+          : 'Not a terminal, so this is a report: nothing is prompted and no login is attempted.',
+      ),
+    );
+    out();
+  }
 
   const checks: Check[] = [
     {
@@ -618,10 +634,16 @@ async function reportReadiness(repo: RepositoryInfo, deps: StartDeps, interactiv
       : { label: 'Configuration', status: 'fail', detail: 'no .relay/config.json', hint: 'Run `relay init --yes`.' },
   );
 
+  const failed = checks.filter((check) => check.status === 'fail');
+
+  if (mode.json) {
+    emitJson('start', checksToJson(checks));
+    return failed.length === 0 ? EXIT.success : EXIT.preconditions;
+  }
+
   const width = Math.max(...checks.map((check) => check.label.length));
   for (const check of checks) out(`  ${statusMark(check)} ${check.label.padEnd(width)}  ${dim(check.detail)}`);
 
-  const failed = checks.filter((check) => check.status === 'fail');
   if (failed.length > 0) {
     out();
     for (const check of failed) {
@@ -636,7 +658,7 @@ async function reportReadiness(repo: RepositoryInfo, deps: StartDeps, interactiv
       ? success('Ready. Run `relay start` on a terminal for a guided first run.')
       : failure(`${failed.length} thing(s) still missing. Fix them, then run \`relay start\` on a terminal.`),
   );
-  return failed.length === 0 ? 0 : 1;
+  return failed.length === 0 ? EXIT.success : EXIT.preconditions;
 }
 
 function printAuthRow(label: string, detail: string, state: AuthState): void {

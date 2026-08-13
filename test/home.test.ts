@@ -139,7 +139,10 @@ describe('home screen', { concurrency: 1 }, () => {
 it('chooses the next command by the documented precedence', () => {
   const live = state();
   const finished = { ...live, phase: 'COMPLETE' as const };
-  const view = (value: RunState, unlanded = false): RunHomeView => ({ state: value, unlanded });
+  const view = (value: RunState, unlanded = false): RunHomeView => ({
+    state: value,
+    landing: unlanded ? 'unlanded' : 'committed',
+  });
   assert.equal(chooseNextCommand(false, [view(live)]), 'relay start');
   assert.equal(chooseNextCommand(true, [view(live)]), `relay watch ${live.runId}`);
   assert.equal(chooseNextCommand(true, [view(finished, true)]), `relay deliver ${finished.runId}`);

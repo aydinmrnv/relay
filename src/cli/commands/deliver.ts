@@ -7,6 +7,7 @@ import { deliverRun, parseDeliver } from './run.ts';
 export interface DeliverOptions {
   /** `--to <policy>`: how far to take it, overriding the run's own setting. */
   to?: string;
+  json?: boolean;
 }
 
 /**
@@ -33,5 +34,6 @@ export async function deliverCommand(runRef: string, options: DeliverOptions = {
 
   return deliverRun(state, {
     ...(options.to === undefined ? {} : { policy: parseDeliver(options.to) }),
+    ...(options.json === true ? { json: true } : {}),
   });
 }

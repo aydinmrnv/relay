@@ -222,7 +222,7 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
 }
 
 /** Projects usage onto the JSON contract, pinning unpriced buckets to `null`. */
-function usageToJson(usage: RunUsage): RunUsageJson {
+export function usageToJson(usage: RunUsage): RunUsageJson {
   return {
     total: totalsToJson(usage.total),
     byPhase: Object.fromEntries(

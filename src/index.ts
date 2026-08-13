@@ -1,4 +1,5 @@
 import { buildProgram } from './cli/program.ts';
+import { exitCodeFor, isCommanderError } from './cli/exit.ts';
 import { reportError } from './cli/output.ts';
 import { packageVersion } from './update/installation.ts';
 
@@ -14,6 +15,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  reportError(error);
-  process.exitCode = 1;
+  // Commander unwinds by throwing rather than exiting the process itself, so
+  // this is the path `--help`, `--version` and every usage error take. It has
+  // already printed whatever it had to say.
+  if (!isCommanderError(error)) reportError(error);
+  process.exitCode = exitCodeFor(error);
 });

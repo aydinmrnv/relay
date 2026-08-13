@@ -1,14 +1,30 @@
 import { glyphs } from '../../ui/theme.ts';
 import { collectChecks, type Check } from '../checks.ts';
+import { checksToJson } from '../doctorJson.ts';
+import { EXIT } from '../exit.ts';
+import { emitJson } from '../json.ts';
 import { banner, box, dim, failure, gridLines, out, success, theme, warning } from '../output.ts';
+
+export interface DoctorOptions {
+  json?: boolean;
+}
 
 /**
  * Verifies everything a run depends on, without touching credentials: Relay
  * asks each CLI whether it is authenticated and never reads a token itself.
+ *
+ * A failure here is the definition of exit code 3: nothing is broken, this
+ * machine is not set up yet, and the two need different responses from whatever
+ * is calling.
  */
-export async function doctorCommand(): Promise<number> {
+export async function doctorCommand(options: DoctorOptions = {}): Promise<number> {
   const checks = await collectChecks(process.cwd());
   const failed = checks.some((check) => check.status === 'fail');
+
+  if (options.json === true) {
+    emitJson('doctor', checksToJson(checks));
+    return failed ? EXIT.preconditions : EXIT.success;
+  }
 
   banner('Preflight for everything a run depends on.');
 
@@ -36,7 +52,7 @@ export async function doctorCommand(): Promise<number> {
   }
   if (problems.length > 0) out();
 
-  return failed ? 1 : 0;
+  return failed ? EXIT.preconditions : EXIT.success;
 }
 
 /** `5 ok · 1 warning · 1 failed`, naming only the categories that occurred. */
