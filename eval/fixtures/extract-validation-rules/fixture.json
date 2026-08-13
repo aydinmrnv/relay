@@ -1,0 +1,10 @@
+{
+  "title": "Turn the validation if-chain into a table of rules without changing what it rejects",
+  "kind": "refactor",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The acceptance suite exercises both the new structure and the behaviour it has to preserve."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/validate.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/validate.test.js"] }
+}

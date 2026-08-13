@@ -1,0 +1,10 @@
+{
+  "title": "Duration formatter stops at minutes and cannot read its own output back",
+  "kind": "feature",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The truncate-don't-round rule is the part implementations usually get wrong."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/duration.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/duration.test.js"] }
+}

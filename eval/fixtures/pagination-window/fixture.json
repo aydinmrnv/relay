@@ -1,0 +1,10 @@
+{
+  "title": "Pager reports one page too many and offsets every page by one page",
+  "kind": "bug",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. Two off-by-ones that only show at the boundaries, which is what makes them survive review."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/pagination.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/pagination.test.js"] }
+}

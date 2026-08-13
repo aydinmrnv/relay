@@ -1,0 +1,10 @@
+{
+  "title": "Replace the nested transition conditionals with a table the rest of the app can read",
+  "kind": "refactor",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The UI needs to ask what is legal, which an if-chain cannot answer."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/machine.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/machine.test.js"] }
+}

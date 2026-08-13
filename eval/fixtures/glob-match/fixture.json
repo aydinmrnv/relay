@@ -1,0 +1,10 @@
+{
+  "title": "Glob matcher treats `*` as \"anything\", so a pattern for one directory matches every directory",
+  "kind": "feature",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. `*` not crossing a separator is the rule that makes a glob a glob."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/glob.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/glob.test.js"] }
+}

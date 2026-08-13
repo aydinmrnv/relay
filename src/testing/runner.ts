@@ -45,7 +45,10 @@ export async function runTests(test: TestCommand, options: RunTestsOptions): Pro
     cwd: options.cwd,
     timeoutMs: options.timeoutMs ?? 15 * 60_000,
     ...(options.signal ? { signal: options.signal } : {}),
-    env: { CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' },
+    // `NODE_TEST_CONTEXT` is shed rather than passed on: a project whose suite
+    // is `node --test` would otherwise report as a subtest of whatever ran
+    // Relay, and exit 0 however many of its tests failed.
+    env: { CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', NODE_TEST_CONTEXT: undefined },
     ...(options.onLine ? { onStdoutLine: options.onLine, onStderrLine: options.onLine } : {}),
   });
 

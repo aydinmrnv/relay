@@ -1,0 +1,10 @@
+{
+  "title": "LRU cache evicts by insertion order, so it is really a FIFO",
+  "kind": "bug",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The bug is the one a Map-backed LRU has until someone re-reads a key."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/lru.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/lru.test.js"] }
+}

@@ -7,3 +7,6 @@ dist/
 .relay/onboarding.json
 
 .DS_Store
+
+# Eval results are written here by default: local measurements, not the project.
+.relay/eval/

@@ -1,0 +1,22 @@
+{
+  "title": "Version comparison orders prereleases and numeric identifiers wrongly",
+  "kind": "bug",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness against the Semantic Versioning 2.0.0 precedence rules (spec clause 11)."
+  },
+  "acceptance": {
+    "command": [
+      "node",
+      "--test",
+      "tests-hidden/semver.acceptance.test.js"
+    ]
+  },
+  "regression": {
+    "command": [
+      "node",
+      "--test",
+      "test/semver.test.js"
+    ]
+  }
+}

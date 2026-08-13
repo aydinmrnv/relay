@@ -1,0 +1,10 @@
+{
+  "title": "Three copy-pasted normalizers have drifted apart; give them one implementation",
+  "kind": "refactor",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The drift between the copies is the reason the refactor is worth doing."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/normalize.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/normalize.test.js"] }
+}

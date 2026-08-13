@@ -1,0 +1,10 @@
+{
+  "title": "Split the report builder into aggregation and rendering without changing a byte of output",
+  "kind": "refactor",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The empty-input crash is what the extraction exposes."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/report.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/report.test.js"] }
+}

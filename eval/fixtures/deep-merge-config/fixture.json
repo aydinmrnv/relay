@@ -1,0 +1,10 @@
+{
+  "title": "Config merge shares structure with its inputs and copies keys it should never copy",
+  "kind": "bug",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. Prototype pollution through a merge of parsed JSON is a real and repeatedly-shipped bug class."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/merge.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/merge.test.js"] }
+}

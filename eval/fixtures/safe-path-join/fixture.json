@@ -1,0 +1,10 @@
+{
+  "title": "\"Safe\" path join lets a request escape the directory it is supposed to be confined to",
+  "kind": "bug",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. Both halves — the traversal and the sibling-prefix check — are the classic pair."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/paths.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/paths.test.js"] }
+}

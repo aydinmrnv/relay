@@ -1,0 +1,10 @@
+{
+  "title": "Word wrapper loses paragraphs and overflows on any word longer than the width",
+  "kind": "feature",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The hard-break case is the one that silently breaks terminal layout."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/wrap.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/wrap.test.js"] }
+}

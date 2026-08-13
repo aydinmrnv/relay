@@ -1,0 +1,10 @@
+{
+  "title": "Extract the general mapping shape out of the bounded-concurrency runner",
+  "kind": "refactor",
+  "source": {
+    "kind": "authored",
+    "note": "Written for this harness. The callback nesting is where the error-ordering bug has been hiding."
+  },
+  "acceptance": { "command": ["node", "--test", "tests-hidden/pool.acceptance.test.js"] },
+  "regression": { "command": ["node", "--test", "test/pool.test.js"] }
+}
