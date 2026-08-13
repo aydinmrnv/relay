@@ -113,7 +113,7 @@ Tune against that, not against this list.
 
 1. Agents only ever run with the worktree as their working directory. Codex gets a real OS sandbox (`--sandbox read-only` / `workspace-write`); Claude gets a tool deny list.
 2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role. Publishing is the delivery phase's job, under a policy you set — never something a model can decide to do mid-turn.
-3. Delivery never goes past `workflow.deliver` on its own — the only thing that goes further is you answering the merge question, which defaults to no and is never asked about work the run could not vouch for. Beyond that, and the default (`pr`) moves no shared branch: it opens a pull request for a person to read. A merge is opt-in. A *local* merge additionally refuses to run unless your checkout is already on the base branch with a clean tree, and restores the tree if the merge conflicts. Every step is gated, every skipped step is recorded with its reason, and a run that failed or was cancelled is committed but never published. `relay status` marks a completed run whose diff is uncommitted as **unlanded**.
+3. Publishing is off by default. Push, pull request creation, and merge require their own explicit flag/config opt-in or a TTY confirmation that defaults to no. These commands remain forbidden to every agent; only Relay's delivery code can execute them. Merge additionally requires passing tests, resolved blocking findings, an approved reviewed plan, an unprotected base branch, and a pull request created by this run. Every skipped step is recorded with its reason.
 4. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
 5. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
 6. No shell, anywhere. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax.
@@ -140,7 +140,7 @@ Tune against that, not against this list.
 | `relay stop [run]` | cancel a run at its next phase boundary |
 | `relay --update` | update Relay itself to the latest version |
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--deliver <policy>` and `--no-offer-merge`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--push`, `--pr`, `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, and `--no-offer-merge`.
 
 The wall-clock flags: `--fast` (implementer plans in its own session, no
 separate plan review), `--no-prime` (each reviewer reads only once its own turn
@@ -164,16 +164,22 @@ Delivery
   · Merge         not requested (deliver: pr)
 ```
 
-`workflow.deliver` is the ceiling, and `--deliver <policy>` overrides it for one
-run:
+The default ceiling is `branch`: Relay commits locally and publishes nothing.
+`--push`, `--pr`, and `--merge` independently opt in (each higher step implies
+its prerequisites). The legacy `--deliver <policy>` remains available for scripts.
 
 | policy | |
 |---|---|
 | `none` | leave the diff staged in the worktree |
 | `branch` | commit to the run branch, and stop (`--commit` is shorthand for this) |
 | `push` | commit and push the branch |
-| `pr` | commit, push and open a pull request — **the default** |
-| `merge` | all of the above, then merge the pull request (`workflow.mergeMethod`, default `squash`) |
+| `pr` | commit, push and open a pull request |
+| `merge` | all of the above, then merge the pull request (`github.mergeMethod`, default `squash`) |
+
+The `github` config section contains `autoPush`, `autoPr`, `autoMerge` (all
+default `false`), `mergeMethod`, `deleteBranchOnMerge`, and
+`protectedBranches`. When cleanup is enabled, Relay deletes the remote run
+branch and removes its guarded worktree after a successful run-created PR merge.
 
 **Every step is gated before anything runs.** The policy says how far; the gate
 says whether it is possible. No `origin` remote stops it at `branch`; no `gh`
@@ -198,19 +204,20 @@ A run that fails or is cancelled never reaches this phase. Its work is still
 committed to the run branch so a `git worktree prune` cannot take it, and
 nothing is published.
 
-### The one question
+### Delivery consent
 
-Everything up to the pull request is mechanical — gated, checked against git,
-and undone by closing a branch. Merging is where the work stops being a
-proposal, so a run that delivered short of one ends by asking, once:
+On an interactive terminal Relay offers each unpublished step in order: push,
+pull request, then merge. Every question defaults to no, and declining a
+prerequisite ends the sequence. A command-line flag or `github.auto*` setting
+is already consent and skips that step's prompt. The merge prompt looks like:
 
 ```
   Merge https://github.com/acme/widgets/pull/21 into main now? (squash) [y/N]
 ```
 
-**Enter is no.** Answering yes raises this run's policy to `merge` and re-runs
-the delivery phase, which is idempotent — the commit, push and pull request are
-already recorded as done, so only the merge happens, through the same gates.
+**Enter is no.** A yes raises the ceiling and re-runs the idempotent delivery
+phase. Non-interactive runs never prompt and publish only what flags or config
+explicitly authorized.
 
 It is never asked when the answer could only be no: work the run could not
 vouch for (failing tests, an unapproved plan, unanswered blocking findings — the
@@ -344,8 +351,10 @@ reaching for before turning a review off.
 | key | |
 |---|---|
 | `workflow.plan` | `review` (planner + adversarial plan review) or `inline` (the implementer plans in its own session — what `--fast` sets) |
-| `workflow.deliver` | how far a run delivers its own work: `none`, `branch`, `push`, `pr` (default), `merge` |
-| `workflow.mergeMethod` | how `deliver: merge` lands a pull request: `squash` (default), `merge`, `rebase` |
+| `github.autoPush` / `autoPr` / `autoMerge` | authorize each publishing step without a prompt (all default `false`) |
+| `github.mergeMethod` | how a pull request lands: `squash` (default), `merge`, `rebase` |
+| `github.deleteBranchOnMerge` | delete the remote run branch and guarded worktree after merge (default `false`) |
+| `github.protectedBranches` | base branches Relay refuses to merge into (default `[]`) |
 | `workflow.offerMerge` | ask once, at the end of a run that delivered short of a merge (default `true`) |
 | `workflow.primeReviewers` | let each reviewer read the repository during the phase it will review |
 | `workflow.concurrentTests` | run the suite during the code review rather than after it |

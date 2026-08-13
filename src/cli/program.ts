@@ -145,6 +145,10 @@ export function buildProgram(version: string): Command {
     .option('--no-parallel-tests', 'run the test suite after the code review instead of during it')
     .option('--no-tests', 'skip the test phase')
     .option('--commit', 'deliver no further than a commit on the run branch')
+    .option('--push', 'push the run branch')
+    .option('--pr', 'push and open a pull request')
+    .option('--merge', 'push, open and merge a pull request')
+    .option('--merge-method <method>', 'merge method (squash|merge|rebase)')
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .action(wrap(runCommand));
@@ -155,6 +159,10 @@ export function buildProgram(version: string): Command {
     .description('continue an interrupted or failed run')
     .option('-v, --verbose', 'stream raw agent events')
     .option('--commit', 'deliver no further than a commit on the run branch')
+    .option('--push', 'push the run branch')
+    .option('--pr', 'push and open a pull request')
+    .option('--merge', 'push, open and merge a pull request')
+    .option('--merge-method <method>', 'merge method (squash|merge|rebase)')
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .action(wrap(resumeCommand));

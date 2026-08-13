@@ -67,7 +67,8 @@ export async function openRunPullRequest(context: PublishContext): Promise<PullR
   const { state } = context;
   const workspace = requireWorkspace(state, 'open a pull request for');
 
-  const result = await createPullRequest(pullRequestDraft(state), {
+  const plan = await context.store.readArtifact(RUN_FILES.plan);
+  const result = await createPullRequest(pullRequestDraft(state, plan), {
     cwd: state.repository.root,
     ...(context.signal === undefined ? {} : { signal: context.signal }),
   });
@@ -77,6 +78,7 @@ export async function openRunPullRequest(context: PublishContext): Promise<PullR
     number: result.number,
     base: workspace.baseBranch,
     head: workspace.branch,
+    createdByRun: result.created,
     at: new Date().toISOString(),
   };
   state.pullRequest = record;
@@ -102,7 +104,10 @@ export async function mergeRunBranch(context: PublishContext): Promise<MergeReco
   const pullRequest = state.pullRequest;
 
   if (pullRequest !== undefined) {
-    const method = state.config.workflow.mergeMethod;
+    if (pullRequest.createdByRun !== true) {
+      throw new RelayError('Relay refuses to merge a pull request this run did not create.', { code: 'MERGE_BLOCKED' });
+    }
+    const method = state.config.github.mergeMethod;
     const merged = await mergePullRequest(pullRequest.url, method, {
       cwd: state.repository.root,
       ...(context.signal === undefined ? {} : { signal: context.signal }),
@@ -159,7 +164,7 @@ export async function mergeRunBranch(context: PublishContext): Promise<MergeReco
  * carries blocking findings nobody answered opens as a **draft**, with those
  * reasons at the top. Delivery is automatic; looking ready to merge is not.
  */
-export function pullRequestDraft(state: RunState): {
+export function pullRequestDraft(state: RunState, approvedPlan?: string): {
   title: string;
   body: string;
   base: string;
@@ -186,6 +191,24 @@ export function pullRequestDraft(state: RunState): {
 
   if (state.diff !== undefined) {
     lines.push(`- Changes: ${state.diff.fileCount} file(s), +${state.diff.additions} −${state.diff.deletions}`);
+    lines.push('', '### Diff stat', '', '```text', ...state.diff.files, '```');
+  }
+
+  if (approvedPlan !== undefined && approvedPlan.trim().length > 0) {
+    const cap = 12_000;
+    const plan = approvedPlan.length > cap ? `${approvedPlan.slice(0, cap)}\n\n… plan truncated …` : approvedPlan;
+    lines.push('', '### Approved plan', '', '<details><summary>Show plan</summary>', '', plan.trim(), '', '</details>');
+  }
+
+  const codeReviews = state.reviews.filter((review) => review.kind === 'code' && review.findings.length > 0);
+  lines.push('', '### Review findings & resolutions', '');
+  if (codeReviews.length === 0) lines.push('No code-review findings.');
+  for (const review of codeReviews) {
+    for (const finding of review.findings) {
+      const response = review.responses?.find((item) => item.findingId === finding.id);
+      lines.push(`- **${finding.id} (${finding.severity})** ${finding.summary}`);
+      lines.push(`  - Resolution: ${response?.response ?? 'UNRESOLVED'}${response?.reasoning ? ` — ${response.reasoning}` : ''}`);
+    }
   }
 
   const tests = state.tests;

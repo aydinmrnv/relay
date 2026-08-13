@@ -1,4 +1,5 @@
-import { hasRemote, mergeReadiness } from '../../git/publish.ts';
+import { deleteRemoteBranch, hasRemote, mergeReadiness } from '../../git/publish.ts';
+import { removeWorktree } from '../../git/worktree.ts';
 import { resolveExecutable } from '../../process/runner.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import type { DeliveryPolicy } from '../../storage/config.ts';
@@ -81,7 +82,12 @@ export async function delivering(context: DeliveryContext): Promise<PhaseResult>
   }
 
   const reached = reachedPolicy(state);
-  state.delivery = { policy, reached, steps, at };
+  const previousCleanup = state.delivery?.cleanup;
+  state.delivery = { policy, reached, steps, at, ...(previousCleanup === undefined ? {} : { cleanup: previousCleanup }) };
+
+  if (state.merge?.via === 'pull-request' && state.pullRequest?.createdByRun === true && state.config.github.deleteBranchOnMerge) {
+    await cleanupMergedRun(context);
+  }
 
   // The ledger is persisted here rather than left to the caller: a crash right
   // after a merge must not lose the record of the merge.
@@ -175,6 +181,7 @@ async function capabilities(state: RunState, policy: DeliveryPolicy): Promise<De
         ? `${state.repository.owner}/${state.repository.name}`
         : null,
     merge: { ok: false, reason: 'a merge was not requested' },
+    protectedBranches: state.config.github.protectedBranches,
   };
 
   // Only a merge that would happen in this checkout needs to know whether this
@@ -183,6 +190,40 @@ async function capabilities(state: RunState, policy: DeliveryPolicy): Promise<De
     caps.merge = await mergeReadiness(root, state.workspace?.baseBranch ?? state.repository.defaultBranch);
   }
   return caps;
+}
+
+async function cleanupMergedRun(context: DeliveryContext): Promise<void> {
+  const { state, store, observer } = context;
+  const cleanup = state.delivery?.cleanup ?? {};
+  if (state.delivery !== undefined) state.delivery.cleanup = cleanup;
+
+  if (cleanup.remoteBranch === undefined && state.push !== undefined) {
+    try {
+      const result = await deleteRemoteBranch(state.repository.root, state.push.remote, state.push.branch, {
+        ...(context.signal ? { signal: context.signal } : {}),
+      });
+      cleanup.remoteBranch = { status: result, detail: `${state.push.remote}/${state.push.branch}`, at: now() };
+    } catch (error) {
+      cleanup.remoteBranch = { status: 'failed', detail: errorMessage(error), at: now() };
+      observer.warn(`Post-merge cleanup could not delete the remote branch: ${errorMessage(error)}`);
+    }
+    await store.saveState(state);
+  }
+
+  if (cleanup.worktree === undefined && state.workspace !== undefined) {
+    try {
+      await removeWorktree(state.repository.root, state.workspace.path, { force: true });
+      cleanup.worktree = { status: 'removed', detail: state.workspace.path, at: now() };
+    } catch (error) {
+      if (isRelayError(error) && error.code === 'UNKNOWN_WORKTREE') {
+        cleanup.worktree = { status: 'absent', detail: state.workspace.path, at: now() };
+      } else {
+        cleanup.worktree = { status: 'failed', detail: errorMessage(error), at: now() };
+        observer.warn(`Post-merge cleanup could not remove the worktree: ${errorMessage(error)}`);
+      }
+    }
+    await store.saveState(state);
+  }
 }
 
 function now(): string {

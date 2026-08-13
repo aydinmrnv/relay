@@ -18,7 +18,7 @@ import {
 import { discoverRepository, resolveBaseRef } from '../src/git/repository.ts';
 import { snapshotDiff, formatDiffStat } from '../src/git/diff.ts';
 import { buildCommitMessage, commitWorktree, describeLanding } from '../src/git/commit.ts';
-import { hasRemote, mergeBranch, mergeReadiness, pushBranch } from '../src/git/publish.ts';
+import { deleteRemoteBranch, hasRemote, mergeBranch, mergeReadiness, pushBranch } from '../src/git/publish.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
@@ -301,6 +301,18 @@ describe('publishing a run branch', () => {
     const remoteRefs = await repo.git('ls-remote', '--heads', 'origin', worktree.branch);
     assert.match(remoteRefs, new RegExp(result.sha));
     assert.equal(await repo.git('rev-parse', `${worktree.branch}@{upstream}`), result.sha);
+  });
+
+  it('deletes a remote branch idempotently without force pushing', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issueNumber: 704, runShortId: 'del001' });
+    await writeFile(join(worktree.path, 'src', 'delete.ts'), 'export const deleted = true;\n', 'utf8');
+    await commitWorktree(worktree.path, { subject: 'work for 704' });
+    await pushBranch(repo.root, worktree.branch);
+
+    assert.equal(await deleteRemoteBranch(repo.root, 'origin', worktree.branch), 'deleted');
+    assert.equal(await repo.git('ls-remote', '--heads', 'origin', worktree.branch), '');
+    assert.equal(await deleteRemoteBranch(repo.root, 'origin', worktree.branch), 'absent');
   });
 
   it('refuses to merge into a branch the user is not on, or a dirty tree', async () => {

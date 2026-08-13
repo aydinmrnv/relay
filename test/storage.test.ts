@@ -68,14 +68,30 @@ describe('config', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxPlanReviewRounds: 1.5 } }), RelayError);
   });
 
-  it('delivers as far as a pull request by default, and validates the policy', () => {
-    // The default is the end of the work Relay can be accountable for: the
-    // change reaches review, and no shared branch has moved.
-    assert.equal(DEFAULT_CONFIG.workflow.deliver, 'pr');
+  it('publishes nothing by default, and validates the legacy policy', () => {
+    assert.equal(DEFAULT_CONFIG.workflow.deliver, 'branch');
     assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { deliver: 'merge' } }).workflow.deliver, 'merge');
     assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { deliver: 'none' } }).workflow.deliver, 'none');
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { deliver: 'yolo' } }), RelayError);
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { deliver: true } }), RelayError);
+  });
+
+  it('validates github publishing config and gives explicit keys precedence', () => {
+    assert.deepEqual(DEFAULT_CONFIG.github, {
+      autoPush: false, autoPr: false, autoMerge: false, mergeMethod: 'squash',
+      deleteBranchOnMerge: false, protectedBranches: [],
+    });
+    const migrated = mergeConfig(DEFAULT_CONFIG, {
+      workflow: { deliver: 'merge', mergeMethod: 'rebase' },
+      github: { autoMerge: false, mergeMethod: 'merge', protectedBranches: ['main'] },
+    });
+    assert.equal(migrated.github.autoPush, true);
+    assert.equal(migrated.github.autoPr, true);
+    assert.equal(migrated.github.autoMerge, false);
+    assert.equal(migrated.github.mergeMethod, 'merge');
+    assert.deepEqual(migrated.github.protectedBranches, ['main']);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { github: { autoPush: 'yes' } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { github: { protectedBranches: [''] } }), RelayError);
   });
 
   it('offers the merge by default, and lets a repository turn the question off', () => {

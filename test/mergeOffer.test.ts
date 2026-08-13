@@ -62,6 +62,7 @@ function delivered(root: string): RunState {
     number: 21,
     base: 'main',
     head: 'relay/13-ce2ubs',
+    createdByRun: true,
     at: 'x',
   };
   state.delivery = { policy: 'pr', reached: 'pr', steps: [], at: 'x' };

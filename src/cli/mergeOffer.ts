@@ -2,7 +2,7 @@ import { mergeReadiness } from '../git/publish.ts';
 import type { RunStore } from '../storage/runs.ts';
 import { Prompter, isPromptCancelled, type PromptSession } from '../ui/prompt.ts';
 import { errorMessage, isRelayError } from '../util/errors.ts';
-import { draftReasons } from '../workflow/delivery.ts';
+import { mergeBlockers, reachedPolicy } from '../workflow/delivery.ts';
 import type { RunObserver } from '../workflow/observer.ts';
 import { delivering } from '../workflow/phases/delivery.ts';
 import type { RunState } from '../workflow/state.ts';
@@ -42,12 +42,14 @@ export async function mergeAvailability(state: RunState): Promise<MergeAvailabil
 
   // A run whose own evidence is not clean opened a draft; offering to merge it
   // would be offering something GitHub will refuse, for a good reason.
-  const drafting = draftReasons(state);
+  const drafting = mergeBlockers(state);
   if (drafting.length > 0) return { blocked: drafting.join('; ') };
 
   if (state.pullRequest !== undefined) {
     return {
-      question: `  Merge ${state.pullRequest.url} into ${base} now? (${state.config.workflow.mergeMethod})`,
+      ...(state.pullRequest.createdByRun !== true ? { blocked: 'this run did not create the pull request' } : {
+      question: `  Merge ${state.pullRequest.url} into ${base} now? (${state.config.github.mergeMethod})`,
+      }),
     };
   }
 
@@ -62,6 +64,38 @@ export interface MergeOfferDeps {
   /** Performs the merge. Injected so the flow is testable without git or gh. */
   merge?: () => Promise<void>;
   observer?: RunObserver;
+}
+
+/** Offers each still-unauthorized publishing rung in dependency order. */
+export async function offerDelivery(
+  state: RunState,
+  store: RunStore,
+  deps: MergeOfferDeps = {},
+): Promise<void> {
+  if (!state.config.workflow.offerMerge || state.commit === undefined) return;
+  const owned = deps.prompter === undefined;
+  const prompter = deps.prompter ?? new Prompter();
+  try {
+    const rungs = [
+      { policy: 'push' as const, question: `  Push ${state.workspace?.branch ?? 'the run branch'} to origin now?` },
+      { policy: 'pr' as const, question: `  Open a pull request into ${state.workspace?.baseBranch ?? state.repository.defaultBranch} now?` },
+    ];
+    for (const rung of rungs) {
+      const rank = { none: 0, branch: 1, push: 2, pr: 3, merge: 4 } as const;
+      if (rank[reachedPolicy(state)] >= rank[rung.policy]) continue;
+      if (!prompter.interactive) {
+        hint(`Not a terminal, so nothing was published. To continue: relay deliver ${state.runId} --to ${rung.policy}`);
+        return;
+      }
+      if (!(await prompter.confirm(rung.question, false))) return;
+      state.config.workflow.deliver = rung.policy;
+      await delivering({ state, store, observer: deps.observer ?? printingObserver, signal: new AbortController().signal });
+      if (reachedPolicy(state) !== rung.policy) return;
+    }
+    await offerMerge(state, store, { ...deps, prompter });
+  } finally {
+    if (owned) prompter.close();
+  }
 }
 
 /**
