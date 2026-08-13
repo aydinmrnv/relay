@@ -27,7 +27,13 @@ export interface RunJson {
   durationMs: number | null;
 
   issueRef: string;
-  issue: { number: number; title: string; url: string; state: string } | null;
+  /**
+   * `number` is null for a tracker that does not number its issues, and for a
+   * task that came from a file or a prompt. `id` is the provider-scoped identity
+   * — `github:acme/widgets#142`, `local:fix-flaky-timeout` — and is null only on
+   * runs recorded before there was more than one provider.
+   */
+  issue: { id: string | null; number: number | null; title: string; url: string; state: string } | null;
 
   repository: { owner: string | null; name: string | null; defaultBranch: string };
   branch: string | null;
@@ -65,6 +71,8 @@ export interface RunJson {
     reached: DeliveryPolicy;
     steps: Array<{ step: DeliveryStep; status: 'done' | 'skipped' | 'failed'; detail: string; at: string }>;
     at: string;
+    /** Whether the pull request closes an issue, or why it closes none. */
+    issueLink?: { status: 'done' | 'skipped'; detail: string; at: string };
   } | null;
 
   tests: {
@@ -153,7 +161,13 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
     issue:
       state.issue === undefined
         ? null
-        : { number: state.issue.number, title: state.issue.title, url: state.issue.url, state: state.issue.state },
+        : {
+            id: state.issue.id ?? null,
+            number: state.issue.number,
+            title: state.issue.title,
+            url: state.issue.url,
+            state: state.issue.state,
+          },
 
     repository: {
       owner: state.repository.owner,

@@ -16,10 +16,12 @@ export function renderSummary(state: RunState): string {
   lines.push(`# Relay run ${state.runId}`);
   lines.push('');
   if (issue !== undefined) {
-    lines.push(`**Issue #${issue.number}** — ${issue.title}`);
+    lines.push(issue.number === null ? `**${issue.title}**` : `**Issue #${issue.number}** — ${issue.title}`);
     lines.push('');
-    lines.push(issue.url);
-    lines.push('');
+    if (issue.url.length > 0) {
+      lines.push(issue.url);
+      lines.push('');
+    }
   }
 
   lines.push(`- Status: **${phaseLabel(state.phase)}**`);
@@ -176,6 +178,13 @@ export function renderSummary(state: RunState): string {
     for (const step of delivery.steps) {
       const mark = step.status === 'done' ? 'x' : ' ';
       lines.push(`- [${mark}] **${step.step}** — ${step.status === 'done' ? step.detail : `${step.status}: ${step.detail}`}`);
+    }
+    const link = delivery.issueLink;
+    if (link !== undefined) {
+      lines.push(
+        `- [${link.status === 'done' ? 'x' : ' '}] **issue link** — ` +
+          `${link.status === 'done' ? link.detail : `skipped: ${link.detail}`}`,
+      );
     }
     lines.push('');
   }

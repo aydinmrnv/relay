@@ -1,4 +1,5 @@
 import { parseIssueRef } from '../github/provider.ts';
+import { looksLikePath } from '../issues/local.ts';
 import { Prompter, isPromptCancelled, type PromptSession } from '../ui/prompt.ts';
 import { errorMessage } from '../util/errors.ts';
 import { showHome, type HomeScreen } from './commands/home.ts';
@@ -22,13 +23,14 @@ export interface SessionDeps {
   prompter: PromptSession;
   /** Draws the home screen, and says whether a run can start from here. */
   home: () => Promise<HomeScreen>;
-  run: (issueRef: string, options: RunOptions) => Promise<number>;
+  /** Undefined is `relay run --prompt`/`--editor`, which name no reference. */
+  run: (issueRef: string | undefined, options: RunOptions) => Promise<number>;
 }
 
 /** Typed instead of an issue when you are done for now. Enter does the same. */
 const QUIT = new Set(['q', 'quit', 'exit']);
 
-const NEXT_ISSUE = '  Next issue? (number, owner/repo#number, or URL — Enter to exit)';
+const NEXT_ISSUE = '  Next issue? (number, owner/repo#number, URL, or a path to a markdown file — Enter to exit)';
 
 export function sessionDeps(): SessionDeps {
   return { prompter: new Prompter(), home: showHome, run: runCommand };
@@ -44,7 +46,7 @@ export async function homeSession(): Promise<number> {
 }
 
 /** `relay run <issue>`: the run, and then the screen it came from. */
-export async function runSession(issueRef: string, options: RunOptions = {}): Promise<number> {
+export async function runSession(issueRef: string | undefined, options: RunOptions = {}): Promise<number> {
   const deps = sessionDeps();
   const code = await deps.run(issueRef, options);
   return relaySession(deps, options, { code });
@@ -113,14 +115,18 @@ async function startRun(deps: SessionDeps, issueRef: string, options: RunOptions
   }
 }
 
-/** Rejects a malformed reference at the prompt, but lets an empty answer through. */
+/**
+ * Rejects a malformed reference at the prompt, but lets an empty answer through
+ * — and lets a path through too, since a run no longer needs a tracker issue.
+ * Whether the file is really there is `relay run`'s answer to give, not this one's.
+ */
 export function validateIssueRef(value: string): string | undefined {
-  if (value.trim().length === 0) return undefined;
+  if (value.trim().length === 0 || looksLikePath(value)) return undefined;
   try {
     parseIssueRef(value);
     return undefined;
   } catch (error) {
-    return errorMessage(error);
+    return `${errorMessage(error)} A path to a markdown file works too.`;
   }
 }
 

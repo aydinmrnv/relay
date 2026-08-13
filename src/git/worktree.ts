@@ -3,7 +3,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { realpathSync } from 'node:fs';
 import { rm, mkdir, stat } from 'node:fs/promises';
 
+import type { IssueIdentity } from '../issues/identity.ts';
 import { RelayError } from '../util/errors.ts';
+import { slugify } from '../util/text.ts';
 import { git, resolveBaseRef, type RepositoryInfo } from './repository.ts';
 
 export interface Worktree {
@@ -55,28 +57,23 @@ export function canonicalizePath(candidate: string): string {
   }
 }
 
-/** Replaces characters that are unsafe in path or ref components. */
-function slugify(value: string, fallback: string): string {
-  const slug = value
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^[-.]+|[-.]+$/g, '')
-    .slice(0, 40);
-  return slug.length > 0 ? slug : fallback;
-}
-
+/**
+ * Both names a run is known by, built from the issue's identity and the run's
+ * short id. The short id is what makes them collision-safe: two runs against the
+ * same issue — or the same spec file — never share a branch or a directory.
+ */
 export function worktreePathFor(
   repo: Pick<RepositoryInfo, 'owner' | 'name' | 'root'>,
-  issueNumber: number,
+  issue: IssueIdentity,
   runShortId: string,
 ): string {
   const owner = slugify(repo.owner ?? 'local', 'local');
   const name = slugify(repo.name ?? repo.root.split(sep).pop() ?? 'repo', 'repo');
-  return join(workspacesRoot(), owner, name, `issue-${issueNumber}-${slugify(runShortId, 'run')}`);
+  return join(workspacesRoot(), owner, name, `issue-${slugify(String(issue), 'issue')}-${slugify(runShortId, 'run')}`);
 }
 
-export function branchNameFor(issueNumber: number, runShortId: string, prefix = 'relay'): string {
-  return `${prefix}/${issueNumber}-${slugify(runShortId, 'run')}`;
+export function branchNameFor(issue: IssueIdentity, runShortId: string, prefix = 'relay'): string {
+  return `${prefix}/${slugify(String(issue), 'issue')}-${slugify(runShortId, 'run')}`;
 }
 
 /**
@@ -118,7 +115,11 @@ export function assertRemovableWorktreePath(candidate: string, root = workspaces
 
 export interface CreateWorktreeOptions {
   repo: RepositoryInfo;
-  issueNumber: number;
+  /**
+   * What the branch and the worktree directory are named after: `142` for an
+   * issue with a number, `fix-flaky-timeout` for a task without one.
+   */
+  issue: IssueIdentity;
   runShortId: string;
   baseBranch?: string;
   branchPrefix?: string;
@@ -130,12 +131,12 @@ export interface CreateWorktreeOptions {
  * read: `git worktree add` does not touch the current branch, index, or files.
  */
 export async function createWorktree(options: CreateWorktreeOptions): Promise<Worktree> {
-  const { repo, issueNumber, runShortId } = options;
+  const { repo, issue, runShortId } = options;
   const baseBranch = options.baseBranch ?? repo.defaultBranch;
   const base = await resolveBaseRef(repo.root, baseBranch);
 
-  const path = worktreePathFor(repo, issueNumber, runShortId);
-  const branch = branchNameFor(issueNumber, runShortId, options.branchPrefix);
+  const path = worktreePathFor(repo, issue, runShortId);
+  const branch = branchNameFor(issue, runShortId, options.branchPrefix);
 
   const existing = await findWorktree(repo.root, path);
   if (existing) {

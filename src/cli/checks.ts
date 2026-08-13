@@ -1,7 +1,7 @@
 import { AGENT_REGISTRY, type HarnessRegistration } from '../agents/index.ts';
 import { describeCommand, probeAuth, type AuthState, type AuthSupport } from '../auth/delegated.ts';
 import { discoverRepository } from '../git/repository.ts';
-import { ISSUE_PROVIDER_REGISTRY } from '../issues/registry.ts';
+import { ISSUE_TRACKER_REGISTRY } from '../issues/registry.ts';
 import { resolveExecutable, runProcess } from '../process/runner.ts';
 
 export interface Check {
@@ -99,7 +99,7 @@ export async function agentAuthChecks(cwd: string, agents?: readonly AgentCheck[
 }
 
 export async function githubCheck(cwd: string): Promise<Check> {
-  const registration = ISSUE_PROVIDER_REGISTRY[0]!;
+  const registration = ISSUE_TRACKER_REGISTRY[0]!;
   const result = await registration.create({ cwd }).checkAvailability();
   return {
     label: `${registration.label} authentication`,
@@ -108,6 +108,25 @@ export async function githubCheck(cwd: string): Promise<Check> {
     ...(result.hint === undefined ? {} : { hint: result.hint }),
   };
 }
+
+/**
+ * Downgrades a failure to a warning, with the alternative attached.
+ *
+ * A tracker is how most runs find their issue and no longer how every run finds
+ * one: `relay run ./spec.md` and `--prompt` need nothing installed. Reporting a
+ * missing `gh` as fatal would have doctor say Relay cannot run when it can.
+ */
+function softenToWarning(check: Check, alternative: string): Check {
+  if (check.status !== 'fail') return check;
+  return {
+    ...check,
+    status: 'warn',
+    hint: check.hint === undefined ? alternative : `${check.hint}\n${alternative}`,
+  };
+}
+
+const WITHOUT_A_TRACKER =
+  'Work that has no ticket needs none of this: `relay run ./spec.md`, `relay run --prompt "…"`.';
 
 /** Repository checks, plus the root they were resolved against when there is one. */
 export async function repositoryChecks(cwd: string): Promise<{ root?: string; checks: Check[] }> {
@@ -143,7 +162,10 @@ export async function repositoryChecks(cwd: string): Promise<{ root?: string; ch
 
 /** Everything a run depends on, in the order `relay doctor` reports it. */
 export async function collectChecks(cwd: string): Promise<Check[]> {
-  const checks: Check[] = [await checkBinary('git', ['--version']), await checkBinary('gh', ['--version'])];
+  const checks: Check[] = [
+    await checkBinary('git', ['--version']),
+    softenToWarning(await checkBinary('gh', ['--version']), WITHOUT_A_TRACKER),
+  ];
 
   const agents = await agentChecks();
   for (const { check } of agents) checks.push(check);
@@ -151,7 +173,7 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
   const repository = await repositoryChecks(cwd);
   checks.push(...(await agentAuthChecks(repository.root ?? cwd, agents)));
   checks.push(...repository.checks);
-  checks.push(await githubCheck(repository.root ?? cwd));
+  checks.push(softenToWarning(await githubCheck(repository.root ?? cwd), WITHOUT_A_TRACKER));
 
   return checks;
 }

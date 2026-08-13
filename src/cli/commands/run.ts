@@ -2,6 +2,14 @@ import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
+import type { IssueProvider } from '../../github/types.ts';
+import {
+  LocalIssueProvider,
+  composeTaskInEditor,
+  readTaskFile,
+  taskFromPrompt,
+  type LocalTask,
+} from '../../issues/local.ts';
 import { listRuns, RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
 import {
   DELIVERY_POLICIES,
@@ -71,6 +79,85 @@ export interface RunOptions {
   tuff?: boolean;
   /** `--max-cost <usd>`: stop the run at the first phase boundary past this. */
   maxCost?: string;
+  /** `--prompt <text>`: the task itself, with no tracker in the way. */
+  prompt?: string;
+  /** `--editor`: write the task in `$EDITOR`, the way `git commit` does. */
+  editor?: boolean;
+}
+
+/**
+ * Where a run's issue comes from: a tracker reference the provider resolves, or
+ * a task this machine already has in hand.
+ *
+ * Resolved before any state is written, so a missing file or an abandoned editor
+ * costs nothing and leaves nothing behind.
+ */
+export type IssueSource = { kind: 'tracker'; ref: string } | { kind: 'local'; task: LocalTask };
+
+export async function resolveIssueSource(
+  issueRef: string | undefined,
+  options: Pick<RunOptions, 'prompt' | 'editor'>,
+  cwd: string,
+): Promise<IssueSource | undefined> {
+  // An argument of whitespace is nobody asking for anything, and reads better
+  // as "nothing to work on" than as a file that does not exist.
+  const ref = issueRef?.trim() === '' ? undefined : issueRef?.trim();
+
+  const given = [ref !== undefined, options.prompt !== undefined, options.editor === true].filter(Boolean).length;
+  if (given === 0) {
+    throw new RelayError('Nothing to work on.', {
+      code: 'NO_ISSUE_REF',
+      hint: 'Pass an issue (`relay run 142`), a file (`relay run ./spec.md`), `--prompt "…"`, or `--editor`.',
+    });
+  }
+  if (given > 1) {
+    throw new RelayError('Pass one of an issue reference, `--prompt` or `--editor` — not several.', {
+      code: 'BAD_FLAG',
+    });
+  }
+
+  if (options.prompt !== undefined) return { kind: 'local', task: taskFromPrompt(options.prompt) };
+  if (options.editor === true) {
+    // The editor gets the terminal handed to it. Behind a pipe or in CI there is
+    // none to hand over, and the failure that produces is unreadable.
+    if (process.stdin.isTTY !== true) {
+      throw new RelayError('`--editor` needs a terminal to hand over to.', {
+        code: 'NOT_A_TTY',
+        hint: 'With no terminal, pass the task directly: `relay run --prompt "…"` or `relay run ./spec.md`.',
+      });
+    }
+    const task = await composeTaskInEditor({ cwd });
+    // An empty buffer is the user changing their mind, not a failure.
+    if (task === undefined) return undefined;
+    return { kind: 'local', task };
+  }
+
+  // A tracker reference wins over a file that happens to share its name:
+  // `relay run 142` has meant issue 142 since the first release, and that is
+  // not something a file called `142` in the working directory gets to change.
+  if (isTrackerRef(ref!)) return { kind: 'tracker', ref: ref! };
+  return { kind: 'local', task: await readTaskFile(ref!, cwd) };
+}
+
+/** Whether the provider would understand this, without making it throw to find out. */
+function isTrackerRef(ref: string): boolean {
+  try {
+    parseIssueRef(ref);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The provider this run reads its issue through. A run carrying its own task
+ * hands that straight back — including on `relay resume`, where a `--prompt` has
+ * no file to be read again from.
+ */
+export function issueProviderFor(cli: CliContext, state: RunState): IssueProvider {
+  return state.task === undefined
+    ? cli.issueProvider
+    : new LocalIssueProvider({ cwd: state.repository.root, task: state.task });
 }
 
 /** Applies `relay run` flags over the repository config for this run only. */
@@ -174,11 +261,17 @@ export function parseCost(value: string, flag: string): number {
   return parsed;
 }
 
-export async function runCommand(issueRef: string, options: RunOptions): Promise<number> {
+export async function runCommand(issueRef: string | undefined, options: RunOptions): Promise<number> {
   const cli = await createCliContext();
 
-  // Fail on a malformed reference before creating any state on disk.
-  parseIssueRef(issueRef);
+  // Resolve what the run is about before creating any state on disk: a
+  // malformed reference, a missing file and an abandoned editor all cost
+  // nothing and leave nothing behind.
+  const source = await resolveIssueSource(issueRef, options, process.cwd());
+  if (source === undefined) {
+    out(dim('Nothing written, so nothing was started.'));
+    return 0;
+  }
 
   const config = applyOverrides(cli.config, options);
 
@@ -195,7 +288,10 @@ export async function runCommand(issueRef: string, options: RunOptions): Promise
   const state = createRunState({
     runId: createRunId(now),
     shortId: shortId(),
-    issueRef,
+    // For a local task the reference is where it came from — a path, `--prompt`
+    // or `--editor` — which is what `relay status` has to be able to show.
+    issueRef: source.kind === 'tracker' ? source.ref : source.task.origin,
+    ...(source.kind === 'tracker' ? {} : { task: source.task }),
     repository: {
       root: cli.repo.root,
       owner: cli.repo.owner,
@@ -400,9 +496,16 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
   const controller = new AbortController();
 
   const renderer = new RunRenderer({
-    // The renderer supplies the mark; this is only what the run is about.
-    title: state.issue === undefined ? `Issue ${state.issueRef}` : `Issue #${state.issue.number}`,
-    subtitle: state.issue?.title ?? `run ${state.runId}`,
+    // The renderer supplies the mark; this is only what the run is about. A task
+    // with no number is named after where it came from — `./spec.md`, `--prompt`
+    // — because `Issue undefined` says less than nothing.
+    title:
+      state.issue !== undefined && state.issue.number !== null
+        ? `Issue #${state.issue.number}`
+        : state.task !== undefined
+          ? state.task.origin
+          : `Issue ${state.issueRef}`,
+    subtitle: state.issue?.title ?? state.task?.title ?? `run ${state.runId}`,
     agentNames: {
       planner: state.config.agents.planner,
       planReviewer: state.config.agents.planReviewer,
@@ -431,7 +534,7 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
     state,
     store,
     harnesses: cli.harnesses,
-    issueProvider: cli.issueProvider,
+    issueProvider: issueProviderFor(cli, state),
     observer: renderer,
     signal: controller.signal,
   };
@@ -526,14 +629,19 @@ export function printDelivery(state: RunState): void {
     ),
   );
 
-  rows(
-    delivery.steps.map((step) => ({
+  const link = delivery.issueLink;
+  rows([
+    ...delivery.steps.map((step) => ({
       label:
         `${step.status === 'done' ? success(marks.ok) : step.status === 'failed' ? failure(marks.failed) : dim(marks.bullet)} ` +
         stepLabel(step.step),
       value: step.status === 'done' ? step.detail : step.status === 'failed' ? failure(step.detail) : dim(step.detail),
     })),
-  );
+    link !== undefined && {
+      label: `${link.status === 'done' ? success(marks.ok) : dim(marks.bullet)} Issue link`,
+      value: link.status === 'done' ? link.detail : dim(link.detail),
+    },
+  ]);
 }
 
 function stepLabel(step: DeliveryStep): string {

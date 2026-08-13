@@ -5,6 +5,7 @@ import type { RunStore } from '../storage/runs.ts';
 import { errorMessage } from '../util/errors.ts';
 import { formatDuration } from '../util/text.ts';
 import { typoize } from '../util/typos.ts';
+import { issueTitle } from '../issues/identity.ts';
 import type { RunObserver } from './observer.ts';
 import type { RunState } from './state.ts';
 
@@ -66,7 +67,7 @@ export async function commitRunWork(context: CommitRunContext): Promise<boolean>
 
 function commitSubject(state: RunState): string {
   const issue = state.issue;
-  const subject = issue === undefined ? `Relay: work for issue ${state.issueRef}` : `${issue.title} (#${issue.number})`;
+  const subject = issue === undefined ? `Relay: work for issue ${state.issueRef}` : issueTitle(issue);
   return humanWriting(state, subject);
 }
 
@@ -96,7 +97,7 @@ function commitBody(state: RunState): string[] {
         : `Tests: not run (${tests.skippedReason ?? tests.reason}).`,
     );
   }
-  if (state.issue !== undefined) lines.push(`Issue: ${state.issue.url}`);
+  if (state.issue !== undefined && state.issue.url.length > 0) lines.push(`Issue: ${state.issue.url}`);
 
   return [humanWriting(state, lines.join('\n'))];
 }
