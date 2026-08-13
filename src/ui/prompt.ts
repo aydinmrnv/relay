@@ -73,8 +73,11 @@ export class Prompter implements PromptSession {
   ): Promise<string> {
     if (!this.interactive) return defaultValue;
 
+    // An empty default has nothing to show, and `[]` reads like a value.
+    const suffix = defaultValue.length === 0 ? '' : ` ${this.hint(`[${defaultValue}]`)}`;
+
     for (;;) {
-      const answer = await this.ask(`${question} ${this.hint(`[${defaultValue}]`)} `);
+      const answer = await this.ask(`${question}${suffix} `);
       if (answer === undefined) return defaultValue;
 
       const value = answer.trim().length === 0 ? defaultValue : answer.trim();

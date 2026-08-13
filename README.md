@@ -6,6 +6,7 @@ It is not "run several agents in parallel". The point is that **specialized agen
 
 ```bash
 relay start       # one command: dependencies, sign-in, config, and a first run
+relay             # the home screen, and a prompt for the next issue
 relay run 142
 relay run --prompt "Fix the flaky timeout in the retry test"   # no ticket needed
 ```
@@ -131,10 +132,11 @@ Tune against that, not against this list.
 
 | Command | |
 |---|---|
+| `relay` | the home screen: what is configured, what has run, and a prompt for the next issue |
 | `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth |
-| `relay run <issue\|file>` | run the full workflow, on a tracker issue or on work that has no ticket |
+| `relay run <issue\|file>` | run the full workflow on a tracker issue or on work that has no ticket, deliver the result, then wait for the next issue |
 | `relay status [run]` | list runs, or print one run's summary (`--json` for machine-readable output) |
 | `relay watch [run]` | follow a run's events live |
 | `relay diff [run]` | show the diff a run produced (`--stat` for a file list) |
@@ -234,9 +236,10 @@ rather than a differently-mistyped one.
 
 The pipeline does not stop at a diff. Delivery is the last phase of a run — it
 commits the work, pushes the branch, opens the pull request, and merges it if
-that is what the repository asked for. No question at the end, because a
-question at the end of a twenty-minute run is answered by an empty terminal as
-often as by a person.
+that is what the repository asked for. Whatever the policy authorizes needs no
+question, because a question at the end of a twenty-minute run is answered by an
+empty terminal as often as by a person. What it did *not* authorize is offered
+to whoever is still watching — see [delivery consent](#delivery-consent).
 
 ```
 Delivery
@@ -290,17 +293,25 @@ nothing is published.
 
 ### Delivery consent
 
-On an interactive terminal Relay offers each unpublished step in order: push,
-pull request, then merge. Every question defaults to no, and declining a
-prerequisite ends the sequence. A command-line flag or `github.auto*` setting
-is already consent and skips that step's prompt. The merge prompt looks like:
+On an interactive terminal a run ends with the questions its policy left
+unanswered — at most two, in dependency order:
 
 ```
+  relay/13-ce2ubs is pushed to origin first.
+  Open a pull request into main now? [y/N]
   Merge https://github.com/acme/widgets/pull/21 into main now? (squash) [y/N]
 ```
 
+The push is not a question of its own. It is the first half of opening a pull
+request, and splitting one intention into two prompts is friction rather than
+safety — so a repository Relay can open a pull request against is asked exactly
+that, and the push happens as part of it. Only a repository with no GitHub side
+to it is asked about the push by itself, because there the push *is* the step.
+
 **Enter is no.** A yes raises the ceiling and re-runs the idempotent delivery
-phase. Non-interactive runs never prompt and publish only what flags or config
+phase. Declining a prerequisite ends the sequence. A command-line flag or
+`github.auto*` setting is already consent and skips that step's prompt.
+Non-interactive runs never prompt and publish only what flags or config
 explicitly authorized.
 
 It is never asked when the answer could only be no: work the run could not
@@ -309,6 +320,33 @@ same reasons the pull request opened as a draft), a checkout that cannot take a
 local merge, `deliver: merge` (which already merged it), or a terminal nobody is
 watching, which gets `relay deliver <run> --to merge` instead. `--no-offer-merge`
 or `workflow.offerMerge: false` turns it off.
+
+## The session
+
+Answering those questions is not the end of the work — the next issue is. So on
+a terminal Relay does not exit when a run finishes: it draws the home screen
+again, with the run that just finished on it, and waits.
+
+```
+╭─ acme/widgets ─────────────────────────────── configured ─╮
+│ Delivery       branch                                     │
+│ Tests          npm test                                   │
+│                                                           │
+│ Recent runs                                               │
+│ 20260812-100000-a1  Complete  8m 2s  +40 −7               │
+├───────────────────────────────────────────────────────────┤
+│ Next  relay run <issue>                                   │
+╰───────────────────────────────────────────────────────────╯
+  Next issue? (number, owner/repo#number, or URL — Enter to exit)
+```
+
+`relay` on its own opens there, `relay run <issue>` and the first run of `relay
+start` come back to it, and Enter — or `q` — leaves. The flags the session was
+opened with carry into every run in it, a run that fails is reported without
+ending the session, and the exit code is the last run's.
+
+Nothing changes behind a pipe or in CI: there is nobody there to ask, so a run
+ends the process exactly as it always did.
 
 ## Terminal output
 
