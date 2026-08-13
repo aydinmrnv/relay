@@ -97,6 +97,14 @@ export interface RelayConfig {
     /** Start the test suite as soon as a diff exists, alongside code review. */
     concurrentTests: boolean;
   };
+  github: {
+    autoPush: boolean;
+    autoPr: boolean;
+    autoMerge: boolean;
+    mergeMethod: MergeMethod;
+    deleteBranchOnMerge: boolean;
+    protectedBranches: string[];
+  };
   timeouts: {
     planningMs: number;
     reviewMs: number;
@@ -136,12 +144,20 @@ export const DEFAULT_CONFIG: RelayConfig = {
     baseBranch: '',
     branchPrefix: 'relay',
     runTests: true,
-    deliver: 'pr',
+    deliver: 'branch',
     mergeMethod: 'squash',
     offerMerge: true,
     maxTransientRetries: 2,
     primeReviewers: true,
     concurrentTests: true,
+  },
+  github: {
+    autoPush: false,
+    autoPr: false,
+    autoMerge: false,
+    mergeMethod: 'squash',
+    deleteBranchOnMerge: false,
+    protectedBranches: [],
   },
   timeouts: {
     planningMs: 20 * 60_000,
@@ -309,6 +325,43 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       'workflow.maxTransientRetries',
       { min: 0, max: 5 },
     );
+  }
+
+  // Legacy workflow delivery keys remain readable. Explicit github values
+  // below take precedence, which makes migration deterministic.
+  if (isRecord(workflow) && workflow['deliver'] !== undefined) {
+    const policy = workflow['deliver'] as DeliveryPolicy;
+    config.github.autoPush = ['push', 'pr', 'merge'].includes(policy);
+    config.github.autoPr = ['pr', 'merge'].includes(policy);
+    config.github.autoMerge = policy === 'merge';
+  }
+  if (isRecord(workflow) && workflow['mergeMethod'] !== undefined) {
+    config.github.mergeMethod = workflow['mergeMethod'] as MergeMethod;
+  }
+
+  const github = raw['github'];
+  if (github !== undefined) {
+    if (!isRecord(github)) throw new RelayError('config.github must be an object.', { code: 'BAD_CONFIG' });
+    for (const key of ['autoPush', 'autoPr', 'autoMerge', 'deleteBranchOnMerge'] as const) {
+      if (github[key] === undefined) continue;
+      if (typeof github[key] !== 'boolean') {
+        throw new RelayError(`config.github.${key} must be a boolean.`, { code: 'BAD_CONFIG' });
+      }
+      config.github[key] = github[key];
+    }
+    if (github['mergeMethod'] !== undefined) {
+      if (!isMergeMethod(github['mergeMethod'])) {
+        throw new RelayError(`config.github.mergeMethod must be one of ${MERGE_METHODS.join(' | ')}.`, { code: 'BAD_CONFIG' });
+      }
+      config.github.mergeMethod = github['mergeMethod'];
+    }
+    if (github['protectedBranches'] !== undefined) {
+      const branches = github['protectedBranches'];
+      if (!Array.isArray(branches) || branches.some((branch) => typeof branch !== 'string' || branch.length === 0)) {
+        throw new RelayError('config.github.protectedBranches must be an array of non-empty strings.', { code: 'BAD_CONFIG' });
+      }
+      config.github.protectedBranches = branches as string[];
+    }
   }
 
   const timeouts = raw['timeouts'];

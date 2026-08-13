@@ -78,8 +78,13 @@ export interface PullRequestRecord {
   number: number | null;
   base: string;
   head: string;
+  /** True only when `gh pr create` created this PR for this run. */
+  createdByRun: boolean;
   at: string;
 }
+
+export interface CleanupOutcome { status: 'deleted' | 'removed' | 'absent' | 'skipped' | 'failed'; detail: string; at: string }
+export interface CleanupRecord { remoteBranch?: CleanupOutcome; worktree?: CleanupOutcome }
 
 export interface MergeRecord {
   /** Branch the work was merged into. */
@@ -123,6 +128,7 @@ export interface DeliveryRecord {
   reached: DeliveryPolicy;
   steps: DeliveryStepRecord[];
   at: string;
+  cleanup?: CleanupRecord;
 }
 
 export interface RunState {

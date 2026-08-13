@@ -11,6 +11,7 @@ import { DEFAULT_CONFIG, type DeliveryPolicy } from '../src/storage/config.ts';
 import { createRunId } from '../src/util/ids.ts';
 import {
   draftReasons,
+  mergeBlockers,
   planDelivery,
   reachedPolicy,
   shortfall,
@@ -160,6 +161,38 @@ describe('delivery plan', () => {
 
     assert.deepEqual(stepsThatRun(state, 'pr', capable()), []);
     assert.match(reasonFor(state, 'pr', capable(), 'commit'), /changed no files/);
+  });
+
+  it('refuses merge without passing test evidence', () => {
+    const failed = finishedRun(repo.root);
+    failed.tests = { ...failed.tests!, passed: false, exitCode: 1 };
+    assert.match(reasonFor(failed, 'merge', capable(), 'merge'), /tests failed/);
+
+    const skipped = finishedRun(repo.root);
+    skipped.tests = { ...skipped.tests!, discovered: false, passed: false, skippedReason: '--no-tests' };
+    assert.match(reasonFor(skipped, 'merge', capable(), 'merge'), /not verifiably run/);
+    assert.match(mergeBlockers(skipped).join(' '), /not verifiably run/);
+  });
+
+  it('refuses merge with unresolved blocking findings', () => {
+    const state = finishedRun(repo.root);
+    state.reviews = [{
+      round: 1, kind: 'code', reviewer: 'claude', decision: 'request_changes', at: 'x',
+      findings: [{ id: 'F1', severity: 'high', category: 'correctness', summary: 'unsafe', impact: 'BLOCKING' }],
+      responses: [{ findingId: 'F1', response: 'REJECT', reasoning: 'not fixed' }],
+    }];
+    assert.match(reasonFor(state, 'merge', capable(), 'merge'), /blocking review findings remain unresolved/);
+  });
+
+  it('refuses protected bases and pull requests not created by the run', () => {
+    const protectedState = finishedRun(repo.root);
+    assert.match(reasonFor(protectedState, 'merge', capable({ protectedBranches: ['main'] }), 'merge'), /protected branch/);
+
+    const foreign = finishedRun(repo.root);
+    foreign.commit = { sha: 'a'.repeat(40), branch: foreign.workspace!.branch, subject: 'x', at: 'x' };
+    foreign.push = { remote: 'origin', branch: foreign.workspace!.branch, sha: 'a'.repeat(40), at: 'x' };
+    foreign.pullRequest = { url: 'https://github.com/acme/widgets/pull/1', number: 1, base: 'main', head: foreign.workspace!.branch, createdByRun: false, at: 'x' };
+    assert.match(reasonFor(foreign, 'merge', capable(), 'merge'), /did not create/);
   });
 });
 
@@ -327,6 +360,33 @@ describe('the delivery phase', () => {
     assert.equal(state.commit?.sha, committed, 'the work was not committed twice');
     assert.equal(state.delivery?.steps.find((step) => step.step === 'commit')?.status, 'skipped');
     assert.match(state.delivery?.steps.find((step) => step.step === 'commit')?.detail ?? '', /already committed/);
+  });
+
+  it('records post-merge cleanup and does not repeat completed cleanup', async () => {
+    await addRemote();
+    const { state, store, observer } = await realRun('push', 'clean1');
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+    const worktreePath = state.workspace!.path;
+    const branch = state.workspace!.branch;
+
+    state.pullRequest = {
+      url: 'https://github.com/acme/widgets/pull/13', number: 13, base: 'main', head: branch,
+      createdByRun: true, at: 'x',
+    };
+    state.merge = { into: 'main', via: 'pull-request', url: state.pullRequest.url, at: 'x' };
+    state.config.github.deleteBranchOnMerge = true;
+    state.config.workflow.deliver = 'merge';
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+
+    assert.equal(state.delivery?.cleanup?.remoteBranch?.status, 'deleted');
+    assert.equal(state.delivery?.cleanup?.worktree?.status, 'removed');
+    assert.equal(await repo.git('ls-remote', '--heads', 'origin', branch), '');
+    await assert.rejects(() => readFile(join(worktreePath, 'src', 'app.ts')));
+
+    const first = structuredClone(state.delivery.cleanup);
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+    assert.deepEqual(state.delivery?.cleanup, first);
+    assert.deepEqual((await store.loadState()).delivery?.cleanup, first);
   });
 
   it('merges into the base branch itself when there is no remote to merge through', async () => {

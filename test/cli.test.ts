@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { runToJson, type RunJson } from '../src/cli/runJson.ts';
 import { logsCommand, statusCommand } from '../src/cli/commands/inspect.ts';
-import { printNextSteps, printOutcome } from '../src/cli/commands/run.ts';
+import { applyOverrides, printNextSteps, printOutcome } from '../src/cli/commands/run.ts';
 import { RunStore } from '../src/storage/runs.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunId } from '../src/util/ids.ts';
@@ -19,6 +19,17 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await repo.cleanup();
+});
+
+describe('delivery CLI flags', () => {
+  it('maps each explicit flag to the intended ceiling', () => {
+    assert.equal(applyOverrides(DEFAULT_CONFIG, {}).workflow.deliver, 'branch');
+    assert.equal(applyOverrides(DEFAULT_CONFIG, { commit: true }).workflow.deliver, 'branch');
+    assert.equal(applyOverrides(DEFAULT_CONFIG, { push: true }).workflow.deliver, 'push');
+    assert.equal(applyOverrides(DEFAULT_CONFIG, { pr: true }).workflow.deliver, 'pr');
+    assert.equal(applyOverrides(DEFAULT_CONFIG, { merge: true }).workflow.deliver, 'merge');
+    assert.equal(applyOverrides(DEFAULT_CONFIG, { deliver: 'pr' }).workflow.deliver, 'pr');
+  });
 });
 
 /** A run carrying every optional field, so the JSON contract is exercised in full. */

@@ -37,6 +37,7 @@ export interface DeliveryCapabilities {
   /** `owner/name`, when the run knows which repository it belongs to. */
   repoSlug: string | null;
   merge: MergeReadiness;
+  protectedBranches?: readonly string[];
 }
 
 export interface PlannedStep {
@@ -102,7 +103,7 @@ export function planDelivery(
       continue;
     }
 
-    const gate = gateFor(step, caps, expected, branch, base);
+    const gate = gateFor(step, state, caps, expected, branch, base);
     if (gate !== undefined) {
       record(false, gate);
       continue;
@@ -155,6 +156,7 @@ function alreadyDone(state: RunState, step: DeliveryStep): string | undefined {
 
 function gateFor(
   step: DeliveryStep,
+  state: RunState,
   caps: DeliveryCapabilities,
   expected: Record<DeliveryStep, boolean>,
   branch: string,
@@ -170,6 +172,12 @@ function gateFor(
       if (caps.repoSlug === null) return `${branch} has no GitHub repository to open it against`;
       return undefined;
     case 'merge':
+      if (caps.protectedBranches?.includes(base) === true) return `${base} is a protected branch`;
+      if (state.pullRequest !== undefined && state.pullRequest.createdByRun !== true) return 'this run did not create the pull request';
+      {
+        const blockers = mergeBlockers(state);
+        if (blockers.length > 0) return blockers.join('; ');
+      }
       // With a pull request in the picture the merge happens on GitHub, and
       // this machine's checkout is irrelevant to it. Only a local merge has to
       // care which branch the user is standing on.
@@ -268,6 +276,28 @@ export function draftReasons(state: RunState): string[] {
     reasons.push('the plan was never approved');
   }
   return reasons;
+}
+
+/** Evidence required before Relay is allowed to perform the irreversible step. */
+export function mergeBlockers(state: RunState): string[] {
+  const reasons: string[] = [];
+  if (!(state.tests?.discovered === true && state.tests.passed === true)) {
+    reasons.push(state.tests?.discovered === true ? 'the tests failed' : 'tests were not verifiably run');
+  }
+  if (unresolvedBlockingFindings(state) > 0) reasons.push('blocking review findings remain unresolved');
+  if (!state.planApproved && state.config.workflow.plan === 'review') reasons.push('the plan was never approved');
+  return reasons;
+}
+
+export function resolveCeiling(
+  config: RunState['config'],
+  flags: { commit?: boolean; push?: boolean; pr?: boolean; merge?: boolean } = {},
+): DeliveryPolicy {
+  if (flags.commit === true) return 'branch';
+  if (flags.merge === true || config.github.autoMerge) return 'merge';
+  if (flags.pr === true || config.github.autoPr) return 'pr';
+  if (flags.push === true || config.github.autoPush) return 'push';
+  return 'branch';
 }
 
 /** Blocking code-review findings the implementer did not accept. */

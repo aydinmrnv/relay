@@ -5,7 +5,7 @@ import { parseIssueRef } from '../../github/provider.ts';
 import { RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
 import { DELIVERY_POLICIES, isDeliveryPolicy, type DeliveryPolicy, type RelayConfig } from '../../storage/config.ts';
 import { WorkflowEngine } from '../../workflow/engine.ts';
-import { shortfall } from '../../workflow/delivery.ts';
+import { resolveCeiling, shortfall } from '../../workflow/delivery.ts';
 import { delivering } from '../../workflow/phases/delivery.ts';
 import type { RunObserver } from '../../workflow/observer.ts';
 import { renderSummary } from '../../workflow/summary.ts';
@@ -18,7 +18,7 @@ import { RunRenderer } from '../../ui/renderer.ts';
 import { glyphs } from '../../ui/theme.ts';
 import { formatDuration } from '../../util/text.ts';
 import { createCliContext, type CliContext } from '../context.ts';
-import { offerMerge } from '../mergeOffer.ts';
+import { offerDelivery } from '../mergeOffer.ts';
 import {
   changeCount,
   command,
@@ -44,6 +44,10 @@ export interface RunOptions {
   tests?: boolean;
   /** `--commit`: stop delivery at the run branch. */
   commit?: boolean;
+  push?: boolean;
+  pr?: boolean;
+  merge?: boolean;
+  mergeMethod?: string;
   /** `--deliver <policy>`: how far this run carries its own work. */
   deliver?: string;
   /** `--no-offer-merge`: finish without the one question. */
@@ -56,14 +60,18 @@ export interface RunOptions {
 }
 
 /** Applies `relay run` flags over the repository config for this run only. */
-function applyOverrides(config: RelayConfig, options: RunOptions): RelayConfig {
+export function applyOverrides(config: RelayConfig, options: RunOptions): RelayConfig {
   const merged: RelayConfig = structuredClone(config);
 
   if (options.base !== undefined) merged.workflow.baseBranch = options.base;
   if (options.tests === false) merged.workflow.runTests = false;
   // `--commit` is the short way to say "keep it, publish nothing".
-  if (options.commit === true) merged.workflow.deliver = 'branch';
+  merged.workflow.deliver = resolveCeiling(merged, options);
   if (options.deliver !== undefined) merged.workflow.deliver = parseDeliver(options.deliver);
+  if (options.mergeMethod !== undefined) {
+    if (!['squash', 'merge', 'rebase'].includes(options.mergeMethod)) throw new RelayError('--merge-method must be squash, merge, or rebase.', { code: 'BAD_FLAG' });
+    merged.github.mergeMethod = options.mergeMethod as RelayConfig['github']['mergeMethod'];
+  }
   if (options.offerMerge === false) merged.workflow.offerMerge = false;
   if (options.prime === false) merged.workflow.primeReviewers = false;
   if (options.parallelTests === false) merged.workflow.concurrentTests = false;
@@ -161,6 +169,9 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
   // The rest of the run's config is a snapshot and stays untouched, but a
   // resume is exactly when a user decides the work should not strand again.
   if (options.commit === true) previous.config.workflow.deliver = 'branch';
+  else if (options.push === true || options.pr === true || options.merge === true) {
+    previous.config.workflow.deliver = resolveCeiling(previous.config, options);
+  }
   if (options.deliver !== undefined) previous.config.workflow.deliver = parseDeliver(options.deliver);
   if (options.offerMerge === false) previous.config.workflow.offerMerge = false;
 
@@ -207,7 +218,7 @@ export async function deliverRun(state: RunState, options: { policy?: DeliveryPo
   // Reported after the fact, so the ledger describes what just happened rather
   // than what the last run left behind.
   printOutcome(state, store);
-  await offerMerge(state, store, { observer: cliObserver });
+  await offerDelivery(state, store, { observer: cliObserver });
   printNextSteps(state, store);
   return state.delivery?.steps.some((step) => step.status === 'failed') === true ? 1 : 0;
 }
@@ -274,7 +285,7 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
 
   // Delivery took it as far as the policy allows on its own. Landing it is the
   // one call left, and this is the moment its author is still watching.
-  await offerMerge(finalState, store);
+  await offerDelivery(finalState, store);
   printNextSteps(finalState, store);
 
   if (finalState.phase === 'CANCELLED') return 130;

@@ -62,6 +62,26 @@ export async function pushBranch(
   return { remote, branch, sha: await git(['rev-parse', `refs/heads/${branch}`], { cwd: repoRoot, ...signalOpt }) };
 }
 
+/** Deletes a published run branch. Missing refs are a successful no-op. */
+export async function deleteRemoteBranch(
+  repoRoot: string,
+  remote: string,
+  branch: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<'deleted' | 'absent'> {
+  try {
+    await git(['push', remote, '--delete', branch], {
+      cwd: repoRoot,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    return 'deleted';
+  } catch (error) {
+    const message = errorMessage(error);
+    if (/remote ref does not exist|unable to delete|not found/i.test(message)) return 'absent';
+    throw new RelayError(`Could not delete ${remote}/${branch}: ${message}`, { code: 'PUSH_FAILED', cause: error });
+  }
+}
+
 /** Why a merge cannot run right now, phrased to be shown next to the option. */
 export interface MergeReadiness {
   ok: boolean;

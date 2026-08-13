@@ -207,6 +207,21 @@ describe('pull request drafts', () => {
     assert.match(pullRequestDraft(state).body, /Tests: `npm test` FAILED \(exit 1\)/);
   });
 
+  it('includes the approved plan and review resolutions', () => {
+    const state = run();
+    state.diff!.files = ['src/a.ts | +4 -1'];
+    state.reviews.push({
+      round: 1, kind: 'code', reviewer: 'claude', decision: 'request_changes', at: 'x',
+      findings: [{ id: 'F1', severity: 'high', category: 'correctness', summary: '<script>bad</script>', impact: 'BLOCKING' }],
+      responses: [{ findingId: 'F1', response: 'ACCEPT', reasoning: 'fixed safely' }],
+    });
+    const body = pullRequestDraft(state, '# Approved\nDo the thing.').body;
+    assert.match(body, /### Approved plan/);
+    assert.match(body, /Review findings & resolutions/);
+    assert.match(body, /Resolution: ACCEPT/);
+    assert.match(body, /src\/a\.ts \| \+4 -1/);
+  });
+
   it('reads the number out of the URL gh reports', () => {
     assert.equal(pullRequestNumber('https://github.com/acme/widgets/pull/21'), 21);
     assert.equal(pullRequestNumber('https://github.com/acme/widgets'), null);
