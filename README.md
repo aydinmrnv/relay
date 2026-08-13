@@ -1,6 +1,6 @@
 # Relay
 
-Relay takes a GitHub issue and coordinates the coding agents you already have installed — Claude Code and Codex — to plan, critique, implement, review and verify the work inside an isolated git worktree.
+Relay takes a GitHub issue and coordinates the coding agents you already have installed — Claude Code and Codex — to plan, critique, implement, review and verify the work inside an isolated git worktree, then delivers the result as far as you let it: a commit, a pushed branch, a pull request, or a merge.
 
 It is not "run several agents in parallel". The point is that **specialized agents review and challenge each other's actual engineering work**, and that every claim they make is checked against git rather than taken at face value.
 
@@ -44,7 +44,7 @@ issue
   → revised implementation  (only BLOCKING findings are routed back)
   → test evidence           (the project's own test command, judged by exit code)
   → final summary
-  → optional local commit   (--commit, on the run's own branch — never pushed)
+  → delivery                (commit → push → pull request → merge, as far as the policy allows)
 ```
 
 Every one of those is a real artifact on disk. Nothing is a chat transcript.
@@ -112,8 +112,8 @@ Tune against that, not against this list.
 ## Safety
 
 1. Agents only ever run with the worktree as their working directory. Codex gets a real OS sandbox (`--sandbox read-only` / `workspace-write`); Claude gets a tool deny list.
-2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role.
-3. Relay never pushes, merges, or opens a pull request. That is your decision. `--commit` is opt-in and goes no further: it commits to the run's own local branch inside `~/.relay/workspaces`, moving no shared ref, so finished work survives a `git worktree prune` instead of stranding as a staged index. Without it, `relay status` marks a completed run whose diff is uncommitted as **unlanded**.
+2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role. Publishing is the delivery phase's job, under a policy you set — never something a model can decide to do mid-turn.
+3. Delivery never goes past `workflow.deliver` on its own — the only thing that goes further is you answering the merge question, which defaults to no and is never asked about work the run could not vouch for. Beyond that, and the default (`pr`) moves no shared branch: it opens a pull request for a person to read. A merge is opt-in. A *local* merge additionally refuses to run unless your checkout is already on the base branch with a clean tree, and restores the tree if the merge conflicts. Every step is gated, every skipped step is recorded with its reason, and a run that failed or was cancelled is committed but never published. `relay status` marks a completed run whose diff is uncommitted as **unlanded**.
 4. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
 5. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
 6. No shell, anywhere. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax.
@@ -136,16 +136,87 @@ Tune against that, not against this list.
 | `relay plan [run]` | print the approved plan |
 | `relay logs [run]` | print the event log |
 | `relay resume <run>` | continue an interrupted or failed run |
+| `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
 | `relay stop [run]` | cancel a run at its next phase boundary |
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests` and `--commit`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, or a full issue URL, plus `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--no-tests`, `--commit`, `--deliver <policy>` and `--no-offer-merge`.
 
 The wall-clock flags: `--fast` (implementer plans in its own session, no
 separate plan review), `--no-prime` (each reviewer reads only once its own turn
 starts) and `--no-parallel-tests` (run the suite after the code review instead
 of during it).
 
-`relay resume <run> --commit` also works on a run that already completed: it commits that run's stranded work and does nothing else.
+## Delivery
+
+The pipeline does not stop at a diff. Delivery is the last phase of a run — it
+commits the work, pushes the branch, opens the pull request, and merges it if
+that is what the repository asked for. No question at the end, because a
+question at the end of a twenty-minute run is answered by an empty terminal as
+often as by a person.
+
+```
+Delivery
+  policy pr
+  ✓ Commit        ad183e8a on relay/13-ce2ubs
+  ✓ Push          origin/relay/13-ce2ubs
+  ✓ Pull request  https://github.com/acme/widgets/pull/21
+  · Merge         not requested (deliver: pr)
+```
+
+`workflow.deliver` is the ceiling, and `--deliver <policy>` overrides it for one
+run:
+
+| policy | |
+|---|---|
+| `none` | leave the diff staged in the worktree |
+| `branch` | commit to the run branch, and stop (`--commit` is shorthand for this) |
+| `push` | commit and push the branch |
+| `pr` | commit, push and open a pull request — **the default** |
+| `merge` | all of the above, then merge the pull request (`workflow.mergeMethod`, default `squash`) |
+
+**Every step is gated before anything runs.** The policy says how far; the gate
+says whether it is possible. No `origin` remote stops it at `branch`; no `gh`
+stops it at `push`; a `merge` with no pull request to merge happens locally, and
+only into a clean checkout already sitting on the base branch. A step that does
+not run is *recorded with the reason*, and the run says so out loud rather than
+reporting a clean success — a silent shortfall is the failure mode of anything
+autonomous.
+
+**It opens as a draft when the run's own evidence says so:** failing tests, a
+plan that was never approved, or blocking review findings the implementer never
+accepted. The reasons go at the top of the pull request body. Delivery is
+automatic; looking ready to merge is not.
+
+**A failed step stops the ones that depended on it and never fails the run** —
+the work is committed on the branch either way. Nothing is retried behind your
+back, and nothing is repeated: delivery is idempotent, so `relay deliver <run>`
+picks up exactly where a run left off once `gh` is installed, the remote is
+reachable, or the policy is raised.
+
+A run that fails or is cancelled never reaches this phase. Its work is still
+committed to the run branch so a `git worktree prune` cannot take it, and
+nothing is published.
+
+### The one question
+
+Everything up to the pull request is mechanical — gated, checked against git,
+and undone by closing a branch. Merging is where the work stops being a
+proposal, so a run that delivered short of one ends by asking, once:
+
+```
+  Merge https://github.com/acme/widgets/pull/21 into main now? (squash) [y/N]
+```
+
+**Enter is no.** Answering yes raises this run's policy to `merge` and re-runs
+the delivery phase, which is idempotent — the commit, push and pull request are
+already recorded as done, so only the merge happens, through the same gates.
+
+It is never asked when the answer could only be no: work the run could not
+vouch for (failing tests, an unapproved plan, unanswered blocking findings — the
+same reasons the pull request opened as a draft), a checkout that cannot take a
+local merge, `deliver: merge` (which already merged it), or a terminal nobody is
+watching, which gets `relay deliver <run> --to merge` instead. `--no-offer-merge`
+or `workflow.offerMerge: false` turns it off.
 
 ## Terminal output
 
@@ -253,7 +324,9 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
     "primeReviewers": true,
     "concurrentTests": true,
     "runTests": true,
-    "commit": false,
+    "deliver": "pr",
+    "mergeMethod": "squash",
+    "offerMerge": true,
     "maxTransientRetries": 2
   },
   "tests": { "command": null }
@@ -270,6 +343,9 @@ reaching for before turning a review off.
 | key | |
 |---|---|
 | `workflow.plan` | `review` (planner + adversarial plan review) or `inline` (the implementer plans in its own session — what `--fast` sets) |
+| `workflow.deliver` | how far a run delivers its own work: `none`, `branch`, `push`, `pr` (default), `merge` |
+| `workflow.mergeMethod` | how `deliver: merge` lands a pull request: `squash` (default), `merge`, `rebase` |
+| `workflow.offerMerge` | ask once, at the end of a run that delivered short of a merge (default `true`) |
 | `workflow.primeReviewers` | let each reviewer read the repository during the phase it will review |
 | `workflow.concurrentTests` | run the suite during the code review rather than after it |
 | `timeouts.primingMs` | cap on a read-ahead turn, which is speculative and must not stall a run |

@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 
 import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
+import { DELIVERY_POLICIES } from '../storage/config.ts';
+import { deliverCommand } from './commands/deliver.ts';
 import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
@@ -72,7 +74,7 @@ export function buildProgram(): Command {
   program
     .command('run')
     .argument('<issue>', 'issue number, owner/repo#number, or issue URL')
-    .description('run the full workflow for a GitHub issue')
+    .description('run the full workflow for a GitHub issue, and deliver the result')
     .option('-v, --verbose', 'stream raw agent events')
     .option('-b, --base <branch>', 'branch to base the worktree on')
     .option('--planner <agent>', `agent that plans and reviews code (${AGENT_PROVIDERS.join('|')})`)
@@ -83,7 +85,9 @@ export function buildProgram(): Command {
     .option('--no-prime', 'do not let reviewers read the repository ahead of their turn')
     .option('--no-parallel-tests', 'run the test suite after the code review instead of during it')
     .option('--no-tests', 'skip the test phase')
-    .option('--commit', 'commit the finished work to the run branch (still never pushed or merged)')
+    .option('--commit', 'deliver no further than a commit on the run branch')
+    .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
+    .option('--no-offer-merge', 'finish without asking whether to merge')
     .action(wrap(runCommand));
 
   program
@@ -91,8 +95,17 @@ export function buildProgram(): Command {
     .argument('<run-id>', 'run id, short id, or "latest"')
     .description('continue an interrupted or failed run')
     .option('-v, --verbose', 'stream raw agent events')
-    .option('--commit', 'commit the finished work to the run branch (still never pushed or merged)')
+    .option('--commit', 'deliver no further than a commit on the run branch')
+    .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
+    .option('--no-offer-merge', 'finish without asking whether to merge')
     .action(wrap(resumeCommand));
+
+  program
+    .command('deliver')
+    .argument('[run-id]', 'run id, short id, or "latest"', 'latest')
+    .description('run a finished run\'s delivery again: commit, push, pull request, merge')
+    .option('--to <policy>', `how far to take it (${DELIVERY_POLICIES.join('|')})`)
+    .action(wrap(deliverCommand));
 
   program
     .command('status')

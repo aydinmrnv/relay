@@ -376,8 +376,13 @@ describe('relay start — the tour', () => {
     assert.match(output, /8–15 minutes/);
     assert.match(output, /--fast/);
     assert.match(output, /billed to your own Claude Code and Codex accounts/);
-    assert.match(output, /never pushes, never merges, never opens a PR/);
     assert.match(output, /never read, never prompted for, never stored/);
+    // Delivery is part of the tour because it is part of the run: the tour says
+    // how far this repository's policy goes, and that it goes no further.
+    assert.match(output, /commit, push and open a pull request — a phase of the run/);
+    assert.match(output, /no merge unless you set one/);
+    assert.match(output, /relay deliver <run>/);
+    assert.match(output, /asked once at the end, and only when it is possible — Enter is no/);
   });
 });
 

@@ -1,5 +1,5 @@
 import { RelayError } from '../util/errors.ts';
-import type { AgentProvider, RelayConfig, Role } from '../storage/config.ts';
+import type { AgentProvider, DeliveryPolicy, RelayConfig, Role } from '../storage/config.ts';
 import type { ReviewRound } from '../reviews/types.ts';
 import type { Phase } from './phases.ts';
 import { canTransition, isTerminal } from './phases.ts';
@@ -52,11 +52,76 @@ export interface TestRecord {
   at: string;
 }
 
-/** A commit Relay made on the run branch. Local only: nothing is ever pushed. */
+/** A commit Relay made on the run branch. Local until someone asks for more. */
 export interface CommitRecord {
   sha: string;
   branch: string;
   subject: string;
+  at: string;
+}
+
+/**
+ * The three records below are written by the delivery phase, and each one is
+ * the evidence that the run's work left this machine — what moved, where, and
+ * when. They are recorded rather than inferred: `relay status` should never
+ * have to guess whether a branch was pushed.
+ */
+export interface PushRecord {
+  remote: string;
+  branch: string;
+  sha: string;
+  at: string;
+}
+
+export interface PullRequestRecord {
+  url: string;
+  number: number | null;
+  base: string;
+  head: string;
+  at: string;
+}
+
+export interface MergeRecord {
+  /** Branch the work was merged into. */
+  into: string;
+  /**
+   * Where it landed. `pull-request` means GitHub merged it and this machine's
+   * checkout was never touched; `local` means Relay merged it here.
+   */
+  via: 'local' | 'pull-request';
+  /** Merge commit, when Relay made it locally. */
+  sha?: string;
+  fastForward?: boolean;
+  /** The pull request that was merged, when that is how it landed. */
+  url?: string;
+  at: string;
+}
+
+/** The steps delivery can take, in the order it takes them. */
+export const DELIVERY_STEPS = ['commit', 'push', 'pullRequest', 'merge'] as const;
+export type DeliveryStep = (typeof DELIVERY_STEPS)[number];
+
+export interface DeliveryStepRecord {
+  step: DeliveryStep;
+  status: 'done' | 'skipped' | 'failed';
+  /** What it produced, or why it did not run. Always populated. */
+  detail: string;
+  at: string;
+}
+
+/**
+ * What the delivery phase did, step by step.
+ *
+ * Skipped steps are recorded with their reason rather than omitted: "no
+ * pull request" and "no pull request because this repository has no remote"
+ * are different facts, and only one of them is actionable.
+ */
+export interface DeliveryRecord {
+  /** The ceiling the run was configured with. */
+  policy: DeliveryPolicy;
+  /** How far it actually got. */
+  reached: DeliveryPolicy;
+  steps: DeliveryStepRecord[];
   at: string;
 }
 
@@ -88,8 +153,14 @@ export interface RunState {
   planApproved: boolean;
   diff?: DiffSummary;
   tests?: TestRecord;
-  /** Present once `--commit` captured the work on the run branch. */
+  /** Present once the work was captured in a commit on the run branch. */
   commit?: CommitRecord;
+  /** Present once the run branch was pushed. */
+  push?: PushRecord;
+  pullRequest?: PullRequestRecord;
+  merge?: MergeRecord;
+  /** What the delivery phase did with the finished work, and what it skipped. */
+  delivery?: DeliveryRecord;
   /** Tokens and cost the run has spent so far. Absent until a CLI reports any. */
   usage?: RunUsage;
 

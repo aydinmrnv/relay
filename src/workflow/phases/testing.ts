@@ -36,7 +36,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
       at,
     };
     observer.note('Tests skipped: disabled in config.');
-    return { next: 'COMPLETE', note: 'tests disabled' };
+    return { next: 'DELIVERING', note: 'tests disabled' };
   }
 
   // Usually already finished: it was started against this diff the moment the
@@ -57,7 +57,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
       at,
     };
     observer.warn(`No test command was run: ${discovery.reason}.`);
-    return { next: 'COMPLETE', note: 'no tests found' };
+    return { next: 'DELIVERING', note: 'no tests found' };
   }
 
   const printable = discovery.command.command.join(' ');
@@ -81,7 +81,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
       at,
     };
     observer.warn(`No test result: ${printable} was discovered but never completed.`);
-    return { next: 'COMPLETE', note: 'tests did not run' };
+    return { next: 'DELIVERING', note: 'tests did not run' };
   }
 
   observer.note(
@@ -131,7 +131,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
 
   if (execution.passed) {
     observer.note(`Tests passed in ${formatDuration(execution.durationMs)}.`);
-    return { next: 'COMPLETE', note: 'tests passed' };
+    return { next: 'DELIVERING', note: 'tests passed' };
   }
 
   observer.warn(
@@ -139,5 +139,5 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
       ? `Tests timed out after ${formatDuration(execution.durationMs)}.`
       : `Tests failed (exit ${String(execution.exitCode)}). Output: ${store.path(outputFile)}`,
   );
-  return { next: 'COMPLETE', note: 'tests failed' };
+  return { next: 'DELIVERING', note: 'tests failed' };
 }

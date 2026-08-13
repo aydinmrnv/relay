@@ -58,6 +58,7 @@ describe('workflow engine — happy path', () => {
         'IMPLEMENTING',
         'REVIEWING_CODE',
         'TESTING',
+        'DELIVERING',
         'COMPLETE',
       ],
     );
@@ -607,9 +608,9 @@ describe('workflow engine — transient failures', () => {
   });
 });
 
-describe('workflow engine — committing the work', () => {
-  it('commits to the run branch when asked, crediting every agent that contributed', async () => {
-    const { context, state } = buildContext(happyPathHarnesses(), { config: { commit: true } });
+describe('workflow engine — delivering the work', () => {
+  it('commits to the run branch, crediting every agent that contributed', async () => {
+    const { context, state } = buildContext(happyPathHarnesses(), { config: { deliver: 'branch' } });
     const final = await new WorkflowEngine(context).run();
 
     assert.equal(final.phase, 'COMPLETE');
@@ -629,17 +630,18 @@ describe('workflow engine — committing the work', () => {
     assert.equal(await repo.git('rev-parse', 'main'), final.workspace!.baseSha);
   });
 
-  it('leaves the work uncommitted by default, and says so', async () => {
-    const { context, store } = buildContext(happyPathHarnesses());
+  it('leaves the work in the worktree when delivery is off', async () => {
+    const { context, store } = buildContext(happyPathHarnesses(), { config: { deliver: 'none' } });
     const final = await new WorkflowEngine(context).run();
 
     assert.equal(final.commit, undefined);
     assert.equal(await repo.git('-C', final.workspace!.path, 'rev-parse', 'HEAD'), final.workspace!.baseSha);
     assert.match((await store.readArtifact('summary.md')) ?? '', /not committed/);
+    assert.equal(final.delivery?.reached, 'none');
   });
 
   it('does not fail the run when the commit itself fails', async () => {
-    const { context, observer } = buildContext(happyPathHarnesses(), { config: { commit: true } });
+    const { context, observer } = buildContext(happyPathHarnesses(), { config: { deliver: 'branch' } });
     const engine = new WorkflowEngine(context);
 
     // The worktree disappears between the last phase and the commit.
@@ -653,6 +655,8 @@ describe('workflow engine — committing the work', () => {
     assert.equal(final.phase, 'COMPLETE');
     assert.equal(final.commit, undefined);
     assert.match(observer.warnings.join(' '), /Could not commit/);
+    // The step is recorded as skipped rather than silently missing.
+    assert.equal(final.delivery?.steps.find((step) => step.step === 'commit')?.status, 'skipped');
   });
 });
 
@@ -804,6 +808,7 @@ describe('run artifacts', () => {
     assert.ok((await store.readArtifact(final.diff!.patchFile)) !== undefined);
 
     const summary = await readFile(store.path('summary.md'), 'utf8');
-    assert.match(summary, /does not push, merge, or open pull requests/);
+    assert.match(summary, /## Delivery/);
+    assert.match(summary, new RegExp(`relay deliver ${final.runId}`));
   });
 });
