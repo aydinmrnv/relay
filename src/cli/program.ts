@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Help } from 'commander';
 
 import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
 import { DELIVERY_POLICIES } from '../storage/config.ts';
@@ -7,6 +7,7 @@ import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
+import { homeCommand } from './commands/home.ts';
 import { runCommand, resumeCommand, type RunOptions } from './commands/run.ts';
 import {
   diffCommand,
@@ -16,9 +17,7 @@ import {
   stopCommand,
   watchCommand,
 } from './commands/inspect.ts';
-import { reportError } from './output.ts';
-
-const VERSION = '0.1.0';
+import { reportError, theme } from './output.ts';
 
 /** Help text names whichever CLIs are registered, not whichever shipped first. */
 const AGENT_LABELS = AGENT_REGISTRY.map((entry) => entry.label).join(', ');
@@ -40,7 +39,42 @@ function wrap<Args extends unknown[]>(
   };
 }
 
-export function buildProgram(): Command {
+export function defaultHelp(command: Command, width?: number): string {
+  const helper = new Help();
+  if (width !== undefined) helper.helpWidth = width;
+  return helper.formatHelp(command, helper);
+}
+
+const HELP_GROUPS = [
+  ['Setup', ['start', 'init', 'doctor']],
+  ['Run', ['run', 'resume', 'stop']],
+  ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs']],
+  ['Deliver', ['deliver']],
+] as const;
+
+function groupedHelp(command: Command, helper: Help): string {
+  if (command.parent !== null) return defaultHelp(command, helper.helpWidth);
+  const base = defaultHelp(command, helper.helpWidth);
+  const marker = 'Commands:\n';
+  const start = base.indexOf(marker);
+  if (start < 0) return base;
+  const prefix = base.slice(0, start);
+  const commands = helper.visibleCommands(command);
+  const byName = new Map(commands.map((child) => [child.name(), child]));
+  const width = Math.max(...commands.map((child) => helper.subcommandTerm(child).length));
+  const sections = HELP_GROUPS.map(([title, names]) => {
+    const lines = names.flatMap((name) => {
+      const child = byName.get(name);
+      return child === undefined
+        ? []
+        : [`  ${helper.subcommandTerm(child).padEnd(width + 2)}${helper.subcommandDescription(child)}`];
+    });
+    return `${title}:\n${lines.join('\n')}`;
+  });
+  return `${prefix}${sections.join('\n\n')}\n`;
+}
+
+export function buildProgram(version: string): Command {
   const program = new Command();
 
   program
@@ -49,9 +83,11 @@ export function buildProgram(): Command {
       `Coordinate locally installed coding agents (${AGENT_LABELS}) to plan, review, implement\n` +
         'and critique work on a GitHub issue inside an isolated git worktree.',
     )
-    .version(VERSION)
+    .version(version)
     .option('--update', 'update Relay itself to the latest version')
     .showHelpAfterError();
+
+  program.configureHelp({ formatHelp: groupedHelp });
 
   // `--update` is an option rather than a command because it is about Relay
   // itself and not about a run: it is the one thing here that needs no
@@ -67,8 +103,10 @@ export function buildProgram(): Command {
       if (unrecognized !== undefined) {
         command.error(`error: unknown command '${unrecognized}'`, { code: 'commander.unknownCommand' });
       }
-      if (options.update !== true) program.help({ error: true });
-      return updateCommand();
+      if (options.update === true) return updateCommand();
+      if (theme().interactive) return homeCommand();
+      process.stderr.write(defaultHelp(command, process.stderr.isTTY ? process.stderr.columns : undefined));
+      return 1;
     }),
   );
 

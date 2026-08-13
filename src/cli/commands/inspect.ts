@@ -69,7 +69,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
   const shown = runs.slice(0, 20);
   const listed = await Promise.all(
     shown.map(async (state) => {
-      const elapsed = new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
+      const elapsed = runDuration(state);
       const issue = state.issue === undefined ? state.issueRef : `#${state.issue.number} ${state.issue.title}`;
       const landing = await landingOf(cli.repo.root, state);
 
@@ -123,7 +123,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
 }
 
 /** A run's phase, coloured by what that phase means for the reader. */
-function phaseTag(state: RunState): string {
+export function phaseTag(state: RunState): string {
   const label = phaseLabel(state.phase);
   if (state.phase === 'COMPLETE') return success(label);
   if (state.phase === 'FAILED') return failure(label);
@@ -155,7 +155,7 @@ async function printStatusJson(repoRoot: string, runRef: string | undefined): Pr
  * unless `--commit` was used, and a staged index is one `git worktree prune`
  * away from being gone — so the answer is read from git rather than assumed.
  */
-async function landingOf(repoRoot: string, state: RunState): Promise<Landing> {
+export async function landingOf(repoRoot: string, state: RunState): Promise<Landing> {
   const workspace = state.workspace;
   if (state.phase !== 'COMPLETE' || workspace === undefined) return 'unknown';
 
@@ -165,6 +165,11 @@ async function landingOf(repoRoot: string, state: RunState): Promise<Landing> {
     changedFiles: state.diff?.fileCount ?? 0,
     ...(state.commit === undefined ? {} : { committedSha: state.commit.sha }),
   });
+}
+
+/** Stable elapsed time for a run, shared by status and the home screen. */
+export function runDuration(state: RunState): number {
+  return new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
 }
 
 /** Warns, after a completed run's summary, that its work is not committed anywhere. */

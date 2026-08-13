@@ -1,9 +1,10 @@
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import { AGENT_PROVIDERS, isAgentProvider } from '../agents/index.ts';
 import { MERGE_METHODS, type MergeMethod } from '../github/pullRequest.ts';
 import { RelayError } from '../util/errors.ts';
-import { readJsonFile, atomicWriteJson } from './atomic.ts';
+import { atomicWriteJson } from './atomic.ts';
 
 export { AGENT_PROVIDERS };
 
@@ -169,9 +170,20 @@ export function runsDir(repoRoot: string): string {
 
 /** Loads repository config, falling back to defaults when absent. */
 export async function loadConfig(repoRoot: string): Promise<RelayConfig> {
-  const raw = await readJsonFile<unknown>(configPath(repoRoot));
-  if (raw === undefined) return structuredClone(DEFAULT_CONFIG);
-  return mergeConfig(DEFAULT_CONFIG, raw);
+  const path = configPath(repoRoot);
+  let contents: string;
+  try {
+    contents = await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return structuredClone(DEFAULT_CONFIG);
+    throw error;
+  }
+  try {
+    return mergeConfig(DEFAULT_CONFIG, JSON.parse(contents) as unknown);
+  } catch (error) {
+    if (error instanceof RelayError) throw error;
+    throw new RelayError(`${path} must contain valid JSON.`, { code: 'BAD_CONFIG', cause: error });
+  }
 }
 
 export async function writeConfig(repoRoot: string, config: RelayConfig): Promise<string> {
