@@ -200,22 +200,35 @@ export async function runEvalTask(task: EvalTask, deps: EvalRunnerDeps): Promise
       hiddenTouched = (await findHiddenPaths(state.workspace.path, fixture)).length > 0;
     }
 
-    // A run with no commit produced nothing to grade. That is a legitimate
-    // outcome — an unsolved task — not a harness failure.
+    // A run stopped from outside — Ctrl-C, `relay stop`, a cost ceiling — says
+    // nothing about the configuration it was running. It is excluded rather
+    // than scored, even when it committed partial work on the way out, because
+    // counting it would drag an arm's rate down for a reason the arm did not
+    // cause.
+    const stopped = state.stopped;
     const sha = state.commit?.sha;
+
     grade =
-      sha === undefined
+      stopped !== undefined
         ? {
             solved: false,
             regressed: false,
             acceptance: null,
             regression: null,
-            ungraded: `the run ended in ${state.phase} with no commit on its branch`,
+            ungraded: `the run was stopped rather than finishing: ${stopped.detail}`,
           }
-        : await gradeCommit(workspace, sha, {
-            label: `final-${state.shortId}`,
-            ...(deps.signal ? { signal: deps.signal } : {}),
-          });
+        : sha === undefined
+          ? {
+              solved: false,
+              regressed: false,
+              acceptance: null,
+              regression: null,
+              ungraded: `the run ended in ${state.phase} with no commit on its branch`,
+            }
+          : await gradeCommit(workspace, sha, {
+              label: `final-${state.shortId}`,
+              ...(deps.signal ? { signal: deps.signal } : {}),
+            });
   } catch (caught) {
     grade = {
       solved: false,

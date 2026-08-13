@@ -6,6 +6,14 @@
  * a configuration's minimum and maximum number of agent turns is arithmetic.
  * Money and wall-clock are not: they come from previously *measured* runs, and
  * when there are none this says so instead of inventing a number.
+ *
+ * `src/workflow/estimate.ts` answers the neighbouring question — what will
+ * *this one run* cost — and is deliberately not reused here. It is phase-aware
+ * and therefore more accurate, but it needs whole `RunState`s to sum phases
+ * from, and the eval's best evidence is previous eval sessions, which are
+ * recorded as outcomes rather than run states. Estimating per turn is what lets
+ * the same sample price a one-turn `solo` arm and a ten-turn `cross-model` one;
+ * a per-run rate calibrated on either would be wrong about the other.
  */
 import { reviewsCode, type RelayConfig } from '../storage/config.ts';
 import { formatCost } from '../workflow/usage.ts';

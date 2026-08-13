@@ -14,7 +14,7 @@ import { join } from 'node:path';
 
 import { atomicWriteFile, atomicWriteJson } from '../storage/atomic.ts';
 import { formatDuration } from '../util/text.ts';
-import { formatCost } from '../workflow/usage.ts';
+import { formatCost, unpricedTurns } from '../workflow/usage.ts';
 import { EVAL_COMPARISONS } from './configs.ts';
 import {
   compareProportions,
@@ -38,7 +38,16 @@ export interface ConfigAggregate {
   regressionRate: Proportion;
   /** Over the runs whose CLI reported a price. Null when none did. */
   costUsd: Summary | null;
+  /** Runs that reported any price at all — the denominator `costUsd` is over. */
   pricedRuns: number;
+  /**
+   * Turns across the arm that published no price, so `costUsd` is a floor.
+   *
+   * Counted per turn rather than per run because a run can report a cost *and*
+   * be missing most of its bill: Codex publishes no price, so a cross-model run
+   * reports Claude's half and stays silent about the other.
+   */
+  unpricedTurns: number;
   wallClockMs: Summary;
   turns: Summary;
   blockingFindings: Summary;
@@ -71,6 +80,10 @@ function aggregateOne(
     regressionRate: proportion(graded.filter((outcome) => outcome.regressed).length, graded.length),
     costUsd: priced.length === 0 ? null : summarize(priced.map((outcome) => outcome.usage?.costUsd ?? 0)),
     pricedRuns: priced.length,
+    unpricedTurns: outcomes.reduce(
+      (total, outcome) => total + (outcome.usage === null ? outcome.turns : unpricedTurns(outcome.usage)),
+      0,
+    ),
     wallClockMs: summarize(outcomes.map((outcome) => outcome.wallClockMs)),
     turns: summarize(outcomes.map((outcome) => outcome.turns)),
     blockingFindings: summarize(outcomes.map((outcome) => outcome.review.blocking)),
@@ -107,10 +120,22 @@ export function aggregateAll(sets: readonly EvalResults[]): ConfigAggregate[] {
   );
 }
 
+/**
+ * Cost per run, with the caveat that makes it honest.
+ *
+ * A missing price means "not reported" and never "free", so a number computed
+ * from a partial bill says how partial it is: how many runs contributed a price
+ * at all, and how many turns across the arm published none.
+ */
 function formatCostSummary(aggregate: ConfigAggregate): string {
   if (aggregate.costUsd === null) return 'not reported';
-  const partial = aggregate.pricedRuns < aggregate.runs ? ` (${aggregate.pricedRuns}/${aggregate.runs} priced)` : '';
-  return `${formatCost(aggregate.costUsd.mean)}${partial}`;
+
+  const caveats: string[] = [];
+  if (aggregate.pricedRuns < aggregate.runs) caveats.push(`${aggregate.pricedRuns}/${aggregate.runs} runs priced`);
+  if (aggregate.unpricedTurns > 0) caveats.push(`${aggregate.unpricedTurns} turns unpriced`);
+
+  const floor = caveats.length === 0 ? '' : ` (≥, ${caveats.join(', ')})`;
+  return `${formatCost(aggregate.costUsd.mean)}${floor}`;
 }
 
 function formatWallClock(aggregate: ConfigAggregate): string {

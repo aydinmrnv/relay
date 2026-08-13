@@ -21,7 +21,7 @@ import {
   samplesFromResults,
   samplesFromRuns,
 } from '../src/eval/estimate.ts';
-import { defaultFixturesDir, fixtureIssueNumber, loadFixtures, readFixture } from '../src/eval/fixtures.ts';
+import { defaultFixturesDir, loadFixtures, readFixture } from '../src/eval/fixtures.ts';
 import { gradeCommit, runSuite, verifyFixture } from '../src/eval/grade.ts';
 import { planTasks } from '../src/eval/harness.ts';
 import { FixtureIssueProvider } from '../src/eval/issueProvider.ts';
@@ -48,6 +48,9 @@ import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { isRelayError } from '../src/util/errors.ts';
 import { createRunState } from '../src/workflow/state.ts';
 import { git } from '../src/git/repository.ts';
+import { branchNameFor, worktreePathFor } from '../src/git/worktree.ts';
+import { issueIdentity } from '../src/issues/identity.ts';
+import { renderIssueMarkdown } from '../src/github/types.ts';
 
 // ---------------------------------------------------------------------------
 // Statistics
@@ -347,26 +350,37 @@ test('a hidden path that also exists in repo/ is refused at load time', async ()
   }
 });
 
-test('issue numbers are stable per fixture id and not per position', () => {
-  assert.equal(fixtureIssueNumber('semver-compare'), fixtureIssueNumber('semver-compare'));
-  assert.notEqual(fixtureIssueNumber('semver-compare'), fixtureIssueNumber('glob-match'));
-  for (const id of ['a', 'semver-compare', 'x'.repeat(60)]) {
-    const number = fixtureIssueNumber(id);
-    assert.ok(Number.isInteger(number) && number >= 1 && number <= 900);
-  }
-});
-
 test('a fixture is presented to the engine as an ordinary issue', async () => {
   const [fixture] = await loadFixtures(defaultFixturesDir(), { only: ['semver-compare'] });
   const issue = await new FixtureIssueProvider(fixture!).getIssue();
 
+  assert.equal(issue.id, 'fixture:semver-compare');
   assert.equal(issue.title, fixture!.title);
   assert.equal(issue.body, fixture!.task.trim());
   assert.equal(issue.state, 'open');
   assert.equal(issue.repository, null);
   assert.deepEqual(issue.labels, ['bug']);
-  // Not a URL anything could fetch: following it would be reading a different task.
-  assert.match(issue.url, /^fixture:/);
+
+  // No tracker behind it, so no number to invent and no URL to follow.
+  assert.equal(issue.number, null);
+  assert.equal(issue.url, '');
+  assert.doesNotMatch(renderIssueMarkdown(issue), /URL:|#null/);
+});
+
+test('a numberless fixture still names a branch and a worktree', async () => {
+  const [fixture] = await loadFixtures(defaultFixturesDir(), { only: ['semver-compare'] });
+  const issue = await new FixtureIssueProvider(fixture!).getIssue();
+  const identity = issueIdentity(issue);
+
+  // Named after the title, exactly as a spec file or a `--prompt` is.
+  assert.equal(typeof identity, 'string');
+  const branch = branchNameFor(identity, 'x7f2q3');
+  assert.match(branch, /^relay\/version-comparison-orders/);
+  assert.doesNotMatch(branch, /null|undefined/);
+  assert.match(
+    worktreePathFor({ owner: null, name: null, root: '/tmp/semver-compare' }, identity, 'x7f2q3'),
+    /issue-version-comparison-orders[a-z0-9-]*-x7f2q3$/,
+  );
 });
 
 // ---------------------------------------------------------------------------

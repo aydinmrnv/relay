@@ -14,6 +14,11 @@ export interface UsageTotals {
   costUsd?: number;
   /** Agent turns folded into these totals. */
   turns: number;
+  /**
+   * Turns that published a price. Fewer than `turns` means `costUsd` is a
+   * floor rather than the bill — see `unpricedTurns`.
+   */
+  pricedTurns?: number;
 }
 
 export interface RunUsage {
@@ -22,7 +27,7 @@ export interface RunUsage {
 }
 
 export function zeroTotals(): UsageTotals {
-  return { inputTokens: 0, outputTokens: 0, turns: 0 };
+  return { inputTokens: 0, outputTokens: 0, turns: 0, pricedTurns: 0 };
 }
 
 export function emptyRunUsage(): RunUsage {
@@ -36,8 +41,21 @@ export function addUsage(totals: UsageTotals, usage: AgentUsage): UsageTotals {
     inputTokens: totals.inputTokens + usage.inputTokens,
     outputTokens: totals.outputTokens + usage.outputTokens,
     turns: totals.turns + 1,
+    pricedTurns: (totals.pricedTurns ?? 0) + (usage.costUsd === undefined ? 0 : 1),
     ...(costUsd === undefined ? {} : { costUsd }),
   };
+}
+
+/**
+ * Turns in a bucket that reported no price, so its cost is a floor.
+ *
+ * A bucket recorded before Relay counted them reports zero, because absent
+ * means "not known" and never "none": a caveat invented from missing data is
+ * worse than no caveat at all.
+ */
+export function unpricedTurns(totals: UsageTotals): number {
+  if (totals.pricedTurns === undefined) return 0;
+  return Math.max(0, totals.turns - totals.pricedTurns);
 }
 
 /**
@@ -49,6 +67,29 @@ export function recordTurnUsage(current: RunUsage | undefined, phase: Phase, usa
   run.total = addUsage(run.total, usage);
   run.byPhase[phase] = addUsage(run.byPhase[phase] ?? zeroTotals(), usage);
   return run;
+}
+
+export interface BudgetBreach {
+  /** Cost reported so far. Turns that published no price are not in it. */
+  spentUsd: number;
+  maxCostUsd: number;
+  /** Turns that reported nothing, so the real spend is at least `spentUsd`. */
+  unpriced: number;
+}
+
+/**
+ * Whether a run has spent past its cap, checked at a phase boundary.
+ *
+ * Only reported cost counts. A CLI that publishes no price leaves the
+ * accumulator's cost absent rather than zero, and an absent cost can never
+ * trip a ceiling: stopping a run over a number nobody reported would be
+ * Relay inventing the evidence for its own intervention.
+ */
+export function budgetBreach(usage: RunUsage | undefined, maxCostUsd: number | null): BudgetBreach | undefined {
+  if (maxCostUsd === null || usage === undefined) return undefined;
+  const spentUsd = usage.total.costUsd;
+  if (spentUsd === undefined || spentUsd <= maxCostUsd) return undefined;
+  return { spentUsd, maxCostUsd, unpriced: unpricedTurns(usage.total) };
 }
 
 export function formatTokens(count: number): string {

@@ -15,6 +15,19 @@ export interface RunObserver {
   warn(text: string): void;
 }
 
+/**
+ * An observer that also owns the beginning and end of a run's report.
+ *
+ * `relay run` picks one of these by how it was asked: the live dashboard for a
+ * person, a stream of JSON lines for `--json`. Both watch the same engine
+ * through the same interface, which is why neither needs a flag threaded
+ * through the workflow.
+ */
+export interface RunDisplay extends RunObserver {
+  start(): void;
+  finish(finalPhase: Phase): void;
+}
+
 export const silentObserver: RunObserver = {
   phaseChanged() {},
   roleStatus() {},

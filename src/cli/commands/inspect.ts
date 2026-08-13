@@ -4,6 +4,7 @@ import { RelayError } from '../../util/errors.ts';
 import { formatDuration, oneLine } from '../../util/text.ts';
 import { snapshotDiff, formatDiffStat, formatFileList } from '../../git/diff.ts';
 import { describeLanding, type Landing } from '../../git/commit.ts';
+import { issueHeadline } from '../../issues/identity.ts';
 import { worktreeExists } from '../../git/worktree.ts';
 import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
 import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
@@ -11,6 +12,9 @@ import type { RunState } from '../../workflow/state.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import { createCliContext } from '../context.ts';
 import { runToJson } from '../runJson.ts';
+import { EXIT, exitCodeForRun } from '../exit.ts';
+import { emitJson, emitJsonLine } from '../json.ts';
+import { diffToJson, eventToJson, logsToJson, planToJson, stopToJson, storedDiffToJson } from '../inspectJson.ts';
 import { panelInnerWidth } from '../../ui/box.ts';
 import { visibleWidth } from '../../ui/theme.ts';
 import {
@@ -70,7 +74,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
   const listed = await Promise.all(
     shown.map(async (state) => {
       const elapsed = runDuration(state);
-      const issue = state.issue === undefined ? state.issueRef : `#${state.issue.number} ${state.issue.title}`;
+      const issue = state.issue === undefined ? state.issueRef : issueHeadline(state.issue);
       const landing = await landingOf(cli.repo.root, state);
 
       return {
@@ -131,23 +135,24 @@ export function phaseTag(state: RunState): string {
 }
 
 /**
- * Machine-readable status. One object for a named run, the full list otherwise
- * — unabridged, unlike the human table, since a script should not have to page.
- * Colour never reaches this path: the payload is serialized straight from state.
+ * Machine-readable status. One `run` for a named run, the whole `runs` list
+ * otherwise — unabridged, unlike the human table, since a script should not
+ * have to page. Colour never reaches this path: the payload is serialized
+ * straight from state.
  */
 async function printStatusJson(repoRoot: string, runRef: string | undefined): Promise<number> {
   if (runRef !== undefined) {
     const state = await resolveRun(repoRoot, runRef);
-    raw(JSON.stringify(runToJson(state, { landing: await landingOf(repoRoot, state) }), null, 2));
-    return 0;
+    emitJson('status', { run: runToJson(state, { landing: await landingOf(repoRoot, state) }) });
+    return EXIT.success;
   }
 
   const runs = await listRuns(repoRoot);
   const payload = await Promise.all(
     runs.map(async (state) => runToJson(state, { landing: await landingOf(repoRoot, state) })),
   );
-  raw(JSON.stringify(payload, null, 2));
-  return 0;
+  emitJson('status', { runs: payload });
+  return EXIT.success;
 }
 
 /**
@@ -190,7 +195,7 @@ async function printLiveStatus(state: RunState, store: RunStore): Promise<void> 
 
   const elapsed = Date.now() - new Date(state.createdAt).getTime();
   rows([
-    issue !== undefined && { label: 'Issue', value: `#${issue.number} ${issue.title}` },
+    issue !== undefined && { label: 'Issue', value: issueHeadline(issue) },
     state.workspace !== undefined && { label: 'Branch', value: state.workspace.branch },
     state.workspace !== undefined && { label: 'Worktree', value: state.workspace.path },
     {
@@ -235,10 +240,11 @@ async function printLiveStatus(state: RunState, store: RunStore): Promise<void> 
  * Shows the run's diff, recomputed from git so it reflects the worktree as it
  * is now, not as it was when the run finished.
  */
-export async function diffCommand(runRef: string, options: { stat?: boolean }): Promise<number> {
+export async function diffCommand(runRef: string, options: { stat?: boolean; json?: boolean }): Promise<number> {
   const cli = await createCliContext();
   const state = await resolveRun(cli.repo.root, runRef);
   const store = new RunStore(cli.repo.root, state.runId);
+  const json = options.json === true;
 
   const workspace = state.workspace;
   if (workspace === undefined) {
@@ -253,47 +259,69 @@ export async function diffCommand(runRef: string, options: { stat?: boolean }): 
         code: 'NO_WORKSPACE',
       });
     }
+    if (json) {
+      emitJson('diff', storedDiffToJson(state, stored, options));
+      return EXIT.success;
+    }
     out(dim(`Worktree is gone; showing the patch captured during the run (${state.diff?.patchFile}).`));
     raw(stored);
-    return 0;
+    return EXIT.success;
   }
 
   const snapshot = await snapshotDiff(workspace.path, workspace.baseSha);
+
+  // An empty diff is a fact rather than an empty state once something is
+  // parsing it, so the JSON path answers before the prose one does.
+  if (json) {
+    emitJson('diff', diffToJson(state, snapshot, options));
+    return EXIT.success;
+  }
 
   if (snapshot.isEmpty) {
     emptyState(`Run ${state.runId} changed no files (${phaseLabel(state.phase)}).`, [
       `relay status ${state.runId}`,
       `relay logs ${state.runId}`,
     ]);
-    return 0;
+    return EXIT.success;
   }
 
   if (options.stat === true) {
     heading(`${workspace.branch} — ${formatDiffStat(snapshot)}`);
     out();
     for (const line of formatFileList(snapshot)) out(`  ${line}`);
-    return 0;
+    return EXIT.success;
   }
 
   raw(snapshot.patch);
-  return 0;
+  return EXIT.success;
 }
 
-export async function logsCommand(runRef: string, options: { limit?: string; all?: boolean }): Promise<number> {
+export async function logsCommand(
+  runRef: string,
+  options: { limit?: string; all?: boolean; json?: boolean },
+): Promise<number> {
   const cli = await createCliContext();
   const state = await resolveRun(cli.repo.root, runRef);
   const store = new RunStore(cli.repo.root, state.runId);
 
   const events = await store.readEvents();
+  const limit = options.all === true ? events.length : Number.parseInt(options.limit ?? '80', 10) || 80;
+
+  // No events is an empty list, not advice: a consumer asked for the log, and
+  // `total` says how much of it there was without any prose.
+  if (options.json === true) {
+    emitJson('logs', logsToJson(state, events, limit));
+    return EXIT.success;
+  }
+
   if (events.length === 0) {
     emptyState(
       `No events recorded for ${state.runId} — it is ${phaseLabel(state.phase)} and no agent has taken a turn yet.`,
       [`relay status ${state.runId}`, `relay watch ${state.runId}`],
     );
-    return 0;
+    return EXIT.success;
   }
 
-  const limit = options.all === true ? events.length : Number.parseInt(options.limit ?? '80', 10) || 80;
   for (const event of events.slice(-limit)) {
     const time = event.timestamp.slice(11, 19);
     const who = event.agent ?? 'relay';
@@ -302,7 +330,7 @@ export async function logsCommand(runRef: string, options: { limit?: string; all
   }
 
   printUsageByPhase(state);
-  return 0;
+  return EXIT.success;
 }
 
 /** Per-phase token spend, so a run's cost can be attributed to the rounds that caused it. */
@@ -321,48 +349,69 @@ function printUsageByPhase(state: RunState): void {
 }
 
 /** Signals a running engine to stop at its next phase boundary. */
-export async function stopCommand(runRef: string): Promise<number> {
+export async function stopCommand(runRef: string, options: { json?: boolean } = {}): Promise<number> {
   const cli = await createCliContext();
   const state = await resolveRun(cli.repo.root, runRef);
   const store = new RunStore(cli.repo.root, state.runId);
+  const json = options.json === true;
 
   if (isTerminal(state.phase)) {
-    out(`Run ${state.runId} already finished (${phaseLabel(state.phase)}).`);
-    return 0;
+    // Already over is not a failure — `relay stop` asked for the run to be
+    // stopped, and it is stopped — so this reports rather than exits non-zero.
+    if (json) emitJson('stop', stopToJson(state, { cancelRequested: false, signalled: false }));
+    else out(`Run ${state.runId} already finished (${phaseLabel(state.phase)}).`);
+    return EXIT.success;
   }
 
   await store.requestCancel(`stopped by user at ${new Date().toISOString()}`);
-  out(`Cancellation requested for ${state.runId}.`);
+  if (!json) out(`Cancellation requested for ${state.runId}.`);
 
+  let signalled = false;
   if (state.pid !== undefined) {
     try {
       // SIGINT so the owning process runs the same clean shutdown as Ctrl-C.
       process.kill(state.pid, 'SIGINT');
-      hint(`Signalled process ${state.pid}.`, '');
+      signalled = true;
+      if (!json) hint(`Signalled process ${state.pid}.`, '');
     } catch {
-      hint('The run process is no longer alive; the cancellation flag has been recorded.', '');
+      if (!json) hint('The run process is no longer alive; the cancellation flag has been recorded.', '');
     }
   }
 
+  if (json) {
+    emitJson('stop', stopToJson(state, { cancelRequested: true, signalled }));
+    return EXIT.success;
+  }
+
   hint('Work completed so far is preserved on the run branch.', '');
-  return 0;
+  return EXIT.success;
 }
 
 /** Tails a run's event log, following an in-progress run until it finishes. */
-export async function watchCommand(runRef: string, options: { interval?: string }): Promise<number> {
+export async function watchCommand(
+  runRef: string,
+  options: { interval?: string; json?: boolean },
+): Promise<number> {
   const cli = await createCliContext();
   const initial = await resolveRun(cli.repo.root, runRef);
   const store = new RunStore(cli.repo.root, initial.runId);
+  const json = options.json === true;
 
   const intervalMs = Math.max(250, Number.parseInt(options.interval ?? '1000', 10) || 1000);
   let seen = 0;
 
-  heading(`Watching ${initial.runId}`);
-  out();
+  if (!json) {
+    heading(`Watching ${initial.runId}`);
+    out();
+  }
 
   for (;;) {
     const events = await store.readEvents();
     for (const event of events.slice(seen)) {
+      if (json) {
+        emitJsonLine('watch', { type: 'event', runId: initial.runId, event: eventToJson(event) });
+        continue;
+      }
       const time = event.timestamp.slice(11, 19);
       const who = event.agent ?? 'relay';
       const detail = event.message ?? (event.data === undefined ? '' : oneLine(JSON.stringify(event.data), 120));
@@ -372,16 +421,29 @@ export async function watchCommand(runRef: string, options: { interval?: string 
 
     const state = await store.loadState();
     if (isTerminal(state.phase)) {
+      // The same verdict `relay run` would have exited with, so watching a run
+      // from another terminal answers the same question the run itself did.
+      const code = exitCodeForRun(state, await landingOf(cli.repo.root, state));
+      if (json) {
+        emitJsonLine('watch', {
+          type: 'finished',
+          runId: state.runId,
+          phase: state.phase,
+          phaseLabel: phaseLabel(state.phase),
+          exitCode: code,
+        });
+        return code;
+      }
       out();
       out(`Run ${phaseLabel(state.phase)}.`);
-      return state.phase === 'COMPLETE' ? 0 : 1;
+      return code;
     }
 
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }
 
-export async function planCommand(runRef: string): Promise<number> {
+export async function planCommand(runRef: string, options: { json?: boolean } = {}): Promise<number> {
   const cli = await createCliContext();
   const state = await resolveRun(cli.repo.root, runRef);
   const store = new RunStore(cli.repo.root, state.runId);
@@ -390,8 +452,12 @@ export async function planCommand(runRef: string): Promise<number> {
   if (plan === undefined) {
     throw new RelayError(`Run ${state.runId} has no plan yet.`, { code: 'NO_PLAN' });
   }
+  if (options.json === true) {
+    emitJson('plan', planToJson(state, plan));
+    return EXIT.success;
+  }
   raw(plan.trimEnd());
-  return 0;
+  return EXIT.success;
 }
 
 export async function readFileOrUndefined(path: string): Promise<string | undefined> {

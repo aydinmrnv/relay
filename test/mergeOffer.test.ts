@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { setTheme } from '../src/cli/output.ts';
-import { mergeAvailability, offerMerge } from '../src/cli/mergeOffer.ts';
+import { mergeAvailability, offerDelivery, offerMerge } from '../src/cli/mergeOffer.ts';
 import { RunStore } from '../src/storage/runs.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunId } from '../src/util/ids.ts';
@@ -126,6 +126,84 @@ async function offer(
     process.stdout.write = originalWrite;
   }
 }
+
+/** A run that committed and published nothing: everything is still to be asked. */
+function committed(root: string): RunState {
+  const state = delivered(root);
+  delete state.pullRequest;
+  delete state.push;
+  delete state.delivery;
+  return state;
+}
+
+/**
+ * Runs the publishing offer against a scripted terminal. Every case here
+ * declines, so the questions are exercised without delivery running for real.
+ */
+async function declineDelivery(answers: readonly string[], state: RunState, interactive = true): Promise<Session> {
+  const prompter = new ScriptedPrompter(answers, interactive);
+  const store = new RunStore(repo.root, state.runId);
+  await store.init();
+
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  let output = '';
+  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+    output += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    await offerDelivery(state, store, { prompter });
+    return { output, merged: state.merge !== undefined, asked: prompter.asked, merges: 0 };
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+}
+
+describe('the delivery offer', () => {
+  it('asks for the pull request as one question, and pushes as part of it', async () => {
+    // A push nobody asked about on its own is not a decision — it is the first
+    // half of opening a pull request, and two prompts for one intention is the
+    // friction, not the safety.
+    const session = await declineDelivery(['n'], committed(repo.root));
+
+    assert.equal(session.asked.length, 1);
+    assert.match(session.asked[0] ?? '', /Open a pull request into main now\?/);
+    assert.match(session.output, /relay\/13-ce2ubs is pushed to origin first/);
+  });
+
+  it('asks about the push alone when there is no repository to open one against', async () => {
+    const state = committed(repo.root);
+    state.repository = { ...state.repository, owner: null, name: null };
+
+    const session = await declineDelivery(['n'], state);
+    assert.equal(session.asked.length, 1);
+    assert.match(session.asked[0] ?? '', /Push relay\/13-ce2ubs to origin now\?/);
+  });
+
+  it('does not offer to push work that is already pushed', async () => {
+    const state = committed(repo.root);
+    state.push = { remote: 'origin', branch: 'relay/13-ce2ubs', sha: 'a'.repeat(40), at: 'x' };
+
+    const session = await declineDelivery(['n'], state);
+    assert.match(session.asked[0] ?? '', /Open a pull request into main now\?/);
+    assert.doesNotMatch(session.output, /pushed to origin first/);
+  });
+
+  it('goes straight to the merge once the pull request is open', async () => {
+    const session = await declineDelivery(['n'], delivered(repo.root));
+
+    assert.equal(session.asked.length, 1);
+    assert.match(session.asked[0] ?? '', /Merge https:\/\/github\.com\/acme\/widgets\/pull\/21 into main now\?/);
+  });
+
+  it('publishes nothing behind a pipe, and names the command that would', async () => {
+    const session = await declineDelivery([], committed(repo.root), false);
+
+    assert.equal(session.asked.length, 0);
+    assert.match(session.output, /relay deliver .* --to pr/);
+  });
+});
 
 describe('the merge offer', () => {
   it('asks once, naming the pull request and how it would land', async () => {

@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { homeCommand, chooseNextCommand, type RunHomeView } from '../src/cli/commands/home.ts';
+import { showHome, chooseNextCommand, type HomeScreen, type RunHomeView } from '../src/cli/commands/home.ts';
 import { Help } from 'commander';
 
 import { buildProgram, defaultHelp } from '../src/cli/program.ts';
@@ -31,7 +31,7 @@ afterEach(async () => {
   await repo.cleanup();
 });
 
-async function captureStdout(action: () => Promise<number>): Promise<{ code: number; output: string }> {
+async function captureStdout(action: () => Promise<HomeScreen>): Promise<{ screen: HomeScreen; output: string }> {
   let output = '';
   const original = process.stdout.write;
   process.stdout.write = ((chunk: string | Uint8Array) => {
@@ -39,7 +39,7 @@ async function captureStdout(action: () => Promise<number>): Promise<{ code: num
     return true;
   }) as typeof process.stdout.write;
   try {
-    return { code: await action(), output };
+    return { screen: await action(), output };
   } finally {
     process.stdout.write = original;
   }
@@ -85,8 +85,9 @@ describe('home screen', { concurrency: 1 }, () => {
     await new RunStore(repo.root, run.runId).saveState(run);
     process.chdir(repo.root);
 
-    const result = await captureStdout(homeCommand);
-    assert.equal(result.code, 0);
+    const result = await captureStdout(showHome);
+    // A configured repository is one the next issue can start from.
+    assert.equal(result.screen.ready, true);
     for (const text of ['Planner', 'Plan reviewer', 'Implementer', 'Code reviewer', 'Delivery', 'npm test', 'Initializing', '+7 −2']) {
       assert.match(result.output, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
@@ -96,8 +97,9 @@ describe('home screen', { concurrency: 1 }, () => {
 
   it('offers start in an unconfigured repository', async () => {
     process.chdir(repo.root);
-    const result = await captureStdout(homeCommand);
-    assert.equal(result.code, 0);
+    const result = await captureStdout(showHome);
+    // Nothing to run yet, so nothing asks for an issue on top of `relay start`.
+    assert.equal(result.screen.ready, false);
     assert.match(result.output, /not configured/);
     assert.match(result.output, /Next  relay start/);
   });
@@ -105,7 +107,7 @@ describe('home screen', { concurrency: 1 }, () => {
   it('does not treat a malformed present config as absent', async () => {
     await repo.writeFile('.relay/config.json', '{ broken');
     process.chdir(repo.root);
-    await assert.rejects(homeCommand, /config\.json/);
+    await assert.rejects(showHome, /config\.json/);
   });
 
   it('marks completed work that has not been landed', async () => {
@@ -116,7 +118,7 @@ describe('home screen', { concurrency: 1 }, () => {
     await new RunStore(repo.root, run.runId).saveState(run);
     process.chdir(repo.root);
 
-    const result = await captureStdout(homeCommand);
+    const result = await captureStdout(showHome);
     assert.match(result.output, /unlanded/);
     assert.match(result.output, new RegExp(`Next  relay deliver ${run.runId}`));
   });
@@ -125,8 +127,8 @@ describe('home screen', { concurrency: 1 }, () => {
     const outside = await mkdtemp(join(tmpdir(), 'relay-home-outside-'));
     process.chdir(outside);
     try {
-      const result = await captureStdout(homeCommand);
-      assert.equal(result.code, 0);
+      const result = await captureStdout(showHome);
+      assert.equal(result.screen.ready, false);
       assert.match(result.output, /Relay coordinates/);
       assert.match(result.output, /relay start/);
     } finally {
@@ -139,7 +141,10 @@ describe('home screen', { concurrency: 1 }, () => {
 it('chooses the next command by the documented precedence', () => {
   const live = state();
   const finished = { ...live, phase: 'COMPLETE' as const };
-  const view = (value: RunState, unlanded = false): RunHomeView => ({ state: value, unlanded });
+  const view = (value: RunState, unlanded = false): RunHomeView => ({
+    state: value,
+    landing: unlanded ? 'unlanded' : 'committed',
+  });
   assert.equal(chooseNextCommand(false, [view(live)]), 'relay start');
   assert.equal(chooseNextCommand(true, [view(live)]), `relay watch ${live.runId}`);
   assert.equal(chooseNextCommand(true, [view(finished, true)]), `relay deliver ${finished.runId}`);

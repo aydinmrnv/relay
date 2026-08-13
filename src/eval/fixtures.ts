@@ -257,14 +257,3 @@ export async function loadFixtures(dir: string, options: LoadFixturesOptions = {
   }
   return fixtures;
 }
-
-/**
- * A stable issue number per fixture, so a run's branch and worktree name mean
- * something in a log. Deterministic in the id, not in the iteration order —
- * `--fixture` must not renumber the set it selects from.
- */
-export function fixtureIssueNumber(id: string): number {
-  let hash = 5381;
-  for (const char of id) hash = ((hash * 33) ^ char.charCodeAt(0)) >>> 0;
-  return 1 + (hash % 900);
-}

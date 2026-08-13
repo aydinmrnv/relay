@@ -1,4 +1,5 @@
 import { RelayError } from '../util/errors.ts';
+import type { LocalTask } from '../issues/local.ts';
 import type { AgentProvider, DeliveryPolicy, RelayConfig, Role } from '../storage/config.ts';
 import type { ReviewRound } from '../reviews/types.ts';
 import type { Phase } from './phases.ts';
@@ -12,7 +13,16 @@ export interface AgentBinding {
 }
 
 export interface IssueSummary {
-  number: number;
+  /**
+   * Provider-scoped identity: `github:acme/widgets#142`, `local:fix-flaky-timeout`.
+   * Absent on runs recorded before an issue could come from anywhere but GitHub.
+   */
+  id?: string;
+  /**
+   * The tracker's own number, or null when the tracker has none. Naming, display
+   * and the pull request's `Closes` line all read this rather than assume it.
+   */
+  number: number | null;
   title: string;
   url: string;
   state: string;
@@ -115,6 +125,20 @@ export interface DeliveryStepRecord {
 }
 
 /**
+ * Whether the pull request closes a tracker issue, and why not when it does not.
+ *
+ * A task with no tracker behind it has nothing to link, which must be a recorded
+ * skip rather than a failure — the work is delivered either way. Silently
+ * dropping the line would make a local run look identical to one whose issue
+ * reference was wrong.
+ */
+export interface IssueLinkRecord {
+  status: 'done' | 'skipped';
+  detail: string;
+  at: string;
+}
+
+/**
  * What the delivery phase did, step by step.
  *
  * Skipped steps are recorded with their reason rather than omitted: "no
@@ -129,6 +153,25 @@ export interface DeliveryRecord {
   steps: DeliveryStepRecord[];
   at: string;
   cleanup?: CleanupRecord;
+  /** Present once a pull request exists: whether it closes an issue, or why not. */
+  issueLink?: IssueLinkRecord;
+}
+
+/**
+ * Why a run ended before its work did, when the reason was not a failure.
+ *
+ * A cancelled run and a run that hit its cost ceiling leave the same phase
+ * behind — CANCELLED, at a boundary, committed and unpublished — and the only
+ * thing that tells them apart afterwards is this record.
+ */
+export interface StopRecord {
+  reason: 'user' | 'budget';
+  /** One phrase, reused as the transition note and the terminal line. */
+  detail: string;
+  at: string;
+  /** Reported cost at the moment a budget stopped the run. */
+  spentUsd?: number;
+  maxCostUsd?: number;
 }
 
 export interface RunState {
@@ -145,6 +188,14 @@ export interface RunState {
 
   issueRef: string;
   issue?: IssueSummary;
+  /**
+   * The task itself, when it came from this machine rather than a tracker.
+   *
+   * Carried by the run so a resume works from what the run started with, and so
+   * a `--prompt` — which has no file to go back to — survives the process that
+   * created it.
+   */
+  task?: LocalTask;
 
   repository: { root: string; owner: string | null; name: string | null; defaultBranch: string };
   workspace?: WorkspaceInfo;
@@ -169,6 +220,8 @@ export interface RunState {
   delivery?: DeliveryRecord;
   /** Tokens and cost the run has spent so far. Absent until a CLI reports any. */
   usage?: RunUsage;
+  /** Why the run stopped short of finishing, when it did. */
+  stopped?: StopRecord;
 
   error?: { message: string; phase: Phase; code?: string };
   /** PID of the process driving the run, so `relay stop` can signal it. */
@@ -179,6 +232,8 @@ export interface CreateRunStateOptions {
   runId: string;
   shortId: string;
   issueRef: string;
+  /** Set when the run works from a local task rather than a tracker issue. */
+  task?: LocalTask;
   repository: RunState['repository'];
   config: RelayConfig;
   now?: Date;
@@ -195,6 +250,7 @@ export function createRunState(options: CreateRunStateOptions): RunState {
     phase: 'INITIALIZING',
     history: [{ phase: 'INITIALIZING', at }],
     issueRef: options.issueRef,
+    ...(options.task === undefined ? {} : { task: options.task }),
     repository: options.repository,
     agents: {
       planner: { provider: options.config.agents.planner },

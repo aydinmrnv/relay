@@ -113,6 +113,21 @@ describe('config', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxTransientRetries: 50 } }), RelayError);
   });
 
+  it('leaves both money settings unset, and takes only positive dollars', () => {
+    // A ceiling nobody chose would stop runs for a reason its owner never set.
+    assert.equal(DEFAULT_CONFIG.workflow.maxCostUsd, null);
+    assert.equal(DEFAULT_CONFIG.workflow.confirmAboveUsd, null);
+
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { maxCostUsd: 2.5 } }).workflow.maxCostUsd, 2.5);
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { confirmAboveUsd: 1 } }).workflow.confirmAboveUsd, 1);
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { workflow: { maxCostUsd: null } }).workflow.maxCostUsd, null);
+
+    // Zero is a configuration mistake, not a budget: it forbids the first turn.
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxCostUsd: 0 } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { maxCostUsd: -1 } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { workflow: { confirmAboveUsd: '5' } }), RelayError);
+  });
+
   it('rejects a malformed test command', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { tests: { command: 'npm test' } }), RelayError);
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { tests: { command: [] } }), RelayError);

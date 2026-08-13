@@ -43,6 +43,14 @@ function evalBaseConfig(): RelayConfig {
   config.github.autoPush = false;
   config.github.autoPr = false;
   config.github.autoMerge = false;
+
+  // Neither money gate belongs in a measurement. A per-run ceiling would stop
+  // the expensive arms part-way and the cheap ones never, which is a bias
+  // dressed as a result; a confirmation threshold would put a prompt nobody is
+  // watching in front of run 94 of 180. The eval asks about its whole cost
+  // once, before it starts, and that is the only question it asks.
+  config.workflow.maxCostUsd = null;
+  config.workflow.confirmAboveUsd = null;
   return config;
 }
 

@@ -2,7 +2,15 @@ import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
-import { RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
+import type { IssueProvider } from '../../github/types.ts';
+import {
+  LocalIssueProvider,
+  composeTaskInEditor,
+  readTaskFile,
+  taskFromPrompt,
+  type LocalTask,
+} from '../../issues/local.ts';
+import { listRuns, RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
 import {
   DELIVERY_POLICIES,
   isDeliveryPolicy,
@@ -13,23 +21,31 @@ import {
 import { WorkflowEngine } from '../../workflow/engine.ts';
 import { resolveCeiling, shortfall } from '../../workflow/delivery.ts';
 import { delivering } from '../../workflow/phases/delivery.ts';
-import type { RunObserver } from '../../workflow/observer.ts';
+import type { RunDisplay, RunObserver } from '../../workflow/observer.ts';
 import { renderSummary } from '../../workflow/summary.ts';
 import { createRunState, type DeliveryStep, type RunState } from '../../workflow/state.ts';
 import { displayPhasesFor, isTerminal, phaseLabel, phaseRole } from '../../workflow/phases.ts';
 import { failedPhase, phaseTimings } from '../../workflow/timeline.ts';
-import { formatUsage } from '../../workflow/usage.ts';
+import { estimateRun, exceedsThreshold, type RunEstimate } from '../../workflow/estimate.ts';
+import { formatCost, formatUsage, unpricedTurns } from '../../workflow/usage.ts';
 import type { EngineContext } from '../../workflow/context.ts';
 import { RunRenderer } from '../../ui/renderer.ts';
+import { Prompter, isPromptCancelled, type PromptSession } from '../../ui/prompt.ts';
 import { glyphs } from '../../ui/theme.ts';
 import { formatDuration } from '../../util/text.ts';
 import { createCliContext, type CliContext } from '../context.ts';
 import { offerDelivery } from '../mergeOffer.ts';
+import { EXIT, exitCodeForRun } from '../exit.ts';
+import { emitJson } from '../json.ts';
+import { runToJson } from '../runJson.ts';
+import { RunJsonStream } from '../runStream.ts';
+import { landingOf } from './inspect.ts';
 import {
   changeCount,
   command,
   theme,
   dim,
+  facts,
   failure,
   hint,
   out,
@@ -66,6 +82,89 @@ export interface RunOptions {
   parallelTests?: boolean;
   /** `--tuff`: write this run's pull request, commits and comments like a human. */
   tuff?: boolean;
+  /** `--json`: stream the run as JSON lines instead of drawing a dashboard. */
+  json?: boolean;
+  /** `--max-cost <usd>`: stop the run at the first phase boundary past this. */
+  maxCost?: string;
+  /** `--prompt <text>`: the task itself, with no tracker in the way. */
+  prompt?: string;
+  /** `--editor`: write the task in `$EDITOR`, the way `git commit` does. */
+  editor?: boolean;
+}
+
+/**
+ * Where a run's issue comes from: a tracker reference the provider resolves, or
+ * a task this machine already has in hand.
+ *
+ * Resolved before any state is written, so a missing file or an abandoned editor
+ * costs nothing and leaves nothing behind.
+ */
+export type IssueSource = { kind: 'tracker'; ref: string } | { kind: 'local'; task: LocalTask };
+
+export async function resolveIssueSource(
+  issueRef: string | undefined,
+  options: Pick<RunOptions, 'prompt' | 'editor'>,
+  cwd: string,
+): Promise<IssueSource | undefined> {
+  // An argument of whitespace is nobody asking for anything, and reads better
+  // as "nothing to work on" than as a file that does not exist.
+  const ref = issueRef?.trim() === '' ? undefined : issueRef?.trim();
+
+  const given = [ref !== undefined, options.prompt !== undefined, options.editor === true].filter(Boolean).length;
+  if (given === 0) {
+    throw new RelayError('Nothing to work on.', {
+      code: 'NO_ISSUE_REF',
+      hint: 'Pass an issue (`relay run 142`), a file (`relay run ./spec.md`), `--prompt "…"`, or `--editor`.',
+    });
+  }
+  if (given > 1) {
+    throw new RelayError('Pass one of an issue reference, `--prompt` or `--editor` — not several.', {
+      code: 'BAD_FLAG',
+    });
+  }
+
+  if (options.prompt !== undefined) return { kind: 'local', task: taskFromPrompt(options.prompt) };
+  if (options.editor === true) {
+    // The editor gets the terminal handed to it. Behind a pipe or in CI there is
+    // none to hand over, and the failure that produces is unreadable.
+    if (process.stdin.isTTY !== true) {
+      throw new RelayError('`--editor` needs a terminal to hand over to.', {
+        code: 'NOT_A_TTY',
+        hint: 'With no terminal, pass the task directly: `relay run --prompt "…"` or `relay run ./spec.md`.',
+      });
+    }
+    const task = await composeTaskInEditor({ cwd });
+    // An empty buffer is the user changing their mind, not a failure.
+    if (task === undefined) return undefined;
+    return { kind: 'local', task };
+  }
+
+  // A tracker reference wins over a file that happens to share its name:
+  // `relay run 142` has meant issue 142 since the first release, and that is
+  // not something a file called `142` in the working directory gets to change.
+  if (isTrackerRef(ref!)) return { kind: 'tracker', ref: ref! };
+  return { kind: 'local', task: await readTaskFile(ref!, cwd) };
+}
+
+/** Whether the provider would understand this, without making it throw to find out. */
+function isTrackerRef(ref: string): boolean {
+  try {
+    parseIssueRef(ref);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The provider this run reads its issue through. A run carrying its own task
+ * hands that straight back — including on `relay resume`, where a `--prompt` has
+ * no file to be read again from.
+ */
+export function issueProviderFor(cli: CliContext, state: RunState): IssueProvider {
+  return state.task === undefined
+    ? cli.issueProvider
+    : new LocalIssueProvider({ cwd: state.repository.root, task: state.task });
 }
 
 /** Applies `relay run` flags over the repository config for this run only. */
@@ -124,6 +223,7 @@ export function applyOverrides(config: RelayConfig, options: RunOptions): RelayC
   if (options.maxCodeRounds !== undefined) {
     merged.workflow.maxCodeReviewRounds = parseRounds(options.maxCodeRounds, '--max-code-rounds');
   }
+  if (options.maxCost !== undefined) merged.workflow.maxCostUsd = parseCost(options.maxCost, '--max-cost');
 
   if (merged.workflow.plan === 'review' && merged.agents.planner === merged.agents.planReviewer) {
     // Not fatal — the user may only have one CLI installed — but it removes the
@@ -157,18 +257,48 @@ function parseRounds(value: string, flag: string): number {
   return parsed;
 }
 
-export async function runCommand(issueRef: string, options: RunOptions): Promise<number> {
+/** A dollar amount from the command line. `$2.50` and `2.50` both mean $2.50. */
+export function parseCost(value: string, flag: string): number {
+  const parsed = Number.parseFloat(value.trim().replace(/^\$/, ''));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new RelayError(`${flag} must be a positive number of US dollars, e.g. ${flag} 2.50 (got "${value}").`, {
+      code: 'BAD_FLAG',
+    });
+  }
+  return parsed;
+}
+
+export async function runCommand(issueRef: string | undefined, options: RunOptions): Promise<number> {
   const cli = await createCliContext();
 
-  // Fail on a malformed reference before creating any state on disk.
-  parseIssueRef(issueRef);
+  // Resolve what the run is about before creating any state on disk: a
+  // malformed reference, a missing file and an abandoned editor all cost
+  // nothing and leave nothing behind.
+  const source = await resolveIssueSource(issueRef, options, process.cwd());
+  if (source === undefined) {
+    out(dim('Nothing written, so nothing was started.'));
+    return 0;
+  }
 
   const config = applyOverrides(cli.config, options);
+
+  // What this run will do and what runs of its shape have cost here before —
+  // said before the first agent turn, which is the only time it is useful.
+  const estimate = estimateRun(await listRuns(cli.repo.root), config.workflow);
+  printEstimate(estimate, config.workflow.maxCostUsd);
+  if (!(await confirmEstimate(estimate, config.workflow.confirmAboveUsd))) {
+    out(dim('  Not started.'));
+    return 130;
+  }
+
   const now = new Date();
   const state = createRunState({
     runId: createRunId(now),
     shortId: shortId(),
-    issueRef,
+    // For a local task the reference is where it came from — a path, `--prompt`
+    // or `--editor` — which is what `relay status` has to be able to show.
+    issueRef: source.kind === 'tracker' ? source.ref : source.task.origin,
+    ...(source.kind === 'tracker' ? {} : { task: source.task }),
     repository: {
       root: cli.repo.root,
       owner: cli.repo.owner,
@@ -179,7 +309,115 @@ export async function runCommand(issueRef: string, options: RunOptions): Promise
     now,
   });
 
-  return executeRun(cli, state, options);
+  return executeRun(cli, state, options, 'run');
+}
+
+/**
+ * What the run will do, and what it has cost to do it here before.
+ *
+ * The sample size is part of the estimate rather than a footnote: "about four
+ * minutes, from two runs" and "about four minutes, from thirty" are different
+ * claims, and only the reader can decide which one to plan around. A
+ * repository with no completed runs is told exactly that — an invented number
+ * would be worse than none, because it would be believed.
+ */
+export function printEstimate(estimate: RunEstimate, maxCostUsd: number | null = null): void {
+  section('Estimate');
+  out(dim(`  ${estimate.phases.map(phaseLabel).join(' → ')}`));
+
+  if (estimate.sampleSize === 0) {
+    hint(
+      estimate.unfinished === 0
+        ? 'No previous runs in this repository, so there is nothing to estimate from — this is the first.'
+        : `No completed runs in this repository (${estimate.unfinished} unfinished), so there is nothing to estimate from.`,
+    );
+    if (maxCostUsd !== null) hint(`It will stop itself past ${formatCost(maxCostUsd)}.`);
+    return;
+  }
+
+  const sample = `from ${estimate.sampleSize} completed run${estimate.sampleSize === 1 ? '' : 's'}`;
+  rows([
+    estimate.duration !== undefined && {
+      label: 'Duration',
+      value: facts([
+        `~${formatDuration(estimate.duration.median)}`,
+        `worst ${formatDuration(estimate.duration.worst)}`,
+        dim(sample),
+      ]),
+    },
+    {
+      label: 'Cost',
+      value:
+        estimate.cost === undefined
+          ? dim('no previous run reported one — the agents in this repository publish no price')
+          : facts([
+              `~${formatCost(estimate.cost.median)}`,
+              `worst ${formatCost(estimate.cost.worst)}`,
+              dim(
+                estimate.cost.sampleSize === estimate.sampleSize
+                  ? sample
+                  : `from ${estimate.cost.sampleSize} of ${estimate.sampleSize} runs that reported one`,
+              ),
+            ]),
+    },
+    maxCostUsd !== null && { label: 'Budget', value: `stops itself past ${formatCost(maxCostUsd)}` },
+  ]);
+
+  if (estimate.cost !== undefined && estimate.cost.unpriced > 0) {
+    hint(`${estimate.cost.unpriced} turn(s) in that sample reported no price, so the cost is a floor.`);
+  }
+  if (estimate.unobserved.length > 0) {
+    hint(`No history for ${estimate.unobserved.map(phaseLabel).join(', ')} — the estimate leaves them out.`);
+  }
+}
+
+/**
+ * The one question asked before a run, and only when the user asked for it.
+ *
+ * `workflow.confirmAboveUsd` means "never start a run above this without me",
+ * so a terminal nobody is watching is a refusal rather than a prompt — the
+ * same rule the merge offer follows, for the same reason.
+ */
+export async function confirmEstimate(
+  estimate: RunEstimate,
+  thresholdUsd: number | null,
+  deps: { prompter?: PromptSession } = {},
+): Promise<boolean> {
+  const cost = estimate.cost;
+  if (cost === undefined || thresholdUsd === null || !exceedsThreshold(estimate, thresholdUsd)) return true;
+
+  const owned = deps.prompter === undefined;
+  const prompter = deps.prompter ?? new Prompter();
+
+  try {
+    if (!prompter.interactive) {
+      throw new RelayError(
+        `Runs of this shape cost ${formatCost(cost.median)} here, above the ` +
+          `${formatCost(thresholdUsd)} you asked to be consulted about — and this is not a terminal, ` +
+          'so there is nobody to ask.',
+        {
+          code: 'COST_NOT_CONFIRMED',
+          hint:
+            'Start it from a terminal, or raise workflow.confirmAboveUsd in .relay/config.json ' +
+            '(null removes the question entirely).',
+        },
+      );
+    }
+
+    out();
+    // Enter is "no": the threshold exists because this run is expensive enough
+    // that its author wanted to be stopped, not nudged.
+    return await prompter.confirm(
+      `  Runs of this shape cost about ${formatCost(cost.median)} here, worst ` +
+        `${formatCost(cost.worst)}. Start it?`,
+      false,
+    );
+  } catch (error) {
+    if (isPromptCancelled(error)) return false;
+    throw error;
+  } finally {
+    if (owned) prompter.close();
+  }
 }
 
 export async function resumeCommand(runRef: string, options: RunOptions): Promise<number> {
@@ -194,6 +432,9 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
   }
   if (options.deliver !== undefined) previous.config.workflow.deliver = parseDeliver(options.deliver);
   if (options.offerMerge === false) previous.config.workflow.offerMerge = false;
+  // A budget applies from here on, and the cost already spent counts against
+  // it: resuming past a cap the run has already breached would defeat it.
+  if (options.maxCost !== undefined) previous.config.workflow.maxCostUsd = parseCost(options.maxCost, '--max-cost');
   // The phases this run will take are already decided, but what it writes on
   // its way out is not: a resume is allowed to change the voice.
   if (options.tuff === true) previous.config.workflow.typos = true;
@@ -203,7 +444,7 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
       // Nothing left to run, but delivery may still have something to do:
       // a push that failed, or a policy that has been raised since.
       out(`Run ${previous.runId} already completed.`);
-      return deliverRun(previous);
+      return deliverRun(previous, { command: 'resume', ...(options.json === true ? { json: true } : {}) });
     }
     // A failed or cancelled run resumes from the phase it died in, keeping its
     // worktree, sessions and review history.
@@ -215,11 +456,13 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
     previous.phase = retryFrom;
     delete previous.error;
     delete previous.finishedAt;
+    // Whatever stopped it last time is history; this attempt records its own.
+    delete previous.stopped;
   } else {
     out(dim(`Resuming ${previous.runId} from ${previous.phase}.`));
   }
 
-  return executeRun(cli, previous, options);
+  return executeRun(cli, previous, options, 'resume');
 }
 
 /**
@@ -230,9 +473,13 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
  * push, or the policy was `branch` on Friday and is `pr` on Monday. It is the
  * same phase, with the same gates, driven from outside the engine.
  */
-export async function deliverRun(state: RunState, options: { policy?: DeliveryPolicy } = {}): Promise<number> {
+export async function deliverRun(
+  state: RunState,
+  options: { policy?: DeliveryPolicy; json?: boolean; command?: string } = {},
+): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   if (options.policy !== undefined) state.config.workflow.deliver = options.policy;
+  const json = options.json === true;
 
   await delivering({ state, store, observer: cliObserver, signal: new AbortController().signal });
   await store.writeArtifact(RUN_FILES.summary, renderSummary(state));
@@ -241,9 +488,17 @@ export async function deliverRun(state: RunState, options: { policy?: DeliveryPo
   // Reported after the fact, so the ledger describes what just happened rather
   // than what the last run left behind.
   printOutcome(state, store);
-  await offerDelivery(state, store, { observer: cliObserver });
+  // The one interactive step there is. Whatever is parsing a document is not at
+  // a terminal by definition, so `--json` never asks and never blocks on it.
+  if (!json) await offerDelivery(state, store, { observer: cliObserver });
   printNextSteps(state, store);
-  return state.delivery?.steps.some((step) => step.status === 'failed') === true ? 1 : 0;
+
+  // Read from git rather than assumed: delivery may have committed the work, or
+  // may have been unable to, and only the branch itself can say which.
+  const landing = await landingOf(state.repository.root, state);
+  const code = exitCodeForRun(state, landing);
+  if (json) emitJson(options.command ?? 'deliver', { exitCode: code, run: runToJson(state, { landing }) });
+  return code;
 }
 
 /** Minimal observer for the phases run outside the live renderer. */
@@ -255,51 +510,71 @@ const cliObserver: RunObserver = {
   warn: (text) => out(warning(`  ${text}`)),
 };
 
-async function executeRun(cli: CliContext, state: RunState, options: RunOptions): Promise<number> {
+async function executeRun(
+  cli: CliContext,
+  state: RunState,
+  options: RunOptions,
+  command: 'run' | 'resume',
+): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   const controller = new AbortController();
+  const json = options.json === true;
 
-  const renderer = new RunRenderer({
-    // The renderer supplies the mark; this is only what the run is about.
-    title: state.issue === undefined ? `Issue ${state.issueRef}` : `Issue #${state.issue.number}`,
-    subtitle: state.issue?.title ?? `run ${state.runId}`,
-    agentNames: {
-      planner: state.config.agents.planner,
-      planReviewer: state.config.agents.planReviewer,
-      implementer: state.config.agents.implementer,
-      codeReviewer: state.config.agents.codeReviewer,
-    },
-    phases: displayPhasesFor(state.config.workflow),
-    ...(options.verbose === true ? { verbose: true } : {}),
-  });
+  // Both displays watch the same engine through the same interface, so nothing
+  // downstream of here knows or cares which one is attached.
+  const stream = json
+    ? new RunJsonStream({ state, command, ...(options.verbose === true ? { verbose: true } : {}) })
+    : undefined;
+  const display: RunDisplay =
+    stream ??
+    new RunRenderer({
+      // The renderer supplies the mark; this is only what the run is about. A
+      // task with no number is named after where it came from — `./spec.md`,
+      // `--prompt` — because `Issue undefined` says less than nothing.
+      title:
+        state.issue !== undefined && state.issue.number !== null
+          ? `Issue #${state.issue.number}`
+          : state.task !== undefined
+            ? state.task.origin
+            : `Issue ${state.issueRef}`,
+      subtitle: state.issue?.title ?? state.task?.title ?? `run ${state.runId}`,
+      agentNames: {
+        planner: state.config.agents.planner,
+        planReviewer: state.config.agents.planReviewer,
+        implementer: state.config.agents.implementer,
+        codeReviewer: state.config.agents.codeReviewer,
+      },
+      phases: displayPhasesFor(state.config.workflow),
+      ...(options.verbose === true ? { verbose: true } : {}),
+    });
 
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight.
   let interrupted = false;
   const onSigint = (): void => {
-    if (interrupted) process.exit(130);
+    if (interrupted) process.exit(EXIT.cancelled);
     interrupted = true;
-    renderer.warn('Cancelling… (press Ctrl-C again to force quit)');
+    display.warn('Cancelling… (press Ctrl-C again to force quit)');
     controller.abort();
     void Promise.all(Object.values(cli.harnesses).map((harness) => harness.cancel()));
   };
   process.on('SIGINT', onSigint);
 
-  renderer.start();
+  display.start();
 
   const context: EngineContext = {
     state,
     store,
     harnesses: cli.harnesses,
-    issueProvider: cli.issueProvider,
-    observer: renderer,
+    issueProvider: issueProviderFor(cli, state),
+    observer: display,
     signal: controller.signal,
   };
 
   let finalState: RunState;
   try {
     finalState = await new WorkflowEngine(context).run();
-    renderer.finish(finalState.phase);
+    display.finish(finalState.phase);
   } finally {
     process.off('SIGINT', onSigint);
   }
@@ -307,15 +582,15 @@ async function executeRun(cli: CliContext, state: RunState, options: RunOptions)
   printOutcome(finalState, store);
 
   // Delivery took it as far as the policy allows on its own. Landing it is the
-  // one call left, and this is the moment its author is still watching.
-  await offerDelivery(finalState, store);
+  // one call left, and this is the moment its author is still watching — which
+  // a run being piped into something is not, so `--json` never asks.
+  if (!json) await offerDelivery(finalState, store);
   printNextSteps(finalState, store);
 
-  if (finalState.phase === 'CANCELLED') return 130;
-  if (finalState.phase !== 'COMPLETE') return 1;
-  // The run worked; a delivery step that broke did not. That distinction is
-  // invisible to a script unless the exit code carries it.
-  return finalState.delivery?.steps.some((step) => step.status === 'failed') === true ? 1 : 0;
+  const landing = await landingOf(state.repository.root, finalState);
+  const code = exitCodeForRun(finalState, landing);
+  stream?.summary(runToJson(finalState, { landing }), code);
+  return code;
 }
 
 /**
@@ -330,7 +605,12 @@ export function printOutcome(state: RunState, store: RunStore): void {
   if (state.phase === 'COMPLETE') {
     out(success('Run complete') + dim(` in ${formatDuration(elapsed)}`));
   } else if (state.phase === 'CANCELLED') {
-    out(warning('Run cancelled') + dim(` after ${formatDuration(elapsed)}`));
+    const stopped = state.stopped;
+    out(
+      warning(stopped?.reason === 'budget' ? 'Run stopped by its budget' : 'Run cancelled') +
+        dim(` after ${formatDuration(elapsed)}`),
+    );
+    if (stopped?.reason === 'budget') out(`  ${stopped.detail}. Nothing was published.`);
   } else {
     printFailure(state);
   }
@@ -353,7 +633,7 @@ export function printOutcome(state: RunState, store: RunStore): void {
         (reviewsCode(state.config) ? `code ${state.rounds.codeReview} round(s)` : warning('code review skipped')),
     },
     commitRow(state),
-    state.usage !== undefined && { label: 'Usage', value: formatUsage(state.usage.total) },
+    state.usage !== undefined && { label: 'Usage', value: usageLine(state) },
     { label: 'Run state', value: store.dir },
   ]);
 
@@ -381,14 +661,19 @@ export function printDelivery(state: RunState): void {
     ),
   );
 
-  rows(
-    delivery.steps.map((step) => ({
+  const link = delivery.issueLink;
+  rows([
+    ...delivery.steps.map((step) => ({
       label:
         `${step.status === 'done' ? success(marks.ok) : step.status === 'failed' ? failure(marks.failed) : dim(marks.bullet)} ` +
         stepLabel(step.step),
       value: step.status === 'done' ? step.detail : step.status === 'failed' ? failure(step.detail) : dim(step.detail),
     })),
-  );
+    link !== undefined && {
+      label: `${link.status === 'done' ? success(marks.ok) : dim(marks.bullet)} Issue link`,
+      value: link.status === 'done' ? link.detail : dim(link.detail),
+    },
+  ]);
 }
 
 function stepLabel(step: DeliveryStep): string {
@@ -485,6 +770,18 @@ function printPhases(state: RunState): void {
       value: formatDuration(ms) + (visits > 1 ? dim(`  ${visits} rounds`) : ''),
     })),
   );
+}
+
+/**
+ * Tokens, cost and the caveat that goes with them. A run whose Codex turns
+ * published no price has a real cost that is higher than the one printed, and
+ * a number presented without that is a number read as the bill.
+ */
+function usageLine(state: RunState): string {
+  const usage = state.usage;
+  if (usage === undefined) return dim('none reported');
+  const unpriced = unpricedTurns(usage.total);
+  return formatUsage(usage.total) + (unpriced === 0 ? '' : dim(`  (${unpriced} turn(s) reported no cost)`));
 }
 
 function testsLine(state: RunState): string {

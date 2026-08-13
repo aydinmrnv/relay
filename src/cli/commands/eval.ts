@@ -39,6 +39,7 @@ import { verifyFixture } from '../../eval/grade.ts';
 import { planTasks, runEvalTasks, type EvalProgressObserver, type EvalTask } from '../../eval/harness.ts';
 import {
   aggregate,
+  aggregateAll,
   comparisonVerdicts,
   loadResults,
   RESULT_COLUMNS,
@@ -64,6 +65,8 @@ import { formatCost } from '../../workflow/usage.ts';
 import { Prompter } from '../../ui/prompt.ts';
 import { glyphs } from '../../ui/theme.ts';
 import { createCliContext } from '../context.ts';
+import { EXIT } from '../exit.ts';
+import { emitJson } from '../json.ts';
 import {
   bold,
   command,
@@ -74,7 +77,6 @@ import {
   heading,
   hint,
   out,
-  raw,
   rows,
   section,
   success,
@@ -158,8 +160,12 @@ export async function evalCommand(options: EvalOptions = {}): Promise<number> {
   if (options.report === true) {
     const sets = await loadResults(outDir);
     const path = await writeResultsIndex(outDir, sets);
+    if (options.json === true) {
+      emitJson('eval', { report: path, sessions: sets.length, aggregates: aggregateAll(sets) });
+      return sets.length === 0 ? EXIT.error : EXIT.success;
+    }
     out(`Wrote ${path} from ${pluralize(sets.length, 'recorded session')}.`);
-    return sets.length === 0 ? 1 : 0;
+    return sets.length === 0 ? EXIT.error : EXIT.success;
   }
 
   const fixturesDir = options.fixtures ?? defaultFixturesDir();
@@ -189,13 +195,19 @@ export async function evalCommand(options: EvalOptions = {}): Promise<number> {
     calibration,
   });
 
+  // The plan goes to stderr under `--json`, like every other command's chrome,
+  // so a `--dry-run --json` estimate is a document a script can read.
   printPlan({ fixtures, configs, repeats, concurrency, estimate, models, outDir, fixturesDir });
 
   if (options.dryRun === true) {
+    if (options.json === true) {
+      emitJson('eval', { dryRun: true, estimate, models, fixtures: fixtures.length, repeats, concurrency });
+      return EXIT.success;
+    }
     out();
     hint('Dry run: nothing was executed. Drop --dry-run to run it.');
     out();
-    return 0;
+    return EXIT.success;
   }
 
   if (!(await confirm(estimate, options.yes === true))) {
@@ -203,7 +215,8 @@ export async function evalCommand(options: EvalOptions = {}): Promise<number> {
     out(warning('Not run.'));
     hint('Pass --yes to run it without being asked, or --dry-run to see the estimate alone.');
     out();
-    return 1;
+    // Not a failure of the eval, but the command did not do what it was asked.
+    return EXIT.error;
   }
 
   return execute({ cli, fixtures, configs, repeats, concurrency, models, outDir, options });
@@ -442,17 +455,18 @@ async function execute(view: ExecuteView): Promise<number> {
   const resultsPath = await writeResults(view.outDir, results);
   const indexPath = await writeResultsIndex(view.outDir, await loadResults(view.outDir));
 
-  if (view.options.json === true) {
-    raw(JSON.stringify(results, null, 2));
-    return 0;
-  }
-
-  printResults(results, resultsPath, indexPath);
-
   // A sweep in which nothing could be graded produced no evidence, and a script
   // that trusted the exit code would publish a table of empty cells.
   const graded = outcomes.filter((outcome) => outcome.grade.ungraded === undefined);
-  return graded.length === 0 ? 1 : 0;
+  const code = graded.length === 0 ? EXIT.error : EXIT.success;
+
+  if (view.options.json === true) {
+    emitJson('eval', { results, aggregates: aggregate(results), report: indexPath, raw: resultsPath });
+    return code;
+  }
+
+  printResults(results, resultsPath, indexPath);
+  return code;
 }
 
 function progressObserver(): EvalProgressObserver {

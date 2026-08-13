@@ -6,6 +6,7 @@ import type { DeliveryPolicy } from '../../storage/config.ts';
 import { errorMessage, isRelayError } from '../../util/errors.ts';
 import type { EngineContext, PhaseResult } from '../context.ts';
 import {
+  issueLinkFor,
   labelFor,
   mergesRemotely,
   planDelivery,
@@ -83,7 +84,15 @@ export async function delivering(context: DeliveryContext): Promise<PhaseResult>
 
   const reached = reachedPolicy(state);
   const previousCleanup = state.delivery?.cleanup;
-  state.delivery = { policy, reached, steps, at, ...(previousCleanup === undefined ? {} : { cleanup: previousCleanup }) };
+  const link = issueLinkFor(state);
+  state.delivery = {
+    policy,
+    reached,
+    steps,
+    at,
+    ...(previousCleanup === undefined ? {} : { cleanup: previousCleanup }),
+    ...(link === undefined ? {} : { issueLink: { ...link, at: now() } }),
+  };
 
   if (state.merge?.via === 'pull-request' && state.pullRequest?.createdByRun === true && state.config.github.deleteBranchOnMerge) {
     await cleanupMergedRun(context);
