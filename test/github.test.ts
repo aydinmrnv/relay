@@ -222,6 +222,34 @@ describe('pull request drafts', () => {
     assert.match(body, /src\/a\.ts \| \+4 -1/);
   });
 
+  it('says plainly when no second model read the diff', () => {
+    const state = run();
+    state.config.workflow.reviewCode = false;
+    state.rounds.codeReview = 0;
+
+    const body = pullRequestDraft(state).body;
+    assert.match(body, /Code review: \*\*none\*\*/);
+    assert.doesNotMatch(body, /Code review: 0 round/);
+  });
+
+  it('writes the pull request with typos under --tuff, without breaking anything parsed', () => {
+    const state = run();
+    state.config.workflow.typos = true;
+
+    const draft = pullRequestDraft(state, '# Approved\nDo the thing.');
+    const plain = pullRequestDraft(run(), '# Approved\nDo the thing.');
+
+    assert.notEqual(draft.body, plain.body);
+    // The parts GitHub and git read are the parts that must survive verbatim.
+    assert.match(draft.body, /Closes #13/);
+    assert.match(draft.body, /`npm test`/);
+    assert.equal(draft.base, 'main');
+    assert.equal(draft.head, 'relay/13-ce2ubs');
+
+    // Deterministic: `relay deliver` re-runs this for the same run.
+    assert.equal(pullRequestDraft(state, '# Approved\nDo the thing.').body, draft.body);
+  });
+
   it('reads the number out of the URL gh reports', () => {
     assert.equal(pullRequestNumber('https://github.com/acme/widgets/pull/21'), 21);
     assert.equal(pullRequestNumber('https://github.com/acme/widgets'), null);

@@ -355,6 +355,52 @@ export interface ImplementationPromptOptions extends PromptContext {
   testCommand?: readonly string[];
   /** Relay runs the suite itself the moment this turn ends. */
   relayRunsTests?: boolean;
+  /** Another agent will review this diff. False on a `--fast` run. */
+  reviewed?: boolean;
+  /** `--tuff`: this run's writing is meant to read as human. */
+  typos?: boolean;
+}
+
+/**
+ * What `--tuff` asks the writing agents for.
+ *
+ * The orchestrator can mistype its own pull request and commit messages on its
+ * own, but the comments in the diff are written by the agent, so this is the
+ * only place they can be asked for. The boundary is the same one Relay applies
+ * to its own text: prose only, never anything the code or its tooling reads.
+ */
+const HOUSE_STYLE = [
+  '## Writing style for this run',
+  '',
+  'Write the comments in this change the way a person types them at speed: plain sentences, with the ',
+  'occasional typo left in rather than corrected. Do not sound like generated text.',
+  '',
+  'That applies to comment prose and nothing else. Identifiers, string literals, API names, file paths, ',
+  'test names and expected values, and any comment a tool parses (directives, pragmas, doc annotations) ',
+  'must all be spelled correctly — a typo there is a bug, not a voice.',
+].join('\n');
+
+function houseStyle(options: { typos?: boolean }): string[] {
+  return options.typos === true ? [HOUSE_STYLE, ''] : [];
+}
+
+/**
+ * Who reads this diff next. On a `--fast` run the answer is nobody, and an
+ * implementer that believes a reviewer is coming behind it leaves work for a
+ * turn that will never happen.
+ */
+function reviewExpectation(options: { reviewed?: boolean }): string[] {
+  if (options.reviewed === false) {
+    return [
+      'There is no code review on this run: no other agent reads this diff. The tests and you are the ',
+      'only checks it gets, so verify your own work before you finish and do not leave anything for a ',
+      'reviewer to catch.',
+    ];
+  }
+  return [
+    'Your diff will be reviewed by a different agent, which will read the actual git diff rather than your ',
+    'description of it, so what you claim and what you changed must match.',
+  ];
 }
 
 /**
@@ -404,8 +450,8 @@ export function buildImplementationPrompt(options: ImplementationPromptOptions):
     'Make the changes directly in your working directory. Follow the repository\'s existing conventions ',
     'and reuse its existing abstractions rather than introducing parallel ones.',
     '',
-    'Write the tests the plan calls for. Your diff will be reviewed by a different agent, which will read ',
-    'the actual git diff rather than your description of it, so what you claim and what you changed must match.',
+    'Write the tests the plan calls for.',
+    ...reviewExpectation(options),
     '',
     ...verificationInstruction(options),
     '',
@@ -413,6 +459,7 @@ export function buildImplementationPrompt(options: ImplementationPromptOptions):
     '',
     'If the plan turns out to be wrong or impossible, implement what you can and state the deviation clearly.',
     '',
+    ...houseStyle(options),
     '## Required output format',
     '',
     'When you are done, emit a short report between these markers:',
@@ -452,14 +499,23 @@ export function buildInlinePlanPrompt(options: ImplementationPromptOptions): str
     '2. Implement it, following the repository\'s existing conventions and reusing its abstractions, ',
     '   and write the tests the change calls for.',
     '',
-    'A different agent will then review your actual git diff against the plan you state below, so state ',
-    'the plan you really followed. If you change approach part-way, say so in the plan rather than ',
-    'leaving the reviewer to discover it.',
+    ...(options.reviewed === false
+      ? [
+          'Nothing downstream reviews this: there is no plan reviewer and no code reviewer on this run. ',
+          'State the plan you really followed anyway — it is what the person reading this run will judge ',
+          'the diff against — and be your own reviewer before you finish.',
+        ]
+      : [
+          'A different agent will then review your actual git diff against the plan you state below, so state ',
+          'the plan you really followed. If you change approach part-way, say so in the plan rather than ',
+          'leaving the reviewer to discover it.',
+        ]),
     '',
     ...verificationInstruction(options),
     '',
     EFFICIENCY,
     '',
+    ...houseStyle(options),
     '## Required output format',
     '',
     'Emit BOTH sections below, in this order.',
@@ -577,6 +633,8 @@ export function buildCodeReviewPrompt(options: CodeReviewPromptOptions): string 
 export interface CodeRevisionPromptOptions extends RevisionPromptOptions {
   /** Relay runs the suite itself once this turn ends. */
   relayRunsTests?: boolean;
+  /** `--tuff`: this run's writing is meant to read as human. */
+  typos?: boolean;
 }
 
 export function buildCodeRevisionPrompt(options: CodeRevisionPromptOptions): string {
@@ -603,6 +661,7 @@ export function buildCodeRevisionPrompt(options: CodeRevisionPromptOptions): str
         ]
       : ['Re-run the tests afterwards if the repository has them.']),
     '',
+    ...houseStyle(options),
     '## Required output format',
     '',
     'Emit BOTH sections below, in this order.',

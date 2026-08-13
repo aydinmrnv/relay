@@ -75,8 +75,15 @@ describe('phase machine', () => {
   it('forbids skipping the work', () => {
     assert.equal(canTransition('PLANNING', 'COMPLETE'), false);
     assert.equal(canTransition('PLANNING', 'IMPLEMENTING'), false);
-    assert.equal(canTransition('IMPLEMENTING', 'TESTING'), false);
+    assert.equal(canTransition('IMPLEMENTING', 'DELIVERING'), false);
     assert.equal(canTransition('COMPLETE', 'PLANNING'), false);
+  });
+
+  it('lets a run with no code review go straight from the diff to the tests', () => {
+    // `--fast` / `workflow.reviewCode: false`. The edge exists; whether a run
+    // takes it is the implementation phase's decision, not the table's.
+    assert.ok(canTransition('IMPLEMENTING', 'TESTING'));
+    assert.ok(canTransition('IMPLEMENTING', 'REVIEWING_CODE'));
   });
 
   it('folds revision phases into the review step for display', () => {

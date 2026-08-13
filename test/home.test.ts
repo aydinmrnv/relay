@@ -154,6 +154,18 @@ it('uses package.json for version and groups explicit root help', async () => {
   for (const heading of ['Setup:', 'Run:', 'Inspect:', 'Deliver:']) assert.match(help, new RegExp(heading));
 });
 
+it('gives the run flags people type most a short form', () => {
+  const program = buildProgram('test');
+  const run = program.commands.find((command) => command.name() === 'run');
+  const parsed = run?.parseOptions(['-f', '-m', '--tuff']);
+  const options = run?.opts() ?? {};
+
+  assert.deepEqual(parsed?.unknown, [], '-f, -m and --tuff must all be real options on `relay run`');
+  assert.equal(options['fast'], true);
+  assert.equal(options['merge'], true);
+  assert.equal(options['tuff'], true);
+});
+
 it('renders bare non-interactive help byte-for-byte like Commander error help at the stderr width', () => {
   const program = buildProgram('test');
   const width = 117;

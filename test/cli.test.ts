@@ -32,6 +32,40 @@ describe('delivery CLI flags', () => {
   });
 });
 
+describe('workflow CLI flags', () => {
+  it('--fast drops both reviews, not just the plan one', () => {
+    const config = applyOverrides(DEFAULT_CONFIG, { fast: true });
+
+    assert.equal(config.workflow.plan, 'inline');
+    assert.equal(config.workflow.reviewCode, false);
+  });
+
+  it('leaves both reviews on by default', () => {
+    const config = applyOverrides(DEFAULT_CONFIG, {});
+
+    assert.equal(config.workflow.plan, 'review');
+    assert.equal(config.workflow.reviewCode, true);
+    assert.equal(config.workflow.typos, false);
+  });
+
+  it('--tuff turns on the typos, and nothing else', () => {
+    const config = applyOverrides(DEFAULT_CONFIG, { tuff: true });
+
+    assert.equal(config.workflow.typos, true);
+    assert.equal(config.workflow.plan, 'review');
+    assert.equal(config.workflow.reviewCode, true);
+  });
+
+  it('combines the fast, merge and typo flags', () => {
+    const config = applyOverrides(DEFAULT_CONFIG, { fast: true, merge: true, tuff: true });
+
+    assert.equal(config.workflow.plan, 'inline');
+    assert.equal(config.workflow.reviewCode, false);
+    assert.equal(config.workflow.deliver, 'merge');
+    assert.equal(config.workflow.typos, true);
+  });
+});
+
 /** A run carrying every optional field, so the JSON contract is exercised in full. */
 function populatedRun(root: string, createdAt = new Date('2026-08-11T10:00:00Z')): RunState {
   const state = createRunState({
