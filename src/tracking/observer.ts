@@ -3,6 +3,8 @@ import type { Role } from '../storage/config.ts';
 import type { Phase } from '../workflow/phases.ts';
 import { phaseRole } from '../workflow/phases.ts';
 import type { RunObserver } from '../workflow/observer.ts';
+import type { TestStatusUpdate } from '../workflow/observer.ts';
+import type { ReviewRound } from '../reviews/types.ts';
 import type { RunState } from '../workflow/state.ts';
 import type { WakatimeTracker } from './wakatime.ts';
 
@@ -36,6 +38,8 @@ export class TrackingObserver implements RunObserver {
 
   roleStatus(role: Role, status: string): void { this.observer.roleStatus(role, status); }
   agentEvent(role: Role, event: AgentEvent): void { this.observer.agentEvent(role, event); }
+  reviewCompleted(round: ReviewRound): void { this.observer.reviewCompleted(round); }
+  testStatus(update: TestStatusUpdate): void { this.observer.testStatus(update); }
   note(text: string): void { this.observer.note(text); }
   warn(text: string): void { this.observer.warn(text); }
 

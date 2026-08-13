@@ -1,6 +1,8 @@
 import type { AgentEvent } from '../agents/types.ts';
 import type { Role } from '../storage/config.ts';
 import type { RunDisplay } from '../workflow/observer.ts';
+import type { TestStatusUpdate } from '../workflow/observer.ts';
+import type { ReviewRound } from '../reviews/types.ts';
 import { phaseLabel, type Phase } from '../workflow/phases.ts';
 import type { RunState } from '../workflow/state.ts';
 import { emitJsonLine } from './json.ts';
@@ -128,6 +130,8 @@ export class RunJsonStream implements RunDisplay {
    * bury the phase boundaries this format exists to report.
    */
   roleStatus(): void {}
+  reviewCompleted(_round: ReviewRound): void {}
+  testStatus(_update: TestStatusUpdate): void {}
 
   agentEvent(role: Role, event: AgentEvent): void {
     if (this.options.verbose !== true) return;

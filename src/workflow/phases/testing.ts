@@ -36,6 +36,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
       at,
     };
     observer.note('Tests skipped: disabled in config.');
+    observer.testStatus({ phase: 'skipped', detail: 'disabled in config' });
     return { next: 'DELIVERING', note: 'tests disabled' };
   }
 
@@ -81,6 +82,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
       at,
     };
     observer.warn(`No test result: ${printable} was discovered but never completed.`);
+    observer.testStatus({ phase: 'skipped', concurrent: attempt.concurrent, detail: 'no result' });
     return { next: 'DELIVERING', note: 'tests did not run' };
   }
 
@@ -130,6 +132,7 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
   });
 
   if (execution.passed) {
+    observer.testStatus({ phase: 'passed', concurrent: attempt.concurrent, detail: formatDuration(execution.durationMs) });
     observer.note(`Tests passed in ${formatDuration(execution.durationMs)}.`);
     return { next: 'DELIVERING', note: 'tests passed' };
   }
@@ -139,5 +142,6 @@ export async function testing(context: EngineContext): Promise<PhaseResult> {
       ? `Tests timed out after ${formatDuration(execution.durationMs)}.`
       : `Tests failed (exit ${String(execution.exitCode)}). Output: ${store.path(outputFile)}`,
   );
+  observer.testStatus({ phase: 'failed', concurrent: attempt.concurrent, detail: `exit ${String(execution.exitCode)}` });
   return { next: 'DELIVERING', note: 'tests failed' };
 }

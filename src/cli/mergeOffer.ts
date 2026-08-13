@@ -199,6 +199,8 @@ const printingObserver: RunObserver = {
   phaseChanged() {},
   roleStatus() {},
   agentEvent() {},
+  reviewCompleted() {},
+  testStatus() {},
   note: (text) => out(`  ${text}`),
   warn: (text) => out(`  ${text}`),
 };

@@ -1,9 +1,13 @@
+import { basename } from 'node:path';
 import { describeEvent, type AgentEvent } from '../agents/types.ts';
+import { isBlocking, type ReviewRound } from '../reviews/types.ts';
 import type { Role } from '../storage/config.ts';
 import { DISPLAY_PHASES, displayPhaseFor, phaseLabel, phaseRole, type Phase } from '../workflow/phases.ts';
-import type { RunObserver } from '../workflow/observer.ts';
+import type { RunObserver, TestStatusUpdate } from '../workflow/observer.ts';
+import type { RunState } from '../workflow/state.ts';
+import { formatUsage, unpricedTurns } from '../workflow/usage.ts';
 import { formatDuration, oneLine } from '../util/text.ts';
-import { asciiSafe, detectTheme, fitWidth, glyphs, padVisible, paint, type Theme } from './theme.ts';
+import { asciiSafe, detectTheme, fitWidth, glyphs, padVisible, paint, truncateVisible, visibleWidth, type Theme } from './theme.ts';
 import { gauge, layoutWidth, panel, panelInnerWidth, statusBar } from './box.ts';
 import { logoBar } from './logo.ts';
 
@@ -19,6 +23,12 @@ const SPINNER_INTERVAL_MS = 120;
  */
 const TIMING_WIDTH = 7;
 
+interface TerminalInput extends NodeJS.ReadStream {
+  isTTY?: boolean;
+  isRaw?: boolean;
+  setRawMode?: (mode: boolean) => void;
+}
+
 export interface RunRendererOptions {
   title: string;
   subtitle?: string;
@@ -31,6 +41,10 @@ export interface RunRendererOptions {
   theme?: Theme;
   /** Injectable clock, so elapsed times are assertable in tests. */
   now?: () => number;
+  state?: RunState;
+  onStop?: () => void | Promise<void>;
+  onDetach?: () => void;
+  input?: TerminalInput;
 }
 
 /**
@@ -58,13 +72,22 @@ export class RunRenderer implements RunObserver {
   private readonly startedAt = new Map<Phase, number>();
   private readonly elapsed = new Map<Phase, number>();
 
-  private activity = '';
+  private activity: { text: string; at: number; priority: number } | undefined;
   private linesDrawn = 0;
+  private drawnWidths: number[] = [];
   private stopped = false;
   private spinnerFrame = 0;
   private spinnerTimer: NodeJS.Timeout | undefined;
   /** When the display opened, for the wall-clock in the footer. */
   private runStartedAt = 0;
+  private latestReview: ReviewRound | undefined;
+  private latestTest: TestStatusUpdate | undefined;
+  private verbose: boolean;
+  private readonly emittedFacts = new Set<string>();
+  private inputHandler: ((chunk: Buffer | string) => void) | undefined;
+  private resizeHandler: (() => void) | undefined;
+  private exitHandler: (() => void) | undefined;
+  private priorRaw: boolean | undefined;
 
   constructor(options: RunRendererOptions) {
     this.options = options;
@@ -72,6 +95,7 @@ export class RunRenderer implements RunObserver {
     this.theme = options.theme ?? detectTheme(this.stream);
     this.now = options.now ?? Date.now;
     this.phases = options.phases ?? DISPLAY_PHASES;
+    this.verbose = options.verbose === true;
     for (const phase of this.phases) this.status.set(phase, 'waiting');
   }
 
@@ -99,6 +123,7 @@ export class RunRenderer implements RunObserver {
       this.render();
     }, SPINNER_INTERVAL_MS);
     this.spinnerTimer.unref?.();
+    this.installTerminalHandlers();
   }
 
   phaseChanged(phase: Phase, detail?: string): void {
@@ -120,7 +145,7 @@ export class RunRenderer implements RunObserver {
     // its clock keeps running across the round rather than restarting.
     if (this.status.get(display) !== 'active') this.startedAt.set(display, this.now());
     this.status.set(display, 'active');
-    this.activity = '';
+    this.activity = undefined;
     this.roleDetail.delete(display);
 
     if (detail !== undefined) this.phaseDetail.set(display, detail);
@@ -129,6 +154,7 @@ export class RunRenderer implements RunObserver {
     if (!this.theme.interactive) {
       const suffix = detail === undefined ? '' : ` (${detail})`;
       this.write(`${phaseLabel(phase)}${suffix}…\n`);
+      if (phase === 'TESTING' || phase === 'DELIVERING') this.emitStateFacts();
     }
   }
 
@@ -142,7 +168,7 @@ export class RunRenderer implements RunObserver {
   }
 
   agentEvent(role: Role, event: AgentEvent): void {
-    if (this.options.verbose === true) {
+    if (this.verbose) {
       this.log(paint(this.theme, 'gray', `[${role}] ${JSON.stringify(event)}`));
       return;
     }
@@ -152,12 +178,28 @@ export class RunRenderer implements RunObserver {
     const summary = oneLine(describeEvent(event), 100);
     if (summary.length === 0) return;
 
-    this.activity = `${role}: ${summary}`;
+    const priority = event.type === 'file_changed' || event.type === 'command' || event.type === 'failed' || event.type === 'message' ? 2 : event.type === 'tool' ? 1 : 0;
+    if (this.activity === undefined || priority >= this.activity.priority || this.activity.priority < 2) {
+      this.activity = { text: `${role}: ${summary}`, at: this.now(), priority };
+    }
     if (this.theme.interactive) {
       this.render();
     } else if (event.type === 'command' || event.type === 'file_changed' || event.type === 'failed') {
-      this.write(`  ${this.activity}\n`);
+      this.write(`  ${this.activity?.text ?? ''}\n`);
     }
+  }
+
+  reviewCompleted(round: ReviewRound): void {
+    if (round.kind !== 'code') return;
+    this.latestReview = round;
+    this.render();
+    this.emitFact(`Findings: ${this.findingsText(round)}`);
+  }
+
+  testStatus(update: TestStatusUpdate): void {
+    this.latestTest = update;
+    this.render();
+    this.emitFact(`Tests: ${this.testText(update)}`);
   }
 
   note(text: string): void {
@@ -186,7 +228,7 @@ export class RunRenderer implements RunObserver {
       if (status === 'waiting' && finalPhase === 'COMPLETE') this.status.set(phase, 'done');
     }
 
-    this.activity = '';
+    this.activity = undefined;
     this.render();
     this.stopped = true;
     if (this.spinnerTimer !== undefined) {
@@ -194,6 +236,21 @@ export class RunRenderer implements RunObserver {
       this.spinnerTimer = undefined;
     }
     if (this.theme.interactive) this.write('\n');
+    this.teardown();
+  }
+
+  /** Restores terminal state; safe to call from a command's finally block. */
+  teardown(): void {
+    const input = this.options.input ?? process.stdin;
+    if (this.inputHandler !== undefined) input.off('data', this.inputHandler);
+    if (this.priorRaw !== undefined && input.setRawMode !== undefined) input.setRawMode(this.priorRaw);
+    if (this.inputHandler !== undefined) input.pause();
+    this.inputHandler = undefined;
+    this.priorRaw = undefined;
+    if (this.resizeHandler !== undefined) process.off('SIGWINCH', this.resizeHandler);
+    if (this.exitHandler !== undefined) process.off('exit', this.exitHandler);
+    this.resizeHandler = undefined;
+    this.exitHandler = undefined;
   }
 
   /** Stops a phase's clock, keeping whatever it had already accumulated. */
@@ -227,8 +284,11 @@ export class RunRenderer implements RunObserver {
   private clear(): void {
     if (!this.theme.interactive || this.linesDrawn === 0) return;
     // Move up over the live region and erase it, leaving logged lines intact.
-    this.stream.write(`\u001B[${this.linesDrawn}A\u001B[0J`);
+    const columns = Math.max(1, this.stream.columns ?? 80);
+    const rows = this.drawnWidths.reduce((sum, width) => sum + Math.max(1, Math.ceil(width / columns)), 0);
+    this.stream.write(`\u001B[${rows}A\u001B[0J`);
     this.linesDrawn = 0;
+    this.drawnWidths = [];
   }
 
   private draw(): void {
@@ -236,6 +296,7 @@ export class RunRenderer implements RunObserver {
     const lines = this.buildLines().map((line) => fitWidth(asciiSafe(line, this.theme), this.stream));
     this.stream.write(`${lines.join('\n')}\n`);
     this.linesDrawn = lines.length;
+    this.drawnWidths = lines.map(visibleWidth);
   }
 
   private width(): number {
@@ -284,12 +345,77 @@ export class RunRenderer implements RunObserver {
     });
 
     const footer: string[] = [];
-    if (this.activity.length > 0) {
-      footer.push(paint(this.theme, 'gray', `${marks.arrow} ${this.activity}`));
+    if (this.activity !== undefined) {
+      footer.push(paint(this.theme, 'gray', `${marks.arrow} ${this.activity.text} (${formatDuration(this.now() - this.activity.at)})`));
     }
     footer.push(this.progressLine(inner));
 
-    return panel({ theme: this.theme, width, title: 'Pipeline', body, footer });
+    const pipeline = panel({ theme: this.theme, width, title: 'Pipeline', body, footer });
+    const work = this.buildWorkLines(width);
+    return work.length === 0 ? pipeline : [...pipeline, ...work];
+  }
+
+  private buildWorkLines(width: number): string[] {
+    const rows: string[] = [];
+    const state = this.options.state;
+    if (state?.diff !== undefined) {
+      const diff = state.diff;
+      const files = diff.files.slice(0, 3).map((file) => basename(file)).join(', ');
+      rows.push(`Diff      +${diff.additions} −${diff.deletions} · ${diff.fileCount} file${diff.fileCount === 1 ? '' : 's'}${files.length === 0 ? '' : ` · ${truncateVisible(files, Math.max(8, panelInnerWidth(width) - 30))}`}`);
+    }
+    const review = this.latestReview ?? state?.reviews.filter((round) => round.kind === 'code').at(-1);
+    if (review !== undefined) rows.push(`Findings  ${this.findingsText(review)}`);
+    if (state?.usage !== undefined) {
+      const unpriced = unpricedTurns(state.usage.total);
+      rows.push(`Cost      ${formatUsage(state.usage.total)}${unpriced === 0 ? '' : ` · ${unpriced} turn${unpriced === 1 ? '' : 's'} unpriced`}`);
+    }
+    if (this.latestTest !== undefined) rows.push(`Tests     ${this.testText(this.latestTest)}`);
+    return rows.length === 0 ? [] : panel({ theme: this.theme, width, title: 'Work', body: rows });
+  }
+
+  private findingsText(round: ReviewRound): string {
+    const blocking = round.findings.filter(isBlocking).length;
+    return `${blocking} blocking · ${round.findings.length - blocking} non-blocking`;
+  }
+
+  private testText(update: TestStatusUpdate): string {
+    return `${update.phase}${update.concurrent ? ' (concurrent)' : ''}${update.detail === undefined ? '' : ` · ${update.detail}`}`;
+  }
+
+  private emitFact(text: string): void {
+    if (this.theme.interactive || this.emittedFacts.has(text)) return;
+    this.emittedFacts.add(text);
+    this.write(`${text}\n`);
+  }
+
+  private emitStateFacts(): void {
+    const state = this.options.state;
+    if (state?.diff !== undefined) this.emitFact(`Diff: +${state.diff.additions} −${state.diff.deletions} · ${state.diff.fileCount} file${state.diff.fileCount === 1 ? '' : 's'}`);
+    if (state?.usage !== undefined) {
+      const unpriced = unpricedTurns(state.usage.total);
+      this.emitFact(`Cost: ${formatUsage(state.usage.total)}${unpriced === 0 ? '' : ` · ${unpriced} turn${unpriced === 1 ? '' : 's'} unpriced`}`);
+    }
+  }
+
+  private installTerminalHandlers(): void {
+    this.resizeHandler = () => this.render();
+    process.on('SIGWINCH', this.resizeHandler);
+    this.exitHandler = () => this.teardown();
+    process.once('exit', this.exitHandler);
+    const input = this.options.input ?? process.stdin;
+    if (input.isTTY !== true || input.setRawMode === undefined) return;
+    this.priorRaw = input.isRaw;
+    input.setRawMode(true);
+    input.resume();
+    this.inputHandler = (chunk) => {
+      for (const key of chunk.toString()) {
+        if (key === 'v') { this.verbose = !this.verbose; this.render(); }
+        else if (key === 'd') this.log(this.options.state?.diff === undefined ? 'Diff: not available yet' : `Diff: +${this.options.state.diff.additions} −${this.options.state.diff.deletions} · ${this.options.state.diff.fileCount} files`);
+        else if (key === 's') { void this.options.onStop?.(); this.note('Stop requested.'); }
+        else if (key === 'q') { if (this.options.onDetach !== undefined) this.options.onDetach(); else this.note('Detach is not available yet.'); }
+      }
+    };
+    input.on('data', this.inputHandler);
   }
 
   /** `████░░░░  3/9 phases · 4m 2s` — how far in, and how long it has taken. */
