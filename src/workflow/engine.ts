@@ -14,6 +14,7 @@ import { implementing, reviewingCode, revisingCode } from './phases/implementati
 import { testing } from './phases/testing.ts';
 import { delivering } from './phases/delivery.ts';
 import { notifyRun } from '../notify/index.ts';
+import { notifyCompletion } from '../notify/completion.ts';
 
 type PhaseHandler = (context: EngineContext) => Promise<PhaseResult>;
 
@@ -83,7 +84,7 @@ export class WorkflowEngine {
         }
 
         observer.phaseChanged(state.phase, roundDetail(state));
-        await this.logPhase('phase_started');
+        await this.logPhase('phase_started', roundDetail(state));
 
         try {
           const result = await handler(this.context);
@@ -116,7 +117,13 @@ export class WorkflowEngine {
     }
 
     await this.writeSummary();
-    await notifyRun(this.context);
+    state.notification ??= {};
+    if (state.notification.completion?.outcome !== state.phase) {
+      state.notification.completion = { outcome: state.phase, attemptedAt: new Date().toISOString() };
+      await store.saveState(state);
+      await notifyRun(this.context);
+      await notifyCompletion(this.context);
+    }
     delete state.pid;
     await store.saveState(state);
     return state;

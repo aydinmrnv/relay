@@ -50,6 +50,7 @@ export async function homeSession(): Promise<number> {
 export async function runSession(issueRef: string | undefined, options: RunOptions = {}): Promise<number> {
   const deps = sessionDeps();
   const code = await deps.run(issueRef, options);
+  if (options.detach === true) return code;
   return relaySession(deps, options, { code });
 }
 
