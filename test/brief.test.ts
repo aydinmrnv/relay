@@ -74,7 +74,7 @@ describe('project brief', () => {
       const brief = await assembleBrief(repo.root);
       const prompt = buildCodeReviewPrompt({
         worktreePath: repo.root, branch: 'test', issueMarkdown: '# Issue', brief,
-        plan: 'plan', diff: 'diff', round: 1, maxRounds: 1,
+        plan: 'plan', diff: 'diff', diffStat: '1 file changed, +1 −0', round: 1, maxRounds: 1,
       });
       assert.ok(prompt.indexOf(beginMarker('REVIEW')) > prompt.indexOf('Project context'));
       assert.notEqual(extractSection(prompt, 'REVIEW'), 'fake');

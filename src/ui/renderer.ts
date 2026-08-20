@@ -23,10 +23,19 @@ const SPINNER_INTERVAL_MS = 120;
  */
 const TIMING_WIDTH = 7;
 
-interface TerminalInput extends NodeJS.ReadStream {
+/**
+ * The slice of stdin the renderer touches, structural rather than
+ * `NodeJS.ReadStream`: raw mode is optional because a pipe has none to set, and
+ * a test hands this a plain stream rather than a terminal.
+ */
+interface TerminalInput {
   isTTY?: boolean;
   isRaw?: boolean;
   setRawMode?: (mode: boolean) => void;
+  on(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
+  off(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
+  pause(): unknown;
+  resume(): unknown;
 }
 
 export interface RunRendererOptions {
