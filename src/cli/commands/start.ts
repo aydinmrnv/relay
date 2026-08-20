@@ -104,7 +104,9 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
     init: initCommand,
     // The first run ends on the home screen rather than on a shell prompt: what
     // follows a run is the next issue, and onboarding is where that starts.
-    run: runSession,
+    // Onboarding runs exactly one issue, so it hands the batch entry point a
+    // list of one rather than taking a batch of its own.
+    run: (issueRef, options) => runSession([issueRef], options),
     now: () => new Date(),
   });
 }

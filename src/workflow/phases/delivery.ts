@@ -1,5 +1,6 @@
 import { deleteRemoteBranch, hasRemote, mergeReadiness } from '../../git/publish.ts';
 import { removeWorktree } from '../../git/worktree.ts';
+import { acquireLock } from '../../git/lock.ts';
 import { resolveExecutable } from '../../process/runner.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import type { DeliveryPolicy } from '../../storage/config.ts';
@@ -44,6 +45,13 @@ export type DeliveryContext = Pick<EngineContext, 'state' | 'store' | 'observer'
  * without failing the run — the work is on the branch either way.
  */
 export async function delivering(context: DeliveryContext): Promise<PhaseResult> {
+  if (context.state.config.workflow.deliver === 'none') return deliveringUnlocked(context);
+  const lock = await acquireLock(context.state.repository.root, 'delivery', { signal: context.signal, runId: context.state.runId });
+  try { return await deliveringUnlocked(context); }
+  finally { await lock.release(); }
+}
+
+async function deliveringUnlocked(context: DeliveryContext): Promise<PhaseResult> {
   const { state, store, observer } = context;
   const policy = state.config.workflow.deliver;
   const at = new Date().toISOString();

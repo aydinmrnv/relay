@@ -70,6 +70,7 @@ export interface RelayConfig {
    */
   models: Partial<Record<AgentProvider | Role, string>>;
   workflow: {
+    maxConcurrentRuns: number;
     plan: PlanMode;
     /**
      * Whether the diff is reviewed by the other model before it is tested.
@@ -161,6 +162,7 @@ export interface RelayConfig {
     project: string | null;
     includeAgentPhases: boolean;
   };
+  retention: { artifactDays: number };
 }
 
 /**
@@ -178,6 +180,7 @@ export const DEFAULT_CONFIG: RelayConfig = {
   },
   models: {},
   workflow: {
+    maxConcurrentRuns: 1,
     plan: 'review',
     reviewCode: true,
     // Two rounds, not three: a round is a review turn plus a revision turn, and
@@ -224,6 +227,7 @@ export const DEFAULT_CONFIG: RelayConfig = {
     project: null,
     includeAgentPhases: true,
   },
+  retention: { artifactDays: 30 },
 };
 
 /** Old run snapshots predate this outward-facing opt-in. */
@@ -349,6 +353,9 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       'workflow.maxPlanReviewRounds',
       { min: 0, max: 10 },
     );
+    config.workflow.maxConcurrentRuns = readBoundedInt(
+      workflow['maxConcurrentRuns'], config.workflow.maxConcurrentRuns, 'workflow.maxConcurrentRuns', { min: 1, max: 32 },
+    );
     config.workflow.maxCodeReviewRounds = readBoundedInt(
       workflow['maxCodeReviewRounds'],
       config.workflow.maxCodeReviewRounds,
@@ -400,6 +407,14 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       if (workflow[key] === undefined) continue;
       config.workflow[key] = readMoney(workflow[key], `workflow.${key}`);
     }
+  }
+
+  const retention = raw['retention'];
+  if (retention !== undefined) {
+    if (!isRecord(retention)) throw new RelayError('config.retention must be an object.', { code: 'BAD_CONFIG' });
+    config.retention.artifactDays = readBoundedInt(
+      retention['artifactDays'], config.retention.artifactDays, 'retention.artifactDays', { min: 0, max: 3650 },
+    );
   }
 
   // Legacy workflow delivery keys remain readable. Explicit github values

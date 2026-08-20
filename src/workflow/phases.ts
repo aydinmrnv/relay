@@ -1,6 +1,7 @@
 import type { PlanMode, Role } from '../storage/config.ts';
 
 export const PHASES = [
+  'QUEUED',
   'INITIALIZING',
   'FETCHING_ISSUE',
   'CREATING_WORKSPACE',
@@ -28,6 +29,7 @@ export const TERMINAL_PHASES: readonly Phase[] = ['COMPLETE', 'FAILED', 'CANCELL
  * therefore added programmatically below.
  */
 const FORWARD_TRANSITIONS: Record<Phase, readonly Phase[]> = {
+  QUEUED: ['INITIALIZING'],
   INITIALIZING: ['FETCHING_ISSUE'],
   FETCHING_ISSUE: ['CREATING_WORKSPACE'],
   // Inline planning skips the planner and plan-review turns entirely: the
@@ -73,6 +75,8 @@ export function canTransition(from: Phase, to: Phase): boolean {
 /** Human-readable phase label used in the terminal UI and summaries. */
 export function phaseLabel(phase: Phase): string {
   switch (phase) {
+    case 'QUEUED':
+      return 'Queued';
     case 'INITIALIZING':
       return 'Initializing';
     case 'FETCHING_ISSUE':

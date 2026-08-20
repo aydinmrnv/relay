@@ -8,7 +8,8 @@ import { issueHeadline } from '../../issues/identity.ts';
 import { worktreeExists } from '../../git/worktree.ts';
 import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
 import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
-import type { RunState } from '../../workflow/state.ts';
+import { transition, type RunState } from '../../workflow/state.ts';
+import { pidAlive } from '../../workflow/admission.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import { runLiveness } from '../../workflow/liveness.ts';
 import { replayEvents } from '../../workflow/replay.ts';
@@ -87,6 +88,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
         // title — putting them together makes the warning the first thing a
         // narrow terminal clips, which is exactly backwards.
         facts: facts([
+          state.phase === 'QUEUED' ? 'waiting to start' : !isTerminal(state.phase) ? (pidAlive(state.pid) ? 'running' : warning('interrupted')) : false,
           state.workspace?.branch ?? '(no branch)',
           formatDuration(elapsed),
           `plan ${state.rounds.planReview}r, code ${state.rounds.codeReview}r`,
@@ -372,6 +374,10 @@ export async function stopCommand(runRef: string, options: { json?: boolean } = 
   }
 
   await store.requestCancel(`stopped by user at ${new Date().toISOString()}`);
+  if (state.phase === 'QUEUED') {
+    transition(state, 'CANCELLED', { note: 'cancelled before start' });
+    await store.saveState(state);
+  }
   if (!json) out(`Cancellation requested for ${state.runId}.`);
 
   let signalled = false;
