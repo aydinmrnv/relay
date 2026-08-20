@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import type { Choice, PromptSession } from '../../src/ui/prompt.ts';
+import type { Choice, PromptSession, SelectItem } from '../../src/ui/prompt.ts';
 
 /**
  * A terminal that answers from a script. The real `Prompter` is covered by its
@@ -61,6 +61,18 @@ export class ScriptedPrompter implements PromptSession {
 
     const match = choices.find((choice) => choice.value === answer);
     assert.ok(match !== undefined, `scripted answer "${answer}" is not one of ${choices.map((c) => c.value).join(', ')}`);
+    return match.value;
+  }
+
+  async select<T>(question: string, items: ReadonlyArray<SelectItem<T>>, defaultIndex = 0): Promise<T> {
+    this.asked.push(question);
+    this.offered.push(items.map((item) => String(item.value)));
+    const fallback = items[defaultIndex]?.value ?? items[0]!.value;
+    if (!this.interactive) return fallback;
+    const answer = this.next();
+    if (answer === undefined) return fallback;
+    const match = items.find((item) => String(item.value) === answer);
+    assert.ok(match !== undefined, `scripted answer "${answer}" is not offered`);
     return match.value;
   }
 

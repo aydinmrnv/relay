@@ -375,6 +375,7 @@ describe('the delivery phase', () => {
     const provider: IssueProvider = {
       name: 'stub',
       getIssue: async () => { throw new Error('not used'); },
+      listIssues: async () => null,
       checkAvailability: async () => ({ available: true, detail: 'available' }),
       comment: async (_ref, body, options) => {
         calls += 1;

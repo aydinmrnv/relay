@@ -311,6 +311,9 @@ describe('relay init — guided', () => {
       async choice() {
         throw new RelayError('Cancelled.', { code: 'PROMPT_CANCELLED' });
       },
+      async select() {
+        throw new RelayError('Cancelled.', { code: 'PROMPT_CANCELLED' });
+      },
       close() {},
     };
 

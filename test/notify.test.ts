@@ -21,7 +21,7 @@ describe('webhook notification', () => {
   it('substitutes completion command tokens without interpreting shell syntax', () => {
     const value = state();
     value.phase = 'COMPLETE';
-    value.pullRequest = { url: 'https://example.test/pr/1', number: 1, base: 'main', head: 'run', at: value.updatedAt };
+    value.pullRequest = { url: 'https://example.test/pr/1', number: 1, base: 'main', head: 'run', createdByRun: true, at: value.updatedAt };
     assert.deepEqual(completionArgs(['notify', '--run={{runId}}', '{{outcome}}', '{{url}}', '$(never)'], value), [
       'notify', `--run=${value.runId}`, 'complete', 'https://example.test/pr/1', '$(never)',
     ]);
