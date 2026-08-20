@@ -9,6 +9,7 @@ export interface Choice<T extends string> {
   /** Extra context shown after the label, e.g. why an option is unavailable. */
   hint?: string;
 }
+export interface SelectItem<T> { value: T; label: string; hint?: string }
 
 export interface PrompterOptions {
   input?: NodeJS.ReadableStream & { isTTY?: boolean };
@@ -38,6 +39,7 @@ export interface PromptSession {
   text(question: string, defaultValue: string, validate?: (value: string) => string | undefined): Promise<string>;
   confirm(question: string, defaultValue: boolean): Promise<boolean>;
   choice<T extends string>(question: string, choices: ReadonlyArray<Choice<T>>, defaultValue: T): Promise<T>;
+  select<T>(question: string, items: ReadonlyArray<SelectItem<T>>, defaultIndex?: number): Promise<T>;
   close(): void;
 }
 
@@ -132,6 +134,47 @@ export class Prompter implements PromptSession {
       if (byName !== undefined) return byName.value;
 
       this.write(`${paint(this.theme, 'yellow', `  Enter 1-${choices.length}, or an agent name.`)}\n`);
+    }
+  }
+
+  async select<T>(question: string, items: ReadonlyArray<SelectItem<T>>, defaultIndex = 0): Promise<T> {
+    if (items.length === 0) throw new RelayError('Cannot select from an empty list.', { code: 'BAD_PROMPT' });
+    const initial = Math.min(Math.max(defaultIndex, 0), items.length - 1);
+    if (!this.interactive) return items[initial]!.value;
+    const rawInput = this.input as NodeJS.ReadableStream & { setRawMode?: (enabled: boolean) => void; isTTY?: boolean };
+    if (rawInput.isTTY === true && typeof rawInput.setRawMode === 'function') {
+      this.close();
+      let selected = initial;
+      const render = (first: boolean): void => {
+        if (!first) this.write(`\x1b[${items.length}A`);
+        items.forEach((item, index) => this.write(`${index === selected ? '❯' : ' '} ${item.label}${item.hint === undefined ? '' : `  ${this.hint(item.hint)}`}\x1b[K\n`));
+      };
+      this.write(`${question}\n`);
+      render(true);
+      rawInput.setRawMode(true);
+      rawInput.resume();
+      try {
+        return await new Promise<T>((resolve, reject) => {
+          const onData = (chunk: Buffer | string): void => {
+            const key = chunk.toString();
+            if (key === '\u0003') { cleanup(); reject(new RelayError('Cancelled.', { code: 'PROMPT_CANCELLED' })); }
+            else if (key === '\r' || key === '\n') { cleanup(); resolve(items[selected]!.value); }
+            else if (key === '\x1b[A') { selected = (selected - 1 + items.length) % items.length; render(false); }
+            else if (key === '\x1b[B') { selected = (selected + 1) % items.length; render(false); }
+          };
+          const cleanup = (): void => { rawInput.off('data', onData); };
+          rawInput.on('data', onData);
+        });
+      } finally { rawInput.setRawMode(false); }
+    }
+    this.write(`${question}\n`);
+    items.forEach((item, index) => this.write(`  ${index + 1}) ${item.label}${item.hint === undefined ? '' : ` — ${item.hint}`}\n`));
+    for (;;) {
+      const answer = await this.ask(`  ${this.hint(`[${initial + 1}]`)} `);
+      if (answer === undefined || answer.trim() === '') return items[initial]!.value;
+      const chosen = Number.parseInt(answer.trim(), 10);
+      if (Number.isInteger(chosen) && chosen >= 1 && chosen <= items.length) return items[chosen - 1]!.value;
+      this.write(`${paint(this.theme, 'yellow', `  Enter 1-${items.length}.`)}\n`);
     }
   }
 

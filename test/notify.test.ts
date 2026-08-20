@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { buildWebhookPayload } from '../src/notify/payload.ts';
 import { notifyRun } from '../src/notify/index.ts';
+import { completionArgs } from '../src/notify/command.ts';
 import { createRunState, transition } from '../src/workflow/state.ts';
 import { RecordingObserver } from '../src/workflow/observer.ts';
 import { buildIssueComment, RUN_MARKER } from '../src/workflow/issueComment.ts';
@@ -17,6 +18,14 @@ function state() {
 }
 
 describe('webhook notification', () => {
+  it('substitutes completion command tokens without interpreting shell syntax', () => {
+    const value = state();
+    value.phase = 'COMPLETE';
+    value.pullRequest = { url: 'https://example.test/pr/1', number: 1, base: 'main', head: 'run', createdByRun: true, at: value.updatedAt };
+    assert.deepEqual(completionArgs(['notify', '--run={{runId}}', '{{outcome}}', '{{url}}', '$(never)'], value), [
+      'notify', `--run=${value.runId}`, 'complete', 'https://example.test/pr/1', '$(never)',
+    ]);
+  });
   it('builds a versioned, deliberately narrow payload', () => {
     const payload = buildWebhookPayload(state());
     assert.equal(payload.schema, 1);

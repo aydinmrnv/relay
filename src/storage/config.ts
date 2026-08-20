@@ -155,7 +155,7 @@ export interface RelayConfig {
     command: string[] | null;
   };
   delivery: { comment: boolean };
-  notify: { webhook: string | null };
+  notify: { webhook: string | null; bell: boolean; system: boolean; command: string[] | null };
   tracking: {
     enabled: boolean;
     plugin: string;
@@ -220,7 +220,7 @@ export const DEFAULT_CONFIG: RelayConfig = {
     command: null,
   },
   delivery: { comment: false },
-  notify: { webhook: null },
+  notify: { webhook: null, bell: false, system: false, command: null },
   tracking: {
     enabled: false,
     plugin: 'relay/<version> relay-wakatime/<version>',
@@ -525,6 +525,19 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
         throw new RelayError('config.notify.webhook must be a non-empty http(s) URL or null.', { code: 'BAD_CONFIG' });
       }
       config.notify.webhook = webhook as string | null;
+    }
+    for (const key of ['bell', 'system'] as const) {
+      if (notify[key] !== undefined) {
+        if (typeof notify[key] !== 'boolean') throw new RelayError(`config.notify.${key} must be a boolean.`, { code: 'BAD_CONFIG' });
+        config.notify[key] = notify[key];
+      }
+    }
+    if (notify['command'] !== undefined) {
+      const command = notify['command'];
+      if (command !== null && (!Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== 'string'))) {
+        throw new RelayError('config.notify.command must be a non-empty array of strings or null.', { code: 'BAD_CONFIG' });
+      }
+      config.notify.command = command as string[] | null;
     }
   }
 

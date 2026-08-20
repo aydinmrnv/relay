@@ -16,11 +16,13 @@ export async function notifyRun(
       ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
       ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
     });
-    context.state.notification = { webhook: { status: result.ok ? 'done' : 'skipped', detail: `${result.detail} after ${result.attempts} attempt(s)`, at } };
+    context.state.notification ??= {};
+    context.state.notification.webhook = { status: result.ok ? 'done' : 'skipped', detail: `${result.detail} after ${result.attempts} attempt(s)`, at };
     if (!result.ok) context.observer.warn(`Webhook notification skipped: ${result.detail}`);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    context.state.notification = { webhook: { status: 'failed', detail, at } };
+    context.state.notification ??= {};
+    context.state.notification.webhook = { status: 'failed', detail, at };
     context.observer.warn(`Webhook notification failed: ${detail}`);
   }
 }

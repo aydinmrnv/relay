@@ -13,6 +13,9 @@ import {
 import { createRunState, transition, validateRunState, providerFor, recordAgentSession } from '../src/workflow/state.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { RelayError } from '../src/util/errors.ts';
+import { runLiveness } from '../src/workflow/liveness.ts';
+import { replayEvents } from '../src/workflow/replay.ts';
+import { RecordingObserver } from '../src/workflow/observer.ts';
 
 function newState() {
   return createRunState({
@@ -26,6 +29,26 @@ function newState() {
 }
 
 describe('phase machine', () => {
+  it('distinguishes running, stale, and terminal runs', () => {
+    const state = newState();
+    assert.equal(runLiveness(state), 'stale');
+    state.pid = process.pid;
+    assert.equal(runLiveness(state), 'running');
+    state.pid = 2_147_483_647;
+    assert.equal(runLiveness(state), 'stale');
+    state.phase = 'COMPLETE';
+    assert.equal(runLiveness(state), 'terminal');
+  });
+
+  it('replays phases and structured agent events through an observer', () => {
+    const observer = new RecordingObserver();
+    replayEvents([
+      { timestamp: '2026-08-11T12:00:01Z', runId: '20260811T120000-abc123', phase: 'PLANNING', agent: null, type: 'phase_started', message: 'round 1/2' },
+      { timestamp: '2026-08-11T12:00:02Z', runId: '20260811T120000-abc123', phase: 'PLANNING', agent: 'planner', type: 'message', data: { text: 'hello' } },
+    ], observer);
+    assert.deepEqual(observer.phases, [{ phase: 'PLANNING', detail: 'round 1/2' }]);
+    assert.equal(observer.events[0]?.event.type, 'message');
+  });
   it('every phase has a transition entry', () => {
     for (const phase of PHASES) {
       assert.ok(Array.isArray(ALLOWED_TRANSITIONS[phase]), `${phase} missing`);

@@ -148,6 +148,9 @@ export interface IssueCommentRecord {
 
 export interface NotificationRecord {
   webhook?: { status: 'done' | 'skipped' | 'failed'; detail: string; at: string };
+  system?: { status: 'done' | 'skipped' | 'failed'; detail: string; at: string };
+  command?: { status: 'done' | 'skipped' | 'failed'; detail: string; at: string };
+  completion?: { outcome: Phase; attemptedAt: string };
 }
 
 /**

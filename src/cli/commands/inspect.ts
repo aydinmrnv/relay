@@ -11,6 +11,9 @@ import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
 import { transition, type RunState } from '../../workflow/state.ts';
 import { pidAlive } from '../../workflow/admission.ts';
 import { formatUsage } from '../../workflow/usage.ts';
+import { runLiveness } from '../../workflow/liveness.ts';
+import { replayEvents } from '../../workflow/replay.ts';
+import { rendererFor } from './run.ts';
 import { createCliContext } from '../context.ts';
 import { runToJson } from '../runJson.ts';
 import { EXIT, exitCodeForRun } from '../exit.ts';
@@ -92,6 +95,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
           state.diff !== undefined && changeCount(state.diff.additions, state.diff.deletions),
           state.commit !== undefined && `committed ${state.commit.sha.slice(0, 8)}`,
           landing === 'unlanded' && warning('unlanded'),
+          runLiveness(state) === 'stale' && warning('stale'),
         ]),
       };
     }),
@@ -130,6 +134,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
 
 /** A run's phase, coloured by what that phase means for the reader. */
 export function phaseTag(state: RunState): string {
+  if (runLiveness(state) === 'stale') return warning('stale');
   const label = phaseLabel(state.phase);
   if (state.phase === 'COMPLETE') return success(label);
   if (state.phase === 'FAILED') return failure(label);
@@ -221,7 +226,10 @@ async function printLiveStatus(state: RunState, store: RunStore): Promise<void> 
     state.error !== undefined && { label: 'Error', value: failure(state.error.message) },
     { label: 'Elapsed', value: formatDuration(elapsed) },
   ]);
-  if (state.pid !== undefined) hint(`Driven by process ${state.pid}`);
+  if (runLiveness(state) === 'stale') {
+    out(warning(`Stale: ${state.pid === undefined ? 'no process was recorded' : `pid ${state.pid} is no longer alive`} — this run is not running.`));
+    hint(`relay resume ${state.runId}`);
+  } else if (state.pid !== undefined) hint(`Driven by process ${state.pid}`);
 
   const events = await store.readEvents();
   const recent = events.slice(-8);
@@ -406,10 +414,8 @@ export async function watchCommand(
   const intervalMs = Math.max(250, Number.parseInt(options.interval ?? '1000', 10) || 1000);
   let seen = 0;
 
-  if (!json) {
-    heading(`Watching ${initial.runId}`);
-    out();
-  }
+  const renderer = json ? undefined : rendererFor(initial);
+  renderer?.start();
 
   for (;;) {
     const events = await store.readEvents();
@@ -418,10 +424,7 @@ export async function watchCommand(
         emitJsonLine('watch', { type: 'event', runId: initial.runId, event: eventToJson(event) });
         continue;
       }
-      const time = event.timestamp.slice(11, 19);
-      const who = event.agent ?? 'relay';
-      const detail = event.message ?? (event.data === undefined ? '' : oneLine(JSON.stringify(event.data), 120));
-      out(`${dim(time)}  ${event.phase.padEnd(18)} ${who.padEnd(14)} ${event.type.padEnd(16)} ${detail}`);
+      replayEvents([event], renderer!);
     }
     seen = events.length;
 
@@ -440,8 +443,8 @@ export async function watchCommand(
         });
         return code;
       }
-      out();
-      out(`Run ${phaseLabel(state.phase)}.`);
+      renderer!.finish(state.phase);
+      if (state.config.notify.bell && process.stdout.isTTY) process.stdout.write('\u0007');
       return code;
     }
 

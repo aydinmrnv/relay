@@ -81,6 +81,9 @@ describe('home screen', { concurrency: 1 }, () => {
     await writeConfig(repo.root, config);
     const run = state();
     run.updatedAt = '2026-08-12T10:00:05Z';
+    // A run in flight has a live process behind it, which is what makes the row
+    // report the phase rather than `stale`.
+    run.pid = process.pid;
     run.diff = { fileCount: 2, additions: 7, deletions: 2, files: [], patchFile: 'patch', at: run.updatedAt };
     await new RunStore(repo.root, run.runId).saveState(run);
     process.chdir(repo.root);

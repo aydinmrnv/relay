@@ -1,8 +1,11 @@
+import { spawn } from 'node:child_process';
+import { rm } from 'node:fs/promises';
+
 import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
-import type { IssueProvider } from '../../github/types.ts';
+import type { IssueListFilters, IssueProvider } from '../../github/types.ts';
 import {
   LocalIssueProvider,
   composeTaskInEditor,
@@ -35,6 +38,7 @@ import { glyphs } from '../../ui/theme.ts';
 import { formatDuration } from '../../util/text.ts';
 import { createCliContext, type CliContext } from '../context.ts';
 import { offerDelivery } from '../mergeOffer.ts';
+import { confirmClosedIssue, resolvePickedIssue } from '../issuePicker.ts';
 import { EXIT, exitCodeForRun } from '../exit.ts';
 import { emitJson } from '../json.ts';
 import { runToJson } from '../runJson.ts';
@@ -63,6 +67,7 @@ import {
 export interface RunOptions {
   /** Internal: batches use line-oriented output because dashboards cannot share a terminal. */
   compact?: boolean;
+  detach?: boolean;
   verbose?: boolean;
   base?: string;
   planner?: string;
@@ -96,6 +101,11 @@ export interface RunOptions {
   prompt?: string;
   /** `--editor`: write the task in `$EDITOR`, the way `git commit` does. */
   editor?: boolean;
+  label?: string[];
+  assignee?: string;
+  mine?: boolean;
+  limit?: string;
+  yes?: boolean;
 }
 
 /**
@@ -274,21 +284,65 @@ export function parseCost(value: string, flag: string): number {
   return parsed;
 }
 
+export function parseLimit(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new RelayError('--limit must be a positive integer.', { code: 'BAD_FLAG' });
+  return parsed;
+}
+
 export async function runCommand(issueRefs: string | string[] | undefined, options: RunOptions): Promise<number> {
   const cli = await createCliContext();
-
+  if (options.mine === true && options.assignee !== undefined) {
+    throw new RelayError('Pass --mine or --assignee, not both.', { code: 'BAD_FLAG' });
+  }
+  const filters: IssueListFilters = {
+    ...(options.label === undefined ? {} : { labels: options.label }),
+    ...(options.assignee === undefined ? {} : { assignee: options.assignee }),
+    ...(options.mine === true ? { mine: true } : {}),
+    ...(options.limit === undefined ? {} : { limit: parseLimit(options.limit) }),
+  };
   const refs = Array.isArray(issueRefs) ? (issueRefs.length === 0 ? [undefined] : issueRefs) : [issueRefs];
   if (refs.length > 1 && (options.prompt !== undefined || options.editor === true)) {
     throw new RelayError('Batch runs accept issue references only; --prompt and --editor create one task.', { code: 'BAD_FLAG' });
   }
+  // A detached child drives one run. Detaching a batch would either bypass the
+  // concurrency limit or leave nobody holding the queue, so the combination is
+  // refused rather than half-honoured.
+  if (refs.length > 1 && options.detach === true) {
+    throw new RelayError('--detach starts a single run; pass one issue reference.', { code: 'BAD_FLAG' });
+  }
+
+  const prompter = new Prompter();
+  const explicitlyNamed = refs.map((ref) => ref !== undefined && ref.trim().length > 0);
+  // Naming nothing is a question only a lone run can ask: a batch named its
+  // issues by definition, so there is nothing left to pick.
+  const resolvedRefs =
+    refs.length === 1 && !explicitlyNamed[0] && options.prompt === undefined && options.editor !== true && prompter.interactive
+      ? [await resolvePickedIssue(cli.issueProvider, filters, prompter)]
+      : refs;
 
   // Resolve what the run is about before creating any state on disk: a
   // malformed reference, a missing file and an abandoned editor all cost
   // nothing and leave nothing behind.
-  const sources = await Promise.all(refs.map((ref) => resolveIssueSource(ref, options, process.cwd())));
-  if (sources.some((source) => source === undefined)) {
+  const resolved = await Promise.all(resolvedRefs.map((ref) => resolveIssueSource(ref, options, process.cwd())));
+  if (resolved.some((source) => source === undefined)) {
     out(dim('Nothing written, so nothing was started.'));
+    prompter.close();
     return 0;
+  }
+  const sources = resolved as IssueSource[];
+
+  // Every named issue answers for itself, and all of them before any of them
+  // starts: learning halfway through a batch that the third one was closed is
+  // too late for the answer to mean anything.
+  for (const [index, source] of sources.entries()) {
+    if (explicitlyNamed[index] !== true || source.kind !== 'tracker') continue;
+    const issue = await cli.issueProvider.getIssue(source.ref);
+    if (!(await confirmClosedIssue(issue, options.yes === true, prompter))) {
+      out(dim('Not started.'));
+      prompter.close();
+      return 130;
+    }
   }
 
   const config = applyOverrides(cli.config, options);
@@ -297,33 +351,73 @@ export async function runCommand(issueRefs: string | string[] | undefined, optio
   // said before the first agent turn, which is the only time it is useful.
   const estimate = estimateRun(await listRuns(cli.repo.root), config.workflow);
   printEstimate(estimate, config.workflow.maxCostUsd);
-  if (!(await confirmEstimate(estimate, config.workflow.confirmAboveUsd))) {
+  if (!(await confirmEstimate(estimate, config.workflow.confirmAboveUsd, { prompter }))) {
     out(dim('  Not started.'));
+    prompter.close();
     return 130;
   }
+  prompter.close();
 
-  const states = sources.map((resolved, index) => {
-    const source = resolved!;
+  const states = sources.map((source, index) => {
+    // Offset per run so a batch created inside the same millisecond still gets
+    // distinct, ordered run ids.
     const now = new Date(Date.now() + index);
     return createRunState({
-    runId: createRunId(now), shortId: shortId(), queued: true,
-    // For a local task the reference is where it came from — a path, `--prompt`
-    // or `--editor` — which is what `relay status` has to be able to show.
-    issueRef: source.kind === 'tracker' ? source.ref : source.task.origin,
-    ...(source.kind === 'tracker' ? {} : { task: source.task }),
-    repository: {
-      root: cli.repo.root,
-      owner: cli.repo.owner,
-      name: cli.repo.name,
-      defaultBranch: cli.repo.defaultBranch,
-    },
-    config,
-    now,
+      runId: createRunId(now),
+      shortId: shortId(),
+      queued: true,
+      // For a local task the reference is where it came from — a path, `--prompt`
+      // or `--editor` — which is what `relay status` has to be able to show.
+      issueRef: source.kind === 'tracker' ? source.ref : source.task.origin,
+      ...(source.kind === 'tracker' ? {} : { task: source.task }),
+      repository: {
+        root: cli.repo.root,
+        owner: cli.repo.owner,
+        name: cli.repo.name,
+        defaultBranch: cli.repo.defaultBranch,
+      },
+      config,
+      now,
     });
   });
 
+  // Guarded above to a single reference, so there is exactly one state here.
+  if (options.detach === true) return startDetached(states[0]!);
+
   const runOptions = states.length > 1 ? { ...options, compact: true } : options;
   return runQueue(states, config.workflow.maxConcurrentRuns, (state) => executeRun(cli, state, runOptions, 'run'));
+}
+
+async function startDetached(state: RunState): Promise<number> {
+  const store = new RunStore(state.repository.root, state.runId);
+  await store.init();
+  await store.saveState(state);
+  const entry = process.argv[1];
+  if (entry === undefined) throw new RelayError('Cannot locate the Relay launcher.', { code: 'SPAWN_FAILED' });
+  const child = spawn(process.execPath, [entry, '__run-detached', state.runId], {
+    cwd: state.repository.root, detached: true, stdio: 'ignore', env: process.env, shell: false,
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('detached child launch timed out')), 2_000);
+      child.once('spawn', () => { clearTimeout(timer); resolve(); });
+      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    });
+  } catch (error) {
+    await rm(store.dir, { recursive: true, force: true });
+    throw new RelayError(`Failed to start detached run: ${error instanceof Error ? error.message : String(error)}`, { code: 'SPAWN_FAILED' });
+  }
+  child.unref();
+  out(`Started ${state.runId}`);
+  hint(`relay watch ${state.runId}`);
+  hint(`relay stop ${state.runId}`);
+  return EXIT.success;
+}
+
+export async function runDetachedChild(runRef: string): Promise<number> {
+  const cli = await createCliContext();
+  const state = await resolveRun(cli.repo.root, runRef);
+  return executeRun(cli, state, {}, 'run');
 }
 
 /**
@@ -472,6 +566,7 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
     delete previous.finishedAt;
     // Whatever stopped it last time is history; this attempt records its own.
     delete previous.stopped;
+    if (previous.notification !== undefined) delete previous.notification.completion;
   } else {
     out(dim(`Resuming ${previous.runId} from ${previous.phase}.`));
   }
@@ -529,11 +624,13 @@ const cliObserver: RunObserver = {
   phaseChanged() {},
   roleStatus() {},
   agentEvent() {},
+  reviewCompleted() {},
+  testStatus() {},
   note: (text) => out(`  ${text}`),
   warn: (text) => out(warning(`  ${text}`)),
 };
 
-async function executeRun(
+export async function executeRun(
   cli: CliContext,
   state: RunState,
   options: RunOptions,
@@ -548,6 +645,8 @@ async function executeRun(
   const stream = json
     ? new RunJsonStream({ state, command, ...(options.verbose === true ? { verbose: true } : {}) })
     : undefined;
+  // Runs in a batch share one terminal, so each reports itself in lines tagged
+  // with its short id rather than redrawing a dashboard over its neighbours.
   const compact: RunDisplay = {
     ...cliObserver,
     start: () => out(dim(`[${state.shortId}] started ${state.issueRef}`)),
@@ -556,28 +655,13 @@ async function executeRun(
     note: (text) => out(`  [${state.shortId}] ${text}`),
     warn: (text) => out(warning(`  [${state.shortId}] ${text}`)),
   };
-  const display: RunDisplay =
-    stream ?? (options.compact === true ? compact :
-    new RunRenderer({
-      // The renderer supplies the mark; this is only what the run is about. A
-      // task with no number is named after where it came from — `./spec.md`,
-      // `--prompt` — because `Issue undefined` says less than nothing.
-      title:
-        state.issue !== undefined && state.issue.number !== null
-          ? `Issue #${state.issue.number}`
-          : state.task !== undefined
-            ? state.task.origin
-            : `Issue ${state.issueRef}`,
-      subtitle: state.issue?.title ?? state.task?.title ?? `run ${state.runId}`,
-      agentNames: {
-        planner: state.config.agents.planner,
-        planReviewer: state.config.agents.planReviewer,
-        implementer: state.config.agents.implementer,
-        codeReviewer: state.config.agents.codeReviewer,
-      },
-      phases: displayPhasesFor(state.config.workflow),
-      ...(options.verbose === true ? { verbose: true } : {}),
-    }));
+  const renderer =
+    stream === undefined && options.compact !== true
+      ? rendererFor(state, options, {
+          onStop: () => store.requestCancel(`stopped by user at ${new Date().toISOString()}`),
+        })
+      : undefined;
+  const display: RunDisplay = stream ?? renderer ?? compact;
 
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight.
@@ -608,7 +692,9 @@ async function executeRun(
   try {
     finalState = await new WorkflowEngine(context).run();
     display.finish(finalState.phase);
+    if (!json && finalState.config.notify.bell && process.stdout.isTTY) process.stdout.write('\u0007');
   } finally {
+    renderer?.teardown();
     tracking.stop();
     process.off('SIGINT', onSigint);
   }
@@ -626,6 +712,33 @@ async function executeRun(
   stream?.summary(runToJson(finalState, { landing }), code);
   await pruneArtifacts(state.repository.root, state.config.retention?.artifactDays ?? 30).catch(() => undefined);
   return code;
+}
+
+/**
+ * The renderer a run is displayed through, built from the run itself.
+ *
+ * `relay run` and `relay attach` show the same picture of the same run, so they
+ * build it the same way. Only the live run can stop the engine, which is why
+ * `hooks` is separate: attaching to someone else's run gets the display without
+ * the controls.
+ */
+export function rendererFor(
+  state: RunState,
+  options: Pick<RunOptions, 'verbose'> = {},
+  hooks: { onStop?: () => void | Promise<void> } = {},
+): RunRenderer {
+  return new RunRenderer({
+    // The renderer supplies the mark; this is only what the run is about. A
+    // task with no number is named after where it came from — `./spec.md`,
+    // `--prompt` — because `Issue undefined` says less than nothing.
+    title: state.issue !== undefined && state.issue.number !== null ? `Issue #${state.issue.number}` : state.task?.origin ?? `Issue ${state.issueRef}`,
+    subtitle: state.issue?.title ?? state.task?.title ?? `run ${state.runId}`,
+    agentNames: { planner: state.config.agents.planner, planReviewer: state.config.agents.planReviewer, implementer: state.config.agents.implementer, codeReviewer: state.config.agents.codeReviewer },
+    phases: displayPhasesFor(state.config.workflow),
+    state,
+    ...hooks,
+    ...(options.verbose === true ? { verbose: true } : {}),
+  });
 }
 
 /**

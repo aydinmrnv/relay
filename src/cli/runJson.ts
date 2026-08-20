@@ -5,6 +5,7 @@ import type { Decision } from '../reviews/types.ts';
 import type { Phase } from '../workflow/phases.ts';
 import { isTerminal, phaseLabel } from '../workflow/phases.ts';
 import type { RunState } from '../workflow/state.ts';
+import { runLiveness, type RunLiveness } from '../workflow/liveness.ts';
 import type { RunUsage, UsageTotals } from '../workflow/usage.ts';
 
 /**
@@ -21,6 +22,8 @@ export interface RunJson {
   phase: Phase;
   phaseLabel: string;
   terminal: boolean;
+  liveness: RunLiveness;
+  stale: boolean;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -154,6 +157,8 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
     phase: state.phase,
     phaseLabel: phaseLabel(state.phase),
     terminal: isTerminal(state.phase),
+    liveness: runLiveness(state),
+    stale: runLiveness(state) === 'stale',
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
     finishedAt,

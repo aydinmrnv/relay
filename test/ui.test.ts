@@ -36,6 +36,13 @@ class FakeStream extends PassThrough {
   }
 }
 
+class FakeInput extends PassThrough {
+  isTTY = true;
+  isRaw = false;
+  readonly modes: boolean[] = [];
+  setRawMode(mode: boolean): this { this.isRaw = mode; this.modes.push(mode); return this; }
+}
+
 const INTERACTIVE: Theme = { color: true, unicode: true, interactive: true };
 const PIPED: Theme = { color: false, unicode: true, interactive: false };
 const ASCII: Theme = { color: false, unicode: false, interactive: false };
@@ -61,6 +68,17 @@ function renderer(theme: Theme, stream: FakeStream, now?: () => number): RunRend
     stream: stream as unknown as NodeJS.WriteStream,
     theme,
     ...(now === undefined ? {} : { now }),
+  });
+}
+
+function runState(): RunState {
+  return createRunState({
+    runId: createRunId(new Date('2026-08-11T10:00:00Z')),
+    shortId: 'aaa111',
+    issueRef: '20',
+    repository: { root: '/repo', owner: 'acme', name: 'relay', defaultBranch: 'main' },
+    config: structuredClone(DEFAULT_CONFIG),
+    now: new Date('2026-08-11T10:00:00Z'),
   });
 }
 
@@ -150,6 +168,70 @@ describe('ascii downgrade', () => {
 });
 
 describe('run renderer — interactive', () => {
+  it('shows work facts at 60, 80 and 120 columns, including fully unpriced usage', () => {
+    for (const columns of [60, 80, 120]) {
+      const stream = new FakeStream();
+      stream.columns = columns;
+      const state = runState();
+      state.diff = { fileCount: 2, additions: 40, deletions: 7, files: ['src/a.ts', 'test/a.test.ts'], patchFile: 'diff.patch', at: 'now' };
+      state.usage = { total: { inputTokens: 12_300, outputTokens: 4_100, turns: 2, pricedTurns: 0 }, byPhase: {} };
+      const view = new RunRenderer({ title: 'Issue #20', agentNames: {}, state, stream: stream as unknown as NodeJS.WriteStream, theme: INTERACTIVE });
+      view.start();
+      view.reviewCompleted({ round: 2, kind: 'code', reviewer: 'codex', decision: 'request_changes', findings: [
+        { id: 'B1', severity: 'high', category: 'correctness', summary: 'broken' },
+        { id: 'N1', severity: 'low', category: 'testing', summary: 'coverage' },
+      ], at: 'now' });
+      view.testStatus({ phase: 'running', concurrent: true });
+      const region = lastRegion(stream);
+      assert.match(region, /Work/);
+      assert.match(region, /\+40 −7 · 2 files/);
+      assert.match(region, /1 blocking · 1 non-blocking/);
+      assert.match(region, /12\.3k in \/ 4\.1k out · 2 turns · 2 turns unpr/);
+      assert.doesNotMatch(region, /\$0\.00/);
+      assert.match(region, /running \(concurrent\)/);
+      for (const line of region.trim().split('\n')) assert.ok(line.length < columns, `${columns}: ${line}`);
+      view.finish('COMPLETE');
+    }
+  });
+
+  it('keeps a meaningful activity over a later tool event and advances its clock', () => {
+    const stream = new FakeStream();
+    const clock = fakeClock();
+    const view = renderer(INTERACTIVE, stream, clock.now);
+    view.start();
+    view.agentEvent('implementer', { type: 'file_changed', agent: 'codex', at: 'now', path: 'src/ui/renderer.ts' });
+    view.agentEvent('implementer', { type: 'tool', agent: 'codex', at: 'now', tool: 'apply_patch', input: '{}' });
+    clock.advance(5_000);
+    view.roleStatus('implementer', 'working');
+    assert.match(lastRegion(stream), /renderer\.ts.*5\.0s/);
+    assert.doesNotMatch(lastRegion(stream), /apply_patch/);
+    view.finish('COMPLETE');
+  });
+
+  it('reflows using physical rows after a resize', () => {
+    const stream = new FakeStream();
+    stream.columns = 120;
+    const view = renderer(INTERACTIVE, stream);
+    view.start();
+    stream.columns = 60;
+    process.emit('SIGWINCH');
+    // The 12 old 92-column panel rows each occupy two physical rows at 60.
+    assert.ok(stream.text.includes(`${ESC}[24A${ESC}[0J`), stream.text);
+    view.finish('COMPLETE');
+  });
+
+  it('handles live keys and restores the prior raw mode', () => {
+    const stream = new FakeStream();
+    const input = new FakeInput();
+    let stops = 0;
+    const view = new RunRenderer({ title: 'Issue #20', agentNames: {}, stream: stream as unknown as NodeJS.WriteStream, input: input as unknown as NodeJS.ReadStream, theme: INTERACTIVE, onStop: () => { stops += 1; } });
+    view.start();
+    assert.deepEqual(input.modes, [true]);
+    input.write('s');
+    assert.equal(stops, 1);
+    view.finish('COMPLETE');
+    assert.deepEqual(input.modes, [true, false]);
+  });
   it('redraws in place and shows a spinner on the active phase', () => {
     const stream = new FakeStream();
     const view = renderer(INTERACTIVE, stream);
@@ -273,6 +355,22 @@ function lastRegion(stream: FakeStream): string {
 }
 
 describe('run renderer — non-interactive', () => {
+  it('emits work facts as plain deduplicated lines', () => {
+    const stream = new FakeStream();
+    const state = runState();
+    state.diff = { fileCount: 1, additions: 3, deletions: 1, files: ['a.ts'], patchFile: 'diff.patch', at: 'now' };
+    state.usage = { total: { inputTokens: 10, outputTokens: 5, turns: 1, pricedTurns: 0 }, byPhase: {} };
+    const view = new RunRenderer({ title: 'Issue #20', agentNames: {}, state, stream: stream as unknown as NodeJS.WriteStream, theme: ASCII });
+    view.start();
+    view.testStatus({ phase: 'running' });
+    view.testStatus({ phase: 'running' });
+    view.phaseChanged('TESTING');
+    view.phaseChanged('DELIVERING');
+    assert.equal(stream.text.match(/Tests: running/g)?.length, 1);
+    assert.equal(stream.text.match(/Diff: \+3 -1/g)?.length, 1);
+    assert.equal(stream.text.match(/Cost: 10 in \/ 5 out/g)?.length, 1);
+    assert.ok(!stream.text.includes(ESC));
+  });
   it('emits append-only text with no escape sequences at all', () => {
     const stream = new FakeStream();
     const view = renderer(PIPED, stream);
@@ -288,6 +386,8 @@ describe('run renderer — non-interactive', () => {
 
     assert.ok(!stream.text.includes(ESC), 'a pipe must never receive control sequences');
     assert.equal(stream.text, stream.visible);
+    assert.match(stream.text, /planner:.*rg TODO/);
+    assert.ok(!stream.text.includes('[object Object]'));
   });
 
   it('reports each phase as it starts and its duration as it ends', () => {
@@ -378,8 +478,20 @@ describe('prompter', () => {
     assert.equal(await prompter.text('Base branch?', 'main'), 'main');
     assert.equal(await prompter.confirm('Proceed?', true), true);
     assert.equal(await prompter.choice('Planner?', [{ value: 'claude', label: 'Claude' }], 'claude'), 'claude');
+    assert.equal(await prompter.select('Issue?', [{ value: 7, label: '#7' }], 0), 7);
     assert.equal(read, false, 'a non-interactive prompter must not consume stdin');
     prompter.close();
+  });
+
+  it('selects from the numbered fallback when raw mode is unavailable', async () => {
+    const io = fake();
+    const value = await answering(io, () => io.prompter.select('Issue?', [
+      { value: 4, label: '#4 First' },
+      { value: 8, label: '#8 Second' },
+    ], 0), ['2']);
+    assert.equal(value, 8);
+    assert.match(io.output.text, /1\) #4 First/);
+    io.prompter.close();
   });
 
   it('accepts a typed answer, and Enter takes the default', async () => {

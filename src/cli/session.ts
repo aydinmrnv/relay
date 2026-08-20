@@ -50,6 +50,9 @@ export async function homeSession(): Promise<number> {
 export async function runSession(issueRef: string[] | undefined, options: RunOptions = {}): Promise<number> {
   const deps = sessionDeps();
   const code = await runCommand(issueRef, options);
+  // A detached run is already gone; there is no result to hand a session, and
+  // nobody is waiting at this terminal for the next question.
+  if (options.detach === true) return code;
   return relaySession(deps, options, { code });
 }
 

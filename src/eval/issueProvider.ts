@@ -40,6 +40,8 @@ export class FixtureIssueProvider implements IssueProvider {
     return structuredClone(this.issue);
   }
 
+  async listIssues(): Promise<null> { return null; }
+
   async checkAvailability(): Promise<{ available: boolean; detail: string }> {
     return { available: true, detail: 'fixture' };
   }

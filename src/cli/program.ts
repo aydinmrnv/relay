@@ -9,7 +9,7 @@ import { EVAL_COMPARISON_NAMES, EVAL_CONFIG_NAMES } from '../eval/configs.ts';
 import { initCommand } from './commands/init.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
-import { resumeCommand, type RunOptions } from './commands/run.ts';
+import { resumeCommand, runDetachedChild, type RunOptions } from './commands/run.ts';
 import { homeCommand } from './commands/home.ts';
 import { statsCommand } from './commands/stats.ts';
 import { cleanCommand } from './commands/clean.ts';
@@ -25,6 +25,9 @@ import {
 import { reportError, theme } from './output.ts';
 import { EXIT, exitCodeFor, isCommanderError } from './exit.ts';
 import { enterJsonMode } from './json.ts';
+import { completionCommand, COMPLETION_HELP } from './commands/completion.ts';
+import { completeCommand } from './completion/complete.ts';
+import { formatCommandDoc } from './help/commandDoc.ts';
 
 /** Help text names whichever CLIs are registered, not whichever shipped first. */
 const AGENT_LABELS = AGENT_REGISTRY.map((entry) => entry.label).join(', ');
@@ -81,10 +84,11 @@ const HELP_GROUPS = [
   ['Deliver', ['deliver']],
   ['Measure', ['eval']],
   ['Maintain', ['clean']],
+  ['Shell', ['completion']],
 ] as const;
 
 function groupedHelp(command: Command, helper: Help): string {
-  if (command.parent !== null) return defaultHelp(command, helper.helpWidth);
+  if (command.parent !== null) return formatCommandDoc(command);
   const base = defaultHelp(command, helper.helpWidth);
   const marker = 'Commands:\n';
   const start = base.indexOf(marker);
@@ -189,6 +193,11 @@ export function buildProgram(version: string): Command {
     .description('run the full workflow for an issue, a spec file or a prompt, deliver the result, and wait for the next issue')
     .option('--prompt <text>', 'work from a description instead of a tracker issue')
     .option('--editor', 'write the task in $EDITOR, the way `git commit` does')
+    .option('--label <name>', 'filter issues by label (repeatable)', collect, [])
+    .option('--assignee <login>', 'filter issues by assignee')
+    .option('--mine', 'filter issues assigned to you')
+    .option('--limit <n>', 'maximum issues to list')
+    .option('-y, --yes', 'run an explicitly named closed issue without prompting')
     .option('-v, --verbose', 'stream raw agent events')
     .option('-b, --base <branch>', 'branch to base the worktree on')
     .option('--planner <agent>', `agent that plans and reviews code (${AGENT_PROVIDERS.join('|')})`)
@@ -209,7 +218,12 @@ export function buildProgram(version: string): Command {
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
     .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
+    .option('--detach', 'start the run in the background and return immediately')
     .action(wrap(runSession));
+
+  // `__` marks a command Relay spawns for itself: hidden from `--help`, and
+  // skipped by the help, man page and completion generators alike.
+  program.command('__run-detached <run-id>', { hidden: true }).action(wrap(runDetachedChild));
 
   program
     .command('clean')
@@ -317,6 +331,26 @@ export function buildProgram(version: string): Command {
     .description('cancel a running workflow')
     .option('--json', JSON_FLAG)
     .action(wrap(stopCommand));
+
+  program
+    .command('completion <shell>')
+    .description('print a shell completion script')
+    .addHelpText('after', `\n${COMPLETION_HELP}\n`)
+    .action(async (shell: string) => {
+      try {
+        process.exitCode = await completionCommand(program, shell);
+      } catch (error) {
+        if (!isCommanderError(error)) reportError(error);
+        process.exitCode = exitCodeFor(error);
+      }
+    });
+
+  program
+    .command('__complete', { hidden: true })
+    .allowUnknownOption(true)
+    .passThroughOptions()
+    .argument('[words...]')
+    .action(async (words: string[] | undefined) => completeCommand(program, words ?? []));
 
   return program;
 }

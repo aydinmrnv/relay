@@ -23,10 +23,16 @@ describe('config', () => {
   it('keeps comments and webhooks off by default and validates their opt-ins', () => {
     assert.equal(DEFAULT_CONFIG.delivery.comment, false);
     assert.equal(DEFAULT_CONFIG.notify.webhook, null);
+    assert.equal(DEFAULT_CONFIG.notify.bell, false);
+    assert.deepEqual(mergeConfig(DEFAULT_CONFIG, { notify: { bell: true, system: true, command: ['notify', '{{runId}}'] } }).notify.command, ['notify', '{{runId}}']);
     assert.equal(mergeConfig(DEFAULT_CONFIG, { delivery: { comment: true }, notify: { webhook: 'https://hooks.example/run' } }).delivery.comment, true);
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { delivery: { comment: 'yes' } }), RelayError);
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { webhook: '' } }), RelayError);
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { webhook: 'file:///tmp/run' } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { bell: 'yes' } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { system: 1 } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { command: [] } }), RelayError);
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { command: ['ok', 2] } }), RelayError);
   });
   it('validates tracking configuration', () => {
     assert.equal(DEFAULT_CONFIG.tracking.enabled, false);
