@@ -551,6 +551,8 @@ const cliObserver: RunObserver = {
   phaseChanged() {},
   roleStatus() {},
   agentEvent() {},
+  reviewCompleted() {},
+  testStatus() {},
   note: (text) => out(`  ${text}`),
   warn: (text) => out(warning(`  ${text}`)),
 };
@@ -570,9 +572,7 @@ async function executeRun(
   const stream = json
     ? new RunJsonStream({ state, command, ...(options.verbose === true ? { verbose: true } : {}) })
     : undefined;
-  const display: RunDisplay =
-    stream ??
-    new RunRenderer({
+  const renderer = stream === undefined ? new RunRenderer({
       // The renderer supplies the mark; this is only what the run is about. A
       // task with no number is named after where it came from — `./spec.md`,
       // `--prompt` — because `Issue undefined` says less than nothing.
@@ -590,8 +590,11 @@ async function executeRun(
         codeReviewer: state.config.agents.codeReviewer,
       },
       phases: displayPhasesFor(state.config.workflow),
+      state,
+      onStop: () => store.requestCancel(`stopped by user at ${new Date().toISOString()}`),
       ...(options.verbose === true ? { verbose: true } : {}),
-    });
+    }) : undefined;
+  const display: RunDisplay = stream ?? renderer!;
 
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight.
@@ -623,6 +626,7 @@ async function executeRun(
     finalState = await new WorkflowEngine(context).run();
     display.finish(finalState.phase);
   } finally {
+    renderer?.teardown();
     tracking.stop();
     process.off('SIGINT', onSigint);
   }

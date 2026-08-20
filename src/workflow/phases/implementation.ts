@@ -218,6 +218,7 @@ export async function reviewingCode(context: EngineContext): Promise<PhaseResult
     at: new Date().toISOString(),
   };
   state.reviews.push(entry);
+  observer.reviewCompleted(entry);
   await store.saveReview('code', round, { ...entry, rawFinalMessage: text });
 
   // Only blocking findings go back automatically; the rest are reported to the

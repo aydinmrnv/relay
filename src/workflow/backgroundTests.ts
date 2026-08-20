@@ -34,7 +34,12 @@ export async function performTests(context: EngineContext, signal: AbortSignal, 
   const discovery = await discoverTestCommand(workspace.path, state.config.tests.command, {
     changedPaths: state.diff?.files ?? [],
   });
-  if (!discovery.found) return { discovery, concurrent };
+  if (!discovery.found) {
+    context.observer.testStatus({ phase: 'skipped', concurrent, detail: discovery.reason });
+    return { discovery, concurrent };
+  }
+
+  context.observer.testStatus({ phase: 'running', concurrent, detail: discovery.command.command.join(' ') });
 
   const execution = await runTests(discovery.command, {
     cwd: discovery.command.directory ?? workspace.path,

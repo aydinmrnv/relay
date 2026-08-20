@@ -1,6 +1,13 @@
 import type { AgentEvent } from '../agents/types.ts';
 import type { Role } from '../storage/config.ts';
+import type { ReviewRound } from '../reviews/types.ts';
 import type { Phase } from './phases.ts';
+
+export interface TestStatusUpdate {
+  phase: 'running' | 'passed' | 'failed' | 'skipped';
+  concurrent?: boolean;
+  detail?: string;
+}
 
 /**
  * How the engine reports progress. The engine never writes to stdout itself,
@@ -11,6 +18,8 @@ export interface RunObserver {
   phaseChanged(phase: Phase, detail?: string): void;
   roleStatus(role: Role, status: string): void;
   agentEvent(role: Role, event: AgentEvent): void;
+  reviewCompleted(round: ReviewRound): void;
+  testStatus(update: TestStatusUpdate): void;
   note(text: string): void;
   warn(text: string): void;
 }
@@ -32,6 +41,8 @@ export const silentObserver: RunObserver = {
   phaseChanged() {},
   roleStatus() {},
   agentEvent() {},
+  reviewCompleted() {},
+  testStatus() {},
   note() {},
   warn() {},
 };
@@ -41,6 +52,8 @@ export class RecordingObserver implements RunObserver {
   readonly phases: Array<{ phase: Phase; detail?: string }> = [];
   readonly statuses: Array<{ role: Role; status: string }> = [];
   readonly events: Array<{ role: Role; event: AgentEvent }> = [];
+  readonly reviews: ReviewRound[] = [];
+  readonly testStatuses: TestStatusUpdate[] = [];
   readonly notes: string[] = [];
   readonly warnings: string[] = [];
 
@@ -53,6 +66,8 @@ export class RecordingObserver implements RunObserver {
   agentEvent(role: Role, event: AgentEvent): void {
     this.events.push({ role, event });
   }
+  reviewCompleted(round: ReviewRound): void { this.reviews.push(round); }
+  testStatus(update: TestStatusUpdate): void { this.testStatuses.push(update); }
   note(text: string): void {
     this.notes.push(text);
   }
