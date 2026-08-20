@@ -65,6 +65,8 @@ function runObserver(label: string, deps: EvalRunnerDeps): RunObserver {
     phaseChanged() {},
     roleStatus() {},
     agentEvent() {},
+    reviewCompleted() {},
+    testStatus() {},
     note: (text) => {
       if (deps.verbose === true) deps.observer.note(`${label}  ${text}`);
     },
