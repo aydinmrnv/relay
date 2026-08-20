@@ -38,6 +38,24 @@ export async function git(
   return result.stdout.trim();
 }
 
+export async function repositoryRoot(
+  cwd: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<string> {
+  return git(['rev-parse', '--show-toplevel'], { cwd, ...options });
+}
+
+export async function listLocalBranches(
+  root: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<string[]> {
+  const output = await git(
+    ['for-each-ref', '--format=%(refname:short)', 'refs/heads'],
+    { cwd: root, ...options },
+  );
+  return output === '' ? [] : output.split('\n');
+}
+
 async function gitQuiet(args: readonly string[], cwd: string): Promise<string | null> {
   try {
     return await git(args, { cwd });

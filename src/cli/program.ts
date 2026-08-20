@@ -24,6 +24,9 @@ import {
 import { reportError, theme } from './output.ts';
 import { EXIT, exitCodeFor, isCommanderError } from './exit.ts';
 import { enterJsonMode } from './json.ts';
+import { completionCommand, COMPLETION_HELP } from './commands/completion.ts';
+import { completeCommand } from './completion/complete.ts';
+import { formatCommandDoc } from './help/commandDoc.ts';
 
 /** Help text names whichever CLIs are registered, not whichever shipped first. */
 const AGENT_LABELS = AGENT_REGISTRY.map((entry) => entry.label).join(', ');
@@ -79,10 +82,11 @@ const HELP_GROUPS = [
   ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats']],
   ['Deliver', ['deliver']],
   ['Measure', ['eval']],
+  ['Shell', ['completion']],
 ] as const;
 
 function groupedHelp(command: Command, helper: Help): string {
-  if (command.parent !== null) return defaultHelp(command, helper.helpWidth);
+  if (command.parent !== null) return formatCommandDoc(command);
   const base = defaultHelp(command, helper.helpWidth);
   const marker = 'Commands:\n';
   const start = base.indexOf(marker);
@@ -310,6 +314,26 @@ export function buildProgram(version: string): Command {
     .description('cancel a running workflow')
     .option('--json', JSON_FLAG)
     .action(wrap(stopCommand));
+
+  program
+    .command('completion <shell>')
+    .description('print a shell completion script')
+    .addHelpText('after', `\n${COMPLETION_HELP}\n`)
+    .action(async (shell: string) => {
+      try {
+        process.exitCode = await completionCommand(program, shell);
+      } catch (error) {
+        if (!isCommanderError(error)) reportError(error);
+        process.exitCode = exitCodeFor(error);
+      }
+    });
+
+  program
+    .command('__complete', { hidden: true })
+    .allowUnknownOption(true)
+    .passThroughOptions()
+    .argument('[words...]')
+    .action(async (words: string[] | undefined) => completeCommand(program, words ?? []));
 
   return program;
 }
