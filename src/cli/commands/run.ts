@@ -21,6 +21,14 @@ import {
   type DeliveryPolicy,
   type RelayConfig,
 } from '../../storage/config.ts';
+import {
+  applyReviewLevel,
+  describeReview,
+  isReviewLevel,
+  REVIEW_LEVELS,
+  reviewProfile,
+  type ReviewLevel,
+} from '../../reviews/level.ts';
 import { WorkflowEngine } from '../../workflow/engine.ts';
 import { resolveCeiling, shortfall } from '../../workflow/delivery.ts';
 import { delivering } from '../../workflow/phases/delivery.ts';
@@ -85,8 +93,10 @@ export interface RunOptions {
   deliver?: string;
   /** `--no-offer-merge`: finish without the one question. */
   offerMerge?: boolean;
-  /** `-f`: no plan review, no code review. */
+  /** `-f`: no plan review, no code review. The shorthand for `--review none`. */
   fast?: boolean;
+  /** `--review <level>`: how hard the agents are asked to look. */
+  review?: string;
   /** `--no-prime`: make each reviewer read only once its turn starts. */
   prime?: boolean;
   /** `--no-parallel-tests`: run the suite after the code review, not during it. */
@@ -183,9 +193,27 @@ export function issueProviderFor(cli: CliContext, state: RunState): IssueProvide
     : new LocalIssueProvider({ cwd: state.repository.root, task: state.task });
 }
 
+export interface OverrideOptions {
+  /**
+   * Whether to say what changed. On for a real run — a run reviewed less than
+   * the reader expects is the one failure mode these flags can produce — and off
+   * when the answer is only being shown, as the home screen does with the flags
+   * a `/command` set.
+   */
+  announce?: boolean;
+}
+
 /** Applies `relay run` flags over the repository config for this run only. */
-export function applyOverrides(config: RelayConfig, options: RunOptions): RelayConfig {
+export function applyOverrides(
+  config: RelayConfig,
+  options: RunOptions,
+  overrideOptions: OverrideOptions = {},
+): RelayConfig {
   const merged: RelayConfig = structuredClone(config);
+  const announce = overrideOptions.announce !== false;
+  const say = (line: string): void => {
+    if (announce) out(line);
+  };
 
   if (options.base !== undefined) merged.workflow.baseBranch = options.base;
   if (options.tests === false) merged.workflow.runTests = false;
@@ -200,25 +228,19 @@ export function applyOverrides(config: RelayConfig, options: RunOptions): RelayC
   if (options.prime === false) merged.workflow.primeReviewers = false;
   if (options.parallelTests === false) merged.workflow.concurrentTests = false;
 
-  if (options.fast === true) {
-    // Fast is the whole trade in one flag: no planner turn, no plan review, no
-    // code review. What is left is one agent, its own plan, and the suite —
-    // which is the fastest a run can be and the least it can promise.
-    merged.workflow.plan = 'inline';
-    merged.workflow.reviewCode = false;
-    out(dim('Fast: one agent plans and implements, and no reviewer reads either the plan or the diff.'));
-    out(
-      warning(
-        merged.workflow.runTests
-          ? '  The tests are the only check on this run.'
-          : '  Nothing checks this run: reviews are off and so are the tests.',
-      ),
-    );
+  // Review depth is set before the individual knobs below, so an explicit
+  // `--max-code-rounds` on top of a level still wins — the same order the
+  // config file resolves them in.
+  const level = resolveReviewLevel(options);
+  if (level !== undefined) {
+    merged.workflow.review = level;
+    applyReviewLevel(merged.workflow, level);
+    if (announce) announceReviewLevel(merged, level);
   }
 
   if (options.tuff === true) {
     merged.workflow.typos = true;
-    out(dim('Tuff: the pull request, the commit messages and the comments in the diff are written with typos.'));
+    say(dim('Tuff: the pull request, the commit messages and the comments in the diff are written with typos.'));
   }
 
   if (options.planner !== undefined) {
@@ -244,10 +266,62 @@ export function applyOverrides(config: RelayConfig, options: RunOptions): RelayC
   if (merged.workflow.plan === 'review' && merged.agents.planner === merged.agents.planReviewer) {
     // Not fatal — the user may only have one CLI installed — but it removes the
     // cross-model critique that makes the workflow worth running.
-    out(warning('Warning: the planner and plan reviewer are the same agent, so the plan is self-reviewed.'));
+    say(warning('Warning: the planner and plan reviewer are the same agent, so the plan is self-reviewed.'));
   }
 
   return merged;
+}
+
+/**
+ * The level this run is asked for, from either spelling of the question.
+ *
+ * `--fast` predates levels and is exactly the bottom of the scale, so it stays
+ * as the shorthand rather than becoming a second dial pointing at the same
+ * thing. Passing both is refused unless they agree: `--fast --review thorough`
+ * has no reading that honours either flag.
+ */
+export function resolveReviewLevel(options: Pick<RunOptions, 'review' | 'fast'>): ReviewLevel | undefined {
+  const named = options.review === undefined ? undefined : parseReviewLevel(options.review);
+  if (options.fast !== true) return named;
+  if (named !== undefined && named !== 'none') {
+    throw new RelayError(`--fast is \`--review none\`, so it cannot be combined with --review ${named}.`, {
+      code: 'BAD_FLAG',
+      hint: 'Pass one of them.',
+    });
+  }
+  return 'none';
+}
+
+export function parseReviewLevel(value: string): ReviewLevel {
+  const normalized = value.trim().toLowerCase();
+  if (!isReviewLevel(normalized)) {
+    throw new RelayError(`--review must be one of ${REVIEW_LEVELS.join(', ')} (got "${value}").`, { code: 'BAD_FLAG' });
+  }
+  return normalized;
+}
+
+/**
+ * Says what the level just bought or gave up.
+ *
+ * A run that quietly reviews less than the reader expects is the one failure
+ * mode this dial can produce, so turning it down is always said out loud, and
+ * turning it off is said in a colour.
+ */
+function announceReviewLevel(config: RelayConfig, level: ReviewLevel): void {
+  const profile = reviewProfile(level);
+  out(dim(`Review ${level}: ${profile.headline}.`));
+
+  if (level === 'none') {
+    out(
+      warning(
+        config.workflow.runTests
+          ? '  The tests are the only check on this run.'
+          : '  Nothing checks this run: reviews are off and so are the tests.',
+      ),
+    );
+    return;
+  }
+  out(dim(`  ${describeReview({ ...config.workflow, review: level })}.`));
 }
 
 function assertProvider(value: string, flag: string): void {
@@ -540,6 +614,17 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
   }
   if (options.deliver !== undefined) previous.config.workflow.deliver = parseDeliver(options.deliver);
   if (options.offerMerge === false) previous.config.workflow.offerMerge = false;
+  // The phases already taken are history, but the ones left are not: a resume
+  // is exactly when somebody decides the remaining reviews should be harder —
+  // or, after a round limit was hit, that this run has been reviewed enough.
+  if (options.review !== undefined || options.fast === true) {
+    const level = resolveReviewLevel(options);
+    if (level !== undefined) {
+      previous.config.workflow.review = level;
+      applyReviewLevel(previous.config.workflow, level);
+      out(dim(`Review ${level} from here: ${describeReview(previous.config.workflow)}.`));
+    }
+  }
   // A budget applies from here on, and the cost already spent counts against
   // it: resuming past a cap the run has already breached would defeat it.
   if (options.maxCost !== undefined) previous.config.workflow.maxCostUsd = parseCost(options.maxCost, '--max-cost');

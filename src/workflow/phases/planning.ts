@@ -9,7 +9,9 @@ import {
 import { assembleBrief, renderBriefArtifact } from '../../agents/brief.ts';
 import { extractSection, beginMarker, endMarker } from '../../reviews/protocol.ts';
 import { parseReview, parseFindingResponses, REVIEW_JSON_SCHEMA } from '../../reviews/parse.ts';
-import { isActionable, type ReviewRound } from '../../reviews/types.ts';
+import { isActionableAt } from '../../reviews/level.ts';
+import type { ReviewRound } from '../../reviews/types.ts';
+import { reviewProfileOf } from '../../storage/config.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import { runAgentTurn, runStructuredTurn } from '../agentRunner.ts';
 import { awaitPriming, startPriming } from '../priming.ts';
@@ -89,6 +91,7 @@ export async function reviewingPlan(context: EngineContext): Promise<PhaseResult
 
   const round = state.rounds.planReview + 1;
   const maxRounds = state.config.workflow.maxPlanReviewRounds;
+  const profile = reviewProfileOf(state.config);
 
   // Round 1 resumes the session the reviewer built while the planner planned;
   // later rounds resume the review itself, so the reviewer remembers what it
@@ -97,7 +100,7 @@ export async function reviewingPlan(context: EngineContext): Promise<PhaseResult
 
   const { value: review, text } = await runStructuredTurn(context, {
     role: 'planReviewer',
-    prompt: buildPlanReviewPrompt({ ...prompts, plan, round, maxRounds, primed }),
+    prompt: buildPlanReviewPrompt({ ...prompts, plan, round, maxRounds, primed, profile }),
     capability: 'read_only',
     timeoutMs: state.config.timeouts.reviewMs,
     resume: true,
@@ -120,7 +123,7 @@ export async function reviewingPlan(context: EngineContext): Promise<PhaseResult
   state.reviews.push(entry);
   await store.saveReview('plan', round, { ...entry, rawFinalMessage: text });
 
-  const actionable = review.findings.filter(isActionable);
+  const actionable = review.findings.filter((finding) => isActionableAt(finding, profile));
 
   if (review.decision === 'approve' || actionable.length === 0) {
     state.planApproved = true;
@@ -151,7 +154,7 @@ export async function revisingPlan(context: EngineContext): Promise<PhaseResult>
     throw new RelayError('No plan review to revise against.', { code: 'NO_REVIEW' });
   }
 
-  const findings = lastReview.findings.filter(isActionable);
+  const findings = lastReview.findings.filter((finding) => isActionableAt(finding, reviewProfileOf(state.config)));
   const round = state.rounds.planReview;
 
   const { value: responses, text } = await runStructuredTurn(context, {

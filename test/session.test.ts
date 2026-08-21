@@ -100,7 +100,7 @@ describe('the Relay session', () => {
     // run — which is what makes the finished run visible on it.
     assert.equal(result.homes, 3);
     assert.equal(result.asked.length, 3);
-    for (const question of result.asked) assert.match(question, /Next issue\?/);
+    for (const question of result.asked) assert.match(question, /What should Relay work on\?/);
   });
 
   it('leaves on Enter, and on the words for it', async () => {
@@ -161,6 +161,63 @@ describe('the Relay session', () => {
 
     assert.equal(result.asked.length, 0, 'home has already said to run `relay start`');
     assert.equal(result.started.length, 0);
+  });
+
+  it('starts a run from plain words, with no ticket anywhere', async () => {
+    const result = await session(['add a dark mode toggle to settings', '']);
+
+    assert.equal(result.started.length, 1);
+    assert.equal(result.started[0]?.issueRef, undefined, 'there is no issue to name');
+    assert.equal(result.started[0]?.options.prompt, 'add a dark mode toggle to settings');
+  });
+
+  it('still reads an issue number and a path as what they are', async () => {
+    const result = await session(['142', './spec.md', '']);
+
+    assert.deepEqual(result.started.map(({ issueRef }) => issueRef), ['142', './spec.md']);
+    for (const started of result.started) assert.equal(started.options.prompt, undefined);
+  });
+
+  it('keeps a task off the session flags, so the next run is not the same task', async () => {
+    const result = await session(['fix the pager', '142', '']);
+
+    assert.equal(result.started[0]?.options.prompt, 'fix the pager');
+    assert.equal(result.started[1]?.options.prompt, undefined, 'the prompt belonged to one run');
+  });
+
+  it('applies a slash command to every run after it, without starting one itself', async () => {
+    const result = await session(['/review thorough', '142', '']);
+
+    assert.equal(result.started.length, 1, 'a command is not a run');
+    assert.equal(result.started[0]?.options.review, 'thorough');
+  });
+
+  it('does not redraw the screen for a command that only printed something', async () => {
+    const result = await session(['/help', ''], { seed: { screen: { ready: true } } });
+
+    assert.equal(result.homes, 0, 'redrawing would push what /help said off the top');
+    assert.equal(result.started.length, 0);
+  });
+
+  it('redraws the screen when a command changed what is on it', async () => {
+    const result = await session(['/review light', ''], { seed: { screen: { ready: true } } });
+    assert.equal(result.homes, 1);
+  });
+
+  it('leaves on /exit', async () => {
+    const result = await session(['/exit', '142']);
+
+    assert.equal(result.started.length, 0);
+    assert.match(result.output, /`relay` opens this screen again/);
+  });
+
+  it('starts the run a command asks for, with the session flags on it', async () => {
+    const result = await session(['/editor', ''], { options: { review: 'light' } });
+
+    assert.equal(result.started.length, 1);
+    assert.equal(result.started[0]?.issueRef, undefined);
+    assert.equal(result.started[0]?.options.editor, true);
+    assert.equal(result.started[0]?.options.review, 'light');
   });
 
   it('treats Ctrl-C at the prompt as leaving, not as an error', async () => {

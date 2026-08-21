@@ -1,6 +1,6 @@
 import type { Command, Option } from 'commander';
 import { repositoryRoot } from '../../git/repository.ts';
-import { agentNames, deliveryPolicies, localBranches, mergeMethods, runRefs } from './candidates.ts';
+import { agentNames, deliveryPolicies, localBranches, mergeMethods, reviewLevels, runRefs } from './candidates.ts';
 import { withDeadline } from './deadline.ts';
 
 const RUN_COMMANDS = new Set(['resume', 'deliver', 'status', 'watch', 'diff', 'plan', 'logs', 'stop']);
@@ -51,6 +51,7 @@ export async function completionCandidates(program: Command, words: readonly str
     if (option?.long === '--planner' || option?.long === '--implementer') candidates = agentNames();
     else if (option?.long === '--deliver' || option?.long === '--to') candidates = deliveryPolicies();
     else if (option?.long === '--merge-method') candidates = mergeMethods();
+    else if (option?.long === '--review') candidates = reviewLevels();
     else {
       const needsRepo = option?.long === '--base' || RUN_COMMANDS.has(command.name());
       if (!needsRepo) return [];

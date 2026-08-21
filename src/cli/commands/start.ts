@@ -15,7 +15,8 @@ import {
   type IssueTrackerRegistration,
 } from '../../issues/registry.ts';
 import { resolveExecutable } from '../../process/runner.ts';
-import { configPath, loadConfig, type RelayConfig } from '../../storage/config.ts';
+import { configPath, loadConfig, reviewLevelOf, type RelayConfig } from '../../storage/config.ts';
+import { describeReview } from '../../reviews/level.ts';
 import { RelayError } from '../../util/errors.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
 import { agentChecks, authStateCheck, type AgentCheck, type Check } from '../checks.ts';
@@ -381,6 +382,9 @@ function showTour(config: RelayConfig): void {
             : 'your own test command, discovered per run'
           : dim('disabled in config'),
       },
+      // Named last because it is the one line above that a reader can change:
+      // all four review facts move together, under one word.
+      { label: 'Depth', value: `${reviewLevelOf(config)} — ${describeReview(config.workflow)}` },
     ],
     '    ',
   );

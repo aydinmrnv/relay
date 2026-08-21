@@ -3,10 +3,19 @@ import { readFile } from 'node:fs/promises';
 
 import { AGENT_PROVIDERS, isAgentProvider } from '../agents/index.ts';
 import { MERGE_METHODS, type MergeMethod } from '../github/pullRequest.ts';
+import {
+  applyReviewLevel,
+  isReviewLevel,
+  levelOf,
+  profileFor,
+  REVIEW_LEVELS,
+  type ReviewLevel,
+  type ReviewProfile,
+} from '../reviews/level.ts';
 import { RelayError } from '../util/errors.ts';
 import { atomicWriteJson } from './atomic.ts';
 
-export { AGENT_PROVIDERS };
+export { AGENT_PROVIDERS, REVIEW_LEVELS, type ReviewLevel };
 
 /**
  * The name of a registered harness. Deliberately not a union of the CLIs that
@@ -71,6 +80,16 @@ export interface RelayConfig {
   models: Partial<Record<AgentProvider | Role, string>>;
   workflow: {
     maxConcurrentRuns: number;
+    /**
+     * How hard the agents are asked to look, as one word.
+     *
+     * The level owns `plan`, `reviewCode` and both round counts — setting it is
+     * setting all four — and it alone decides the severity at which a finding
+     * comes back to the implementer. Any of those keys may still be written
+     * underneath it, and an explicit key always wins: the level is a starting
+     * point that a repository is allowed to tune, not a lock.
+     */
+    review: ReviewLevel;
     plan: PlanMode;
     /**
      * Whether the diff is reviewed by the other model before it is tested.
@@ -181,6 +200,7 @@ export const DEFAULT_CONFIG: RelayConfig = {
   models: {},
   workflow: {
     maxConcurrentRuns: 1,
+    review: 'standard',
     plan: 'review',
     reviewCode: true,
     // Two rounds, not three: a round is a review turn plus a revision turn, and
@@ -245,6 +265,24 @@ export function commentsIssue(config: RelayConfig): boolean {
  */
 export function reviewsCode(config: RelayConfig): boolean {
   return config.workflow.reviewCode !== false;
+}
+
+/**
+ * The review profile a run is judged by, read from the run's own config
+ * snapshot — so a run started at `thorough` keeps being judged at `thorough`
+ * even if the repository's default changes underneath it.
+ *
+ * A snapshot recorded before levels existed has no `review` key and gets the
+ * level its round counts describe, which is `standard` for every run that took
+ * the defaults.
+ */
+export function reviewProfileOf(config: RelayConfig): ReviewProfile {
+  return profileFor(config.workflow);
+}
+
+/** The level name for a config, including whether its keys were tuned past it. */
+export function reviewLevelOf(config: RelayConfig): ReviewLevel {
+  return config.workflow.review ?? levelOf(config.workflow) ?? 'standard';
 }
 
 export function relayDir(repoRoot: string): string {
@@ -340,6 +378,18 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
   const workflow = raw['workflow'];
   if (workflow !== undefined) {
     if (!isRecord(workflow)) throw new RelayError('config.workflow must be an object.', { code: 'BAD_CONFIG' });
+    // Read first, and written before anything else in this block: the level
+    // seeds four keys, and a repository that also names one of them by hand
+    // means the hand-written one. Every read below overwrites what it seeded.
+    if (workflow['review'] !== undefined) {
+      if (!isReviewLevel(workflow['review'])) {
+        throw new RelayError(`config.workflow.review must be one of ${REVIEW_LEVELS.join(' | ')}.`, {
+          code: 'BAD_CONFIG',
+        });
+      }
+      config.workflow.review = workflow['review'];
+      applyReviewLevel(config.workflow, workflow['review']);
+    }
     if (workflow['plan'] !== undefined) {
       const plan = workflow['plan'];
       if (typeof plan !== 'string' || !(PLAN_MODES as readonly string[]).includes(plan)) {

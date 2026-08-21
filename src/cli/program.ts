@@ -1,7 +1,7 @@
 import { Command, Help } from 'commander';
 
 import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
-import { DELIVERY_POLICIES } from '../storage/config.ts';
+import { DELIVERY_POLICIES, REVIEW_LEVELS } from '../storage/config.ts';
 import { deliverCommand } from './commands/deliver.ts';
 import { doctorCommand } from './commands/doctor.ts';
 import { collect, evalCommand } from './commands/eval.ts';
@@ -202,10 +202,11 @@ export function buildProgram(version: string): Command {
     .option('-b, --base <branch>', 'branch to base the worktree on')
     .option('--planner <agent>', `agent that plans and reviews code (${AGENT_PROVIDERS.join('|')})`)
     .option('--implementer <agent>', `agent that implements and reviews the plan (${AGENT_PROVIDERS.join('|')})`)
+    .option('-r, --review <level>', `how hard the agents look (${REVIEW_LEVELS.join('|')})`)
     .option('--max-plan-rounds <n>', 'maximum plan review rounds')
     .option('--max-code-rounds <n>', 'maximum code review rounds')
     .option('--max-cost <usd>', 'stop the run at the first phase boundary past this many dollars')
-    .option('-f, --fast', 'one agent plans and implements: no plan review, no code review')
+    .option('-f, --fast', 'shorthand for --review none: one agent plans and implements, unreviewed')
     .option('--no-prime', 'do not let reviewers read the repository ahead of their turn')
     .option('--no-parallel-tests', 'run the test suite after the code review instead of during it')
     .option('--no-tests', 'skip the test phase')
@@ -240,6 +241,7 @@ export function buildProgram(version: string): Command {
     .argument('<run-id>', 'run id, short id, or "latest"')
     .description('continue an interrupted or failed run')
     .option('-v, --verbose', 'stream raw agent events')
+    .option('-r, --review <level>', `how hard the agents look from here on (${REVIEW_LEVELS.join('|')})`)
     .option('--max-cost <usd>', 'stop the run at the first phase boundary past this many dollars')
     .option('--commit', 'deliver no further than a commit on the run branch')
     .option('--push', 'push the run branch')

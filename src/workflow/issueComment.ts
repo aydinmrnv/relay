@@ -1,4 +1,5 @@
-import { isBlocking } from '../reviews/types.ts';
+import { isBlockingAt } from '../reviews/level.ts';
+import { reviewProfileOf } from '../storage/config.ts';
 import { typoize } from '../util/typos.ts';
 import { unresolvedBlockingFindings } from './delivery.ts';
 import type { RunState } from './state.ts';
@@ -11,7 +12,7 @@ export function RUN_MARKER(runId: string): string {
 export function buildIssueComment(state: RunState): string {
   const diff = state.diff;
   const tests = state.tests;
-  const raised = state.reviews.flatMap((review) => review.kind === 'code' ? review.findings : []).filter(isBlocking).length;
+  const raised = state.reviews.flatMap((review) => review.kind === 'code' ? review.findings : []).filter((finding) => isBlockingAt(finding, reviewProfileOf(state.config))).length;
   const resolved = raised - unresolvedBlockingFindings(state);
   const usage = state.usage?.total ?? zeroTotals();
   const caveat = unpricedTurns(usage) > 0 ? ` (${unpricedTurns(usage)} unpriced turn(s))` : '';

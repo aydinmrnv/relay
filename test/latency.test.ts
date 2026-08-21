@@ -146,16 +146,26 @@ describe('reviewer priming', () => {
 
     const { context, observer, state } = buildContext(harnesses);
     state.config.timeouts.primeGraceMs = 50;
+    const observerNotes = (): string => observer.notes.join(' ');
 
     // The stalled turn is a fake with no process to kill, so the test plays the
-    // part the OS plays in a real run and lets it die shortly after the abort.
-    const timer = setTimeout(400).then(release);
+    // part the OS plays in a real run and lets it die once the run has given up
+    // waiting for it. Waiting for that note rather than for a fixed delay is
+    // what keeps this a test of the grace period: a machine slow enough to
+    // reach the review turn after the delay expired would otherwise find a
+    // read-ahead that had already landed, and fail for the wrong reason.
+    const abandoned = /still reading when its review came up/;
+    const timer = (async (): Promise<void> => {
+      const deadline = Date.now() + 10_000;
+      while (!abandoned.test(observerNotes()) && Date.now() < deadline) await setTimeout(10);
+      release();
+    })();
 
     const final = await new WorkflowEngine(context).run();
     await timer;
 
     assert.equal(final.phase, 'COMPLETE');
-    assert.match(observer.notes.join(' '), /still reading when its review came up/);
+    assert.match(observerNotes(), abandoned);
 
     // Cold, not resumed into a half-finished reading.
     const review = workTurns(harnesses.codex, 'planReviewer')[0];

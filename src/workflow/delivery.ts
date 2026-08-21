@@ -1,5 +1,6 @@
 import type { DeliveryPolicy } from '../storage/config.ts';
-import { isBlocking } from '../reviews/types.ts';
+import { isBlockingAt } from '../reviews/level.ts';
+import { reviewProfileOf } from '../storage/config.ts';
 import type { MergeReadiness } from '../git/publish.ts';
 import {
   DELIVERY_STEPS,
@@ -322,11 +323,12 @@ export function resolveCeiling(
 
 /** Blocking code-review findings the implementer did not accept. */
 export function unresolvedBlockingFindings(state: RunState): number {
+  const profile = reviewProfileOf(state.config);
   let count = 0;
   for (const review of state.reviews) {
     if (review.kind !== 'code') continue;
     for (const finding of review.findings) {
-      if (!isBlocking(finding)) continue;
+      if (!isBlockingAt(finding, profile)) continue;
       const response = review.responses?.find((entry) => entry.findingId === finding.id);
       if (response?.response !== 'ACCEPT') count += 1;
     }

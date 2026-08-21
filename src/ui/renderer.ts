@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 import { describeEvent, type AgentEvent } from '../agents/types.ts';
-import { isBlocking, type ReviewRound } from '../reviews/types.ts';
+import { isBlockingAt, profileFor, reviewLevelName, type ReviewProfile } from '../reviews/level.ts';
+import type { ReviewRound } from '../reviews/types.ts';
 import type { Role } from '../storage/config.ts';
 import { DISPLAY_PHASES, displayPhaseFor, phaseLabel, phaseRole, type Phase } from '../workflow/phases.ts';
 import type { RunObserver, TestStatusUpdate } from '../workflow/observer.ts';
@@ -359,7 +360,18 @@ export class RunRenderer implements RunObserver {
     }
     footer.push(this.progressLine(inner));
 
-    const pipeline = panel({ theme: this.theme, width, title: 'Pipeline', body, footer });
+    // The level rides in the frame's badge rather than in a row of its own: it
+    // is the one fact about this run that explains the shape of the checklist
+    // under it — why there is no plan review, or why a third round is allowed.
+    const workflow = this.options.state?.config.workflow;
+    const pipeline = panel({
+      theme: this.theme,
+      width,
+      title: 'Pipeline',
+      ...(workflow === undefined ? {} : { badge: paint(this.theme, 'gray', `review ${reviewLevelName(workflow)}`) }),
+      body,
+      footer,
+    });
     const work = this.buildWorkLines(width);
     return work.length === 0 ? pipeline : [...pipeline, ...work];
   }
@@ -382,8 +394,17 @@ export class RunRenderer implements RunObserver {
     return rows.length === 0 ? [] : panel({ theme: this.theme, width, title: 'Work', body: rows });
   }
 
+  /**
+   * The same count the engine acts on, so the panel and the phase note never
+   * disagree about how many findings are coming back.
+   */
+  private get profile(): ReviewProfile {
+    return profileFor(this.options.state?.config.workflow ?? {});
+  }
+
   private findingsText(round: ReviewRound): string {
-    const blocking = round.findings.filter(isBlocking).length;
+    const profile = this.profile;
+    const blocking = round.findings.filter((finding) => isBlockingAt(finding, profile)).length;
     return `${blocking} blocking · ${round.findings.length - blocking} non-blocking`;
   }
 

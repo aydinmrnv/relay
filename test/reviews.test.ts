@@ -8,7 +8,8 @@ import {
   REVIEW_JSON_SCHEMA,
   findStrictSchemaViolations,
 } from '../src/reviews/parse.ts';
-import { isBlocking, isActionable, formatFindingLine } from '../src/reviews/types.ts';
+import { formatFindingLine } from '../src/reviews/types.ts';
+import { isActionableAt, isBlockingAt, REVIEW_PROFILES } from '../src/reviews/level.ts';
 
 describe('artifact protocol', () => {
   it('extracts a delimited section', () => {
@@ -205,20 +206,45 @@ describe('finding responses', () => {
 
 describe('finding classification', () => {
   const base = { id: 'F1', category: 'correctness' as const, summary: 's' };
+  const standard = REVIEW_PROFILES.standard;
 
-  it('treats explicit impact as authoritative', () => {
-    assert.equal(isBlocking({ ...base, severity: 'low', impact: 'BLOCKING' }), true);
-    assert.equal(isBlocking({ ...base, severity: 'critical', impact: 'SUGGESTION' }), false);
+  it('returns a severe finding whatever the reviewer classified it as', () => {
+    // A critical bug filed as a suggestion is still a critical bug, and the
+    // severity scale is the half of the classification the reviewer cannot
+    // talk itself out of.
+    assert.equal(isBlockingAt({ ...base, severity: 'critical', impact: 'SUGGESTION' }, standard), true);
+    assert.equal(isBlockingAt({ ...base, severity: 'high' }, standard), true);
   });
 
-  it('falls back to severity when impact is absent', () => {
-    assert.equal(isBlocking({ ...base, severity: 'high' }), true);
-    assert.equal(isBlocking({ ...base, severity: 'medium' }), false);
+  it('honours an explicit BLOCKING down to the level\'s floor, and no further', () => {
+    assert.equal(isBlockingAt({ ...base, severity: 'medium', impact: 'BLOCKING' }, standard), true);
+    // Below the floor a "blocking" nitpick is reported, not returned: a round
+    // costs minutes of a person's time.
+    assert.equal(isBlockingAt({ ...base, severity: 'low', impact: 'BLOCKING' }, standard), false);
+    assert.equal(isBlockingAt({ ...base, severity: 'medium' }, standard), false);
+  });
+
+  it('moves the bar with the level', () => {
+    const medium = { ...base, severity: 'medium' as const };
+    assert.equal(isBlockingAt(medium, REVIEW_PROFILES.light), false);
+    assert.equal(isBlockingAt(medium, REVIEW_PROFILES.standard), false);
+    assert.equal(isBlockingAt(medium, REVIEW_PROFILES.thorough), true);
+
+    const low = { ...base, severity: 'low' as const };
+    assert.equal(isBlockingAt(low, REVIEW_PROFILES.thorough), false);
+    assert.equal(isBlockingAt(low, REVIEW_PROFILES.exhaustive), true);
+
+    // A light review returns only what it cannot let through.
+    assert.equal(isBlockingAt({ ...base, severity: 'high' }, REVIEW_PROFILES.light), false);
+    assert.equal(isBlockingAt({ ...base, severity: 'high', impact: 'BLOCKING' }, REVIEW_PROFILES.light), true);
+    assert.equal(isBlockingAt({ ...base, severity: 'critical' }, REVIEW_PROFILES.light), true);
   });
 
   it('treats anything above low severity as actionable for plan revision', () => {
-    assert.equal(isActionable({ ...base, severity: 'low' }), false);
-    assert.equal(isActionable({ ...base, severity: 'medium' }), true);
+    assert.equal(isActionableAt({ ...base, severity: 'low' }, standard), false);
+    assert.equal(isActionableAt({ ...base, severity: 'medium' }, standard), true);
+    // A thorough plan review answers the cosmetic ones too.
+    assert.equal(isActionableAt({ ...base, severity: 'low' }, REVIEW_PROFILES.thorough), true);
   });
 
   it('formats a finding with its location', () => {

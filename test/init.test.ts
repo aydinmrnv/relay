@@ -7,7 +7,7 @@ import { runInit, type InitDeps } from '../src/cli/commands/init.ts';
 import { setTheme } from '../src/cli/output.ts';
 import type { AgentCheck } from '../src/cli/checks.ts';
 import { AGENT_REGISTRY } from '../src/agents/index.ts';
-import { loadConfig, configPath, type RelayConfig } from '../src/storage/config.ts';
+import { loadConfig, configPath, REVIEW_LEVELS, type RelayConfig } from '../src/storage/config.ts';
 import type { PromptSession } from '../src/ui/prompt.ts';
 import { RelayError } from '../src/util/errors.ts';
 import type { Theme } from '../src/ui/theme.ts';
@@ -171,7 +171,8 @@ describe('relay init — guided', () => {
       /1\. This repository/,
       /2\. Coding agents/,
       /3\. Roles/,
-      /4\. What a run does/,
+      /4\. Review depth/,
+      /5\. What a run does/,
       /Done/,
     ]) {
       assert.match(output, step);
@@ -197,8 +198,28 @@ describe('relay init — guided', () => {
     ]);
     // Driven by the registry, so a newly added harness is offered automatically.
     const names = AGENT_REGISTRY.map((entry) => entry.name);
-    assert.equal(prompter.offered.length, 4);
-    for (const offered of prompter.offered) assert.deepEqual(offered, names);
+    const roleChoices = prompter.offered.filter((offered) => offered.every((value) => names.includes(value)));
+    assert.equal(roleChoices.length, 4);
+    for (const offered of roleChoices) assert.deepEqual(offered, names);
+  });
+
+  it('offers the review levels, and writes the four keys the chosen one means', async () => {
+    const { prompter } = await runFlow(['', '', '', '', '', '', 'thorough']);
+
+    assert.ok(prompter.asked.some((question) => /Review depth for this repository/.test(question)));
+    assert.deepEqual(prompter.offered.at(-1), [...REVIEW_LEVELS]);
+
+    const config = await readConfig();
+    assert.equal(config.workflow.review, 'thorough');
+    assert.equal(config.workflow.maxPlanReviewRounds, 3);
+    assert.equal(config.workflow.maxCodeReviewRounds, 3);
+    assert.equal(config.workflow.plan, 'review');
+    assert.equal(config.workflow.reviewCode, true);
+  });
+
+  it('keeps the shipped level when the depth question is answered with Enter', async () => {
+    await runFlow(ALL_DEFAULTS);
+    assert.equal((await readConfig()).workflow.review, 'standard');
   });
 
   it('completes on defaults alone, keeping the shipped roles', async () => {
