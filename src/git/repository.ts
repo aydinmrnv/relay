@@ -7,7 +7,14 @@ export interface RepositoryInfo {
   /** Path to the shared `.git` directory, common to all worktrees. */
   gitDir: string;
   currentBranch: string | null;
+  /** HEAD's commit, or `''` in a repository whose first commit is still to come. */
   headSha: string;
+  /**
+   * True when HEAD is unborn: `git init` has run and nothing has been committed.
+   * A run can still start here — it branches from the empty tree instead of from
+   * a commit, and its first commit becomes the repository's first.
+   */
+  isEmpty: boolean;
   isDirty: boolean;
   dirtyFiles: string[];
   defaultBranch: string;
@@ -75,15 +82,13 @@ export async function discoverRepository(cwd: string): Promise<RepositoryInfo> {
 
   const gitDir = (await gitQuiet(['rev-parse', '--path-format=absolute', '--git-common-dir'], root)) ?? `${root}/.git`;
   const branchRaw = await gitQuiet(['rev-parse', '--abbrev-ref', 'HEAD'], root);
-  const currentBranch = branchRaw === null || branchRaw === 'HEAD' ? null : branchRaw;
+  // An unborn HEAD resolves to no commit, but it still names the branch the
+  // first commit will create — which is the honest answer to "what branch is
+  // this?" in a repository nobody has committed to yet.
+  const currentBranch =
+    branchRaw === null || branchRaw === 'HEAD' ? await gitQuiet(['symbolic-ref', '--short', 'HEAD'], root) : branchRaw;
 
   const headSha = (await gitQuiet(['rev-parse', 'HEAD'], root)) ?? '';
-  if (headSha === '') {
-    throw new RelayError('This repository has no commits yet.', {
-      code: 'EMPTY_REPOSITORY',
-      hint: 'Relay branches from an existing commit. Make an initial commit first.',
-    });
-  }
 
   const status = (await gitQuiet(['status', '--porcelain'], root)) ?? '';
   const dirtyFiles = status
@@ -99,6 +104,7 @@ export async function discoverRepository(cwd: string): Promise<RepositoryInfo> {
     gitDir,
     currentBranch,
     headSha,
+    isEmpty: headSha === '',
     isDirty: dirtyFiles.length > 0,
     dirtyFiles,
     defaultBranch: await detectDefaultBranch(root),
@@ -145,7 +151,23 @@ export async function detectDefaultBranch(root: string): Promise<string> {
   }
 
   const current = await gitQuiet(['rev-parse', '--abbrev-ref', 'HEAD'], root);
-  return current !== null && current !== 'HEAD' ? current : 'HEAD';
+  if (current !== null && current !== 'HEAD') return current;
+
+  // Nothing has been committed, so no branch exists to be found — but HEAD
+  // already points at the one `git commit` would create, and that is the branch
+  // a run in this repository is working towards.
+  const unborn = await gitQuiet(['symbolic-ref', '--short', 'HEAD'], root);
+  return unborn !== null && unborn.length > 0 ? unborn : 'HEAD';
+}
+
+/**
+ * The hash of the empty tree, asked of git rather than written down: it is one
+ * value under SHA-1 and a different one under SHA-256, and a repository can be
+ * either. It is what a run in an empty repository diffs against — every file
+ * the agents write is an addition against nothing, which is exactly the truth.
+ */
+export async function emptyTreeSha(root: string): Promise<string> {
+  return git(['hash-object', '-t', 'tree', '--stdin'], { cwd: root, stdin: '' });
 }
 
 /** Resolves a ref to a sha, preferring the remote-tracking copy when present. */

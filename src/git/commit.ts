@@ -120,9 +120,25 @@ export async function describeLanding(repoRoot: string, subject: LandingSubject)
   try {
     head = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${subject.branch}^{commit}`], { cwd: repoRoot });
   } catch {
-    return 'unknown';
+    return missingBranch(repoRoot, subject);
   }
-  if (head.length === 0) return 'unknown';
+  if (head.length === 0) return missingBranch(repoRoot, subject);
 
   return head === subject.baseSha ? 'unlanded' : 'committed';
+}
+
+/**
+ * What a branch with no commit means, which depends on what the run branched
+ * from. A run in a repository that had no commits branches from the empty tree,
+ * and its branch stays unborn until something is committed to it: the absent ref
+ * is the *expected* state of work that was never landed, not a missing answer.
+ * Anywhere else, a branch that has gone is a question Relay cannot answer.
+ */
+async function missingBranch(repoRoot: string, subject: LandingSubject): Promise<Landing> {
+  try {
+    const type = await git(['cat-file', '-t', subject.baseSha], { cwd: repoRoot });
+    return type === 'tree' ? 'unlanded' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }

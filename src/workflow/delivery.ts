@@ -40,6 +40,12 @@ export interface DeliveryCapabilities {
   repoSlug: string | null;
   merge: MergeReadiness;
   protectedBranches?: readonly string[];
+  /**
+   * Set only when the base branch does not exist yet, which happens when the run
+   * started from a repository with no commits: there is nothing to open a pull
+   * request into until someone publishes a base.
+   */
+  baseMissing?: boolean;
 }
 
 export interface PlannedStep {
@@ -172,6 +178,7 @@ function gateFor(
     case 'pullRequest':
       if (!caps.gh) return 'the GitHub CLI is not installed';
       if (caps.repoSlug === null) return `${branch} has no GitHub repository to open it against`;
+      if (caps.baseMissing === true) return `${base} does not exist yet — ${branch} is this repository's first commit`;
       return undefined;
     case 'merge':
       if (caps.protectedBranches?.includes(base) === true) return `${base} is a protected branch`;

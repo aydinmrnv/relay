@@ -32,9 +32,12 @@ export interface IssueSummary {
 export interface WorkspaceInfo {
   path: string;
   branch: string;
+  /** The commit branched from, or the empty tree when there was none to branch from. */
   baseSha: string;
   baseRef: string;
   baseBranch: string;
+  /** True when the repository had no commits: this run's commit is its first. */
+  fromEmptyRepository?: boolean;
 }
 
 export interface DiffSummary {

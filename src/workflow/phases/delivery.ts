@@ -1,4 +1,4 @@
-import { deleteRemoteBranch, hasRemote, mergeReadiness } from '../../git/publish.ts';
+import { branchExistsSomewhere, deleteRemoteBranch, hasRemote, mergeReadiness } from '../../git/publish.ts';
 import { removeWorktree } from '../../git/worktree.ts';
 import { acquireLock } from '../../git/lock.ts';
 import { resolveExecutable } from '../../process/runner.ts';
@@ -233,10 +233,18 @@ async function capabilities(state: RunState, policy: DeliveryPolicy): Promise<De
     protectedBranches: state.config.github.protectedBranches,
   };
 
+  const base = state.workspace?.baseBranch ?? state.repository.defaultBranch;
+
+  // Only a run that started from an empty repository can be missing its base
+  // branch, and only a pull request cares — everything else is asked nothing.
+  if (opensPullRequest && state.workspace?.fromEmptyRepository === true) {
+    caps.baseMissing = !(await branchExistsSomewhere(root, base, caps.remote));
+  }
+
   // Only a merge that would happen in this checkout needs to know whether this
   // checkout is ready for one.
   if (policy === 'merge' && !mergesRemotely(caps)) {
-    caps.merge = await mergeReadiness(root, state.workspace?.baseBranch ?? state.repository.defaultBranch);
+    caps.merge = await mergeReadiness(root, base);
   }
   return caps;
 }
