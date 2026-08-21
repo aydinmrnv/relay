@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises';
 import type { Landing } from '../../git/commit.ts';
 import { discoverRepository } from '../../git/repository.ts';
 import { configPath, loadConfig, type RelayConfig } from '../../storage/config.ts';
+import { describeReview, reviewLevelName } from '../../reviews/level.ts';
 import { listRuns } from '../../storage/runs.ts';
 import { isTerminal } from '../../workflow/phases.ts';
 import type { RunState } from '../../workflow/state.ts';
@@ -23,6 +24,7 @@ import {
   out,
   warning,
 } from '../output.ts';
+import { applyOverrides, type RunOptions } from './run.ts';
 import { landingOf, phaseTag, runDuration } from './inspect.ts';
 
 export interface RunHomeView {
@@ -49,23 +51,48 @@ async function configExists(root: string): Promise<boolean> {
   }
 }
 
-function configLines(config: RelayConfig, configured: boolean): string[] {
+/**
+ * The panel's rows, for the config as written and as this session has it.
+ *
+ * A `/review light` at the prompt changes what the next run does but not what
+ * the file says, and a screen that kept showing the file would be describing a
+ * run that is not going to happen. So the effective value is the one shown, and
+ * the ones the session moved say so.
+ */
+function configLines(base: RelayConfig, effective: RelayConfig, configured: boolean): string[] {
+  const row = (label: string, value: string, base: string): readonly string[] => [
+    label,
+    value === base ? value : `${value}  ${dim('· this session')}`,
+  ];
+
   return gridLines(
     [{ header: '' }, { header: '' }],
     [
       ['State', configured ? 'configured' : 'not configured'],
-      ['Planner', config.agents.planner],
-      ['Plan reviewer', config.agents.planReviewer],
-      ['Implementer', config.agents.implementer],
-      ['Code reviewer', config.agents.codeReviewer],
-      ['Delivery', config.workflow.deliver],
-      ['Tests', config.tests.command?.join(' ') ?? 'auto-detected per run'],
+      row('Planner', effective.agents.planner, base.agents.planner),
+      row('Plan reviewer', effective.agents.planReviewer, base.agents.planReviewer),
+      row('Implementer', effective.agents.implementer, base.agents.implementer),
+      row('Code reviewer', effective.agents.codeReviewer, base.agents.codeReviewer),
+      // The level and what it means, on one line: the name alone is a word
+      // nobody can act on, and the numbers alone are four facts to hold.
+      row(
+        'Review',
+        `${reviewLevelName(effective.workflow)}  ${dim(describeReview(effective.workflow))}`,
+        `${reviewLevelName(base.workflow)}  ${dim(describeReview(base.workflow))}`,
+      ),
+      row('Delivery', effective.workflow.deliver, base.workflow.deliver),
+      ['Tests', base.tests.command?.join(' ') ?? 'auto-detected per run'],
     ],
   );
 }
 
 export interface HomeOptions {
   json?: boolean;
+  /**
+   * Flags a `/command` set for this session. The screen shows the config as it
+   * would apply to the next run, and marks whatever the session moved.
+   */
+  session?: RunOptions;
 }
 
 export interface HomeScreen {
@@ -106,6 +133,14 @@ export async function showHome(options: HomeOptions = {}): Promise<HomeScreen> {
 
   const configured = await configExists(repo.root);
   const config = await loadConfig(repo.root);
+  // What a run would do with the session's flags, and what it would do without
+  // them — compared against each other rather than against the file, so a
+  // delivery ceiling the config implies is not mistaken for a session override.
+  // Silently, because `relay run` is where these same flags are announced as a
+  // change being made; here they are only being shown.
+  const base = options.session === undefined ? config : applyOverrides(config, {}, { announce: false });
+  const effective =
+    options.session === undefined ? config : applyOverrides(config, options.session, { announce: false });
   const states = (await listRuns(repo.root)).slice(0, 3);
   const runs: RunHomeView[] = await Promise.all(
     states.map(async (state) => ({ state, landing: await landingOf(repo.root, state) })),
@@ -122,7 +157,7 @@ export async function showHome(options: HomeOptions = {}): Promise<HomeScreen> {
         defaultBranch: repo.defaultBranch,
       },
       configured,
-      config: configToJson(config),
+      config: configToJson(effective),
       runs: runs.map(({ state, landing }) => runToJson(state, { landing })),
       next: chooseNextCommand(configured, runs),
     };
@@ -148,7 +183,7 @@ export async function showHome(options: HomeOptions = {}): Promise<HomeScreen> {
     title: repository,
     badge: configured ? 'configured' : 'not configured',
     body: [
-      ...configLines(config, configured),
+      ...configLines(base, effective, configured),
       '',
       dim('Recent runs'),
       ...runLines,

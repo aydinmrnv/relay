@@ -61,15 +61,11 @@ export interface ReviewRound {
   at: string;
 }
 
-export function isBlocking(finding: ReviewFinding): boolean {
-  if (finding.impact !== undefined) return finding.impact === 'BLOCKING';
-  return finding.severity === 'high' || finding.severity === 'critical';
-}
-
-/** Findings a plan revision must answer: anything above cosmetic. */
-export function isActionable(finding: ReviewFinding): boolean {
-  return finding.severity !== 'low' || finding.impact === 'BLOCKING';
-}
+// Whether a finding blocks is not a property of the finding: it is a property
+// of how hard this run asked to be reviewed. `isBlockingAt` and
+// `isActionableAt` in `./level.ts` take that level as an argument, and are the
+// only two answers in the codebase — a second, level-blind definition here
+// would be the one that silently disagreed with the run's own configuration.
 
 export function countBySeverity(findings: readonly ReviewFinding[]): Record<Severity, number> {
   const counts: Record<Severity, number> = { low: 0, medium: 0, high: 0, critical: 0 };

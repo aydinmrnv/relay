@@ -1,5 +1,5 @@
 import type { Landing } from '../git/commit.ts';
-import type { DeliveryPolicy } from '../storage/config.ts';
+import { reviewLevelOf, type DeliveryPolicy } from '../storage/config.ts';
 import type { DeliveryStep } from '../workflow/state.ts';
 import type { Decision } from '../reviews/types.ts';
 import type { Phase } from '../workflow/phases.ts';
@@ -45,6 +45,8 @@ export interface RunJson {
   agents: Record<string, string>;
   planApproved: boolean;
   rounds: { planReview: number; codeReview: number; maxPlanReview: number; maxCodeReview: number };
+  /** The depth this run was reviewed at, as chosen: `standard`, `thorough`, … */
+  reviewLevel: string;
   reviews: Array<{ kind: 'plan' | 'code'; round: number; reviewer: string; decision: Decision; findings: number; at: string }>;
 
   diff: {
@@ -205,6 +207,7 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
       maxPlanReview: state.config.workflow.maxPlanReviewRounds,
       maxCodeReview: state.config.workflow.maxCodeReviewRounds,
     },
+    reviewLevel: reviewLevelOf(state.config),
     reviews: state.reviews.map((review) => ({
       kind: review.kind,
       round: review.round,

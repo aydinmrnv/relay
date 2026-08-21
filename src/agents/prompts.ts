@@ -1,5 +1,6 @@
 import { formatFindingLine, type ReviewFinding } from '../reviews/types.ts';
 import { beginMarker, endMarker } from '../reviews/protocol.ts';
+import { REVIEW_PROFILES, type ReviewProfile } from '../reviews/level.ts';
 import { briefForRole, type ProjectBrief } from './brief.ts';
 import type { Role } from '../storage/config.ts';
 
@@ -60,10 +61,39 @@ const EFFICIENCY = [
  * A cap keeps a review from turning into an essay. Reviews are read by another
  * agent under the same time pressure, and the twentieth finding of a long tail
  * has never been the one that mattered.
+ *
+ * The number is the level's, because that is most of what a level is: a light
+ * review that reported fifteen findings would not be a light review.
  */
-const FINDING_BUDGET =
-  'Report at most 10 findings. If you have more, report the 10 that matter most and drop the rest — ' +
-  'a long tail of minor findings costs a revision round and buys nothing.';
+function findingBudget(profile: ReviewProfile): string {
+  return (
+    `Report at most ${profile.findingBudget} findings. If you have more, report the ` +
+    `${profile.findingBudget} that matter most and drop the rest — a long tail of minor findings costs a ` +
+    'revision round and buys nothing.'
+  );
+}
+
+/**
+ * What this level asks for beyond the checklist every review shares, and where
+ * the bar sits — a reviewer that does not know which findings come back cannot
+ * classify them honestly, and every level moves that bar.
+ */
+function reviewDepth(profile: ReviewProfile, kind: 'plan' | 'code'): string[] {
+  const bar =
+    kind === 'code'
+      ? `On this run the review depth is "${profile.level}": a finding of ${profile.returnsAt} severity or ` +
+        'above goes back to the implementer for another round on its own, and below that only the ones ' +
+        `you mark BLOCKING do — down to ${profile.blockingFloor} severity. Everything else is reported to ` +
+        'the person reading this run, and costs nothing.'
+      : `On this run the review depth is "${profile.level}": the planner must answer every finding of ` +
+        `${profile.planAnswersAt} severity or above, and up to ${profile.maxPlanReviewRounds} round(s) are ` +
+        'available before the plan is implemented as it stands.';
+
+  return profile.emphasis.length === 0 ? [bar, ''] : [bar, '', ...profile.emphasis, ''];
+}
+
+/** The level a review runs at when a caller has not said. */
+const STANDARD = REVIEW_PROFILES.standard;
 
 /** Reminds a primed reviewer that it is resuming its own reading, not starting over. */
 const ALREADY_READ =
@@ -183,9 +213,12 @@ export interface PlanReviewPromptOptions extends PromptContext {
   maxRounds: number;
   /** The reviewer already read the repository in this session. */
   primed?: boolean;
+  /** How hard to look. Defaults to the standard level. */
+  profile?: ReviewProfile;
 }
 
 export function buildPlanReviewPrompt(options: PlanReviewPromptOptions): string {
+  const profile = options.profile ?? STANDARD;
   return [
     groundRules(options, 'read_only', 'planReviewer'),
     '',
@@ -204,6 +237,7 @@ export function buildPlanReviewPrompt(options: PlanReviewPromptOptions): string 
     'abstractions it claims exist really do exist and work the way it assumes.',
     '',
     ...(options.primed === true ? [ALREADY_READ, ''] : [EFFICIENCY, '']),
+    ...reviewDepth(profile, 'plan'),
     'Look specifically for:',
     '- incorrect assumptions about how the existing code behaves',
     '- existing abstractions, helpers or patterns the plan overlooks and would duplicate',
@@ -218,7 +252,7 @@ export function buildPlanReviewPrompt(options: PlanReviewPromptOptions): string 
     'are objecting to. Do not invent findings to appear thorough — approving a good plan is a valid ',
     'and useful outcome, and the fastest one. Do not report style preferences as findings.',
     '',
-    FINDING_BUDGET,
+    findingBudget(profile),
     '',
     '## Required output format',
     '',
@@ -228,7 +262,7 @@ export function buildPlanReviewPrompt(options: PlanReviewPromptOptions): string 
     reviewJsonTemplate('plan'),
     endMarker('REVIEW'),
     '',
-    'Use "approve" only if you found nothing of medium severity or above.',
+    `Use "approve" only if you found nothing of ${profile.planAnswersAt} severity or above.`,
   ].join('\n');
 }
 
@@ -526,9 +560,12 @@ export interface CodeReviewPromptOptions extends PromptContext {
   testsRunning?: boolean;
   /** The plan survived its own adversarial review before any code was written. */
   planApproved?: boolean;
+  /** How hard to look. Defaults to the standard level. */
+  profile?: ReviewProfile;
 }
 
 export function buildCodeReviewPrompt(options: CodeReviewPromptOptions): string {
+  const profile = options.profile ?? STANDARD;
   return [
     groundRules(options, 'read_only', 'codeReviewer'),
     '',
@@ -564,6 +601,7 @@ export function buildCodeReviewPrompt(options: CodeReviewPromptOptions): string 
     'open the surrounding code — a diff hunk alone rarely shows whether a change is correct.',
     '',
     ...(options.primed === true ? [ALREADY_READ, ''] : [EFFICIENCY, '']),
+    ...reviewDepth(profile, 'code'),
     ...(options.testsRunning === true
       ? [
           'Relay is running this project\'s test suite against this exact diff right now, and will report ',
@@ -584,11 +622,10 @@ export function buildCodeReviewPrompt(options: CodeReviewPromptOptions): string 
     '- NON_BLOCKING: a real problem, but does not block',
     '- SUGGESTION: an improvement worth noting',
     '',
-    'Only BLOCKING findings are sent back to the implementer automatically, so classify honestly: ',
-    'marking a nitpick BLOCKING wastes a round — several minutes of a person\'s time — and marking a ',
-    'real bug SUGGESTION lets it through.',
+    'Classify honestly: marking a nitpick BLOCKING wastes a round — several minutes of a person\'s time — ',
+    'and marking a real bug SUGGESTION lets it through.',
     '',
-    FINDING_BUDGET,
+    findingBudget(profile),
     '',
     '## Required output format',
     '',
@@ -598,7 +635,7 @@ export function buildCodeReviewPrompt(options: CodeReviewPromptOptions): string 
     reviewJsonTemplate('code'),
     endMarker('REVIEW'),
     '',
-    'Use "approve" if there are no BLOCKING findings.',
+    `Use "approve" if nothing you found is BLOCKING or reaches ${profile.returnsAt} severity.`,
   ].join('\n');
 }
 

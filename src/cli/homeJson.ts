@@ -1,4 +1,4 @@
-import type { RelayConfig } from '../storage/config.ts';
+import { reviewLevelOf, type RelayConfig } from '../storage/config.ts';
 import type { RunJson } from './runJson.ts';
 
 /**
@@ -12,6 +12,8 @@ import type { RunJson } from './runJson.ts';
 export interface ConfigJson {
   agents: { planner: string; planReviewer: string; implementer: string; codeReviewer: string };
   workflow: {
+    /** The level as chosen, e.g. `thorough`. The four keys below are what it means. */
+    review: string;
     plan: string;
     reviewCode: boolean;
     runTests: boolean;
@@ -34,6 +36,7 @@ export function configToJson(config: RelayConfig): ConfigJson {
       codeReviewer: config.agents.codeReviewer,
     },
     workflow: {
+      review: reviewLevelOf(config),
       plan: config.workflow.plan,
       reviewCode: config.workflow.reviewCode,
       runTests: config.workflow.runTests,

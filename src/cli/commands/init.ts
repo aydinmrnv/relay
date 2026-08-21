@@ -3,7 +3,19 @@ import { join } from 'node:path';
 
 import { AGENT_REGISTRY } from '../../agents/index.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
-import { DEFAULT_CONFIG, ROLES, configPath, loadConfig, relayDir, writeConfig, type RelayConfig, type Role } from '../../storage/config.ts';
+import {
+  DEFAULT_CONFIG,
+  REVIEW_LEVELS,
+  ROLES,
+  configPath,
+  loadConfig,
+  relayDir,
+  reviewLevelOf,
+  writeConfig,
+  type RelayConfig,
+  type Role,
+} from '../../storage/config.ts';
+import { applyReviewLevel, describeReview, reviewProfile } from '../../reviews/level.ts';
 import { detectInstructionFiles } from '../../agents/brief.ts';
 import { discoverTestCommand } from '../../testing/discovery.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
@@ -179,6 +191,8 @@ async function writeDetectedConfig(
   out(`  Repository  ${repo.owner !== null && repo.name !== null ? `${repo.owner}/${repo.name}` : repo.root}`);
   out(`  Base branch ${repo.defaultBranch}`);
 
+  out(`  Review      ${reviewLevelOf(config)} ${dim(`(${describeReview(config.workflow)})`)}`);
+
   const discovery = await discoverTestCommand(repo.root, null);
   out(`  Tests       ${discovery.found ? discovery.command.command.join(' ') : dim(`none detected (${discovery.reason})`)}`);
   await reportProjectContext(repo.root);
@@ -206,6 +220,7 @@ async function guidedInit(repo: RepositoryInfo, path: string, config: RelayConfi
   await confirmDetection(repo, config, deps.prompter);
   const agents = await confirmAgents(deps);
   await assignRoles(config, agents, deps.prompter);
+  await chooseReviewDepth(config, deps.prompter);
   explainRun(config);
 
   const instructionFiles = await reportProjectContext(repo.root);
@@ -329,17 +344,56 @@ async function assignRoles(config: RelayConfig, agents: AgentCheck[], prompter: 
   }
 }
 
-/** Step 4 — what pressing enter on `relay run` is actually going to do. */
+/**
+ * Step 4 — how hard the agents look, which is the dial with a price.
+ *
+ * Asked after the roles because it only means anything once you know who is
+ * reviewing whom, and asked at all because the default is a compromise: a
+ * repository of small changes wants `light`, and one where a mistake ships to
+ * customers wants `thorough`. Both are one word here and neither is discoverable
+ * from a config file nobody opens.
+ */
+async function chooseReviewDepth(config: RelayConfig, prompter: PromptSession): Promise<void> {
+  section('4. Review depth');
+  out(dim('  How hard the agents look at each other\'s work. It is the dial that trades'));
+  out(dim('  minutes and tokens for confidence, and `relay run --review <level>` changes'));
+  out(dim('  it for one run without touching this file.'));
+  out();
+
+  const current = reviewLevelOf(config);
+  const level = await prompter.select(
+    '  Review depth for this repository?',
+    REVIEW_LEVELS.map((candidate) => ({
+      value: candidate,
+      label: candidate.padEnd(10),
+      hint: reviewProfile(candidate).headline,
+    })),
+    Math.max(0, REVIEW_LEVELS.indexOf(current)),
+  );
+
+  config.workflow.review = level;
+  applyReviewLevel(config.workflow, level);
+  out(dim(`  ${describeReview(config.workflow)}.`));
+}
+
+/** Step 5 — what pressing enter on `relay run` is actually going to do. */
 function explainRun(config: RelayConfig): void {
-  section('4. What a run does');
+  section('5. What a run does');
   const sequence = [
-    `plan (${config.agents.planner})`,
-    `review (${config.agents.planReviewer}, up to ${config.workflow.maxPlanReviewRounds} rounds)`,
-    `implement (${config.agents.implementer})`,
-    `review (${config.agents.codeReviewer}, up to ${config.workflow.maxCodeReviewRounds} rounds)`,
+    ...(config.workflow.plan === 'review'
+      ? [
+          `plan (${config.agents.planner})`,
+          `review (${config.agents.planReviewer}, up to ${config.workflow.maxPlanReviewRounds} rounds)`,
+        ]
+      : [`plan and implement in one turn (${config.agents.implementer})`]),
+    ...(config.workflow.plan === 'review' ? [`implement (${config.agents.implementer})`] : []),
+    ...(config.workflow.reviewCode
+      ? [`review (${config.agents.codeReviewer}, up to ${config.workflow.maxCodeReviewRounds} rounds)`]
+      : []),
     'tests',
   ];
   bullet(sequence.join(' → '));
+  bullet(`Review depth ${reviewLevelOf(config)}: ${describeReview(config.workflow)}.`);
   bullet('All of it inside a throwaway git worktree — your own branch, index and files are untouched.');
   bullet('A run typically takes 10–20 minutes and spends real tokens on your own CLI accounts.');
   bullet(`It then delivers the work itself: ${deliverySentence(config)}.`);
@@ -382,8 +436,7 @@ function tokenize(input: string): string[] {
 function printConfig(config: RelayConfig): void {
   rows([
     ...ROLES.map((role) => ({ label: roleLabel(role), value: config.agents[role] })),
-    { label: 'plan rounds', value: String(config.workflow.maxPlanReviewRounds) },
-    { label: 'code rounds', value: String(config.workflow.maxCodeReviewRounds) },
+    { label: 'review', value: `${reviewLevelOf(config)}  ${dim(describeReview(config.workflow))}` },
   ]);
 }
 

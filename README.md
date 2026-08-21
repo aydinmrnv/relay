@@ -189,7 +189,7 @@ README — not a defended one.
 
 | Command | |
 |---|---|
-| `relay` | the home screen: what is configured, what has run, and a prompt for the next issue |
+| `relay` | the home screen and a prompt: describe the work in plain words, name an issue, or type a `/command` |
 | `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth |
@@ -210,13 +210,14 @@ Every command above except `--update` takes `--json`, and exits with a code from
 a documented table. Both are below, under [Machine-readable
 output](#machine-readable-output) and [Exit codes](#exit-codes).
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--review <level>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
 
-The three worth typing by hand:
+The four worth typing by hand:
 
 | | |
 |---|---|
-| `-f` | fast: one agent plans and implements, and neither the plan nor the diff is reviewed |
+| `-r <level>` | how hard the agents look: `none`, `light`, `standard`, `thorough`, `exhaustive` |
+| `-f` | fast: the shorthand for `--review none` |
 | `-m` | merge: take the work all the way — commit, push, pull request, merge — without being asked |
 | `--tuff` | write this run's pull request, commit messages and code comments the way a person types them |
 
@@ -228,6 +229,47 @@ instead of during it).
 lands anyway. The merge still has to pass its own gates — the tests must have
 verifiably passed, and a protected base branch is still refused — so what `-f`
 removes is the critique, never the evidence.
+
+### How hard the agents look
+
+Review depth is the one dial on this workflow that trades wall-clock and tokens
+for confidence, and it is one word:
+
+```bash
+relay run 142 --review thorough      # or -r thorough
+relay run 142 -f                     # the shorthand for --review none
+```
+
+| level | plan review | code review | a finding comes back when | findings |
+|---|---|---|---|---|
+| `none` | — | — | nothing reviews this run | — |
+| `light` | — | 1 round | it is critical, or the reviewer marked a high-severity finding BLOCKING | 5 |
+| `standard` | 2 rounds | 2 rounds | it is high or above, or the reviewer marked a medium-severity finding BLOCKING | 10 |
+| `thorough` | 3 rounds | 3 rounds | it is medium or above, or the reviewer marked it BLOCKING | 15 |
+| `exhaustive` | 4 rounds | 4 rounds | always — every finding is answered | 25 |
+
+A level sets four things at once, and all four are visible on the home screen
+and in the run's header: whether there is a separate planning turn at all
+(`workflow.plan`), whether the diff is reviewed (`workflow.reviewCode`), and how
+many rounds each review may take. `standard` is the default and is exactly what
+Relay did before levels existed.
+
+The last two columns are the part a round count cannot express. Only a finding
+that clears the level's bar is sent back to the implementer; the rest are
+reported to you in the summary, where they cost nothing. Raising the level lowers
+that bar, so a `thorough` run returns medium-severity findings a `standard` run
+would only mention — and the reviewer is told which bar it is classifying
+against, so it can be honest about the difference between a bug and a nitpick.
+
+Set the repository's default in `.relay/config.json`:
+
+```json
+{ "workflow": { "review": "thorough" } }
+```
+
+A key written next to it still wins — `{ "review": "thorough", "maxCodeReviewRounds": 1 }`
+is three plan rounds, one code round, and thorough's severity bar — because a
+level is a starting point a repository is allowed to tune, not a lock.
 
 ### Work that has no ticket
 
@@ -428,30 +470,90 @@ or `workflow.offerMerge: false` turns it off.
 
 ## The session
 
-Answering those questions is not the end of the work — the next issue is. So on
+Answering those questions is not the end of the work — the next task is. So on
 a terminal Relay does not exit when a run finishes: it draws the home screen
 again, with the run that just finished on it, and waits.
 
+What it waits with is a composer, not a question. Type the work in plain words
+and Relay starts a run from it — no issue, no file, no flag:
+
 ```
-╭─ acme/widgets ─────────────────────────────── configured ─╮
-│ Delivery       branch                                     │
-│ Tests          npm test                                   │
-│                                                           │
-│ Recent runs                                               │
-│ 20260812-100000-a1  Complete  8m 2s  +40 −7               │
-├───────────────────────────────────────────────────────────┤
-│ Next  relay run <issue>                                   │
-╰───────────────────────────────────────────────────────────╯
-  Next issue? (number, owner/repo#number, or URL — Enter to exit)
+╭─ acme/widgets ───────────────────────────────────────────── configured ─╮
+│ State          configured                                               │
+│ Planner        claude                                                   │
+│ Plan reviewer  codex                                                    │
+│ Implementer    codex                                                    │
+│ Code reviewer  claude                                                   │
+│ Review         thorough  plan 3 · code 3 · returns medium+              │
+│ Delivery       branch                                                   │
+│ Tests          npm test                                                 │
+│                                                                         │
+│ Recent runs                                                             │
+│ 20260812-100000-a1  Complete  8m 2s  +40 −7                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Next  relay run <issue>                                                 │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+╭─────────────────────────────────────────────────────────────────────────╮
+│ › add a dark mode toggle to the settings page                           │
+╰─────────────────────────────────────────────────────────────────────────╯
+  new task · 8 words · no ticket needed  Enter start · Tab complete · ^C exit
 ```
+
+The line under the box is the composer reading back what it is about to do,
+redrawn on every keystroke — `issue #142`, `spec file ./spec.md`, `new task`,
+or the summary of the `/command` you are typing. It is there to catch the two
+mistakes a prompt this loose makes possible, a mistyped issue number quietly
+becoming a task description and a slash command that does not exist, before
+either costs a run.
+
+| you type | Relay runs |
+|---|---|
+| `add a dark mode toggle` | `relay run --prompt "add a dark mode toggle"` |
+| `142`, `#142`, `owner/repo#142`, an issue URL | `relay run 142` |
+| `./spec.md` | `relay run ./spec.md` |
+| `/command` | the command below — no run |
+| empty, `q`, `quit`, `exit` | leaves |
+
+A tracker reference wins over a file that happens to share its name, and both
+win over prose — the same precedence `relay run`'s own argument has always had.
+Anything with a newline in it is a task by construction, so a pasted paragraph
+is never mistaken for something else.
+
+### Commands at the prompt
+
+| | |
+|---|---|
+| `/help` | everything you can type here |
+| `/review [level]` | how hard the agents look; no argument opens the list |
+| `/agents [planner] [implementer]` | which CLI plans, and which one implements |
+| `/deliver [policy]` | how far a finished run carries its own work |
+| `/issues` | pick from the open issues instead of typing one |
+| `/editor` | write the task in `$EDITOR`, the way `git commit` does |
+| `/verbose` | stream raw agent events during a run |
+| `/status` | what the runs in this repository did |
+| `/clear` | clear the screen and draw it again |
+| `/exit` | leave |
+
+A command changes what the *next* run does and nothing that has already
+happened. The home screen shows the result immediately, with `· this session`
+against whatever the command moved — so the panel always describes the run that
+would actually start, not the config file as written.
+
+Editing works the way a shell's does: arrows and Ctrl-A/E to move, Ctrl-W and
+Ctrl-U to delete, Up and Down for what you typed before, Tab to complete a
+`/command`, Ctrl-C to leave. Long input wraps inside the box rather than
+scrolling, because a line you cannot see is a line you cannot check.
 
 `relay` on its own opens there, `relay run <issue>` and the first run of `relay
-start` come back to it, and Enter — or `q` — leaves. The flags the session was
-opened with carry into every run in it, a run that fails is reported without
-ending the session, and the exit code is the last run's.
+start` come back to it. The flags the session was opened with carry into every
+run in it, a run that fails is reported without ending the session, and the exit
+code is the last run's.
 
 Nothing changes behind a pipe or in CI: there is nobody there to ask, so a run
-ends the process exactly as it always did.
+ends the process exactly as it always did. A terminal too narrow or too dumb for
+the composer gets the same question as a plain prompt, and everything above
+still works.
 
 ## Terminal output
 
@@ -462,7 +564,7 @@ phase, in fixed columns, redrawn in place.
 ◆ RELAY ───────────────────────────────────────────────────────── Issue #142
 Add authentication rate limiting
 
-╭─ Pipeline ───────────────────────────────────────────────────────────────╮
+╭─ Pipeline ─────────────────────────────────────────── review thorough ───╮
 │ ● Fetching issue              complete                                   │
 │ ● Creating workspace          complete                                   │
 │ ● Planning             1m 4s  claude · reading the codebase              │
@@ -480,8 +582,11 @@ Every column starts in the same place from the first row to the last: mark,
 phase, clock, then who is doing what. A duration sits directly beside the phase
 it times rather than a column away from it, review phases show the round being
 consumed (`round 2/2`) rather than a bare "revising", and the footer carries how
-far in the run is and how long it has taken. A `--fast` run shows the five steps
-it will actually take rather than greying out two it never enters. The run ends
+far in the run is and how long it has taken. The frame's badge carries the review
+level, because it is the one fact that explains the shape of the checklist under
+it — why there is no plan review, or why a third round is allowed. A `--fast`
+run shows the five steps it will actually take rather than greying out two it
+never enters. The run ends
 with one block covering phases, rounds, diff, tests, cost and the next command —
 with a per-phase duration, which is the number to tune against. When a phase
 fails, that block names the agent that failed, the phase, and the two commands
@@ -638,6 +743,7 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
   },
   "models": { "codeReviewer": "haiku" },
   "workflow": {
+    "review": "standard",
     "plan": "review",
     "reviewCode": true,
     "maxPlanReviewRounds": 2,
@@ -673,8 +779,10 @@ reaching for before turning a review off.
 
 | key | |
 |---|---|
+| `workflow.review` | how hard the agents look: `none`, `light`, `standard` (default), `thorough`, `exhaustive`. Sets the four keys below it and the severity at which a finding comes back; an explicit key still wins ([how hard the agents look](#how-hard-the-agents-look)) |
 | `workflow.plan` | `review` (planner + adversarial plan review) or `inline` (the implementer plans in its own session — what `--fast` sets) |
 | `workflow.reviewCode` | whether the other model reviews the diff (default `true`; `--fast` sets it `false`) |
+| `workflow.maxPlanReviewRounds` / `maxCodeReviewRounds` | rounds each review may take before the run proceeds with what it has (`--max-plan-rounds`, `--max-code-rounds`) |
 | `workflow.typos` | write the pull request, commits and code comments with human typos (default `false`; what `--tuff` sets) |
 | `github.autoPush` / `autoPr` / `autoMerge` | authorize each publishing step without a prompt (all default `false`) |
 | `github.mergeMethod` | how a pull request lands: `squash` (default), `merge`, `rebase` |

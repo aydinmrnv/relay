@@ -11,9 +11,10 @@ import { assembleBrief, renderBriefArtifact } from '../../agents/brief.ts';
 import { snapshotDiff, formatDiffStat, type DiffSnapshot } from '../../git/diff.ts';
 import { beginMarker, endMarker, extractSection } from '../../reviews/protocol.ts';
 import { parseReview, parseFindingResponses, REVIEW_JSON_SCHEMA } from '../../reviews/parse.ts';
-import { isBlocking, type ReviewRound } from '../../reviews/types.ts';
+import { isBlockingAt } from '../../reviews/level.ts';
+import type { ReviewRound } from '../../reviews/types.ts';
 import { discoverTestCommand } from '../../testing/discovery.ts';
-import { reviewsCode } from '../../storage/config.ts';
+import { reviewProfileOf, reviewsCode } from '../../storage/config.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import { runAgentTurn, runStructuredTurn } from '../agentRunner.ts';
 import { cancelBackgroundTests, startBackgroundTests } from '../backgroundTests.ts';
@@ -182,6 +183,7 @@ export async function reviewingCode(context: EngineContext): Promise<PhaseResult
 
   const round = state.rounds.codeReview + 1;
   const maxRounds = state.config.workflow.maxCodeReviewRounds;
+  const profile = reviewProfileOf(state.config);
   const primed = await awaitPriming(context, 'codeReviewer');
 
   const { value: review, text } = await runStructuredTurn(context, {
@@ -194,6 +196,7 @@ export async function reviewingCode(context: EngineContext): Promise<PhaseResult
       round,
       maxRounds,
       primed,
+      profile,
       planApproved: state.planApproved,
       testsRunning: context.backgroundTests !== undefined,
     }),
@@ -222,8 +225,9 @@ export async function reviewingCode(context: EngineContext): Promise<PhaseResult
   await store.saveReview('code', round, { ...entry, rawFinalMessage: text });
 
   // Only blocking findings go back automatically; the rest are reported to the
-  // user in the summary so they stay visible without costing a round.
-  const blocking = review.findings.filter(isBlocking);
+  // user in the summary so they stay visible without costing a round. Where
+  // that line falls is the review level's decision, not a constant.
+  const blocking = review.findings.filter((finding) => isBlockingAt(finding, profile));
 
   if (review.decision === 'approve' || blocking.length === 0) {
     observer.note(`Code review passed after ${round} round(s) (${review.findings.length} total finding(s)).`);
@@ -251,7 +255,7 @@ export async function revisingCode(context: EngineContext): Promise<PhaseResult>
   const lastReview = [...state.reviews].reverse().find((entry) => entry.kind === 'code');
   if (lastReview === undefined) throw new RelayError('No code review to revise against.', { code: 'NO_REVIEW' });
 
-  const blocking = lastReview.findings.filter(isBlocking);
+  const blocking = lastReview.findings.filter((finding) => isBlockingAt(finding, reviewProfileOf(state.config)));
   const round = state.rounds.codeReview;
 
   const { value: responses } = await runStructuredTurn(context, {

@@ -19,7 +19,8 @@ import type { EngineContext } from '../workflow/context.ts';
 import { WorkflowEngine } from '../workflow/engine.ts';
 import type { RunObserver } from '../workflow/observer.ts';
 import { createRunState, type RunState } from '../workflow/state.ts';
-import { isBlocking } from '../reviews/types.ts';
+import { isBlockingAt } from '../reviews/level.ts';
+import { reviewProfileOf } from '../storage/config.ts';
 import type { ResolvedEvalConfig } from './configs.ts';
 import { gradeCommit, gradePatch } from './grade.ts';
 import { FixtureIssueProvider } from './issueProvider.ts';
@@ -122,7 +123,7 @@ async function measureReviewYield(
   const codeReviews = state.reviews.filter((review) => review.kind === 'code');
   for (const review of codeReviews) {
     yielded.findings += review.findings.length;
-    yielded.blocking += review.findings.filter(isBlocking).length;
+    yielded.blocking += review.findings.filter((finding) => isBlockingAt(finding, reviewProfileOf(state.config))).length;
     for (const response of review.responses ?? []) {
       if (response.response === 'ACCEPT') yielded.upheld += 1;
       if (response.response === 'REJECT') yielded.rejected += 1;
