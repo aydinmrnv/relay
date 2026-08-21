@@ -41,6 +41,7 @@ import {
   warn,
   warning,
 } from '../output.ts';
+import { parseChatInput } from '../chat.ts';
 import { runSession, validateIssueRef } from '../session.ts';
 import { initCommand, type InitOptions } from './init.ts';
 import { statusMark } from './doctor.ts';
@@ -78,7 +79,8 @@ export interface StartDeps {
     cwd: string,
   ) => Promise<{ available: boolean; detail: string; hint?: string }>;
   init: (options: InitOptions) => Promise<number>;
-  run: (issueRef: string, options: RunOptions) => Promise<number>;
+  /** Undefined names no reference: the work was described rather than filed. */
+  run: (issueRef: string | undefined, options: RunOptions) => Promise<number>;
   now: () => Date;
 }
 
@@ -106,8 +108,9 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
     // The first run ends on the home screen rather than on a shell prompt: what
     // follows a run is the next issue, and onboarding is where that starts.
     // Onboarding runs exactly one issue, so it hands the batch entry point a
-    // list of one rather than taking a batch of its own.
-    run: (issueRef, options) => runSession([issueRef], options),
+    // list of one rather than taking a batch of its own — or none at all, when
+    // the work was described instead of referenced.
+    run: (issueRef, options) => runSession(issueRef === undefined ? undefined : [issueRef], options),
     now: () => new Date(),
   });
 }
@@ -165,8 +168,24 @@ async function guidedStart(repo: RepositoryInfo, deps: StartDeps, options: Start
   rows([
     { label: 'Repository', value: repo.owner !== null && repo.name !== null ? `${repo.owner}/${repo.name}` : repo.root },
     { label: 'Root', value: repo.root },
-    { label: 'Base branch', value: repo.defaultBranch },
+    {
+      label: 'Base branch',
+      value: repo.isEmpty
+        ? `${repo.defaultBranch}  ${dim('(unborn — no commits yet)')}`
+        : repo.defaultBranch,
+    },
   ]);
+
+  // An empty repository is a supported starting point, and the least obvious
+  // one: nothing about a tool that reviews diffs suggests it can be pointed at a
+  // directory where no code exists yet.
+  if (repo.isEmpty) {
+    out();
+    hint('This repository has no commits. A run branches from an empty tree, so every file the', '    ');
+    hint('agents write is new, and the commit at the end is this repository\'s first.', '    ');
+    hint('There is no issue tracker to read from yet either — describe the work instead:', '    ');
+    command('relay run --prompt "A CLI that renders markdown tables"', '    ');
+  }
 
   const blockers = [...(await ensureAgents(repo, deps)), ...(await ensureIssueProvider(repo, deps))];
 
@@ -486,7 +505,9 @@ async function firstRun(
 
   const question = dry
     ? '  Walk through a run now, without calling any agent?'
-    : '  Start a run against a real issue now?';
+    : repo.isEmpty
+      ? '  Start a run now, on work you describe?'
+      : '  Start a run against a real issue now?';
   // A real run defaults to "no": it takes 10–20 minutes and spends real tokens,
   // so it is never what pressing Enter does.
   if (!(await deps.prompter.confirm(question, dry))) {
@@ -494,26 +515,56 @@ async function firstRun(
     return blockers.length > 0 ? EXIT.preconditions : EXIT.success;
   }
 
-  const ref = await deps.prompter.text(
-    '  Which issue? (number, owner/repo#number, URL, or a path to a markdown file)',
-    '',
-    validateIssueRef,
-  );
-  if (ref.trim().length === 0) {
+  // Nothing has been filed against code that does not exist yet, so an empty
+  // repository is asked for the work itself and the answer is read the way the
+  // home screen reads its composer: an issue is an issue, a path is a file, and
+  // prose is the task. Everywhere else the question is unchanged.
+  const answer = repo.isEmpty
+    ? await deps.prompter.text('  What should Relay build? (describe it, or name an issue)', '')
+    : await deps.prompter.text(
+        '  Which issue? (number, owner/repo#number, URL, or a path to a markdown file)',
+        '',
+        validateIssueRef,
+      );
+
+  const work = repo.isEmpty ? describedWork(answer) : ({ kind: 'issue', ref: answer.trim() } as const);
+  if (work === undefined || work.ref.length === 0) {
     out();
-    hint('No issue given, so nothing was started.');
+    hint(repo.isEmpty ? 'Nothing described, so nothing was started.' : 'No issue given, so nothing was started.');
     printNextSteps(dry);
     return blockers.length > 0 ? EXIT.preconditions : EXIT.success;
   }
 
   await markCompleted(repo, deps);
 
-  if (dry) return rehearseRun(repo, config, ref);
+  if (dry) return rehearseRun(repo, config, work);
 
   // The run renderer owns the terminal from here.
   deps.prompter.close();
   out();
-  return deps.run(ref, {});
+  return work.kind === 'task' ? deps.run(undefined, { prompt: work.ref }) : deps.run(work.ref, {});
+}
+
+/** An issue, a spec file, or the work itself — whichever was typed. */
+type Work = { kind: 'issue' | 'file' | 'task'; ref: string };
+
+/**
+ * What a described first run is: the same reading the session's composer does,
+ * minus the slash commands, which belong to the home screen rather than to a
+ * question in the middle of onboarding.
+ */
+function describedWork(answer: string): Work | undefined {
+  const intent = parseChatInput(answer);
+  switch (intent.kind) {
+    case 'issue':
+      return { kind: 'issue', ref: intent.ref };
+    case 'file':
+      return { kind: 'file', ref: intent.path };
+    case 'task':
+      return { kind: 'task', ref: intent.text };
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -521,15 +572,18 @@ async function firstRun(
  * guarantees, nothing spawned and nothing spent. It is the cheapest way to see
  * the shape of a run before committing 10–20 minutes and real tokens to one.
  */
-function rehearseRun(repo: RepositoryInfo, config: RelayConfig, issueRef: string): number {
+function rehearseRun(repo: RepositoryInfo, config: RelayConfig, work: Work): number {
   const base = config.workflow.baseBranch.length > 0 ? config.workflow.baseBranch : repo.defaultBranch;
 
   out();
   out(bold('Dry run') + dim(' — no agent is called, no process is spawned, nothing is spent.'));
   out();
   rows([
-    { label: 'Issue', value: issueRef },
-    { label: 'Base branch', value: base },
+    { label: work.kind === 'task' ? 'Task' : 'Issue', value: work.ref },
+    {
+      label: 'Base branch',
+      value: repo.isEmpty ? `${base}  ${dim('(unborn — the run\'s commit would create it)')}` : base,
+    },
     { label: 'Branch', value: `${config.workflow.branchPrefix}/<issue>-<short-id>  ${dim('(created, never pushed)')}` },
     { label: 'Worktree', value: `${workspacesRoot()}/…  ${dim('(throwaway, outside your repo)')}` },
     { label: 'Run state', value: '.relay/runs/<run-id>/' },
@@ -539,8 +593,19 @@ function rehearseRun(repo: RepositoryInfo, config: RelayConfig, issueRef: string
   out(`  ${bold('What a real run would do, in order')}`);
   rows(
     [
-      { label: 'Fetch issue', value: `read ${issueRef} through the issue provider  ${dim('→ issue.md')}` },
-      { label: 'Workspace', value: `create the worktree and branch from ${base}` },
+      {
+        label: work.kind === 'task' ? 'Read the task' : 'Fetch issue',
+        value:
+          work.kind === 'task'
+            ? `take the work exactly as you described it  ${dim('→ issue.md')}`
+            : `read ${work.ref} through the issue provider  ${dim('→ issue.md')}`,
+      },
+      {
+        label: 'Workspace',
+        value: repo.isEmpty
+          ? 'create the worktree, and branch from an empty tree — there is no commit yet'
+          : `create the worktree and branch from ${base}`,
+      },
       { label: 'Plan', value: agentStep(config.agents.planner, 'read-only', config.timeouts.planningMs, 'plan.md') },
       {
         label: 'Plan review',
@@ -570,7 +635,9 @@ function rehearseRun(repo: RepositoryInfo, config: RelayConfig, issueRef: string
 
   out();
   out(success('Nothing above happened. To do it for real:'));
-  command(`relay run ${issueRef}`);
+  // The task is quoted the way a shell needs it, because this line is printed to
+  // be copied — a description with an apostrophe in it must still paste cleanly.
+  command(work.kind === 'task' ? `relay run --prompt ${JSON.stringify(work.ref)}` : `relay run ${work.ref}`);
   out();
   return 0;
 }
@@ -640,7 +707,9 @@ async function reportReadiness(
     {
       label: 'Git repository',
       status: 'ok',
-      detail: `${repo.owner !== null && repo.name !== null ? `${repo.owner}/${repo.name}` : repo.root} · base ${repo.defaultBranch}`,
+      detail:
+        `${repo.owner !== null && repo.name !== null ? `${repo.owner}/${repo.name}` : repo.root} · base ${repo.defaultBranch}` +
+        (repo.isEmpty ? ' · no commits yet, so a run starts from an empty tree' : ''),
     },
   ];
 

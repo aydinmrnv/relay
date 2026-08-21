@@ -19,7 +19,9 @@ export interface TempRepo {
  * against git itself: worktrees, diffs and refs have too much behaviour to mock
  * credibly.
  */
-export async function createTempRepo(options: { withPackageJson?: boolean } = {}): Promise<TempRepo> {
+export async function createTempRepo(
+  options: { withPackageJson?: boolean; empty?: boolean } = {},
+): Promise<TempRepo> {
   // Resolve symlinks up front: git always reports realpaths, so tests that
   // compare against them must start from one too (macOS /var → /private/var).
   const base = await realpath(await mkdtemp(join(tmpdir(), 'relay-test-')));
@@ -52,14 +54,18 @@ export async function createTempRepo(options: { withPackageJson?: boolean } = {}
     await writeFile(path, contents, 'utf8');
   };
 
-  await write('README.md', '# Test repo\n');
-  await write('src/app.ts', 'export const value = 1;\n');
-  if (options.withPackageJson === true) {
-    await write('package.json', JSON.stringify({ name: 'temp', version: '1.0.0', scripts: { test: 'echo ok' } }, null, 2));
-  }
+  // `empty: true` stops here: `git init` and nothing else, which is the state a
+  // brand new project is in and one Relay is expected to start work from.
+  if (options.empty !== true) {
+    await write('README.md', '# Test repo\n');
+    await write('src/app.ts', 'export const value = 1;\n');
+    if (options.withPackageJson === true) {
+      await write('package.json', JSON.stringify({ name: 'temp', version: '1.0.0', scripts: { test: 'echo ok' } }, null, 2));
+    }
 
-  await git('add', '-A');
-  await git('commit', '-q', '-m', 'initial commit');
+    await git('add', '-A');
+    await git('commit', '-q', '-m', 'initial commit');
+  }
 
   return {
     root,

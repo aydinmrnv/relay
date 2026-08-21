@@ -105,7 +105,11 @@ export async function creatingWorkspace(context: EngineContext): Promise<PhaseRe
   state.workspace = worktree;
   await ensureBrief(context, worktree.path);
   observer.note(`Worktree ${worktree.path}`);
-  observer.note(`Branch ${worktree.branch} from ${worktree.baseBranch} (${worktree.baseSha.slice(0, 8)})`);
+  observer.note(
+    worktree.fromEmptyRepository === true
+      ? `Branch ${worktree.branch} from an empty tree — this repository has no commits, so this run makes its first`
+      : `Branch ${worktree.branch} from ${worktree.baseBranch} (${worktree.baseSha.slice(0, 8)})`,
+  );
 
   return { next, note: worktree.branch };
 }

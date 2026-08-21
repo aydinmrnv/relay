@@ -119,6 +119,16 @@ describe('delivery plan', () => {
     assert.match(reasonFor(state, 'pr', noRemote, 'pullRequest'), /no push: this repository has no `origin` remote/);
   });
 
+  it('will not open a pull request into a base branch that does not exist yet', () => {
+    // A run in a repository that had no commits: the branch it pushed is the
+    // only one there is, so there is nothing to open a pull request against.
+    const state = finishedRun(repo.root);
+    const caps = capable({ baseMissing: true });
+
+    assert.deepEqual(stepsThatRun(state, 'pr', caps), ['commit', 'push']);
+    assert.match(reasonFor(state, 'pr', caps, 'pullRequest'), /main does not exist yet/);
+  });
+
   it('will not open a pull request without the CLI that owns the credentials', () => {
     const state = finishedRun(repo.root);
     const caps = capable({ gh: false });

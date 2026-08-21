@@ -137,6 +137,18 @@ export async function repositoryChecks(cwd: string): Promise<{ root?: string; ch
       { label: 'Git repository', status: 'ok', detail: `${repo.root}${slug}, base ${repo.defaultBranch}` },
     ];
 
+    // Not a problem, and worth saying anyway: what a run does here is different
+    // enough — no base commit, nothing to diff against — to be a surprise. The
+    // whole answer goes in the detail, because doctor prints a hint only for a
+    // check that failed, and this one has not.
+    if (repo.isEmpty) {
+      checks.push({
+        label: 'Commits',
+        status: 'ok',
+        detail: `none yet — a run branches from an empty tree, and its commit is ${repo.defaultBranch}'s first`,
+      });
+    }
+
     if (repo.isDirty) {
       checks.push({
         label: 'Working tree',

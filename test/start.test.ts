@@ -7,6 +7,7 @@ import { AGENT_REGISTRY } from '../src/agents/index.ts';
 import { describeCommand, type AuthState, type AuthSupport } from '../src/auth/delegated.ts';
 import type { AgentCheck } from '../src/cli/checks.ts';
 import { runStart, type StartDeps, type StartOptions } from '../src/cli/commands/start.ts';
+import type { RunOptions } from '../src/cli/commands/run.ts';
 import { EXIT } from '../src/cli/exit.ts';
 import { loadOnboarding, onboardingPath } from '../src/cli/onboarding.ts';
 import { setTheme } from '../src/cli/output.ts';
@@ -50,7 +51,8 @@ interface WorldOptions {
 class World {
   readonly logins: string[] = [];
   readonly initCalls: unknown[] = [];
-  readonly runs: Array<{ ref: string }> = [];
+  /** `ref` is undefined when the work was described rather than referenced. */
+  readonly runs: Array<{ ref: string | undefined; options: RunOptions }> = [];
   readonly prompter: ScriptedPrompter;
   output = '';
 
@@ -100,8 +102,8 @@ class World {
         await writeConfig(repo.root, structuredClone(DEFAULT_CONFIG));
         return this.options.initExitCode ?? 0;
       },
-      run: async (ref) => {
-        this.runs.push({ ref });
+      run: async (ref, options) => {
+        this.runs.push({ ref, options });
         return this.options.runExitCode ?? 0;
       },
       now: () => new Date('2026-08-12T09:00:00Z'),
@@ -403,7 +405,7 @@ describe('relay start — the first run', () => {
     const { exitCode, world } = await start(['y', '142']);
 
     assert.equal(exitCode, 0);
-    assert.deepEqual(world.runs, [{ ref: '142' }]);
+    assert.deepEqual(world.runs, [{ ref: '142', options: {} }]);
   });
 
   it('starts nothing when no issue is given', async () => {
@@ -435,5 +437,67 @@ describe('relay start — the first run', () => {
     assert.match(output, /A dry run needs none of them/);
     assert.match(output, /Dry run/);
     assert.equal(world.runs.length, 0);
+  });
+});
+
+/**
+ * The repository a project starts in: `git init`, and nothing else.
+ *
+ * Everything onboarding normally leans on is missing here — no commit to branch
+ * from, no tracker to read an issue out of, often no remote at all. None of that
+ * is a reason to refuse: the first run is the one that fills the repository, and
+ * the work it does is described rather than filed.
+ */
+describe('relay start — a repository with no commits', () => {
+  beforeEach(async () => {
+    await repo.cleanup();
+    repo = await createTempRepo({ empty: true });
+  });
+
+  it('says what a run does here instead of stopping', async () => {
+    await alreadyOnboarded();
+    const { output, exitCode } = await start([]);
+
+    assert.equal(exitCode, 0);
+    assert.match(output, /unborn — no commits yet/);
+    assert.match(output, /branches from an empty tree/);
+    assert.match(output, /relay run --prompt/);
+  });
+
+  it('starts a run from work described in a sentence', async () => {
+    await alreadyOnboarded();
+    const { exitCode, world } = await start(['y', 'A CLI that renders markdown tables']);
+
+    assert.equal(exitCode, 0);
+    assert.ok(world.prompter.asked.some((question) => question.includes('What should Relay build?')));
+    // No ticket exists to name, so the work itself is what the run is given.
+    assert.deepEqual(world.runs, [{ ref: undefined, options: { prompt: 'A CLI that renders markdown tables' } }]);
+  });
+
+  it('still takes an issue or a spec file if one is named', async () => {
+    await alreadyOnboarded();
+    const { world } = await start(['y', '142']);
+
+    assert.deepEqual(world.runs, [{ ref: '142', options: {} }]);
+  });
+
+  it('rehearses a described run without spending anything', async () => {
+    await alreadyOnboarded();
+    const { output, exitCode, world } = await start(['y', 'Build a markdown table renderer'], { dryRun: true });
+
+    assert.equal(exitCode, 0);
+    assert.equal(world.runs.length, 0);
+    assert.match(output, /Task\s+Build a markdown table renderer/);
+    assert.match(output, /branch from an empty tree — there is no commit yet/);
+    assert.match(output, /relay run --prompt "Build a markdown table renderer"/);
+  });
+
+  it('reports readiness without calling the repository a problem', async () => {
+    await alreadyOnboarded();
+    const { output, exitCode } = await start([], {}, { interactive: false });
+
+    assert.equal(exitCode, 0);
+    assert.match(output, /no commits yet, so a run starts from an empty tree/);
+    assert.match(output, /Ready\./);
   });
 });

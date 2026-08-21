@@ -15,10 +15,17 @@ import {
   worktreePathFor,
   worktreeExists,
 } from '../src/git/worktree.ts';
-import { discoverRepository, resolveBaseRef } from '../src/git/repository.ts';
+import { discoverRepository, emptyTreeSha, resolveBaseRef } from '../src/git/repository.ts';
 import { snapshotDiff, formatDiffStat } from '../src/git/diff.ts';
 import { buildCommitMessage, commitWorktree, describeLanding } from '../src/git/commit.ts';
-import { deleteRemoteBranch, hasRemote, mergeBranch, mergeReadiness, pushBranch } from '../src/git/publish.ts';
+import {
+  branchExistsSomewhere,
+  deleteRemoteBranch,
+  hasRemote,
+  mergeBranch,
+  mergeReadiness,
+  pushBranch,
+} from '../src/git/publish.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
 
@@ -400,5 +407,104 @@ describe('publishing a run branch', () => {
     assert.equal(await repo.git('rev-parse', 'HEAD'), before);
     assert.equal(await repo.git('status', '--porcelain'), '');
     assert.match(await readFile(join(repo.root, 'src', 'app.ts'), 'utf8'), /999/);
+  });
+});
+
+/**
+ * A repository nobody has committed to yet.
+ *
+ * This is where a project starts, and it used to be the one repository Relay
+ * refused: there was no commit to branch from, so there was no run. There still
+ * is no commit — the run branches from the empty tree instead, every file it
+ * writes is an addition against nothing, and the commit it makes at the end is
+ * the repository's first. Everything below is that claim, checked against git.
+ */
+describe('a repository with no commits', () => {
+  let repo: TempRepo;
+
+  before(async () => {
+    repo = await createTempRepo({ empty: true });
+    process.env['RELAY_HOME'] = repo.relayHome;
+  });
+
+  after(async () => {
+    delete process.env['RELAY_HOME'];
+    await repo.cleanup();
+  });
+
+  it('is discovered rather than refused', async () => {
+    const info = await discoverRepository(repo.root);
+
+    assert.equal(info.isEmpty, true);
+    assert.equal(info.headSha, '');
+    // HEAD is unborn, but it still names the branch the first commit creates.
+    assert.equal(info.currentBranch, 'main');
+    assert.equal(info.defaultBranch, 'main');
+  });
+
+  it('branches a worktree from the empty tree, leaving the checkout unborn', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issue: 'first-project', runShortId: 'emp001' });
+
+    assert.equal(worktree.fromEmptyRepository, true);
+    assert.equal(worktree.baseSha, await emptyTreeSha(repo.root));
+    assert.equal(await worktreeExists(worktree.path), true);
+    // The base is a tree, not a commit — there is no commit to name.
+    assert.equal(await repo.git('cat-file', '-t', worktree.baseSha), 'tree');
+
+    // The user's own checkout is exactly as it was: still empty, still unborn.
+    assert.equal((await discoverRepository(repo.root)).isEmpty, true);
+    assert.equal(await repo.git('symbolic-ref', '--short', 'HEAD'), 'main');
+  });
+
+  it('measures every file the run wrote as an addition against nothing', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issue: 'diff-it', runShortId: 'emp002' });
+
+    // Nothing written yet: an empty repository and an untouched worktree are
+    // the same diff, which is no diff at all.
+    assert.equal((await snapshotDiff(worktree.path, worktree.baseSha)).isEmpty, true);
+
+    await mkdir(join(worktree.path, 'src'), { recursive: true });
+    await writeFile(join(worktree.path, 'src', 'index.ts'), 'export const started = true;\n', 'utf8');
+    await writeFile(join(worktree.path, 'README.md'), '# New project\n', 'utf8');
+
+    const snapshot = await snapshotDiff(worktree.path, worktree.baseSha);
+    assert.equal(snapshot.isEmpty, false);
+    assert.deepEqual(snapshot.files.map((file) => file.path).sort(), ['README.md', 'src/index.ts']);
+    assert.deepEqual([...new Set(snapshot.files.map((file) => file.status))], ['A']);
+    assert.equal(snapshot.deletions, 0);
+  });
+
+  it('commits the repository\'s first commit, with no parent and on the run branch', async () => {
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issue: 'commit-it', runShortId: 'emp003' });
+    const subject = { branch: worktree.branch, baseSha: worktree.baseSha, changedFiles: 1 };
+
+    // An unborn branch is not an answer Relay cannot give: it is work that was
+    // never committed, which is exactly what `unlanded` means.
+    await writeFile(join(worktree.path, 'index.ts'), 'export const value = 1;\n', 'utf8');
+    assert.equal(await describeLanding(repo.root, subject), 'unlanded');
+
+    const result = await commitWorktree(worktree.path, { subject: 'Start the project' });
+    assert.ok(result !== undefined);
+    assert.equal(await describeLanding(repo.root, subject), 'committed');
+
+    // A root commit: no parent, and only the run's branch points at it.
+    assert.equal(await repo.git('-C', worktree.path, 'rev-list', '--count', '--max-parents=0', 'HEAD'), '1');
+    assert.equal(await repo.git('rev-parse', worktree.branch), result.sha);
+    assert.equal((await discoverRepository(repo.root)).isEmpty, true);
+  });
+
+  it('has no base branch anywhere to open a pull request into', async () => {
+    assert.equal(await branchExistsSomewhere(repo.root, 'main', null), false);
+    // A run branch that has been committed does exist, which is what makes the
+    // question about the base branch worth asking separately.
+    const info = await discoverRepository(repo.root);
+    const worktree = await createWorktree({ repo: info, issue: 'base-check', runShortId: 'emp004' });
+    await writeFile(join(worktree.path, 'a.txt'), 'a\n', 'utf8');
+    await commitWorktree(worktree.path, { subject: 'work' });
+
+    assert.equal(await branchExistsSomewhere(repo.root, worktree.branch, null), true);
   });
 });

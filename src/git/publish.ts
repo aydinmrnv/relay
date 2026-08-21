@@ -32,6 +32,39 @@ export async function hasRemote(repoRoot: string, remote = 'origin'): Promise<bo
 }
 
 /**
+ * Whether a branch exists anywhere this machine can see it: as a local ref, as a
+ * remote-tracking ref, or on the remote itself.
+ *
+ * Asked only about the base branch of a run that started from a repository with
+ * no commits, where the answer is usually "nowhere" — and a pull request into a
+ * branch that does not exist is a step worth skipping with a reason rather than
+ * attempting and reporting someone else's error message. A remote that cannot be
+ * reached answers `true`: a failed network call is not evidence of absence, and
+ * refusing on it would skip a pull request that would have opened.
+ */
+export async function branchExistsSomewhere(
+  repoRoot: string,
+  branch: string,
+  remote: string | null,
+): Promise<boolean> {
+  const local = [`refs/heads/${branch}`, `refs/remotes/${remote ?? 'origin'}/${branch}`];
+  for (const ref of local) {
+    try {
+      if ((await git(['rev-parse', '--verify', '--quiet', ref], { cwd: repoRoot })).length > 0) return true;
+    } catch {
+      // Not this ref; the next one, or the remote, may still know it.
+    }
+  }
+
+  if (remote === null) return false;
+  try {
+    return (await git(['ls-remote', '--heads', remote, branch], { cwd: repoRoot, timeoutMs: 20_000 })).length > 0;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Pushes a run branch and sets its upstream.
  *
  * Relay runs git without a terminal, so a repository whose credentials are not

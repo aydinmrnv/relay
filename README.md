@@ -323,6 +323,39 @@ Delivery
 `relay start` and `relay doctor`: someone with no GitHub CLI at all can still
 complete the flow and finish a real run.
 
+### A repository with no commits
+
+`git init` and nothing else is a place a run can start. There is no commit to
+branch from, so the run branches from the empty tree instead: every file the
+agents write is an addition against nothing, and the commit at the end is the
+repository's first.
+
+```bash
+mkdir markdown-tables && cd markdown-tables && git init
+relay start                                              # asks what to build, not which issue
+relay run --prompt "A CLI that renders markdown tables"
+```
+
+Everything downstream is unchanged, because everything downstream measures the
+work with git either way. The worktree is still isolated and still outside your
+checkout, your own branch stays unborn until you merge something into it, and the
+plan, the reviews, the tests and the diff all happen exactly as they do in a
+repository with ten years of history behind it.
+
+Two things differ, and both are said out loud rather than assumed:
+
+- **`relay start` asks what to build**, not which issue to read. Nothing has been
+  filed against code that does not exist yet, so the first run here is described
+  in a sentence — an issue number or a spec file still works if you have one.
+- **A pull request needs a base branch to open against**, and an empty repository
+  has none. The step is skipped with its reason — `main does not exist yet —
+  relay/…-x7f2q3 is this repository's first commit` — rather than failing on the
+  way out, so `deliver: pr` reaches `push` and reports the shortfall.
+
+Checking out a branch with no commit is `git worktree add --orphan`, which needs
+**git 2.42 or newer**. On an older git, Relay says so and names the one command
+that removes the problem: `git commit --allow-empty -m "Initial commit"`.
+
 ### `--tuff`
 
 Relay's writing reads like a machine wrote it, because one did. `--tuff` makes
@@ -840,7 +873,7 @@ relabels nor suppresses it. Users with shell-level tracking may add
 
 ## Requirements
 
-Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed and already authenticated. Run `relay doctor` to check.
+Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed and already authenticated. Run `relay doctor` to check. Starting from a repository with no commits additionally needs git ≥ 2.42, for `git worktree add --orphan`.
 
 ## Updating
 

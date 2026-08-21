@@ -6,17 +6,29 @@ import { rm, mkdir, stat } from 'node:fs/promises';
 import type { IssueIdentity } from '../issues/identity.ts';
 import { RelayError } from '../util/errors.ts';
 import { slugify } from '../util/text.ts';
-import { git, resolveBaseRef, type RepositoryInfo } from './repository.ts';
+import { emptyTreeSha, git, resolveBaseRef, type RepositoryInfo } from './repository.ts';
 
 export interface Worktree {
   /** Absolute path to the isolated checkout. */
   path: string;
   branch: string;
-  /** Commit the branch was created from; every diff is computed against this. */
+  /**
+   * Commit the branch was created from; every diff is computed against this. In
+   * a repository with no commits it is the empty tree instead — there is no
+   * commit to name, and a diff against nothing is still a diff.
+   */
   baseSha: string;
   baseRef: string;
   baseBranch: string;
+  /**
+   * True when the run branched from an empty repository: the branch is unborn
+   * until the run commits, and that commit is the repository's first.
+   */
+  fromEmptyRepository?: boolean;
 }
+
+/** What `baseRef` records when there was no ref to branch from. */
+export const EMPTY_BASE_REF = '(empty repository)';
 
 /** Root under which every Relay worktree lives. Nothing is ever removed outside it. */
 export function workspacesRoot(): string {
@@ -129,28 +141,51 @@ export interface CreateWorktreeOptions {
 /**
  * Creates the isolated checkout for a run. The user's working tree is only ever
  * read: `git worktree add` does not touch the current branch, index, or files.
+ *
+ * A repository with no commits is a supported starting point rather than an
+ * error. There is nothing to branch from, so the run gets a worktree on an
+ * unborn branch and diffs against the empty tree; the commit it makes at the end
+ * is the repository's first. Relay still writes nothing to the user's checkout:
+ * the branch it creates is its own, and HEAD there stays unborn.
  */
 export async function createWorktree(options: CreateWorktreeOptions): Promise<Worktree> {
   const { repo, issue, runShortId } = options;
   const baseBranch = options.baseBranch ?? repo.defaultBranch;
-  const base = await resolveBaseRef(repo.root, baseBranch);
+  const base = repo.isEmpty
+    ? { ref: EMPTY_BASE_REF, sha: await emptyTreeSha(repo.root) }
+    : await resolveBaseRef(repo.root, baseBranch);
+  const empty = repo.isEmpty ? { fromEmptyRepository: true as const } : {};
 
   const path = worktreePathFor(repo, issue, runShortId);
   const branch = branchNameFor(issue, runShortId, options.branchPrefix);
 
   const existing = await findWorktree(repo.root, path);
   if (existing) {
-    return { path, branch: existing.branch ?? branch, baseSha: base.sha, baseRef: base.ref, baseBranch };
+    return { path, branch: existing.branch ?? branch, baseSha: base.sha, baseRef: base.ref, baseBranch, ...empty };
   }
 
   await mkdir(join(path, '..'), { recursive: true });
 
-  await git(['worktree', 'add', '--no-track', '-b', branch, path, base.sha], {
-    cwd: repo.root,
-    ...(options.signal ? { signal: options.signal } : {}),
-  });
+  const add = repo.isEmpty
+    ? ['worktree', 'add', '--orphan', '-b', branch, path]
+    : ['worktree', 'add', '--no-track', '-b', branch, path, base.sha];
 
-  return { path, branch, baseSha: base.sha, baseRef: base.ref, baseBranch };
+  try {
+    await git(add, { cwd: repo.root, ...(options.signal ? { signal: options.signal } : {}) });
+  } catch (error) {
+    if (!repo.isEmpty) throw error;
+    // `--orphan` is the only way to check out a branch that has no commit, and
+    // it arrived in git 2.42. The alternative is one command the user can run.
+    throw new RelayError('Could not create a worktree in a repository with no commits.', {
+      code: 'EMPTY_REPOSITORY',
+      hint:
+        'Starting from an empty repository needs `git worktree add --orphan`, which is git 2.42 or newer.\n' +
+        'Upgrade git, or make the first commit yourself: `git commit --allow-empty -m "Initial commit"`.',
+      cause: error,
+    });
+  }
+
+  return { path, branch, baseSha: base.sha, baseRef: base.ref, baseBranch, ...empty };
 }
 
 export interface WorktreeEntry {

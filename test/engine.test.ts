@@ -21,6 +21,7 @@ import {
   type Harness,
 } from './helpers/engine.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
+import { discoverRepository } from '../src/git/repository.ts';
 
 let repo: TempRepo;
 
@@ -638,6 +639,46 @@ describe('workflow engine — delivering the work', () => {
     assert.equal(await repo.git('-C', final.workspace!.path, 'rev-parse', 'HEAD'), final.workspace!.baseSha);
     assert.match((await store.readArtifact('summary.md')) ?? '', /not committed/);
     assert.equal(final.delivery?.reached, 'none');
+  });
+
+  it('makes the first commit of a repository that had none', async () => {
+    // The whole pipeline, in a directory where `git init` is all that has
+    // happened: nothing to plan against, nothing to diff against, and no commit
+    // to branch from. The run still finishes, and what it leaves behind is the
+    // repository's root commit on the run's own branch.
+    await repo.cleanup();
+    repo = await createTempRepo({ empty: true });
+    process.env['RELAY_HOME'] = repo.relayHome;
+
+    const harnesses: Harness = {
+      claude: new FakeAgentHarness('claude', {
+        planner: [{ text: planText() }],
+        codeReviewer: [{ text: approveReview('The first file is the right first file.') }],
+      }),
+      codex: new FakeAgentHarness('codex', {
+        planReviewer: [{ text: approveReview('Plan is sound.') }],
+        implementer: [
+          { text: section('NOTES', 'Created index.ts'), effect: writesFile('index.ts', 'export const started = true;\n') },
+        ],
+      }),
+    };
+    const { context } = buildContext(harnesses, { config: { deliver: 'branch' } });
+
+    const final = await new WorkflowEngine(context).run();
+
+    assert.equal(final.phase, 'COMPLETE');
+    assert.equal(final.workspace?.fromEmptyRepository, true);
+    // Everything the run wrote is an addition: there was nothing to change.
+    assert.equal(final.diff?.deletions, 0);
+    assert.ok((final.diff?.additions ?? 0) > 0);
+
+    const sha = final.commit?.sha;
+    assert.ok(sha !== undefined);
+    assert.equal(await repo.git('rev-list', '--count', '--max-parents=0', sha), '1');
+    assert.equal(await repo.git('rev-parse', final.workspace!.branch), sha);
+
+    // The user's own checkout never moved: still on an unborn branch.
+    assert.equal((await discoverRepository(repo.root)).isEmpty, true);
   });
 
   it('does not fail the run when the commit itself fails', async () => {
