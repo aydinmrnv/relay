@@ -15,8 +15,9 @@ import {
   codexSandboxMode,
   CODEX_EXEC_ONLY_FLAGS,
 } from '../src/agents/codex.ts';
-import { describeEvent } from '../src/agents/types.ts';
+import { describeEvent, type AgentCapability } from '../src/agents/types.ts';
 import { AGENT_REGISTRY, AGENT_PROVIDERS, createHarnesses, isAgentProvider } from '../src/agents/index.ts';
+import { ROLES, type Role } from '../src/storage/config.ts';
 
 describe('claude command construction', () => {
   it('requests a machine-readable stream and a caller-chosen session id', () => {
@@ -410,4 +411,88 @@ describe('harness registry', () => {
     assert.equal(isAgentProvider(undefined), false);
     assert.equal(isAgentProvider(42), false);
   });
+
+  it('declares its read-only enforcement, for relay doctor to report', () => {
+    for (const entry of AGENT_REGISTRY) {
+      assert.ok(['os-sandbox', 'deny-list'].includes(entry.enforcement.readOnly), entry.name);
+      assert.ok(entry.enforcement.detail.length > 0, `${entry.name} must say what enforces read-only`);
+    }
+  });
+});
+
+/**
+ * The Safety claim, asserted against the argv each harness actually builds
+ * rather than in prose: `git push`, `git merge`, `gh pr create` and
+ * `gh pr merge` are closed to every agent in every role.
+ *
+ * The suite is parameterized over `AGENT_REGISTRY`, and the first test fails
+ * for any registered harness with no entry in the assertion table — a future
+ * harness cannot ship without stating, and proving, how it denies these.
+ */
+describe('the deny list in the constructed argv, per harness and role', () => {
+  /** The capability each role runs with, mirroring `src/workflow/phases/`. */
+  const ROLE_CAPABILITY: Record<Role, AgentCapability> = {
+    planner: 'read_only',
+    planReviewer: 'read_only',
+    implementer: 'write',
+    codeReviewer: 'read_only',
+  };
+
+  const DENIED_COMMANDS = ['git push', 'git merge', 'gh pr create', 'gh pr merge'] as const;
+
+  const DENY_ASSERTIONS: Record<string, (args: readonly string[], capability: AgentCapability) => void> = {
+    // Claude denies by name: every forbidden command must appear in the
+    // --disallowed-tools list, and read-only roles lose the edit tools too.
+    claude: (args, capability) => {
+      for (const command of DENIED_COMMANDS) {
+        assert.ok(args.includes(`Bash(${command}:*)`), `claude argv must deny \`${command}\``);
+      }
+      if (capability === 'read_only') {
+        for (const tool of CLAUDE_READ_ONLY_DENIED) {
+          assert.ok(args.includes(tool), `read-only claude argv must deny ${tool}`);
+        }
+      }
+    },
+    // Codex denies by sandbox: read-only turns cannot write at all, and
+    // workspace-write turns have no network to push or open anything with.
+    // The argv must select that sandbox and must not weaken it.
+    codex: (args, capability) => {
+      const mode = capability === 'write' ? 'workspace-write' : 'read-only';
+      const viaFlag = args.includes('--sandbox') && args[args.indexOf('--sandbox') + 1] === mode;
+      const viaConfig = args.includes(`sandbox_mode="${mode}"`);
+      assert.ok(viaFlag || viaConfig, `codex argv must select the ${mode} sandbox`);
+      assert.ok(args.includes('approval_policy="never"'), 'codex must never wait on an approval prompt');
+      assert.ok(
+        !args.some((arg) => /network_access\s*=\s*true|danger|bypass/i.test(arg)),
+        'codex argv must not weaken its sandbox',
+      );
+    },
+  };
+
+  it('has assertions for every registered harness, so a new one cannot omit them', () => {
+    for (const entry of AGENT_REGISTRY) {
+      assert.ok(
+        Object.hasOwn(DENY_ASSERTIONS, entry.name),
+        `no deny-list assertions for harness "${entry.name}" — add them to this table before registering it`,
+      );
+    }
+  });
+
+  for (const entry of AGENT_REGISTRY) {
+    for (const role of ROLES) {
+      it(`${entry.name} as ${role} (${ROLE_CAPABILITY[role]})`, async () => {
+        // A no-op binary: the harness spawns it and records the exact argv it
+        // would have handed the real CLI, without needing that CLI installed.
+        const harness = entry.create({ binary: 'true' });
+        const turn = { prompt: 'noop', cwd: process.cwd(), role, capability: ROLE_CAPABILITY[role], timeoutMs: 30_000 };
+
+        const started = await harness.start(turn);
+        DENY_ASSERTIONS[entry.name]!(started.invocation.args, ROLE_CAPABILITY[role]);
+
+        // Resume builds a different argv shape; the denial must survive it.
+        const resumed = await harness.resume('00000000-0000-0000-0000-000000000000', 'noop', turn);
+        DENY_ASSERTIONS[entry.name]!(resumed.invocation.args, ROLE_CAPABILITY[role]);
+      });
+    }
+  }
 });

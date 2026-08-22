@@ -93,6 +93,8 @@ export interface RunOptions {
   deliver?: string;
   /** `--no-offer-merge`: finish without the one question. */
   offerMerge?: boolean;
+  /** `--allow-secret <path>`: let a file the secret scan flagged publish anyway. */
+  allowSecret?: string[];
   /** `-f`: no plan review, no code review. The shorthand for `--review none`. */
   fast?: boolean;
   /** `--review <level>`: how hard the agents are asked to look. */
@@ -227,6 +229,10 @@ export function applyOverrides(
   if (options.offerMerge === false) merged.workflow.offerMerge = false;
   if (options.prime === false) merged.workflow.primeReviewers = false;
   if (options.parallelTests === false) merged.workflow.concurrentTests = false;
+  if (options.allowSecret !== undefined && options.allowSecret.length > 0) {
+    merged.delivery.allowSecrets = [...(merged.delivery.allowSecrets ?? []), ...options.allowSecret];
+    say(dim(`Secret scan: ${options.allowSecret.join(', ')} allowed through by --allow-secret.`));
+  }
 
   // Review depth is set before the individual knobs below, so an explicit
   // `--max-code-rounds` on top of a level still wins — the same order the
@@ -631,6 +637,14 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
   // The phases this run will take are already decided, but what it writes on
   // its way out is not: a resume is allowed to change the voice.
   if (options.tuff === true) previous.config.workflow.typos = true;
+  // A resume is exactly when a scan finding gets answered: the run stopped at
+  // `branch`, the user looked at the file, and this is the deliberate override.
+  if (options.allowSecret !== undefined && options.allowSecret.length > 0) {
+    previous.config.delivery = {
+      comment: previous.config.delivery?.comment ?? false,
+      allowSecrets: [...(previous.config.delivery?.allowSecrets ?? []), ...options.allowSecret],
+    };
+  }
 
   if (isTerminal(previous.phase)) {
     if (previous.phase === 'COMPLETE') {
@@ -672,10 +686,18 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
  */
 export async function deliverRun(
   state: RunState,
-  options: { policy?: DeliveryPolicy; json?: boolean; command?: string; cli?: CliContext } = {},
+  options: { policy?: DeliveryPolicy; json?: boolean; command?: string; cli?: CliContext; allowSecrets?: string[] } = {},
 ): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   if (options.policy !== undefined) state.config.workflow.deliver = options.policy;
+  // `--allow-secret`: the deliberate answer to a scan finding, scoped to this
+  // run's snapshot — the repository's own config never learns it.
+  if (options.allowSecrets !== undefined && options.allowSecrets.length > 0) {
+    state.config.delivery = {
+      comment: state.config.delivery?.comment ?? false,
+      allowSecrets: [...(state.config.delivery?.allowSecrets ?? []), ...options.allowSecrets],
+    };
+  }
   const json = options.json === true;
 
   await delivering({

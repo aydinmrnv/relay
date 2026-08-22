@@ -10,6 +10,30 @@ import type { AgentHarness } from './types.ts';
  */
 export interface HarnessOptions {
   defaultModel?: string;
+  /**
+   * Overrides the executable the harness spawns. Tests use it to build the real
+   * argv against a no-op binary; a user can use it to pin an absolute path.
+   */
+  binary?: string;
+}
+
+/**
+ * How a harness's read-only capability is actually enforced — by the operating
+ * system, or by a deny list inside the CLI's own process. Declared here so
+ * `relay doctor` can report the difference instead of the README implying
+ * parity, and so Relay knows which harnesses need its own OS sandbox wrapped
+ * around their read-only turns.
+ */
+export interface EnforcementInfo {
+  /**
+   * `os-sandbox`: the CLI itself confines the turn at the OS level, and Relay
+   * must not wrap it again (a nested Seatbelt profile fails on macOS).
+   * `deny-list`: the CLI only refuses tools by name, so Relay wraps the turn in
+   * its own OS sandbox where the platform offers one (`src/agents/sandbox.ts`).
+   */
+  readonly readOnly: 'os-sandbox' | 'deny-list';
+  /** One line for `relay doctor`, e.g. `OS sandbox (codex --sandbox read-only)`. */
+  readonly detail: string;
 }
 
 export interface HarnessRegistration {
@@ -26,6 +50,8 @@ export interface HarnessRegistration {
    * ever delegates to these — it holds no credential of its own.
    */
   readonly auth: AuthSupport;
+  /** What enforces `read_only` for this harness. `relay doctor` reports it. */
+  readonly enforcement: EnforcementInfo;
   create(options: HarnessOptions): AgentHarness;
 }
 
@@ -49,6 +75,10 @@ export const AGENT_REGISTRY: readonly HarnessRegistration[] = [
       status: { command: 'claude', args: ['auth', 'status'], signedIn: claudeSignedIn },
       login: { command: 'claude', args: ['auth', 'login'] },
     },
+    enforcement: {
+      readOnly: 'deny-list',
+      detail: 'tool deny list (--disallowed-tools)',
+    },
     create: (options) => new ClaudeHarness(options),
   },
   {
@@ -59,6 +89,10 @@ export const AGENT_REGISTRY: readonly HarnessRegistration[] = [
     auth: {
       status: { command: 'codex', args: ['login', 'status'] },
       login: { command: 'codex', args: ['login'] },
+    },
+    enforcement: {
+      readOnly: 'os-sandbox',
+      detail: 'OS sandbox (codex --sandbox read-only)',
     },
     create: (options) => new CodexHarness(options),
   },

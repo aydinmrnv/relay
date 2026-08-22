@@ -1,4 +1,5 @@
 import { AGENT_REGISTRY, type HarnessRegistration } from '../agents/index.ts';
+import { detectOsSandbox } from '../agents/sandbox.ts';
 import { describeCommand, probeAuth, type AuthState, type AuthSupport } from '../auth/delegated.ts';
 import { discoverRepository } from '../git/repository.ts';
 import { ISSUE_TRACKER_REGISTRY } from '../issues/registry.ts';
@@ -60,6 +61,44 @@ export async function agentChecks(): Promise<AgentCheck[]> {
       };
     }),
   );
+}
+
+/**
+ * How `read_only` is actually enforced for every registered harness, one row
+ * each: a user assigning a review role deserves to know whether the operating
+ * system holds that promise or a deny list inside the CLI does.
+ *
+ * A harness whose CLI carries its own OS sandbox reports it directly. One that
+ * only has a deny list reports the OS sandbox Relay wraps around it — or, when
+ * the platform offers none, an honest warning that the deny list is the only
+ * layer. A warning, not a failure: Relay still runs, weaker than it would like.
+ */
+export async function enforcementChecks(platform: NodeJS.Platform = process.platform): Promise<Check[]> {
+  const sandbox = await detectOsSandbox(platform);
+
+  return AGENT_REGISTRY.map((entry) => {
+    const label = `${entry.label} read-only`;
+    if (entry.enforcement.readOnly === 'os-sandbox') {
+      return { label, status: 'ok' as const, detail: entry.enforcement.detail };
+    }
+    if (sandbox.available) {
+      return {
+        label,
+        status: 'ok' as const,
+        detail: `OS sandbox (${sandbox.mechanism}) + ${entry.enforcement.detail}`,
+      };
+    }
+    return {
+      label,
+      status: 'warn' as const,
+      detail: `${entry.enforcement.detail} only — ${sandbox.reason}`,
+      hint:
+        'Read-only turns for this harness rely on the CLI honouring its own deny list.\n' +
+        (platform === 'linux'
+          ? 'Install bubblewrap (`bwrap`) to add an OS-level sandbox around them.'
+          : 'No OS-level sandbox is available here to wrap around them.'),
+    };
+  });
 }
 
 /**
@@ -181,6 +220,7 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
 
   const agents = await agentChecks();
   for (const { check } of agents) checks.push(check);
+  checks.push(...(await enforcementChecks()));
 
   const repository = await repositoryChecks(cwd);
   checks.push(...(await agentAuthChecks(repository.root ?? cwd, agents)));

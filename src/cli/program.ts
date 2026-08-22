@@ -217,6 +217,7 @@ export function buildProgram(version: string): Command {
     .option('--merge-method <method>', 'merge method (squash|merge|rebase)')
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
+    .option('--allow-secret <path>', 'publish a file the secret scan flagged (repeatable)', collect, [])
     .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
     .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
     .option('--detach', 'start the run in the background and return immediately')
@@ -250,6 +251,7 @@ export function buildProgram(version: string): Command {
     .option('--merge-method <method>', 'merge method (squash|merge|rebase)')
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
+    .option('--allow-secret <path>', 'publish a file the secret scan flagged (repeatable)', collect, [])
     .option('--tuff', 'write the pull request and commits with typos, like a human')
     .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
     .action(wrap(resumeCommand));
@@ -259,6 +261,7 @@ export function buildProgram(version: string): Command {
     .argument('[run-id]', 'run id, short id, or "latest"', 'latest')
     .description('run a finished run\'s delivery again: commit, push, pull request, merge')
     .option('--to <policy>', `how far to take it (${DELIVERY_POLICIES.join('|')})`)
+    .option('--allow-secret <path>', 'publish a file the secret scan flagged (repeatable)', collect, [])
     .option('--json', JSON_FLAG)
     .action(wrap(deliverCommand));
 

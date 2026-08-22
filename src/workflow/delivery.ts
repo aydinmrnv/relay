@@ -2,6 +2,7 @@ import type { DeliveryPolicy } from '../storage/config.ts';
 import { isBlockingAt } from '../reviews/level.ts';
 import { reviewProfileOf } from '../storage/config.ts';
 import type { MergeReadiness } from '../git/publish.ts';
+import type { SecretScanResult } from '../git/secretScan.ts';
 import {
   DELIVERY_STEPS,
   type DeliveryRecord,
@@ -46,6 +47,15 @@ export interface DeliveryCapabilities {
    * request into until someone publishes a base.
    */
   baseMissing?: boolean;
+  /**
+   * What the pre-publish secret scan found, present whenever the policy would
+   * take the work off this machine. A finding gates the push (and the merge:
+   * a base branch is one `git push` from a remote) and delivery stops at
+   * `branch` with the rule and location recorded — never the secret itself.
+   * `error` means the scan could not run, which blocks the same way: nothing
+   * leaves the machine unscanned.
+   */
+  secrets?: SecretScanResult | { error: string };
 }
 
 export interface PlannedStep {
@@ -174,13 +184,18 @@ function gateFor(
     case 'commit':
       return undefined;
     case 'push':
-      return caps.remote === null ? 'this repository has no `origin` remote' : undefined;
+      if (caps.remote === null) return 'this repository has no `origin` remote';
+      return secretGate(caps.secrets);
     case 'pullRequest':
       if (!caps.gh) return 'the GitHub CLI is not installed';
       if (caps.repoSlug === null) return `${branch} has no GitHub repository to open it against`;
       if (caps.baseMissing === true) return `${base} does not exist yet — ${branch} is this repository's first commit`;
       return undefined;
-    case 'merge':
+    case 'merge': {
+      // A local merge never leaves the machine, but the base branch it lands on
+      // will: a flagged change is stopped here too, for the same reason.
+      const secrets = secretGate(caps.secrets);
+      if (secrets !== undefined) return secrets;
       if (caps.protectedBranches?.includes(base) === true) return `${base} is a protected branch`;
       if (state.pullRequest !== undefined && state.pullRequest.createdByRun !== true) return 'this run did not create the pull request';
       {
@@ -192,7 +207,24 @@ function gateFor(
       // care which branch the user is standing on.
       if (expected.pullRequest) return undefined;
       return caps.merge.ok ? undefined : (caps.merge.reason ?? `${base} cannot be merged into here`);
+    }
   }
+}
+
+/**
+ * Why a flagged change may not be published, as one recorded line: the rule and
+ * the location of the first finding — never the matched text. The full list is
+ * printed by the phase; the plan's reason is the durable record.
+ */
+export function secretGate(secrets: DeliveryCapabilities['secrets']): string | undefined {
+  if (secrets === undefined) return undefined;
+  if ('error' in secrets) return `the secret scan could not run: ${secrets.error}`;
+  if (secrets.findings.length === 0) return undefined;
+
+  const first = secrets.findings[0]!;
+  const where = first.line === null ? first.file : `${first.file}:${first.line}`;
+  const more = secrets.findings.length - 1;
+  return `the secret scan matched ${first.rule} in ${where}${more > 0 ? ` (and ${more} more)` : ''}`;
 }
 
 /** Whether the merge would be `gh pr merge` rather than a merge in this checkout. */
