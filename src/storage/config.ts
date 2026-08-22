@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
-import { AGENT_PROVIDERS, isAgentProvider } from '../agents/index.ts';
+import { AGENT_PROVIDERS } from '../agents/index.ts';
+import { parseHarnessesConfig, type HarnessConfig } from '../agents/configHarness.ts';
 import { MERGE_METHODS, type MergeMethod } from '../github/pullRequest.ts';
 import {
   applyReviewLevel,
@@ -71,6 +72,13 @@ function isMergeMethod(value: unknown): value is MergeMethod {
 
 export interface RelayConfig {
   version: 1;
+  /**
+   * User-defined coding CLIs, keyed by the name roles refer to them by. Parsed
+   * before `agents`, because a role may name one. See `HarnessConfig` for the
+   * deliberately narrow shape. Absent in configs written before it existed, so
+   * readers go through `configHarnesses()` rather than the key.
+   */
+  harnesses: Record<string, HarnessConfig>;
   agents: Record<Role, AgentProvider>;
   /**
    * Model overrides, keyed by role (`codeReviewer`) or by provider (`claude`).
@@ -199,6 +207,7 @@ export interface RelayConfig {
  */
 export const DEFAULT_CONFIG: RelayConfig = {
   version: 1,
+  harnesses: {},
   agents: {
     planner: 'claude',
     planReviewer: 'codex',
@@ -261,6 +270,40 @@ export const DEFAULT_CONFIG: RelayConfig = {
 /** Old run snapshots predate this outward-facing opt-in. */
 export function commentsIssue(config: RelayConfig): boolean {
   return config.delivery?.comment === true;
+}
+
+/**
+ * The config's user-defined harnesses. Read through a function because a run
+ * snapshot recorded before the key existed has no `harnesses` at all.
+ */
+export function configHarnesses(config: RelayConfig): Record<string, HarnessConfig> {
+  return config.harnesses ?? {};
+}
+
+/** The roles that must run read-only, because they judge the others' work. */
+export const REVIEW_ROLES = ['planReviewer', 'codeReviewer'] as const;
+
+/**
+ * Refuses a reviewer that cannot be confined.
+ *
+ * A config-defined harness without `readOnly` flags is perfectly usable for
+ * implementation — but a reviewer that can edit the code it is reviewing
+ * breaks the guarantee the whole workflow rests on, so the assignment is
+ * refused here, loudly, rather than silently run unenforced. Called at config
+ * load and again after `--planner`/`--implementer` flags reshuffle the roles.
+ */
+export function assertReviewRolesEnforceable(config: RelayConfig): void {
+  for (const role of REVIEW_ROLES) {
+    const provider = config.agents[role];
+    const def = configHarnesses(config)[provider];
+    if (def === undefined || def.readOnly !== undefined) continue;
+    throw new RelayError(
+      `Agent "${provider}" cannot be the ${role}: it is a config-defined harness with no "readOnly" flags, ` +
+        `and a reviewer that can edit the code it reviews breaks the guarantee reviews rest on. ` +
+        `Add "readOnly" to harnesses.${provider} in .relay/config.json, or give the ${role} role to a shipped agent (${AGENT_PROVIDERS.join(', ')}).`,
+      { code: 'BAD_CONFIG' },
+    );
+  }
 }
 
 /**
@@ -345,6 +388,16 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
 
   const config: RelayConfig = structuredClone(base);
 
+  // Parsed before `agents`: roles may name a harness this block defines, and a
+  // name colliding with a shipped CLI or a role is refused inside the parser.
+  const harnesses = raw['harnesses'];
+  if (harnesses !== undefined) {
+    config.harnesses = parseHarnessesConfig(harnesses, [...AGENT_PROVIDERS, ...ROLES]);
+  }
+  const knownProviders = [...AGENT_PROVIDERS, ...Object.keys(configHarnesses(config))];
+  const isProvider = (value: unknown): value is string =>
+    typeof value === 'string' && knownProviders.includes(value);
+
   const agents = raw['agents'];
   if (agents !== undefined) {
     if (!isRecord(agents)) throw new RelayError('config.agents must be an object.', { code: 'BAD_CONFIG' });
@@ -354,23 +407,32 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
           code: 'BAD_CONFIG',
         });
       }
-      if (!isAgentProvider(provider)) {
+      if (!isProvider(provider)) {
         throw new RelayError(
-          `Unknown agent "${String(provider)}" for role "${role}". Valid agents: ${AGENT_PROVIDERS.join(', ')}.`,
+          `Unknown agent "${String(provider)}" for role "${role}". Valid agents: ${knownProviders.join(', ')}.`,
           { code: 'BAD_CONFIG' },
         );
       }
       config.agents[role as Role] = provider;
     }
   }
+  assertReviewRolesEnforceable(config);
 
   const models = raw['models'];
   if (models !== undefined) {
     if (!isRecord(models)) throw new RelayError('config.models must be an object.', { code: 'BAD_CONFIG' });
     for (const [key, model] of Object.entries(models)) {
+      // A config-defined harness has no model flag in its schema, so a model
+      // for it would be silently unused — refused rather than ignored.
+      if (configHarnesses(config)[key] !== undefined) {
+        throw new RelayError(
+          `config.models.${key}: "${key}" is a config-defined harness, and its schema has no model flag to pass a model to. Remove this key.`,
+          { code: 'BAD_CONFIG' },
+        );
+      }
       // A role key and a provider key are both legitimate: the first pins one
       // seat's model, the second pins every seat that CLI happens to fill.
-      if (!isAgentProvider(key) && !isRole(key)) {
+      if (!isProvider(key) && !isRole(key)) {
         throw new RelayError(
           `Unknown key "${key}" in config.models. Valid keys: ${[...ROLES, ...AGENT_PROVIDERS].join(', ')}.`,
           { code: 'BAD_CONFIG' },

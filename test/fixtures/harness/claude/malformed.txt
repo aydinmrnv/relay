@@ -1,0 +1,3 @@
+this is not json at all
+{"type":"assistant","message":
+[[garbage]] 42

@@ -1,0 +1,3 @@
+mytool v1.2.3 starting
+{"session": "mytool-fix
+plain prose, not jsonl

@@ -101,7 +101,18 @@ Tune against that, not against this list.
 
 **Relay never calls a model API.** It has no API keys, reads no credentials, and never sees a token. It launches the official CLIs you have already authenticated (`claude`, `codex`, `gh`) as child processes and lets each one own its own auth.
 
-**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/` and one row in `AGENT_REGISTRY` (`src/agents/index.ts`) — config validation, `relay doctor`, `relay init`, `relay start` and the `--planner` / `--implementer` flags all read that array, so none of them need touching. Each row also declares how that vendor is installed and how it is signed in, which is all onboarding needs to know to delegate.
+**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/`, one row in `AGENT_REGISTRY` (`src/agents/index.ts`), and one fixture set for the conformance suite — config validation, `relay doctor`, `relay init`, `relay start` and the `--planner` / `--implementer` flags all read that array, so none of them need touching. Each row also declares how that vendor is installed and how it is signed in, which is all onboarding needs to know to delegate. What a harness owes — event order, resume semantics, stdin-only prompts, failure shape, read-only enforcement, retry classification — is written as prose above the interface and enforced by a conformance suite (`test/helpers/conformance.ts`) that replays recorded stream fixtures against every registered harness, so a new harness is done when the suite passes.
+
+**A CLI Relay has not packaged can be added in config.** `.relay/config.json` takes a `harnesses` block — an argv, `promptOn: "stdin"`, a `jsonl` stream, a `$.field` mapping, and optional `resume` / `readOnly` flag templates with `{sessionId}` as the only substitution. No shell, no interpolation into command strings, no eval. A config harness appears in `relay doctor` and `relay init` and is assignable to roles like a shipped CLI, with one rule: a harness without `readOnly` flags is usable for implementation and refused for `planReviewer` and `codeReviewer`, because a reviewer that can edit the code it reviews breaks the guarantee reviews rest on.
+
+```json
+{ "harnesses": { "mytool": {
+  "command": "mytool", "args": ["run", "--json"], "promptOn": "stdin",
+  "stream": "jsonl", "map": { "text": "$.message", "usage": "$.usage", "sessionId": "$.session" },
+  "resume": ["--session", "{sessionId}"],
+  "readOnly": ["--sandbox", "read-only"]
+} } }
+```
 
 **Issue trackers use the same seam.** `IssueProvider` (`src/github/types.ts`) is implemented today only by `gh`, and `ISSUE_PROVIDER_REGISTRY` (`src/issues/registry.ts`) is where a second tracker plugs in: one implementation plus one row, carrying its own install command and its own login command. `relay start` asks where issues live by reading that array rather than by naming GitHub.
 

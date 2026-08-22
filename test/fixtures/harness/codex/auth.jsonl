@@ -1,0 +1,2 @@
+{"type":"thread.started","thread_id":"codex-fixture-thread"}
+{"type":"turn.failed","error":{"message":"Not logged in. Run `codex login` first."}}

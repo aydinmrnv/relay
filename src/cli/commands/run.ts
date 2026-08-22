@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 
-import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
+import { AGENT_PROVIDERS } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
@@ -16,6 +16,8 @@ import {
 import { listRuns, RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
 import {
   DELIVERY_POLICIES,
+  assertReviewRolesEnforceable,
+  configHarnesses,
   isDeliveryPolicy,
   reviewsCode,
   type DeliveryPolicy,
@@ -250,16 +252,29 @@ export function applyOverrides(
   }
 
   if (options.planner !== undefined) {
-    assertProvider(options.planner, '--planner');
+    assertProvider(options.planner, '--planner', merged);
     merged.agents.planner = options.planner;
-    // Keeping the reviewer on the other model is the point of the workflow.
-    merged.agents.codeReviewer = merged.agents.planner;
+    // Keeping the reviewer on the other model is the point of the workflow —
+    // unless this agent cannot be confined to read-only, in which case the
+    // configured reviewer keeps the seat rather than breaking the guarantee.
+    if (canReview(merged, options.planner)) {
+      merged.agents.codeReviewer = merged.agents.planner;
+    } else {
+      say(warning(`Warning: ${options.planner} has no read-only mode, so it cannot review — the code reviewer stays ${merged.agents.codeReviewer}.`));
+    }
   }
   if (options.implementer !== undefined) {
-    assertProvider(options.implementer, '--implementer');
+    assertProvider(options.implementer, '--implementer', merged);
     merged.agents.implementer = options.implementer;
-    merged.agents.planReviewer = merged.agents.implementer;
+    if (canReview(merged, options.implementer)) {
+      merged.agents.planReviewer = merged.agents.implementer;
+    } else {
+      say(warning(`Warning: ${options.implementer} has no read-only mode, so it cannot review — the plan reviewer stays ${merged.agents.planReviewer}.`));
+    }
   }
+  // The backstop for every path that reshuffles roles: a reviewer that cannot
+  // be forced read-only is refused with the same message config load uses.
+  assertReviewRolesEnforceable(merged);
 
   if (options.maxPlanRounds !== undefined) {
     merged.workflow.maxPlanReviewRounds = parseRounds(options.maxPlanRounds, '--max-plan-rounds');
@@ -330,10 +345,17 @@ function announceReviewLevel(config: RelayConfig, level: ReviewLevel): void {
   out(dim(`  ${describeReview({ ...config.workflow, review: level })}.`));
 }
 
-function assertProvider(value: string, flag: string): void {
-  if (!isAgentProvider(value)) {
-    throw new RelayError(`${flag} must be one of ${AGENT_PROVIDERS.join(', ')} (got "${value}").`, { code: 'BAD_FLAG' });
+function assertProvider(value: string, flag: string, config: RelayConfig): void {
+  const known = [...AGENT_PROVIDERS, ...Object.keys(configHarnesses(config))];
+  if (!known.includes(value)) {
+    throw new RelayError(`${flag} must be one of ${known.join(', ')} (got "${value}").`, { code: 'BAD_FLAG' });
   }
+}
+
+/** Whether an agent may hold a review seat: shipped, or confinable to read-only. */
+function canReview(config: RelayConfig, provider: string): boolean {
+  const def = configHarnesses(config)[provider];
+  return def === undefined || def.readOnly !== undefined;
 }
 
 export function parseDeliver(value: string): DeliveryPolicy {

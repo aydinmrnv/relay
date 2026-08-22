@@ -96,6 +96,39 @@ export interface AvailabilityResult {
   hint?: string;
 }
 
+/**
+ * The harness contract.
+ *
+ * The interface below says what a harness looks like; this section says what
+ * one owes. The executable version is the conformance suite in
+ * `test/helpers/conformance.ts`, which runs every entry in `AGENT_REGISTRY`
+ * (and any config-defined harness) against recorded stream fixtures — a new
+ * harness is done when it passes. The obligations, in prose:
+ *
+ * - A successful turn emits `started`, then its work events, then exactly one
+ *   `completed`. The session's `text` carries the final message — the artifact
+ *   Relay parses — and `usage` is present whenever the CLI reported counts.
+ * - `resume(sessionId, prompt, …)` continues that same conversation: the CLI
+ *   is handed the session id as an argv flag, the new prompt is delivered
+ *   alone, and earlier context is never re-sent.
+ * - Prompts arrive on stdin. Never as an argv entry, never through a shell.
+ * - `cancel()` terminates in-flight work and resolves; the interrupted
+ *   `start`/`resume` still settles, with `aborted: true`.
+ * - Every failure — a killed process, a non-zero exit, a malformed or
+ *   truncated stream, a binary that is not installed — resolves the session
+ *   with `ok: false`, an `error`, and a `failed` event. `start` and `resume`
+ *   never hang and never throw past the harness boundary.
+ * - The CLI's exit status is the source of truth: a stream claiming success on
+ *   a non-zero exit is a failure, and an exit 0 whose stream never carried a
+ *   terminal event is a malformed stream, not a quiet success.
+ * - `read_only` is enforced by the underlying CLI (a sandbox, a tool deny
+ *   list) — or the harness refuses the turn outright when it cannot enforce
+ *   it. Asking the model to behave is not enforcement.
+ * - Error messages are what `src/workflow/retry.ts` classifies. Transient
+ *   failures (rate limits, 5xx, dropped connections) must keep the CLI's own
+ *   wording so they are retried; auth failures must read as auth failures so
+ *   they are not.
+ */
 export interface AgentHarness {
   readonly name: string;
 

@@ -350,6 +350,7 @@ export class ClaudeHarness implements AgentHarness {
     let finalText = '';
     let failure: string | undefined;
     let usage: AgentUsage | undefined;
+    let sawResult = false;
 
     const emit = (event: AgentEvent): void => {
       events.push(event);
@@ -357,7 +358,10 @@ export class ClaudeHarness implements AgentHarness {
       if (event.type === 'started' && event.sessionId !== undefined) sessionId = event.sessionId;
       if (event.type === 'completed' && event.result !== undefined) finalText = event.result;
       if (event.type === 'failed') failure = event.error;
-      if ((event.type === 'completed' || event.type === 'failed') && event.usage !== undefined) usage = event.usage;
+      if (event.type === 'completed' || event.type === 'failed') {
+        sawResult = true;
+        if (event.usage !== undefined) usage = event.usage;
+      }
     };
 
     // Claude's own read-only enforcement is a deny list — a policy inside its
@@ -374,33 +378,70 @@ export class ClaudeHarness implements AgentHarness {
       }
     }
 
+    const startedAt = Date.now();
     try {
-      const result = await runProcess(spawnSpec.command, spawnSpec.args, {
-        cwd: options.cwd,
-        // The prompt goes over stdin: no argv length limit, no quoting, and
-        // nothing derived from an issue or an agent ever reaches a shell.
-        stdin: options.prompt,
-        timeoutMs: options.timeoutMs ?? this.defaultTimeoutMs,
-        signal: controller.signal,
-        onStdoutLine: (line) => {
-          const parsed = parseJsonLine(line);
-          if (parsed === undefined) return;
-          for (const event of normalizeClaudeLine(parsed, options.role)) emit(event);
-        },
-        onStderrLine: (line) => {
-          if (line.trim().length > 0) emit(makeEvent('notice', options.role, { text: oneLine(line, 300) }));
-        },
-      });
+      let result;
+      try {
+        result = await runProcess(spawnSpec.command, spawnSpec.args, {
+          cwd: options.cwd,
+          // The prompt goes over stdin: no argv length limit, no quoting, and
+          // nothing derived from an issue or an agent ever reaches a shell.
+          stdin: options.prompt,
+          timeoutMs: options.timeoutMs ?? this.defaultTimeoutMs,
+          signal: controller.signal,
+          onStdoutLine: (line) => {
+            const parsed = parseJsonLine(line);
+            if (parsed === undefined) return;
+            for (const event of normalizeClaudeLine(parsed, options.role)) emit(event);
+          },
+          onStderrLine: (line) => {
+            if (line.trim().length > 0) emit(makeEvent('notice', options.role, { text: oneLine(line, 300) }));
+          },
+        });
+      } catch (error) {
+        // A process that could not even start (missing binary, EACCES) fails
+        // the turn the way a crash does: a `failed` event and a resolved
+        // session. Nothing thrown here may cross the harness boundary.
+        emit(makeEvent('failed', options.role, { error: error instanceof Error ? error.message : String(error) }));
+        return {
+          provider: this.name,
+          role: options.role,
+          ...(sessionId === undefined ? {} : { sessionId }),
+          ok: false,
+          text: finalText,
+          events,
+          ...(failure === undefined ? {} : { error: failure }),
+          exitCode: null,
+          durationMs: Date.now() - startedAt,
+          timedOut: false,
+          aborted: false,
+          ...(usage === undefined ? {} : { usage }),
+          invocation: { command: spawnSpec.command, args: spawnSpec.args },
+        };
+      }
 
       // The CLI's exit status is the source of truth. A `result` event claiming
-      // success on a non-zero exit is not trusted.
+      // success on a non-zero exit is not trusted — and an exit 0 whose stream
+      // never carried a result line is a malformed or truncated stream, not a
+      // success with nothing to say.
+      if (result.ok && failure === undefined && !sawResult) {
+        failure = 'claude exited without reporting a result: its stream was malformed or truncated';
+      }
       const ok = result.ok && failure === undefined;
       if (!ok && failure === undefined) {
         failure = result.timedOut
           ? `claude timed out after ${Math.round((options.timeoutMs ?? this.defaultTimeoutMs) / 1000)}s`
           : result.aborted
             ? 'claude was cancelled'
-            : `claude exited with code ${result.exitCode}${result.stderr.trim() ? `: ${oneLine(result.stderr, 400)}` : ''}`;
+            : result.signal !== null
+              ? `claude was killed by ${result.signal}`
+              : `claude exited with code ${result.exitCode}${result.stderr.trim() ? `: ${oneLine(result.stderr, 400)}` : ''}`;
+      }
+      // The contract promises a `failed` event for every failed turn, so one is
+      // synthesized when the stream itself never said so — a kill, a silent
+      // non-zero exit, a cancellation, a truncated stream.
+      if (!ok && !events.some((event) => event.type === 'failed')) {
+        emit(makeEvent('failed', options.role, { error: failure ?? 'claude failed' }));
       }
 
       return {

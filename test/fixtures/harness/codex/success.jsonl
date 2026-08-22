@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"codex-fixture-thread"}
+{"type":"item.completed","item":{"type":"reasoning","text":"Looking around the repository."}}
+{"type":"item.completed","item":{"type":"command_execution","command":"npm test","exit_code":0}}
+{"type":"item.completed","item":{"type":"agent_message","text":"Wired the flux capacitor; tests pass."}}
+{"type":"turn.completed","usage":{"input_tokens":900,"cached_input_tokens":100,"output_tokens":40}}

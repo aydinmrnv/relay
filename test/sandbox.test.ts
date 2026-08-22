@@ -167,14 +167,14 @@ describe('relay doctor names the enforcement per harness', () => {
 
   it('credits codex with its own OS sandbox on every platform', async () => {
     for (const platform of ['darwin', 'linux', 'win32'] as const) {
-      const check = (await enforcementChecks(platform)).find((row) => row.label.startsWith('Codex'));
+      const check = (await enforcementChecks([], platform)).find((row) => row.label.startsWith('Codex'));
       assert.equal(check?.status, 'ok');
       assert.match(check?.detail ?? '', /OS sandbox \(codex --sandbox read-only\)/);
     }
   });
 
   it('warns, honestly, where a deny-list harness gets no OS sandbox', async () => {
-    const check = (await enforcementChecks('win32')).find((row) => row.label.startsWith('Claude'));
+    const check = (await enforcementChecks([], 'win32')).find((row) => row.label.startsWith('Claude'));
     assert.equal(check?.status, 'warn');
     assert.match(check?.detail ?? '', /tool deny list .* only — no OS sandbox is available on win32/);
     assert.ok((check?.hint ?? '').length > 0);
