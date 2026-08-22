@@ -152,6 +152,78 @@ export async function mergePullRequest(
   return { url, method };
 }
 
+/**
+ * Whether this repository lets a pull request merge itself once its checks
+ * pass. Read from the repository settings rather than found out by trying:
+ * `gh pr merge --auto` failing at the prompt is a worse answer than a
+ * two-answer question.
+ *
+ * Anything that prevents an answer — no `gh`, no auth, a `gh` too old to know
+ * the field — reads as "not available", because the fallback is simply not
+ * offering the option.
+ */
+export async function autoMergeAllowed(
+  repo: string | undefined,
+  options: PullRequestOptions,
+): Promise<boolean> {
+  const binary = options.binary ?? 'gh';
+  if ((await resolveExecutable(binary)) === null) return false;
+
+  const result = await runProcess(
+    binary,
+    [
+      'repo',
+      'view',
+      ...(repo === undefined ? [] : [repo]),
+      '--json',
+      'autoMergeAllowed',
+      '--jq',
+      '.autoMergeAllowed',
+    ],
+    {
+      cwd: options.cwd,
+      timeoutMs: options.timeoutMs ?? 15_000,
+      ...(options.signal ? { signal: options.signal } : {}),
+      env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+    },
+  );
+
+  return result.ok && result.stdout.trim() === 'true';
+}
+
+/**
+ * Arms GitHub's auto-merge on a pull request: `gh pr merge --auto`.
+ *
+ * Nothing merges here. The decision is made now, by a person, and GitHub holds
+ * it until the required checks pass — which is why this is only ever reached
+ * from a question that person answered.
+ */
+export async function enableAutoMerge(
+  url: string,
+  method: MergeMethod,
+  options: PullRequestOptions,
+): Promise<void> {
+  const binary = options.binary ?? 'gh';
+
+  const result = await runProcess(binary, ['pr', 'merge', url, '--auto', `--${method}`], {
+    cwd: options.cwd,
+    timeoutMs: options.timeoutMs ?? 60_000,
+    ...(options.signal ? { signal: options.signal } : {}),
+    env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+  });
+
+  if (!result.ok) {
+    const combined = `${result.stdout}\n${result.stderr}`;
+    throw new RelayError(`\`gh pr merge --auto\` failed: ${lastLines(combined)}`, {
+      code: 'AUTO_MERGE_FAILED',
+      hint:
+        `The pull request is open at ${url} and nothing was merged.\n` +
+        'A repository with auto-merge disabled, or a pull request with no required checks to wait for, ' +
+        'both land here — merge it now instead, or merge it on GitHub.',
+    });
+  }
+}
+
 export function pullRequestNumber(url: string): number | null {
   const match = /\/pull\/(\d+)/.exec(url);
   if (match?.[1] === undefined) return null;
