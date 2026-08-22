@@ -1,5 +1,9 @@
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { runProcess, resolveExecutable } from '../process/runner.ts';
 import { parseJsonLine } from '../process/lines.ts';
+import { sandboxReadOnly } from './sandbox.ts';
 import { uuid } from '../util/ids.ts';
 import { oneLine } from '../util/text.ts';
 import type {
@@ -32,6 +36,28 @@ export const CLAUDE_ALWAYS_DENIED = [
 /** Additional tools denied to read-only roles (planning and review). */
 export const CLAUDE_READ_ONLY_DENIED = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
+/**
+ * What the Claude CLI itself must be able to write when Relay wraps a
+ * read-only turn in an OS sandbox: its own state (`~/.claude`, `~/.claude.json`
+ * and friends), its caches, and the temp directory. The worktree is not in
+ * this list, which is the enforcement — a read-only reviewer cannot write the
+ * code it is reviewing, whatever its deny list says.
+ */
+export function claudeWritablePaths(home: string = homedir(), tmp: string = tmpdir()): string[] {
+  return [
+    tmp,
+    join(home, '.claude'),
+    join(home, '.claude.json'),
+    join(home, '.claude.json.backup'),
+    join(home, '.claude.json.lock'),
+    join(home, '.cache'),
+    join(home, '.npm'),
+    join(home, '.config', 'claude'),
+    join(home, 'Library', 'Caches'),
+    join(home, 'Library', 'Logs'),
+  ];
+}
+
 export interface ClaudeArgsOptions {
   capability: AgentCapability;
   /** Pre-generated session id for a fresh conversation. */
@@ -62,7 +88,10 @@ export function buildClaudeArgs(options: ClaudeArgsOptions): string[] {
 
   // Relay confines the agent to a throwaway worktree, so the interactive
   // permission prompt has no one to answer it and would only stall the run.
-  // Capability is enforced through the deny list instead.
+  // Capability is enforced in layers instead: read-only turns are wrapped in an
+  // OS sandbox where the platform offers one (see `execute`), and the deny
+  // list below is the second layer — and the only one where no sandbox exists,
+  // which the turn reports as a notice rather than leaving unsaid.
   args.push('--permission-mode', 'bypassPermissions');
 
   const denied = [...CLAUDE_ALWAYS_DENIED];
@@ -331,8 +360,22 @@ export class ClaudeHarness implements AgentHarness {
       if ((event.type === 'completed' || event.type === 'failed') && event.usage !== undefined) usage = event.usage;
     };
 
+    // Claude's own read-only enforcement is a deny list — a policy inside its
+    // process. Read-only turns are therefore wrapped in an OS sandbox where the
+    // platform provides one, so "the reviewer cannot write" is the operating
+    // system's promise rather than the CLI's. When no sandbox exists, the turn
+    // says so out loud instead of implying parity it does not have.
+    let spawnSpec = { command: this.binary, args };
+    if (options.capability === 'read_only') {
+      const sandboxed = await sandboxReadOnly(spawnSpec, claudeWritablePaths());
+      spawnSpec = sandboxed.invocation;
+      if (sandboxed.notice !== undefined) {
+        emit(makeEvent('notice', options.role, { text: sandboxed.notice }));
+      }
+    }
+
     try {
-      const result = await runProcess(this.binary, args, {
+      const result = await runProcess(spawnSpec.command, spawnSpec.args, {
         cwd: options.cwd,
         // The prompt goes over stdin: no argv length limit, no quoting, and
         // nothing derived from an issue or an agent ever reaches a shell.
@@ -373,7 +416,9 @@ export class ClaudeHarness implements AgentHarness {
         timedOut: result.timedOut,
         aborted: result.aborted,
         ...(usage === undefined ? {} : { usage }),
-        invocation: { command: this.binary, args },
+        // The wrapped argv, when a sandbox applied: the audit trail records
+        // what was actually executed, sandbox and all.
+        invocation: { command: spawnSpec.command, args: spawnSpec.args },
       };
     } finally {
       options.signal?.removeEventListener('abort', onAbort);

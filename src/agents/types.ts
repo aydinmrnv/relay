@@ -33,8 +33,13 @@ export type AgentEventType = AgentEvent['type'];
 
 /**
  * What the agent is permitted to do in the worktree.
- * `read_only` is enforced by the underlying CLI (Codex's sandbox, Claude's tool
- * deny list) rather than by asking the model to behave.
+ *
+ * `read_only` is never enforced by asking the model to behave. Codex runs under
+ * its own OS sandbox (`--sandbox read-only`); Claude is wrapped in an OS
+ * sandbox by Relay where the platform offers one (`sandbox-exec` on macOS,
+ * bubblewrap on Linux — see `src/agents/sandbox.ts`), with its tool deny list
+ * as the second layer, and the only layer where no sandbox exists — which the
+ * turn reports as a notice and `relay doctor` reports per harness.
  */
 export type AgentCapability = 'read_only' | 'write';
 

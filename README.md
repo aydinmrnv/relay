@@ -174,16 +174,17 @@ README — not a defended one.
 
 ## Safety
 
-1. Agents only ever run with the worktree as their working directory. Codex gets a real OS sandbox (`--sandbox read-only` / `workspace-write`); Claude gets a tool deny list.
-2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role. Publishing is the delivery phase's job, under a policy you set — never something a model can decide to do mid-turn.
+1. Agents only ever run with the worktree as their working directory, and read-only turns are enforced per harness — differently, and the difference is stated rather than implied. **Codex**: the CLI's own OS sandbox (`--sandbox read-only` / `workspace-write`); Relay does not wrap it again, because nesting a second sandbox inside it fails. **Claude**: the CLI only offers a tool deny list, so Relay wraps every read-only Claude turn in an OS sandbox of its own — `sandbox-exec` on macOS, bubblewrap (`bwrap`) on Linux — that denies all writes outside the CLI's own state and temp directories, with the deny list kept as a second layer. Where the platform offers no sandbox, the deny list is the only enforcement, the turn says so in its event stream, and `relay doctor` reports the enforcement mechanism per harness so you know which promise you are getting.
+2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role — asserted by a test against the argv each harness actually builds, parameterized over the harness registry so a newly added CLI cannot ship without proving how it denies them. Publishing is the delivery phase's job, under a policy you set — never something a model can decide to do mid-turn.
 3. Publishing is off by default. Push, pull request creation, and merge require their own explicit flag/config opt-in or a TTY confirmation that defaults to no. These commands remain forbidden to every agent; only Relay's delivery code can execute them. Merge additionally requires passing tests, resolved blocking findings, an approved reviewed plan, an unprotected base branch, and a pull request created by this run. Every skipped step is recorded with its reason.
-4. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
-5. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
-6. No shell, anywhere. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax.
-7. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
-8. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
-9. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
-10. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`.
+4. Nothing leaves the machine unscanned. Between commit and push, delivery runs the change through a secret scan: the high-signal credential patterns Relay already redacts logs with, an entropy heuristic for keys with no recognizable prefix, and filenames that should never be committed (`.env`, `id_rsa`, `*.pem`, credential JSON). A hit stops delivery at `branch` — committed locally, published nowhere — and reports the rule, the file and the line, never the secret itself. `--allow-secret <path>` is the deliberate one-off override; `.relay/secretsignore` is the repeatable one. A scan that cannot run blocks the same way.
+5. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
+6. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
+7. No shell, anywhere. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax.
+8. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
+9. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
+10. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
+11. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`.
 
 ## Commands
 
@@ -210,7 +211,7 @@ Every command above except `--update` takes `--json`, and exits with a code from
 a documented table. Both are below, under [Machine-readable
 output](#machine-readable-output) and [Exit codes](#exit-codes).
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--review <level>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--review <level>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, `--allow-secret <path>`, and `--tuff`.
 
 The four worth typing by hand:
 

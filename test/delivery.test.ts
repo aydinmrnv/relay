@@ -205,6 +205,61 @@ describe('delivery plan', () => {
     foreign.pullRequest = { url: 'https://github.com/acme/widgets/pull/1', number: 1, base: 'main', head: foreign.workspace!.branch, createdByRun: false, at: 'x' };
     assert.match(reasonFor(foreign, 'merge', capable(), 'merge'), /did not create/);
   });
+
+  it('stops at branch when the secret scan finds something, naming the rule and the place', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({
+      secrets: { findings: [{ file: 'fixtures/token.txt', line: 3, rule: 'github-token' }], scanned: 5, suppressed: 0 },
+    });
+
+    assert.deepEqual(stepsThatRun(state, 'pr', caps), ['commit']);
+    assert.match(reasonFor(state, 'pr', caps, 'push'), /secret scan matched github-token in fixtures\/token\.txt:3/);
+    // Downstream steps inherit the scan's reason rather than inventing one.
+    assert.match(reasonFor(state, 'pr', caps, 'pullRequest'), /no push: the secret scan matched/);
+  });
+
+  it('counts the findings beyond the first rather than listing them all in one line', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({
+      secrets: {
+        findings: [
+          { file: '.env', line: null, rule: 'never-commit filename (.env)' },
+          { file: 'a.txt', line: 1, rule: 'api-key' },
+          { file: 'b.txt', line: 9, rule: 'jwt' },
+        ],
+        scanned: 3,
+        suppressed: 0,
+      },
+    });
+    assert.match(reasonFor(state, 'push', caps, 'push'), /never-commit filename \(\.env\) in \.env \(and 2 more\)/);
+  });
+
+  it('blocks a local merge on findings too: the base branch is one push from a remote', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({
+      remote: null,
+      gh: false,
+      merge: { ok: true },
+      secrets: { findings: [{ file: 'leak.txt', line: 2, rule: 'anthropic-key' }], scanned: 1, suppressed: 0 },
+    });
+
+    assert.deepEqual(stepsThatRun(state, 'merge', caps), ['commit']);
+    assert.match(reasonFor(state, 'merge', caps, 'merge'), /secret scan matched anthropic-key in leak\.txt:2/);
+  });
+
+  it('blocks when the scan itself could not run — nothing leaves unscanned', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({ secrets: { error: 'git exploded' } });
+
+    assert.deepEqual(stepsThatRun(state, 'push', caps), ['commit']);
+    assert.match(reasonFor(state, 'push', caps, 'push'), /secret scan could not run: git exploded/);
+  });
+
+  it('gates nothing on a clean scan', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({ secrets: { findings: [], scanned: 4, suppressed: 1 } });
+    assert.deepEqual(stepsThatRun(state, 'pr', caps), ['commit', 'push', 'pullRequest']);
+  });
 });
 
 describe('draft pull requests', () => {
@@ -467,5 +522,66 @@ describe('the delivery phase', () => {
     assert.equal(state.merge?.into, 'main');
     assert.match(await readFile(join(repo.root, 'src', 'app.ts'), 'utf8'), /13/);
     assert.equal(state.delivery?.reached, 'merge');
+  });
+
+  // Assembled at runtime so no token-shaped string sits in this repository's
+  // own diff, where the scanner under test would flag it.
+  const PLANTED_KEY = ['ghp', `Qq7${'Ww1Ee2Rr3Tt4Yy5Uu6Ii7'}`].join('_');
+
+  it('stops a planted key at branch: committed, never pushed, location reported, secret unprinted', async () => {
+    process.env['RELAY_HOME'] = repo.relayHome;
+    await addRemote();
+    const { state, store, observer } = await realRun('push', 'sec001');
+    await writeFile(join(state.workspace!.path, 'notes.txt'), `debugging\ntoken: ${PLANTED_KEY}\n`, 'utf8');
+
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+
+    // Stopped at branch: the commit exists, nothing reached the remote.
+    assert.equal(state.delivery?.reached, 'branch');
+    assert.deepEqual(
+      state.delivery?.steps.map((step) => `${step.step}:${step.status}`),
+      ['commit:done', 'push:skipped', 'pullRequest:skipped', 'merge:skipped'],
+    );
+    assert.equal(await repo.git('ls-remote', '--heads', 'origin', state.workspace!.branch), '');
+
+    // The reason names the rule, the file and the line…
+    const push = state.delivery?.steps.find((step) => step.step === 'push');
+    assert.match(push?.detail ?? '', /secret scan matched github-token in notes\.txt:2/);
+    assert.match(observer.warnings.join('\n'), /github-token in notes\.txt:2/);
+    // …and the override is offered out loud.
+    assert.match(observer.notes.join('\n'), /--allow-secret|secretsignore/);
+
+    // The secret itself appears nowhere: not in the record, not in what was
+    // printed, not in the summary artifact.
+    assert.ok(!JSON.stringify(state.delivery).includes(PLANTED_KEY));
+    assert.ok(!observer.warnings.join('\n').includes(PLANTED_KEY));
+    assert.ok(!observer.notes.join('\n').includes(PLANTED_KEY));
+    assert.ok(!((await store.readArtifact('summary.md')) ?? '').includes(PLANTED_KEY));
+  });
+
+  it('lets --allow-secret publish the one file that was deliberate', async () => {
+    process.env['RELAY_HOME'] = repo.relayHome;
+    await addRemote();
+    const { state, store, observer } = await realRun('push', 'sec002');
+    await writeFile(join(state.workspace!.path, 'fixture.txt'), `token: ${PLANTED_KEY}\n`, 'utf8');
+    state.config.delivery.allowSecrets = ['fixture.txt'];
+
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+
+    assert.equal(state.delivery?.reached, 'push');
+    assert.match(await repo.git('ls-remote', '--heads', 'origin', state.workspace!.branch), new RegExp(state.push!.sha));
+  });
+
+  it('lets .relay/secretsignore make the same allowance repeatable', async () => {
+    process.env['RELAY_HOME'] = repo.relayHome;
+    await addRemote();
+    await repo.writeFile('.relay/secretsignore', '# fake keys used by the test suite\nfixtures/**\n');
+    const { state, store, observer } = await realRun('push', 'sec003');
+    await mkdir(join(state.workspace!.path, 'fixtures'), { recursive: true });
+    await writeFile(join(state.workspace!.path, 'fixtures', 'sample.txt'), `token: ${PLANTED_KEY}\n`, 'utf8');
+
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+
+    assert.equal(state.delivery?.reached, 'push');
   });
 });

@@ -173,7 +173,15 @@ export interface RelayConfig {
     /** Overrides discovery entirely, e.g. `["npm", "test"]`. */
     command: string[] | null;
   };
-  delivery: { comment: boolean };
+  delivery: {
+    comment: boolean;
+    /**
+     * Paths `--allow-secret` let through the pre-publish secret scan. Set per
+     * invocation by the flag, never from `.relay/config.json`: a standing
+     * allowance belongs in `.relay/secretsignore`, where it is reviewable.
+     */
+    allowSecrets?: string[];
+  };
   notify: { webhook: string | null; bell: boolean; system: boolean; command: string[] | null };
   tracking: {
     enabled: boolean;

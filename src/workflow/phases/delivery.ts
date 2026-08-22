@@ -1,4 +1,5 @@
 import { branchExistsSomewhere, deleteRemoteBranch, hasRemote, mergeReadiness } from '../../git/publish.ts';
+import { readSecretsIgnore, scanForSecrets } from '../../git/secretScan.ts';
 import { removeWorktree } from '../../git/worktree.ts';
 import { acquireLock } from '../../git/lock.ts';
 import { resolveExecutable } from '../../process/runner.ts';
@@ -61,6 +62,7 @@ async function deliveringUnlocked(context: DeliveryContext): Promise<PhaseResult
   const steps: DeliveryStepRecord[] = [];
 
   if (policy === 'none') observer.note('Delivery is off (deliver: none) — the work stays in the worktree.');
+  reportSecretFindings(context, caps);
 
   // The first failure ends the chain: a pull request for a branch that could
   // not be pushed would describe work nobody can fetch.
@@ -213,6 +215,32 @@ function reportShortfall(context: DeliveryContext): void {
 }
 
 /**
+ * Says once, out loud, what the secret scan found and how to override it —
+ * rule and location only, never the matched text. The plan's recorded reason
+ * carries the first finding; a person deciding what to do needs the whole list.
+ */
+function reportSecretFindings(context: DeliveryContext, caps: DeliveryCapabilities): void {
+  const secrets = caps.secrets;
+  if (secrets === undefined) return;
+
+  const { observer } = context;
+  if ('error' in secrets) {
+    observer.warn(`The secret scan could not run: ${secrets.error}. Nothing will be published unscanned.`);
+    return;
+  }
+  if (secrets.findings.length === 0) return;
+
+  observer.warn(`Secret scan: ${secrets.findings.length} finding(s) — the work stays on its branch.`);
+  for (const finding of secrets.findings.slice(0, 10)) {
+    observer.warn(`  ${finding.rule} in ${finding.file}${finding.line === null ? '' : `:${finding.line}`}`);
+  }
+  if (secrets.findings.length > 10) observer.warn(`  … and ${secrets.findings.length - 10} more`);
+  observer.note(
+    'If a match is deliberate: `relay deliver --allow-secret <path>` for one file, or add a pattern to .relay/secretsignore.',
+  );
+}
+
+/**
  * What the world permits, asked only about the steps this run might take. Each
  * probe is a subprocess, and a `deliver: branch` run has no business shelling
  * out to find out whether some remote exists.
@@ -232,6 +260,23 @@ async function capabilities(state: RunState, policy: DeliveryPolicy): Promise<De
     merge: { ok: false, reason: 'a merge was not requested' },
     protectedBranches: state.config.github.protectedBranches,
   };
+
+  // The scan between commit and push: run whenever this delivery could take
+  // the change off this machine and the push has not already happened. A scan
+  // that fails is recorded as an error, which gates exactly like a finding —
+  // nothing leaves the machine unscanned.
+  if (publishes && state.workspace !== undefined && state.push === undefined) {
+    try {
+      caps.secrets = await scanForSecrets({
+        worktree: state.workspace.path,
+        baseSha: state.workspace.baseSha,
+        ignore: await readSecretsIgnore(root),
+        allow: state.config.delivery?.allowSecrets ?? [],
+      });
+    } catch (error) {
+      caps.secrets = { error: errorMessage(error) };
+    }
+  }
 
   const base = state.workspace?.baseBranch ?? state.repository.defaultBranch;
 

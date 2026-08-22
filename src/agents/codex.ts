@@ -17,7 +17,15 @@ import type {
 } from './types.ts';
 import { makeEvent } from './types.ts';
 
-/** Codex enforces capability with a real OS sandbox rather than a prompt. */
+/**
+ * Codex enforces capability with a real OS sandbox rather than a prompt.
+ *
+ * This is why Relay does not wrap Codex in its own sandbox the way it wraps
+ * Claude (`src/agents/sandbox.ts`): the CLI already confines the turn at the OS
+ * level, and nesting a second Seatbelt profile around it fails on macOS. The
+ * registry declares this as `enforcement: os-sandbox`, and `relay doctor`
+ * reports it per harness.
+ */
 export function codexSandboxMode(capability: AgentCapability): string {
   return capability === 'write' ? 'workspace-write' : 'read-only';
 }

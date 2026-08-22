@@ -7,6 +7,8 @@ import { deliverRun, parseDeliver } from './run.ts';
 export interface DeliverOptions {
   /** `--to <policy>`: how far to take it, overriding the run's own setting. */
   to?: string;
+  /** `--allow-secret <path>`: let a file the secret scan flagged publish anyway. */
+  allowSecret?: string[];
   json?: boolean;
 }
 
@@ -35,6 +37,9 @@ export async function deliverCommand(runRef: string, options: DeliverOptions = {
   return deliverRun(state, {
     cli,
     ...(options.to === undefined ? {} : { policy: parseDeliver(options.to) }),
+    ...(options.allowSecret === undefined || options.allowSecret.length === 0
+      ? {}
+      : { allowSecrets: options.allowSecret }),
     ...(options.json === true ? { json: true } : {}),
   });
 }
