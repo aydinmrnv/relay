@@ -130,6 +130,55 @@ describe('theme detection', () => {
     assert.equal(withEnv({ ...clean, RELAY_ASCII: '1' }, () => detectTheme(tty)).unicode, false);
   });
 
+  // Windows terminals that can render ANSI announce themselves; a legacy
+  // console announces nothing. The platform is injected, so these run — and
+  // mean the same thing — on every OS.
+  const bareWindows = {
+    ...clean,
+    TERM: undefined,
+    WT_SESSION: undefined,
+    ConEmuANSI: undefined,
+    ANSICON: undefined,
+    TERM_PROGRAM: undefined,
+  };
+
+  it('does not trust a Windows TTY that shows no sign of handling ANSI', () => {
+    assert.deepEqual(withEnv(bareWindows, () => detectTheme(tty, 'win32')), {
+      color: false,
+      unicode: false,
+      interactive: false,
+    });
+    // The identical environment on POSIX stays fully featured: an unset TERM
+    // is unremarkable there, and ANSI is a property of the TTY itself.
+    assert.deepEqual(withEnv(bareWindows, () => detectTheme(tty, 'linux')), {
+      color: true,
+      unicode: true,
+      interactive: true,
+    });
+  });
+
+  it('recognizes ANSI-capable Windows terminals by their environment', () => {
+    const capable = [
+      { WT_SESSION: 'b5a2…' }, // Windows Terminal
+      { TERM_PROGRAM: 'vscode' },
+      { ConEmuANSI: 'ON' },
+      { ANSICON: '189x1000 (189x43)' },
+      { TERM: 'xterm-256color' }, // MSYS, Cygwin, mintty
+    ];
+    for (const signal of capable) {
+      const theme = withEnv({ ...bareWindows, ...signal }, () => detectTheme(tty, 'win32'));
+      assert.deepEqual(theme, { color: true, unicode: true, interactive: true }, JSON.stringify(signal));
+    }
+
+    // The universal opt-outs still win inside a capable terminal.
+    assert.equal(
+      withEnv({ ...bareWindows, WT_SESSION: 'x', NO_COLOR: '1' }, () => detectTheme(tty, 'win32')).color,
+      false,
+    );
+    assert.equal(withEnv({ ...bareWindows, ConEmuANSI: 'OFF' }, () => detectTheme(tty, 'win32')).color, false);
+    assert.equal(withEnv({ ...bareWindows, WT_SESSION: 'x' }, () => detectTheme(pipe, 'win32')).interactive, false);
+  });
+
   it('offers spinner frames in both alphabets', () => {
     assert.ok(glyphs(INTERACTIVE).spinner.length > 1);
     const ascii = glyphs(ASCII).spinner;

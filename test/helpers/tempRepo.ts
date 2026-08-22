@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, rm, writeFile, realpath } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runProcess } from '../../src/process/runner.ts';
@@ -38,8 +38,11 @@ export async function createTempRepo(
         GIT_AUTHOR_EMAIL: 'test@relay.invalid',
         GIT_COMMITTER_NAME: 'Relay Test',
         GIT_COMMITTER_EMAIL: 'test@relay.invalid',
-        GIT_CONFIG_GLOBAL: '/dev/null',
-        GIT_CONFIG_SYSTEM: '/dev/null',
+        // `os.devNull` rather than a literal `/dev/null`: on Windows the null
+        // device is `\\.\nul`, and pointing git at a path that does not exist
+        // would fail instead of isolating the test from the user's config.
+        GIT_CONFIG_GLOBAL: devNull,
+        GIT_CONFIG_SYSTEM: devNull,
       },
     });
     if (!result.ok) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);

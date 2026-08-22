@@ -1,0 +1,35 @@
+# Typecheck and tests on every platform Relay claims to support. The
+# windows-latest leg is what keeps Windows support honest (#41): executable
+# resolution, shim spawning and the worktree guard regress silently without it.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Relay's tests write files with \n and diff them byte-for-byte; a
+      # CRLF-rewriting checkout would make every diff lie on Windows.
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test

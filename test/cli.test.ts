@@ -391,7 +391,10 @@ describe('relay status --json', () => {
     // A real branch, still pointing at the commit the run branched from: the
     // shape of every finished run Relay has not committed.
     const baseSha = await repo.git('rev-parse', 'HEAD');
-    const state = populatedRun(repo.root);
+    // Started minutes ago, not on a fixed calendar date: this test reads the
+    // 80-column human listing, and a duration measured against the real clock
+    // ("273h 40m") would eventually push the "unlanded" flag off the row.
+    const state = populatedRun(repo.root, new Date(Date.now() - 5 * 60_000));
     state.workspace = { ...state.workspace!, branch: 'relay/142-aaa111', baseSha };
     transition(state, 'FETCHING_ISSUE');
     for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'DELIVERING', 'COMPLETE'] as const) {

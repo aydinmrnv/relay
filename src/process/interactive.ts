@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { RelayError } from '../util/errors.ts';
+import { resolveInvocation } from './runner.ts';
 
 export interface InteractiveResult {
   exitCode: number | null;
@@ -25,7 +26,11 @@ export async function runInteractive(
   args: readonly string[],
   options: { cwd?: string } = {},
 ): Promise<InteractiveResult> {
-  const child = spawn(command, [...args], {
+  // Windows `.cmd` shims are resolved to a direct, shell-free argv; on POSIX
+  // this is the identity. A login flow gets a real TTY, never a shell.
+  const invocation = await resolveInvocation(command, args);
+
+  const child = spawn(invocation.command, [...invocation.args], {
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     stdio: 'inherit',
     shell: false,

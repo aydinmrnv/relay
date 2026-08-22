@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { rm, mkdir, stat } from 'node:fs/promises';
 
@@ -37,6 +37,47 @@ export function workspacesRoot(): string {
     : join(homedir(), '.relay', 'workspaces');
 }
 
+type PlatformPath = typeof posix;
+
+/**
+ * How paths behave on a platform: which `node:path` implementation applies and
+ * whether two spellings that differ only in case name the same file. Injected
+ * so the removal guard's Windows behaviour — drive letters, UNC prefixes,
+ * case-insensitive comparison — is testable from any operating system.
+ */
+export interface PathStyle {
+  path: PlatformPath;
+  /** Windows filesystems compare case-insensitively; the guard must too. */
+  caseInsensitive: boolean;
+  /**
+   * Whether canonicalization may consult the real filesystem. Simulated styles
+   * turn it off: a `C:\` path has no realpath on the OS running the tests.
+   */
+  useRealpath: boolean;
+}
+
+export function nativePathStyle(): PathStyle {
+  const isWindows = process.platform === 'win32';
+  return {
+    path: isWindows ? win32 : posix,
+    caseInsensitive: isWindows,
+    useRealpath: true,
+  };
+}
+
+/**
+ * Windows verbatim namespaces (`\\?\C:\…`, `\\?\UNC\server\share\…`) name the
+ * same locations as their ordinary spellings but compare unequal as strings —
+ * and `path.win32` passes them through untouched. Reduced here so the guard
+ * compares what a path means, not how it is spelt.
+ */
+function stripVerbatimPrefix(candidate: string, style: PathStyle): string {
+  if (style.path !== win32 || !/^[\\/]{2}\?[\\/]/.test(candidate)) return candidate;
+  const rest = candidate.slice(4);
+  if (/^UNC[\\/]/i.test(rest)) return `\\\\${rest.slice(4)}`;
+  return rest;
+}
+
 /**
  * Resolves symlinks so paths Relay constructs can be compared with the paths
  * git reports. On macOS `/var` is a symlink to `/private/var`, so a temp-dir
@@ -46,8 +87,10 @@ export function workspacesRoot(): string {
  * Paths that do not exist yet are canonicalized against their nearest existing
  * ancestor, so the guard works before a directory is created.
  */
-export function canonicalizePath(candidate: string): string {
-  const absolute = resolve(candidate);
+export function canonicalizePath(candidate: string, style: PathStyle = nativePathStyle()): string {
+  const p = style.path;
+  const absolute = p.resolve(stripVerbatimPrefix(candidate, style));
+  if (!style.useRealpath) return absolute;
   try {
     return realpathSync.native(absolute);
   } catch {
@@ -57,12 +100,12 @@ export function canonicalizePath(candidate: string): string {
   const trailing: string[] = [];
   let current = absolute;
   for (;;) {
-    const parent = dirname(current);
+    const parent = p.dirname(current);
     if (parent === current) return absolute;
-    trailing.unshift(basename(current));
+    trailing.unshift(p.basename(current));
     current = parent;
     try {
-      return join(realpathSync.native(current), ...trailing);
+      return p.join(realpathSync.native(current), ...trailing);
     } catch {
       continue;
     }
@@ -80,7 +123,9 @@ export function worktreePathFor(
   runShortId: string,
 ): string {
   const owner = slugify(repo.owner ?? 'local', 'local');
-  const name = slugify(repo.name ?? repo.root.split(sep).pop() ?? 'repo', 'repo');
+  // Split on both separators: git on Windows reports roots with forward
+  // slashes even though the platform separator is a backslash.
+  const name = slugify(repo.name ?? repo.root.split(/[\\/]/).pop() ?? 'repo', 'repo');
   return join(workspacesRoot(), owner, name, `issue-${slugify(String(issue), 'issue')}-${slugify(runShortId, 'run')}`);
 }
 
@@ -93,20 +138,40 @@ export function branchNameFor(issue: IssueIdentity, runShortId: string, prefix =
  * sits strictly inside the Relay workspaces root — never the user's checkout,
  * never a parent directory, never a path escaping via `..` or a symlink.
  */
-export function assertRemovableWorktreePath(candidate: string, root = workspacesRoot()): string {
-  if (!isAbsolute(candidate)) {
+export function assertRemovableWorktreePath(
+  candidate: string,
+  root = workspacesRoot(),
+  style: PathStyle = nativePathStyle(),
+): string {
+  const p = style.path;
+  // A drive-relative spelling like `C:dir` is not absolute: it means "dir,
+  // relative to wherever the process last stood on C:", which is exactly the
+  // ambiguity a removal guard cannot accept.
+  if (!p.isAbsolute(stripVerbatimPrefix(candidate, style))) {
     throw new RelayError(`Refusing to remove a non-absolute path: ${candidate}`, { code: 'UNSAFE_PATH' });
   }
 
-  const normalizedRoot = canonicalizePath(root);
-  const normalized = canonicalizePath(candidate);
+  const normalizedRoot = canonicalizePath(root, style);
+  const normalized = canonicalizePath(candidate, style);
 
-  if (normalized === normalizedRoot) {
+  // `\\.\C:` and friends name devices, never worktrees.
+  if (p === win32 && /^[\\/]{2}[.?][\\/]/.test(normalized)) {
+    throw new RelayError(`Refusing to remove a Windows device-namespace path: ${candidate}`, { code: 'UNSAFE_PATH' });
+  }
+
+  // Comparisons fold case where the filesystem does; the returned path never
+  // does — it is handed to git and `rm`, which want the caller's spelling.
+  const fold = (value: string): string => (style.caseInsensitive ? value.toLowerCase() : value);
+
+  if (fold(normalized) === fold(normalizedRoot)) {
     throw new RelayError('Refusing to remove the Relay workspaces root itself.', { code: 'UNSAFE_PATH' });
   }
 
-  const rel = relative(normalizedRoot, normalized);
-  if (rel.length === 0 || rel.startsWith('..') || isAbsolute(rel)) {
+  // `path.win32.relative` already compares case-insensitively and answers with
+  // an absolute path when the two share no root — a different drive letter or
+  // a different UNC share can never be "inside" the workspaces root.
+  const rel = p.relative(normalizedRoot, normalized);
+  if (rel.length === 0 || rel.startsWith('..') || p.isAbsolute(rel)) {
     throw new RelayError(`Refusing to remove a path outside the Relay workspace root: ${candidate}`, {
       code: 'UNSAFE_PATH',
       hint: `Relay only removes directories under ${normalizedRoot}.`,
@@ -114,7 +179,7 @@ export function assertRemovableWorktreePath(candidate: string, root = workspaces
   }
 
   // owner/repo/worktree — anything shallower would take out a whole repo or owner.
-  const depth = rel.split(sep).filter((part) => part.length > 0).length;
+  const depth = rel.split(p.sep).filter((part) => part.length > 0).length;
   if (depth < 3) {
     throw new RelayError(`Refusing to remove a shared workspace directory: ${candidate}`, {
       code: 'UNSAFE_PATH',
