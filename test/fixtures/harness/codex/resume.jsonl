@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"codex-fixture-thread"}
+{"type":"item.completed","item":{"type":"agent_message","text":"Follow-up complete."}}
+{"type":"turn.completed","usage":{"input_tokens":200,"cached_input_tokens":150,"output_tokens":15}}

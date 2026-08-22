@@ -10,6 +10,12 @@ import type { AgentHarness } from './types.ts';
  */
 export interface HarnessOptions {
   defaultModel?: string;
+  /**
+   * Where the executable lives, when it is not simply the CLI's name on PATH.
+   * The conformance suite uses this to point a registered harness at a fixture
+   * player instead of the real CLI.
+   */
+  binary?: string;
 }
 
 export interface HarnessRegistration {
@@ -26,6 +32,12 @@ export interface HarnessRegistration {
    * ever delegates to these — it holds no credential of its own.
    */
   readonly auth: AuthSupport;
+  /**
+   * Whether the harness can actually enforce `read_only`. Absent means yes —
+   * every shipped CLI can. Config-defined harnesses without `readOnly` flags
+   * set this to `false`, which is what bars them from review roles.
+   */
+  readonly enforcesReadOnly?: boolean;
   create(options: HarnessOptions): AgentHarness;
 }
 

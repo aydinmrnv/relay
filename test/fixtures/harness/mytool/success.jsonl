@@ -1,0 +1,3 @@
+{"session":"mytool-fixture-session","message":"Booting up."}
+{"message":"Poking at the repository."}
+{"message":"Wired the flux capacitor; tests pass.","usage":{"input_tokens":500,"output_tokens":25}}

@@ -389,9 +389,11 @@ describe('relay status --json', () => {
 
   it('marks a completed run whose diff was never committed as unlanded', async () => {
     // A real branch, still pointing at the commit the run branched from: the
-    // shape of every finished run Relay has not committed.
+    // shape of every finished run Relay has not committed. A recent start
+    // keeps the rendered duration short, so "unlanded" is not truncated out of
+    // the 80-column row as the fixture date recedes into the past.
     const baseSha = await repo.git('rev-parse', 'HEAD');
-    const state = populatedRun(repo.root);
+    const state = populatedRun(repo.root, new Date(Date.now() - 5 * 60_000));
     state.workspace = { ...state.workspace!, branch: 'relay/142-aaa111', baseSha };
     transition(state, 'FETCHING_ISSUE');
     for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'DELIVERING', 'COMPLETE'] as const) {

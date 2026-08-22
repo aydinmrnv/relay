@@ -1,8 +1,10 @@
 import { AGENT_REGISTRY, type HarnessRegistration } from '../agents/index.ts';
+import { configHarnessRegistrations } from '../agents/configHarness.ts';
 import { describeCommand, probeAuth, type AuthState, type AuthSupport } from '../auth/delegated.ts';
 import { discoverRepository } from '../git/repository.ts';
 import { ISSUE_TRACKER_REGISTRY } from '../issues/registry.ts';
 import { resolveExecutable, runProcess } from '../process/runner.ts';
+import { configHarnesses, loadConfig } from '../storage/config.ts';
 
 export interface Check {
   label: string;
@@ -43,11 +45,12 @@ export async function checkBinary(name: string, versionArgs: readonly string[]):
 
 /**
  * Every registered CLI, in registry order, so a newly added harness is checked
- * without doctor or init knowing its name.
+ * without doctor or init knowing its name. Config-defined harnesses ride along
+ * as `extra` rows, after the shipped ones.
  */
-export async function agentChecks(): Promise<AgentCheck[]> {
+export async function agentChecks(extra: readonly HarnessRegistration[] = []): Promise<AgentCheck[]> {
   return Promise.all(
-    AGENT_REGISTRY.map(async (entry) => {
+    [...AGENT_REGISTRY, ...extra].map(async (entry) => {
       const result = await entry.create({}).checkAvailability();
       return {
         entry,
@@ -91,10 +94,14 @@ export function authStateCheck(label: string, support: AuthSupport, state: AuthS
 
 /**
  * Sign-in state for every registered coding CLI that is actually installed.
- * A missing CLI has already reported the more useful problem.
+ * A missing CLI has already reported the more useful problem, and a CLI with
+ * no status probe (every config-defined harness) has no state Relay can ask
+ * for, so probing it would only report "unknown" about every one.
  */
 export async function agentAuthChecks(cwd: string, agents?: readonly AgentCheck[]): Promise<Check[]> {
-  const installed = (agents ?? (await agentChecks())).filter(({ check }) => check.status === 'ok');
+  const installed = (agents ?? (await agentChecks())).filter(
+    ({ entry, check }) => check.status === 'ok' && entry.auth.status !== undefined,
+  );
   return Promise.all(installed.map(({ entry }) => authCheck(`${entry.label} sign-in`, entry.auth, cwd)));
 }
 
@@ -172,6 +179,31 @@ export async function repositoryChecks(cwd: string): Promise<{ root?: string; ch
   }
 }
 
+/**
+ * The repository's own harnesses, plus the check to report when the config
+ * that would define them cannot be read. Doctor's job is to say what is wrong,
+ * so a broken config is a failed check here rather than a crash.
+ */
+async function configuredHarnesses(
+  root: string | undefined,
+): Promise<{ registrations: HarnessRegistration[]; check?: Check }> {
+  if (root === undefined) return { registrations: [] };
+  try {
+    const config = await loadConfig(root);
+    return { registrations: configHarnessRegistrations(configHarnesses(config)) };
+  } catch (error) {
+    return {
+      registrations: [],
+      check: {
+        label: 'Relay config',
+        status: 'fail',
+        detail: error instanceof Error ? error.message : 'unreadable',
+        hint: 'Fix .relay/config.json, then run `relay doctor` again.',
+      },
+    };
+  }
+}
+
 /** Everything a run depends on, in the order `relay doctor` reports it. */
 export async function collectChecks(cwd: string): Promise<Check[]> {
   const checks: Check[] = [
@@ -179,12 +211,15 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
     softenToWarning(await checkBinary('gh', ['--version']), WITHOUT_A_TRACKER),
   ];
 
-  const agents = await agentChecks();
+  const repository = await repositoryChecks(cwd);
+  const configured = await configuredHarnesses(repository.root);
+
+  const agents = await agentChecks(configured.registrations);
   for (const { check } of agents) checks.push(check);
 
-  const repository = await repositoryChecks(cwd);
   checks.push(...(await agentAuthChecks(repository.root ?? cwd, agents)));
   checks.push(...repository.checks);
+  if (configured.check !== undefined) checks.push(configured.check);
   checks.push(softenToWarning(await githubCheck(repository.root ?? cwd), WITHOUT_A_TRACKER));
 
   return checks;

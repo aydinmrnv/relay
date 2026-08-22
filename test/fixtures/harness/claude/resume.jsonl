@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"claude-fixture-session"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Picking up where I left off."}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"Follow-up complete.","total_cost_usd":0.01,"usage":{"input_tokens":300,"output_tokens":20}}

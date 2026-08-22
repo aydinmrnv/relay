@@ -1,12 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { AGENT_REGISTRY } from '../../agents/index.ts';
+import { configHarnessRegistrations } from '../../agents/configHarness.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
 import {
   DEFAULT_CONFIG,
   REVIEW_LEVELS,
+  REVIEW_ROLES,
   ROLES,
+  configHarnesses,
   configPath,
   loadConfig,
   relayDir,
@@ -61,7 +63,8 @@ export interface InitOptions {
  */
 export interface InitDeps {
   prompter: PromptSession;
-  checkAgents: () => Promise<AgentCheck[]>;
+  /** Receives the effective config so config-defined harnesses are checked too. */
+  checkAgents: (config: RelayConfig) => Promise<AgentCheck[]>;
 }
 
 /** How each role is described during onboarding, in the order a run uses them. */
@@ -81,7 +84,10 @@ const ROLE_PROMPTS: Array<{ role: Role; question: string }> = [
  * which — is the one a first run should never answer silently.
  */
 export async function initCommand(options: InitOptions = {}): Promise<number> {
-  return runInit(options, { prompter: new Prompter(), checkAgents: agentChecks });
+  return runInit(options, {
+    prompter: new Prompter(),
+    checkAgents: (config) => agentChecks(configHarnessRegistrations(configHarnesses(config))),
+  });
 }
 
 export async function runInit(options: InitOptions, deps: InitDeps): Promise<number> {
@@ -140,7 +146,7 @@ async function reportConfig(
   outcome: { written: boolean },
 ): Promise<number> {
   const discovery = await discoverTestCommand(repo.root, null);
-  const agents = await deps.checkAgents();
+  const agents = await deps.checkAgents(config);
 
   const payload: InitJson = {
     repository: {
@@ -197,8 +203,8 @@ async function writeDetectedConfig(
   out(`  Tests       ${discovery.found ? discovery.command.command.join(' ') : dim(`none detected (${discovery.reason})`)}`);
   await reportProjectContext(repo.root);
 
-  const agents = await deps.checkAgents();
-  const labelWidth = Math.max(11, ...AGENT_REGISTRY.map((entry) => entry.label.length));
+  const agents = await deps.checkAgents(config);
+  const labelWidth = Math.max(11, ...agents.map(({ entry }) => entry.label.length));
   for (const { entry, check } of agents) {
     out(`  ${entry.label.padEnd(labelWidth)} ${check.status === 'ok' ? check.detail : warning(check.detail)}`);
   }
@@ -218,7 +224,7 @@ async function guidedInit(repo: RepositoryInfo, path: string, config: RelayConfi
   out(dim('Every question has a default — press Enter to accept it.'));
 
   await confirmDetection(repo, config, deps.prompter);
-  const agents = await confirmAgents(deps);
+  const agents = await confirmAgents(deps, config);
   await assignRoles(config, agents, deps.prompter);
   await chooseReviewDepth(config, deps.prompter);
   explainRun(config);
@@ -287,10 +293,10 @@ async function confirmDetection(repo: RepositoryInfo, config: RelayConfig, promp
 }
 
 /** Step 2 — the doctor checks, with a re-check that does not restart the flow. */
-async function confirmAgents(deps: InitDeps): Promise<AgentCheck[]> {
+async function confirmAgents(deps: InitDeps, config: RelayConfig): Promise<AgentCheck[]> {
   for (;;) {
     section('2. Coding agents');
-    const agents = await deps.checkAgents();
+    const agents = await deps.checkAgents(config);
     const width = Math.max(...agents.map(({ entry }) => entry.label.length));
     for (const { entry, check } of agents) {
       out(`  ${statusMark(check)} ${entry.label.padEnd(width)}  ${dim(check.detail)}`);
@@ -324,15 +330,23 @@ async function assignRoles(config: RelayConfig, agents: AgentCheck[], prompter: 
   out(dim('  Relay is built around each agent attacking the other\'s work, so keep'));
   out(dim('  the planner and the plan reviewer on different models.'));
 
-  const choices: Array<Choice<string>> = agents.map(({ entry, check }) => ({
-    value: entry.name,
-    label: entry.label,
-    ...(check.status === 'ok' ? {} : { hint: 'unavailable' }),
-  }));
+  const choiceFor = ({ entry, check }: AgentCheck): Choice<string> => {
+    const hints: string[] = [];
+    if (check.status !== 'ok') hints.push('unavailable');
+    if (entry.enforcesReadOnly === false) hints.push('no read-only mode');
+    return { value: entry.name, label: entry.label, ...(hints.length > 0 ? { hint: hints.join(', ') } : {}) };
+  };
+  const choices: Array<Choice<string>> = agents.map(choiceFor);
+  // A reviewer must run read-only, so a harness that cannot be confined is not
+  // offered for the review seats — the same rule config validation enforces.
+  const reviewerChoices: Array<Choice<string>> = agents
+    .filter(({ entry }) => entry.enforcesReadOnly !== false)
+    .map(choiceFor);
 
   for (const { role, question } of ROLE_PROMPTS) {
     out();
-    config.agents[role] = await prompter.choice(`  ${question}`, choices, config.agents[role]);
+    const offered = (REVIEW_ROLES as readonly Role[]).includes(role) ? reviewerChoices : choices;
+    config.agents[role] = await prompter.choice(`  ${question}`, offered, config.agents[role]);
   }
 
   if (config.agents.planner === config.agents.planReviewer) {
