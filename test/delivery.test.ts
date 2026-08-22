@@ -12,6 +12,9 @@ import { createRunId } from '../src/util/ids.ts';
 import {
   draftReasons,
   mergeBlockers,
+  mergeEvidence,
+  mergeUnanswered,
+  mergeUnblock,
   planDelivery,
   reachedPolicy,
   shortfall,
@@ -174,15 +177,54 @@ describe('delivery plan', () => {
     assert.match(reasonFor(state, 'pr', capable(), 'commit'), /changed no files/);
   });
 
-  it('refuses merge without passing test evidence', () => {
+  it('refuses merge on failing tests, but not on tests that never ran', () => {
     const failed = finishedRun(repo.root);
     failed.tests = { ...failed.tests!, passed: false, exitCode: 1 };
     assert.match(reasonFor(failed, 'merge', capable(), 'merge'), /tests failed/);
+    assert.match(mergeBlockers(failed).join(' '), /tests failed/);
 
+    // Missing evidence is a gap, not a refusal: nothing failed, nothing ran.
+    // An explicit `--to merge` is a person deciding with that gap in view.
     const skipped = finishedRun(repo.root);
     skipped.tests = { ...skipped.tests!, discovered: false, passed: false, skippedReason: '--no-tests' };
-    assert.match(reasonFor(skipped, 'merge', capable(), 'merge'), /not verifiably run/);
-    assert.match(mergeBlockers(skipped).join(' '), /not verifiably run/);
+    assert.deepEqual(mergeBlockers(skipped), []);
+    assert.match(mergeEvidence(skipped).gaps.join(' '), /Tests were not verifiably run \(--no-tests\)/);
+    assert.deepEqual(stepsThatRun(skipped, 'merge', capable()), ['commit', 'push', 'pullRequest', 'merge']);
+  });
+
+  it('treats an exhausted plan review as a caveat, never a blocker', () => {
+    // The round limit working is the designed exit from a two-round debate,
+    // not a fault: the plan was revised and the run proceeded deliberately.
+    const exhausted = finishedRun(repo.root);
+    exhausted.planApproved = false;
+    exhausted.rounds.planReview = exhausted.config.workflow.maxPlanReviewRounds;
+
+    assert.deepEqual(mergeBlockers(exhausted), []);
+    assert.match(mergeEvidence(exhausted).caveats.join(' '), /plan review used all 2 round\(s\)/);
+    assert.deepEqual(stepsThatRun(exhausted, 'merge', capable()), ['commit', 'push', 'pullRequest', 'merge']);
+
+    // A review that was configured and never ran its course is another matter.
+    const never = finishedRun(repo.root);
+    never.planApproved = false;
+    assert.match(mergeBlockers(never).join(' '), /the plan was never approved/);
+    assert.match(reasonFor(never, 'merge', capable(), 'merge'), /never approved/);
+  });
+
+  it('says what would unblock a refused merge', () => {
+    const state = finishedRun(repo.root);
+    state.tests = { ...state.tests!, passed: false, exitCode: 1 };
+    state.pullRequest = {
+      url: 'https://github.com/acme/widgets/pull/9', number: 9, base: 'main',
+      head: state.workspace!.branch, createdByRun: true, at: 'x',
+    };
+
+    const unblock = mergeUnblock(state) ?? '';
+    assert.match(unblock, /a passing test run/);
+    assert.match(unblock, /draft/);
+    assert.match(unblock, /GitHub/);
+
+    // A clean run has nothing to unblock.
+    assert.equal(mergeUnblock(finishedRun(repo.root)), undefined);
   });
 
   it('refuses merge with unresolved blocking findings', () => {
@@ -248,6 +290,67 @@ describe('draft pull requests', () => {
     state.planApproved = false;
 
     assert.match(draftReasons(state).join(' '), /plan was never approved/);
+  });
+
+  it('does not draft over a plan review that merely used all its rounds', () => {
+    const state = finishedRun(repo.root);
+    state.planApproved = false;
+    state.rounds.planReview = state.config.workflow.maxPlanReviewRounds;
+
+    // The round limit working must not produce a pull request GitHub refuses
+    // to merge — the merge question is asked over exactly this state.
+    assert.deepEqual(draftReasons(state), []);
+    assert.equal(pullRequestDraft(state).draft, undefined);
+  });
+});
+
+describe('the unanswered merge question', () => {
+  /** A run whose pull request is open and whose evidence is clean. */
+  function openPullRequest(root: string): RunState {
+    const state = finishedRun(root);
+    state.commit = { sha: 'a'.repeat(40), branch: state.workspace!.branch, subject: 'x', at: 'x' };
+    state.push = { remote: 'origin', branch: state.workspace!.branch, sha: 'a'.repeat(40), at: 'x' };
+    state.pullRequest = {
+      url: 'https://github.com/acme/widgets/pull/21', number: 21, base: 'main',
+      head: state.workspace!.branch, createdByRun: true, at: 'x',
+    };
+    return state;
+  }
+
+  it('is recorded state: open pull request, no answer, nothing forbidding it', () => {
+    assert.equal(mergeUnanswered(openPullRequest(repo.root)), true);
+  });
+
+  it('is settled by an answer, a merge, or evidence that forbids the question', () => {
+    const declined = openPullRequest(repo.root);
+    declined.mergeOffer = { status: 'declined', at: 'x' };
+    assert.equal(mergeUnanswered(declined), false);
+
+    const auto = openPullRequest(repo.root);
+    auto.mergeOffer = { status: 'auto', at: 'x' };
+    assert.equal(mergeUnanswered(auto), false);
+
+    const merged = openPullRequest(repo.root);
+    merged.merge = { into: 'main', via: 'pull-request', at: 'x' };
+    assert.equal(mergeUnanswered(merged), false);
+
+    const refused = openPullRequest(repo.root);
+    refused.tests = { ...refused.tests!, passed: false, exitCode: 1 };
+    assert.equal(mergeUnanswered(refused), false);
+
+    const foreign = openPullRequest(repo.root);
+    foreign.pullRequest = { ...foreign.pullRequest!, createdByRun: false };
+    assert.equal(mergeUnanswered(foreign), false);
+
+    const off = openPullRequest(repo.root);
+    off.config.workflow.offerMerge = false;
+    assert.equal(mergeUnanswered(off), false);
+  });
+
+  it('stays on the table while the recorded answer is pending', () => {
+    const pending = openPullRequest(repo.root);
+    pending.mergeOffer = { status: 'pending', detail: 'Tests were not verifiably run.', at: 'x' };
+    assert.equal(mergeUnanswered(pending), true);
   });
 });
 

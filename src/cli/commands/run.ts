@@ -30,7 +30,7 @@ import {
   type ReviewLevel,
 } from '../../reviews/level.ts';
 import { WorkflowEngine } from '../../workflow/engine.ts';
-import { resolveCeiling, shortfall } from '../../workflow/delivery.ts';
+import { mergeUnanswered, resolveCeiling, shortfall } from '../../workflow/delivery.ts';
 import { delivering } from '../../workflow/phases/delivery.ts';
 import type { RunDisplay, RunObserver } from '../../workflow/observer.ts';
 import { renderSummary } from '../../workflow/summary.ts';
@@ -950,6 +950,9 @@ export function printNextSteps(state: RunState, store: RunStore): void {
   } else if (state.pullRequest !== undefined) {
     hint('Open for review:');
     command(state.pullRequest.url);
+    // Only while the merge question is still unanswered — an answered "no"
+    // was a decision, and this block is a report, not a second ask.
+    if (mergeUnanswered(state)) command(`relay deliver ${state.runId} --to merge`);
   } else if (state.commit !== undefined) {
     // When delivery stopped short, the reason is more useful than the command:
     // re-running it changes nothing until the thing that blocked it is fixed.

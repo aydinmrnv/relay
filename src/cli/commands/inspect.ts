@@ -10,6 +10,7 @@ import { listRuns, resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts
 import { PHASES, isTerminal, phaseLabel } from '../../workflow/phases.ts';
 import { transition, type RunState } from '../../workflow/state.ts';
 import { pidAlive } from '../../workflow/admission.ts';
+import { mergeUnanswered } from '../../workflow/delivery.ts';
 import { formatUsage } from '../../workflow/usage.ts';
 import { runLiveness } from '../../workflow/liveness.ts';
 import { replayEvents } from '../../workflow/replay.ts';
@@ -58,6 +59,7 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
     if (summary !== undefined) {
       out(summary.trimEnd());
       await printLanding(cli.repo.root, state);
+      printMergeOffer(state);
       return 0;
     }
 
@@ -95,6 +97,10 @@ export async function statusCommand(runRef?: string, options: StatusOptions = {}
           state.diff !== undefined && changeCount(state.diff.additions, state.diff.deletions),
           state.commit !== undefined && `committed ${state.commit.sha.slice(0, 8)}`,
           landing === 'unlanded' && warning('unlanded'),
+          // The same treatment `unlanded` gets: an open pull request whose
+          // merge question was never answered is recorded state, not history.
+          mergeUnanswered(state) && warning('merge unanswered'),
+          state.mergeOffer?.status === 'auto' && state.merge === undefined && 'auto-merge armed',
           runLiveness(state) === 'stale' && warning('stale'),
         ]),
       };
@@ -182,6 +188,29 @@ export async function landingOf(repoRoot: string, state: RunState): Promise<Land
 /** Stable elapsed time for a run, shared by status and the home screen. */
 export function runDuration(state: RunState): number {
   return new Date(state.finishedAt ?? state.updatedAt).getTime() - new Date(state.createdAt).getTime();
+}
+
+/**
+ * Says, after a completed run's summary, where the merge question stands.
+ *
+ * The unanswered case gets the `unlanded` treatment — a warning and the one
+ * command that answers it — because a question that scrolled past at the end of
+ * a run is otherwise a pull request nobody remembers to land.
+ */
+function printMergeOffer(state: RunState): void {
+  if (state.merge !== undefined || state.pullRequest === undefined) return;
+
+  if (state.mergeOffer?.status === 'auto') {
+    out();
+    out(dim('Auto-merge is armed: GitHub merges the pull request when its checks pass.'));
+    return;
+  }
+
+  if (!mergeUnanswered(state)) return;
+  out();
+  out(warning('Merge unanswered: this run opened a pull request and the merge question was never answered.'));
+  hint(state.pullRequest.url);
+  hint(`relay deliver ${state.runId} --to merge`);
 }
 
 /** Warns, after a completed run's summary, that its work is not committed anywhere. */

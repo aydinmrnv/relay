@@ -389,9 +389,12 @@ describe('relay status --json', () => {
 
   it('marks a completed run whose diff was never committed as unlanded', async () => {
     // A real branch, still pointing at the commit the run branched from: the
-    // shape of every finished run Relay has not committed.
+    // shape of every finished run Relay has not committed. Created moments ago
+    // rather than on the fixture's fixed date: the transitions below stamp real
+    // time, and a duration that grows with the calendar eventually pushes the
+    // `unlanded` tag past the box clip.
     const baseSha = await repo.git('rev-parse', 'HEAD');
-    const state = populatedRun(repo.root);
+    const state = populatedRun(repo.root, new Date(Date.now() - 5 * 60_000));
     state.workspace = { ...state.workspace!, branch: 'relay/142-aaa111', baseSha };
     transition(state, 'FETCHING_ISSUE');
     for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'DELIVERING', 'COMPLETE'] as const) {
@@ -432,6 +435,49 @@ describe('relay status --json', () => {
     assert.equal(json.landing, 'committed');
     assert.equal(json.unlanded, false);
     assert.equal(json.commit?.subject, 'Add authentication rate limiting (#142)');
+  });
+
+  it('marks a pull request whose merge question was never answered', async () => {
+    // The same treatment `unlanded` gets: an unanswered question is recorded
+    // state on the run, not a line that scrolled past at the end of it.
+    const state = populatedRun(repo.root);
+    state.commit = { sha: 'f'.repeat(40), branch: 'relay/142-aaa111', subject: 'x', at: 'x' };
+    state.push = { remote: 'origin', branch: 'relay/142-aaa111', sha: 'f'.repeat(40), at: 'x' };
+    state.pullRequest = {
+      url: 'https://github.com/acme/widgets/pull/142', number: 142, base: 'main',
+      head: 'relay/142-aaa111', createdByRun: true, at: 'x',
+    };
+    await persist(state);
+
+    const json = (JSON.parse(await captureStatus([state.shortId, { json: true }])) as { run: RunJson }).run;
+    assert.equal(json.mergeUnanswered, true);
+    assert.equal(json.mergeOffer, null);
+
+    // Once answered, the flag drops and the answer itself is the record.
+    state.mergeOffer = { status: 'declined', at: '2026-08-11T10:09:00Z' };
+    await persist(state);
+    const answered = (JSON.parse(await captureStatus([state.shortId, { json: true }])) as { run: RunJson }).run;
+    assert.equal(answered.mergeUnanswered, false);
+    assert.equal(answered.mergeOffer?.status, 'declined');
+  });
+
+  it('shows the unanswered merge, and the command that answers it, for a named run', async () => {
+    const state = populatedRun(repo.root);
+    state.commit = { sha: 'f'.repeat(40), branch: 'relay/142-aaa111', subject: 'x', at: 'x' };
+    state.pullRequest = {
+      url: 'https://github.com/acme/widgets/pull/142', number: 142, base: 'main',
+      head: 'relay/142-aaa111', createdByRun: true, at: 'x',
+    };
+    transition(state, 'FETCHING_ISSUE');
+    for (const phase of ['CREATING_WORKSPACE', 'PLANNING', 'REVIEWING_PLAN', 'IMPLEMENTING', 'REVIEWING_CODE', 'TESTING', 'DELIVERING', 'COMPLETE'] as const) {
+      transition(state, phase);
+    }
+    const store = await persist(state);
+    await store.writeArtifact('summary.md', '# summary');
+
+    const output = await captureStatus([state.shortId, {}]);
+    assert.match(output, /Merge unanswered/);
+    assert.match(output, /relay deliver \S+ --to merge/);
   });
 
   it('keeps the human table as the default', async () => {

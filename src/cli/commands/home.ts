@@ -5,6 +5,7 @@ import { discoverRepository } from '../../git/repository.ts';
 import { configPath, loadConfig, type RelayConfig } from '../../storage/config.ts';
 import { describeReview, reviewLevelName } from '../../reviews/level.ts';
 import { listRuns } from '../../storage/runs.ts';
+import { mergeUnanswered } from '../../workflow/delivery.ts';
 import { isTerminal } from '../../workflow/phases.ts';
 import type { RunState } from '../../workflow/state.ts';
 import { formatDuration } from '../../util/text.ts';
@@ -38,6 +39,10 @@ export function chooseNextCommand(configured: boolean, runs: readonly RunHomeVie
   const live = runs.find(({ state }) => !isTerminal(state.phase));
   if (live !== undefined) return `relay watch ${live.state.runId}`;
   if (runs[0]?.landing === 'unlanded') return `relay deliver ${runs[0].state.runId}`;
+  // A pull request whose merge question was never answered is the next step by
+  // definition: the run is over, the work is up, and one answer lands it.
+  const unanswered = runs.find(({ state }) => mergeUnanswered(state));
+  if (unanswered !== undefined) return `relay deliver ${unanswered.state.runId} --to merge`;
   return 'relay run <issue>';
 }
 
@@ -175,6 +180,7 @@ export async function showHome(options: HomeOptions = {}): Promise<HomeScreen> {
           formatDuration(runDuration(state)),
           state.diff !== undefined && changeCount(state.diff.additions, state.diff.deletions),
           landing === 'unlanded' && warning('unlanded'),
+          mergeUnanswered(state) && warning('merge unanswered'),
         ]),
       ]);
 

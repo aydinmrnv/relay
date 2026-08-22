@@ -152,6 +152,20 @@ it('chooses the next command by the documented precedence', () => {
   assert.equal(chooseNextCommand(true, [view(live)]), `relay watch ${live.runId}`);
   assert.equal(chooseNextCommand(true, [view(finished, true)]), `relay deliver ${finished.runId}`);
   assert.equal(chooseNextCommand(true, [view(finished)]), 'relay run <issue>');
+
+  // A pull request whose merge question was never answered is the next step:
+  // the run is over, the work is up, and one answer lands it.
+  const unanswered = structuredClone(finished);
+  unanswered.planApproved = true;
+  unanswered.commit = { sha: 'a'.repeat(40), branch: 'relay/18-abc123', subject: 'x', at: 'x' };
+  unanswered.pullRequest = {
+    url: 'https://github.com/acme/widgets/pull/18', number: 18, base: 'main',
+    head: 'relay/18-abc123', createdByRun: true, at: 'x',
+  };
+  assert.equal(chooseNextCommand(true, [view(unanswered)]), `relay deliver ${unanswered.runId} --to merge`);
+  // An answered question is not a next step, however it was answered.
+  unanswered.mergeOffer = { status: 'declined', at: 'x' };
+  assert.equal(chooseNextCommand(true, [view(unanswered)]), 'relay run <issue>');
 });
 
 it('uses package.json for version and groups explicit root help', async () => {

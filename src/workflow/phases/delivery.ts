@@ -11,6 +11,7 @@ import {
   issueLinkFor,
   labelFor,
   mergesRemotely,
+  mergeUnblock,
   planDelivery,
   reachedPolicy,
   shortfall,
@@ -210,6 +211,13 @@ function reportShortfall(context: DeliveryContext): void {
   if (blocked === undefined || blocked.status === 'failed') return;
 
   context.observer.warn(`No ${labelFor(blocked.step)}: ${blocked.detail}.`);
+
+  // A refusal names what would change it: the alternative the reader reaches
+  // for, `relay deliver --to merge`, refuses the same evidence.
+  if (blocked.step === 'merge') {
+    const unblock = mergeUnblock(state);
+    if (unblock !== undefined) context.observer.note(unblock);
+  }
 }
 
 /**

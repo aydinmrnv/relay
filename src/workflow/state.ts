@@ -116,6 +116,26 @@ export interface MergeRecord {
   at: string;
 }
 
+/**
+ * The merge question at the end of a run, and what became of it.
+ *
+ * An unanswered question is state, not a line that scrolled past: a run that
+ * opened a pull request and was never answered records `pending`, so `relay
+ * status` can show it and `relay deliver <run> --to merge` can answer it later.
+ */
+export interface MergeOfferRecord {
+  /**
+   * `pending`  — the question is on the table and nobody has answered it.
+   * `declined` — asked, and the answer was no.
+   * `auto`     — auto-merge armed on GitHub; it lands when the checks pass.
+   * `accepted` — answered yes; the merge record is the evidence.
+   */
+  status: 'pending' | 'declined' | 'auto' | 'accepted';
+  /** The gaps and caveats the question carried, when it carried any. */
+  detail?: string;
+  at: string;
+}
+
 /** The steps delivery can take, in the order it takes them. */
 export const DELIVERY_STEPS = ['commit', 'push', 'pullRequest', 'merge'] as const;
 export type DeliveryStep = (typeof DELIVERY_STEPS)[number];
@@ -237,6 +257,8 @@ export interface RunState {
   push?: PushRecord;
   pullRequest?: PullRequestRecord;
   merge?: MergeRecord;
+  /** The merge question this run's pull request is waiting on, once it was put. */
+  mergeOffer?: MergeOfferRecord;
   /** What the delivery phase did with the finished work, and what it skipped. */
   delivery?: DeliveryRecord;
   notification?: NotificationRecord;

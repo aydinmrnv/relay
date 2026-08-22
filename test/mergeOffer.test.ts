@@ -88,19 +88,24 @@ interface Session {
   merged: boolean;
   asked: string[];
   merges: number;
+  /** Times auto-merge was armed on GitHub. */
+  autos: number;
+  /** The answer lists put to the user, when the question was a choice. */
+  offered: string[][];
 }
 
 /** Runs the offer against a scripted terminal, capturing what it printed. */
 async function offer(
   answers: readonly string[],
   state: RunState,
-  options: { interactive?: boolean } = {},
+  options: { interactive?: boolean; autoMerge?: boolean } = {},
 ): Promise<Session> {
   const prompter = new ScriptedPrompter(answers, options.interactive ?? true);
   const store = new RunStore(repo.root, state.runId);
   await store.init();
 
   let merges = 0;
+  let autos = 0;
   const originalWrite = process.stdout.write.bind(process.stdout);
   let output = '';
   process.stdout.write = ((chunk: string | Uint8Array): boolean => {
@@ -111,6 +116,11 @@ async function offer(
   try {
     const merged = await offerMerge(state, store, {
       prompter,
+      // Injected so no test ever probes a real `gh`.
+      autoMergeAvailable: async () => options.autoMerge === true,
+      enableAuto: async () => {
+        autos += 1;
+      },
       merge: async () => {
         merges += 1;
         state.merge = {
@@ -121,7 +131,7 @@ async function offer(
         };
       },
     });
-    return { output, merged, asked: prompter.asked, merges };
+    return { output, merged, asked: prompter.asked, merges, autos, offered: prompter.offered };
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -153,8 +163,8 @@ async function declineDelivery(answers: readonly string[], state: RunState, inte
   }) as typeof process.stdout.write;
 
   try {
-    await offerDelivery(state, store, { prompter });
-    return { output, merged: state.merge !== undefined, asked: prompter.asked, merges: 0 };
+    await offerDelivery(state, store, { prompter, autoMergeAvailable: async () => false });
+    return { output, merged: state.merge !== undefined, asked: prompter.asked, merges: 0, autos: 0, offered: prompter.offered };
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -207,12 +217,14 @@ describe('the delivery offer', () => {
 
 describe('the merge offer', () => {
   it('asks once, naming the pull request and how it would land', async () => {
-    const session = await offer(['y'], delivered(repo.root));
+    const state = delivered(repo.root);
+    const session = await offer(['y'], state);
 
     assert.equal(session.asked.length, 1);
     assert.match(session.asked[0] ?? '', /Merge https:\/\/github\.com\/acme\/widgets\/pull\/21 into main now\? \(squash\)/);
     assert.equal(session.merged, true);
     assert.equal(session.merges, 1);
+    assert.equal(state.mergeOffer?.status, 'accepted');
   });
 
   it('does nothing on no, which is what pressing Enter does', async () => {
@@ -258,6 +270,82 @@ describe('the merge offer', () => {
     // The pull request is a draft for the same reason, so the answer is honest
     // rather than a question GitHub would refuse anyway.
     assert.match(session.output, /No merge offered: the tests failed/);
+    // And the refusal names what would change it, because the command a refused
+    // user reaches for next would refuse the same evidence.
+    assert.match(session.output, /What would unblock it: a passing test run/);
+    assert.equal(failing.mergeOffer, undefined);
+  });
+
+  it('asks anyway when the test evidence is merely missing, and names the gap', async () => {
+    // A repository where discovery finds no test command produced an absence,
+    // not a failure — and the user standing there has more context than state.
+    const state = delivered(repo.root);
+    state.tests = {
+      discovered: false, command: [], reason: 'no test command was discovered',
+      exitCode: null, passed: false, durationMs: 0, timedOut: false,
+      skippedReason: 'no test command was discovered', at: 'x',
+    };
+
+    const session = await offer([], state);
+    assert.equal(session.asked.length, 1);
+    assert.match(
+      session.asked[0] ?? '',
+      /Tests were not verifiably run \(no test command was discovered\)\. Merge https:\/\/github\.com\/acme\/widgets\/pull\/21 into main anyway\?/,
+    );
+    // Enter is still no: the gap softens nothing about the default.
+    assert.equal(session.merges, 0);
+    assert.match(session.output, /Left unmerged/);
+    assert.equal(state.mergeOffer?.status, 'declined');
+  });
+
+  it('carries an exhausted plan review as a caveat in the question', async () => {
+    const state = delivered(repo.root);
+    state.planApproved = false;
+    state.rounds.planReview = state.config.workflow.maxPlanReviewRounds;
+
+    const session = await offer(['n'], state);
+    assert.equal(session.asked.length, 1);
+    assert.match(session.asked[0] ?? '', /plan review used all 2 round\(s\) without approval\./);
+    assert.match(session.asked[0] ?? '', /anyway\?/);
+  });
+
+  it('offers "when checks pass" only where GitHub can hold it, defaulting to no', async () => {
+    const state = delivered(repo.root);
+    const session = await offer([], state, { autoMerge: true });
+
+    assert.deepEqual(session.offered, [['now', 'when-checks-pass', 'no']]);
+    // An exhausted script takes the default, exactly as Enter would.
+    assert.equal(session.merges, 0);
+    assert.equal(session.autos, 0);
+    assert.equal(state.mergeOffer?.status, 'declined');
+
+    // Without auto-merge the question stays a plain yes/no.
+    const plain = await offer(['y'], delivered(repo.root), { autoMerge: false });
+    assert.deepEqual(plain.offered, []);
+    assert.equal(plain.merges, 1);
+  });
+
+  it('arms auto-merge for "when checks pass" rather than merging anything', async () => {
+    const state = delivered(repo.root);
+    const session = await offer(['when-checks-pass'], state, { autoMerge: true });
+
+    assert.equal(session.autos, 1);
+    assert.equal(session.merges, 0);
+    assert.equal(session.merged, false);
+    assert.equal(state.merge, undefined);
+    assert.equal(state.mergeOffer?.status, 'auto');
+    assert.match(session.output, /GitHub merges it when its checks pass/);
+  });
+
+  it('records a declined question, and a merged one as accepted', async () => {
+    const declined = delivered(repo.root);
+    await offer(['n'], declined);
+    assert.equal(declined.mergeOffer?.status, 'declined');
+
+    const accepted = delivered(repo.root);
+    await offer(['now'], accepted, { autoMerge: true });
+    assert.equal(accepted.mergeOffer?.status, 'accepted');
+    assert.notEqual(accepted.merge, undefined);
   });
 
   it('says nothing when there is nothing to merge, or it is already merged', async () => {
@@ -284,10 +372,17 @@ describe('the merge offer', () => {
   });
 
   it('never asks a terminal nobody is watching, and names the command instead', async () => {
-    const session = await offer([], delivered(repo.root), { interactive: false });
+    const state = delivered(repo.root);
+    const session = await offer([], state, { interactive: false });
 
     assert.equal(session.asked.length, 0);
     assert.equal(session.merged, false);
     assert.match(session.output, /relay deliver .* --to merge/);
+    // The unanswered question is state, not a line that scrolled past: it is
+    // recorded on the run, persisted, and answerable later.
+    assert.equal(state.mergeOffer?.status, 'pending');
+    const store = new RunStore(repo.root, state.runId);
+    const persisted = await store.loadState();
+    assert.equal(persisted.mergeOffer?.status, 'pending');
   });
 });

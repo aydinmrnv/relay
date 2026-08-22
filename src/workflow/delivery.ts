@@ -300,21 +300,111 @@ export function draftReasons(state: RunState): string[] {
     const count = unresolvedBlockingFindings(state);
     reasons.push(`${count} blocking review finding(s) were never accepted`);
   }
-  if (!state.planApproved && state.config.workflow.plan === 'review') {
+  if (planApproval(state) === 'never') {
     reasons.push('the plan was never approved');
   }
   return reasons;
 }
 
-/** Evidence required before Relay is allowed to perform the irreversible step. */
-export function mergeBlockers(state: RunState): string[] {
-  const reasons: string[] = [];
-  if (!(state.tests?.discovered === true && state.tests.passed === true)) {
-    reasons.push(state.tests?.discovered === true ? 'the tests failed' : 'tests were not verifiably run');
+/**
+ * Where the plan approval actually stands.
+ *
+ * `exhausted` is the round limit working: the plan was reviewed, revised, and
+ * the run proceeded on it deliberately — the designed exit from a two-round
+ * debate, not a fault. `never` is a review that was configured and did not run
+ * its course, which is the only version that means something went wrong.
+ */
+export function planApproval(state: RunState): 'approved' | 'exhausted' | 'never' {
+  if (state.planApproved || state.config.workflow.plan !== 'review') return 'approved';
+  return state.rounds.planReview >= state.config.workflow.maxPlanReviewRounds ? 'exhausted' : 'never';
+}
+
+/**
+ * The run's own evidence about merging, sorted by what it means.
+ *
+ * Missing evidence and bad evidence are not the same thing. Bad — the tests
+ * failed, blocking findings were never accepted — forbids the merge: the pull
+ * request opened as a draft on that evidence and stays one. Missing — no test
+ * command was discovered, `--no-tests` — is an absence, not a failure: the
+ * question is asked with the gap named, because the person answering has more
+ * context than this function does. Caveats are worth saying and block nothing.
+ */
+export interface MergeEvidence {
+  /** Bad evidence. Merging is refused, and the pull request is a draft. */
+  blockers: string[];
+  /** Missing evidence, worded as sentences the question can carry. */
+  gaps: string[];
+  /** True but not disqualifying, worded the same way. */
+  caveats: string[];
+}
+
+export function mergeEvidence(state: RunState): MergeEvidence {
+  const blockers: string[] = [];
+  const gaps: string[] = [];
+  const caveats: string[] = [];
+
+  const tests = state.tests;
+  if (tests?.discovered === true) {
+    if (tests.passed !== true) blockers.push(tests.timedOut ? 'the tests timed out' : 'the tests failed');
+  } else {
+    const why = tests?.skippedReason ?? tests?.reason;
+    gaps.push(`Tests were not verifiably run${why === undefined ? '' : ` (${why})`}.`);
   }
-  if (unresolvedBlockingFindings(state) > 0) reasons.push('blocking review findings remain unresolved');
-  if (!state.planApproved && state.config.workflow.plan === 'review') reasons.push('the plan was never approved');
-  return reasons;
+
+  if (unresolvedBlockingFindings(state) > 0) blockers.push('blocking review findings remain unresolved');
+
+  const plan = planApproval(state);
+  if (plan === 'never') blockers.push('the plan was never approved');
+  if (plan === 'exhausted') {
+    caveats.push(
+      `The plan review used all ${state.config.workflow.maxPlanReviewRounds} round(s) without approval.`,
+    );
+  }
+
+  return { blockers, gaps, caveats };
+}
+
+/**
+ * Evidence that forbids the merge outright. Only *bad* evidence lands here —
+ * missing evidence is a gap in the question, never a reason to skip it, and an
+ * explicit `relay deliver --to merge` is a person deciding with that gap in view.
+ */
+export function mergeBlockers(state: RunState): string[] {
+  return mergeEvidence(state).blockers;
+}
+
+/**
+ * What would change a refusal, said next to it — because the command a refused
+ * user reaches for, `relay deliver --to merge`, will refuse the same evidence.
+ */
+export function mergeUnblock(state: RunState): string | undefined {
+  const fixes: string[] = [];
+  if (state.tests?.discovered === true && state.tests.passed !== true) fixes.push('a passing test run');
+  if (unresolvedBlockingFindings(state) > 0) fixes.push('the blocking review findings accepted or fixed');
+  if (planApproval(state) === 'never') fixes.push('an approved plan');
+  if (fixes.length === 0) return undefined;
+
+  const landing =
+    state.pullRequest === undefined
+      ? ''
+      : ' — the pull request opened as a draft on the same evidence, so once addressed, mark it ready and merge it on GitHub';
+  return `What would unblock it: ${fixes.join(', ')}${landing}.`;
+}
+
+/**
+ * Whether a pull request this run opened is still waiting on the merge answer.
+ *
+ * True only when the question is genuinely on the table: this run created the
+ * pull request, nothing has merged it, no bad evidence forbids it, and nobody
+ * has said no. `relay status` shows this the way it shows `unlanded`, and
+ * `relay deliver <run> --to merge` is how it gets answered late.
+ */
+export function mergeUnanswered(state: RunState): boolean {
+  if (!state.config.workflow.offerMerge) return false;
+  if (state.pullRequest === undefined || state.pullRequest.createdByRun !== true) return false;
+  if (state.merge !== undefined) return false;
+  if (state.mergeOffer !== undefined && state.mergeOffer.status !== 'pending') return false;
+  return mergeBlockers(state).length === 0;
 }
 
 export function resolveCeiling(

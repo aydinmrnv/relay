@@ -1,5 +1,6 @@
 import type { Landing } from '../git/commit.ts';
 import { reviewLevelOf, type DeliveryPolicy } from '../storage/config.ts';
+import { mergeUnanswered } from '../workflow/delivery.ts';
 import type { DeliveryStep } from '../workflow/state.ts';
 import type { Decision } from '../reviews/types.ts';
 import type { Phase } from '../workflow/phases.ts';
@@ -70,6 +71,10 @@ export interface RunJson {
   push: { remote: string; branch: string; sha: string; at: string } | null;
   pullRequest: { url: string; number: number | null; base: string; head: string; at: string } | null;
   merge: { into: string; via: 'local' | 'pull-request'; sha?: string; fastForward?: boolean; url?: string; at: string } | null;
+  /** The merge question at the end of the run, and what became of it. */
+  mergeOffer: { status: 'pending' | 'declined' | 'auto' | 'accepted'; detail: string | null; at: string } | null;
+  /** True while a pull request this run opened has the merge question unanswered. */
+  mergeUnanswered: boolean;
   /** Every delivery step, including the ones that were skipped and why. */
   delivery: {
     policy: DeliveryPolicy;
@@ -239,6 +244,11 @@ export function runToJson(state: RunState, options: RunJsonOptions = {}): RunJso
     push: state.push ?? null,
     pullRequest: state.pullRequest ?? null,
     merge: state.merge ?? null,
+    mergeOffer:
+      state.mergeOffer === undefined
+        ? null
+        : { status: state.mergeOffer.status, detail: state.mergeOffer.detail ?? null, at: state.mergeOffer.at },
+    mergeUnanswered: mergeUnanswered(state),
     delivery: state.delivery ?? null,
     notification: state.notification ?? null,
 
