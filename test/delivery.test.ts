@@ -12,6 +12,9 @@ import { createRunId } from '../src/util/ids.ts';
 import {
   draftReasons,
   mergeBlockers,
+  mergeEvidence,
+  mergeUnanswered,
+  mergeUnblock,
   planDelivery,
   reachedPolicy,
   shortfall,
@@ -174,15 +177,54 @@ describe('delivery plan', () => {
     assert.match(reasonFor(state, 'pr', capable(), 'commit'), /changed no files/);
   });
 
-  it('refuses merge without passing test evidence', () => {
+  it('refuses merge on failing tests, but not on tests that never ran', () => {
     const failed = finishedRun(repo.root);
     failed.tests = { ...failed.tests!, passed: false, exitCode: 1 };
     assert.match(reasonFor(failed, 'merge', capable(), 'merge'), /tests failed/);
+    assert.match(mergeBlockers(failed).join(' '), /tests failed/);
 
+    // Missing evidence is a gap, not a refusal: nothing failed, nothing ran.
+    // An explicit `--to merge` is a person deciding with that gap in view.
     const skipped = finishedRun(repo.root);
     skipped.tests = { ...skipped.tests!, discovered: false, passed: false, skippedReason: '--no-tests' };
-    assert.match(reasonFor(skipped, 'merge', capable(), 'merge'), /not verifiably run/);
-    assert.match(mergeBlockers(skipped).join(' '), /not verifiably run/);
+    assert.deepEqual(mergeBlockers(skipped), []);
+    assert.match(mergeEvidence(skipped).gaps.join(' '), /Tests were not verifiably run \(--no-tests\)/);
+    assert.deepEqual(stepsThatRun(skipped, 'merge', capable()), ['commit', 'push', 'pullRequest', 'merge']);
+  });
+
+  it('treats an exhausted plan review as a caveat, never a blocker', () => {
+    // The round limit working is the designed exit from a two-round debate,
+    // not a fault: the plan was revised and the run proceeded deliberately.
+    const exhausted = finishedRun(repo.root);
+    exhausted.planApproved = false;
+    exhausted.rounds.planReview = exhausted.config.workflow.maxPlanReviewRounds;
+
+    assert.deepEqual(mergeBlockers(exhausted), []);
+    assert.match(mergeEvidence(exhausted).caveats.join(' '), /plan review used all 2 round\(s\)/);
+    assert.deepEqual(stepsThatRun(exhausted, 'merge', capable()), ['commit', 'push', 'pullRequest', 'merge']);
+
+    // A review that was configured and never ran its course is another matter.
+    const never = finishedRun(repo.root);
+    never.planApproved = false;
+    assert.match(mergeBlockers(never).join(' '), /the plan was never approved/);
+    assert.match(reasonFor(never, 'merge', capable(), 'merge'), /never approved/);
+  });
+
+  it('says what would unblock a refused merge', () => {
+    const state = finishedRun(repo.root);
+    state.tests = { ...state.tests!, passed: false, exitCode: 1 };
+    state.pullRequest = {
+      url: 'https://github.com/acme/widgets/pull/9', number: 9, base: 'main',
+      head: state.workspace!.branch, createdByRun: true, at: 'x',
+    };
+
+    const unblock = mergeUnblock(state) ?? '';
+    assert.match(unblock, /a passing test run/);
+    assert.match(unblock, /draft/);
+    assert.match(unblock, /GitHub/);
+
+    // A clean run has nothing to unblock.
+    assert.equal(mergeUnblock(finishedRun(repo.root)), undefined);
   });
 
   it('refuses merge with unresolved blocking findings', () => {
@@ -204,6 +246,61 @@ describe('delivery plan', () => {
     foreign.push = { remote: 'origin', branch: foreign.workspace!.branch, sha: 'a'.repeat(40), at: 'x' };
     foreign.pullRequest = { url: 'https://github.com/acme/widgets/pull/1', number: 1, base: 'main', head: foreign.workspace!.branch, createdByRun: false, at: 'x' };
     assert.match(reasonFor(foreign, 'merge', capable(), 'merge'), /did not create/);
+  });
+
+  it('stops at branch when the secret scan finds something, naming the rule and the place', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({
+      secrets: { findings: [{ file: 'fixtures/token.txt', line: 3, rule: 'github-token' }], scanned: 5, suppressed: 0 },
+    });
+
+    assert.deepEqual(stepsThatRun(state, 'pr', caps), ['commit']);
+    assert.match(reasonFor(state, 'pr', caps, 'push'), /secret scan matched github-token in fixtures\/token\.txt:3/);
+    // Downstream steps inherit the scan's reason rather than inventing one.
+    assert.match(reasonFor(state, 'pr', caps, 'pullRequest'), /no push: the secret scan matched/);
+  });
+
+  it('counts the findings beyond the first rather than listing them all in one line', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({
+      secrets: {
+        findings: [
+          { file: '.env', line: null, rule: 'never-commit filename (.env)' },
+          { file: 'a.txt', line: 1, rule: 'api-key' },
+          { file: 'b.txt', line: 9, rule: 'jwt' },
+        ],
+        scanned: 3,
+        suppressed: 0,
+      },
+    });
+    assert.match(reasonFor(state, 'push', caps, 'push'), /never-commit filename \(\.env\) in \.env \(and 2 more\)/);
+  });
+
+  it('blocks a local merge on findings too: the base branch is one push from a remote', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({
+      remote: null,
+      gh: false,
+      merge: { ok: true },
+      secrets: { findings: [{ file: 'leak.txt', line: 2, rule: 'anthropic-key' }], scanned: 1, suppressed: 0 },
+    });
+
+    assert.deepEqual(stepsThatRun(state, 'merge', caps), ['commit']);
+    assert.match(reasonFor(state, 'merge', caps, 'merge'), /secret scan matched anthropic-key in leak\.txt:2/);
+  });
+
+  it('blocks when the scan itself could not run — nothing leaves unscanned', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({ secrets: { error: 'git exploded' } });
+
+    assert.deepEqual(stepsThatRun(state, 'push', caps), ['commit']);
+    assert.match(reasonFor(state, 'push', caps, 'push'), /secret scan could not run: git exploded/);
+  });
+
+  it('gates nothing on a clean scan', () => {
+    const state = finishedRun(repo.root);
+    const caps = capable({ secrets: { findings: [], scanned: 4, suppressed: 1 } });
+    assert.deepEqual(stepsThatRun(state, 'pr', caps), ['commit', 'push', 'pullRequest']);
   });
 });
 
@@ -248,6 +345,67 @@ describe('draft pull requests', () => {
     state.planApproved = false;
 
     assert.match(draftReasons(state).join(' '), /plan was never approved/);
+  });
+
+  it('does not draft over a plan review that merely used all its rounds', () => {
+    const state = finishedRun(repo.root);
+    state.planApproved = false;
+    state.rounds.planReview = state.config.workflow.maxPlanReviewRounds;
+
+    // The round limit working must not produce a pull request GitHub refuses
+    // to merge — the merge question is asked over exactly this state.
+    assert.deepEqual(draftReasons(state), []);
+    assert.equal(pullRequestDraft(state).draft, undefined);
+  });
+});
+
+describe('the unanswered merge question', () => {
+  /** A run whose pull request is open and whose evidence is clean. */
+  function openPullRequest(root: string): RunState {
+    const state = finishedRun(root);
+    state.commit = { sha: 'a'.repeat(40), branch: state.workspace!.branch, subject: 'x', at: 'x' };
+    state.push = { remote: 'origin', branch: state.workspace!.branch, sha: 'a'.repeat(40), at: 'x' };
+    state.pullRequest = {
+      url: 'https://github.com/acme/widgets/pull/21', number: 21, base: 'main',
+      head: state.workspace!.branch, createdByRun: true, at: 'x',
+    };
+    return state;
+  }
+
+  it('is recorded state: open pull request, no answer, nothing forbidding it', () => {
+    assert.equal(mergeUnanswered(openPullRequest(repo.root)), true);
+  });
+
+  it('is settled by an answer, a merge, or evidence that forbids the question', () => {
+    const declined = openPullRequest(repo.root);
+    declined.mergeOffer = { status: 'declined', at: 'x' };
+    assert.equal(mergeUnanswered(declined), false);
+
+    const auto = openPullRequest(repo.root);
+    auto.mergeOffer = { status: 'auto', at: 'x' };
+    assert.equal(mergeUnanswered(auto), false);
+
+    const merged = openPullRequest(repo.root);
+    merged.merge = { into: 'main', via: 'pull-request', at: 'x' };
+    assert.equal(mergeUnanswered(merged), false);
+
+    const refused = openPullRequest(repo.root);
+    refused.tests = { ...refused.tests!, passed: false, exitCode: 1 };
+    assert.equal(mergeUnanswered(refused), false);
+
+    const foreign = openPullRequest(repo.root);
+    foreign.pullRequest = { ...foreign.pullRequest!, createdByRun: false };
+    assert.equal(mergeUnanswered(foreign), false);
+
+    const off = openPullRequest(repo.root);
+    off.config.workflow.offerMerge = false;
+    assert.equal(mergeUnanswered(off), false);
+  });
+
+  it('stays on the table while the recorded answer is pending', () => {
+    const pending = openPullRequest(repo.root);
+    pending.mergeOffer = { status: 'pending', detail: 'Tests were not verifiably run.', at: 'x' };
+    assert.equal(mergeUnanswered(pending), true);
   });
 });
 
@@ -467,5 +625,66 @@ describe('the delivery phase', () => {
     assert.equal(state.merge?.into, 'main');
     assert.match(await readFile(join(repo.root, 'src', 'app.ts'), 'utf8'), /13/);
     assert.equal(state.delivery?.reached, 'merge');
+  });
+
+  // Assembled at runtime so no token-shaped string sits in this repository's
+  // own diff, where the scanner under test would flag it.
+  const PLANTED_KEY = ['ghp', `Qq7${'Ww1Ee2Rr3Tt4Yy5Uu6Ii7'}`].join('_');
+
+  it('stops a planted key at branch: committed, never pushed, location reported, secret unprinted', async () => {
+    process.env['RELAY_HOME'] = repo.relayHome;
+    await addRemote();
+    const { state, store, observer } = await realRun('push', 'sec001');
+    await writeFile(join(state.workspace!.path, 'notes.txt'), `debugging\ntoken: ${PLANTED_KEY}\n`, 'utf8');
+
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+
+    // Stopped at branch: the commit exists, nothing reached the remote.
+    assert.equal(state.delivery?.reached, 'branch');
+    assert.deepEqual(
+      state.delivery?.steps.map((step) => `${step.step}:${step.status}`),
+      ['commit:done', 'push:skipped', 'pullRequest:skipped', 'merge:skipped'],
+    );
+    assert.equal(await repo.git('ls-remote', '--heads', 'origin', state.workspace!.branch), '');
+
+    // The reason names the rule, the file and the line…
+    const push = state.delivery?.steps.find((step) => step.step === 'push');
+    assert.match(push?.detail ?? '', /secret scan matched github-token in notes\.txt:2/);
+    assert.match(observer.warnings.join('\n'), /github-token in notes\.txt:2/);
+    // …and the override is offered out loud.
+    assert.match(observer.notes.join('\n'), /--allow-secret|secretsignore/);
+
+    // The secret itself appears nowhere: not in the record, not in what was
+    // printed, not in the summary artifact.
+    assert.ok(!JSON.stringify(state.delivery).includes(PLANTED_KEY));
+    assert.ok(!observer.warnings.join('\n').includes(PLANTED_KEY));
+    assert.ok(!observer.notes.join('\n').includes(PLANTED_KEY));
+    assert.ok(!((await store.readArtifact('summary.md')) ?? '').includes(PLANTED_KEY));
+  });
+
+  it('lets --allow-secret publish the one file that was deliberate', async () => {
+    process.env['RELAY_HOME'] = repo.relayHome;
+    await addRemote();
+    const { state, store, observer } = await realRun('push', 'sec002');
+    await writeFile(join(state.workspace!.path, 'fixture.txt'), `token: ${PLANTED_KEY}\n`, 'utf8');
+    state.config.delivery.allowSecrets = ['fixture.txt'];
+
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+
+    assert.equal(state.delivery?.reached, 'push');
+    assert.match(await repo.git('ls-remote', '--heads', 'origin', state.workspace!.branch), new RegExp(state.push!.sha));
+  });
+
+  it('lets .relay/secretsignore make the same allowance repeatable', async () => {
+    process.env['RELAY_HOME'] = repo.relayHome;
+    await addRemote();
+    await repo.writeFile('.relay/secretsignore', '# fake keys used by the test suite\nfixtures/**\n');
+    const { state, store, observer } = await realRun('push', 'sec003');
+    await mkdir(join(state.workspace!.path, 'fixtures'), { recursive: true });
+    await writeFile(join(state.workspace!.path, 'fixtures', 'sample.txt'), `token: ${PLANTED_KEY}\n`, 'utf8');
+
+    await delivering({ state, store, observer, signal: new AbortController().signal });
+
+    assert.equal(state.delivery?.reached, 'push');
   });
 });

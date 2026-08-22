@@ -10,19 +10,36 @@ export interface Theme {
   interactive: boolean;
 }
 
-export function detectTheme(stream: NodeJS.WriteStream = process.stdout): Theme {
+export function detectTheme(
+  stream: NodeJS.WriteStream = process.stdout,
+  platform: NodeJS.Platform = process.platform,
+): Theme {
   const env = process.env;
   const noColor = env['NO_COLOR'] !== undefined && env['NO_COLOR'] !== '';
   const isCI = env['CI'] !== undefined && env['CI'] !== '' && env['CI'] !== '0' && env['CI'] !== 'false';
   const isDumb = env['TERM'] === 'dumb';
   const isTTY = stream.isTTY === true;
 
+  // On Windows a TTY does not imply escape sequences are safe. The terminals
+  // that handle ANSI — Windows Terminal, VS Code, ConEmu, ANSICON, the
+  // MSYS/Cygwin family — each announce themselves in the environment; a stock
+  // legacy console announces nothing, and gets plain output. The same signal
+  // gates unicode: a legacy console's raster font and OEM codepage cannot show
+  // the glyphs Relay draws with.
+  const ansiCapable =
+    platform !== 'win32' ||
+    env['WT_SESSION'] !== undefined ||
+    env['ConEmuANSI'] === 'ON' ||
+    env['ANSICON'] !== undefined ||
+    (env['TERM_PROGRAM'] !== undefined && env['TERM_PROGRAM'] !== '') ||
+    (env['TERM'] !== undefined && env['TERM'] !== '' && !isDumb);
+
   return {
     // CI turns colour off even on an allocated TTY: the output's real reader is
     // a stored log, and an escape sequence in a log is noise nobody asked for.
-    color: !noColor && !isDumb && !isCI && isTTY,
-    unicode: env['RELAY_ASCII'] === undefined && !isDumb,
-    interactive: isTTY && !isCI && !isDumb,
+    color: !noColor && !isDumb && !isCI && isTTY && ansiCapable,
+    unicode: env['RELAY_ASCII'] === undefined && !isDumb && ansiCapable,
+    interactive: isTTY && !isCI && !isDumb && ansiCapable,
   };
 }
 

@@ -1,6 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { rm, readFile, writeFile, mkdir } from 'node:fs/promises';
 
 import { runProcess } from '../src/process/runner.ts';
@@ -14,6 +14,7 @@ import {
   removeWorktree,
   worktreePathFor,
   worktreeExists,
+  type PathStyle,
 } from '../src/git/worktree.ts';
 import { discoverRepository, emptyTreeSha, resolveBaseRef } from '../src/git/repository.ts';
 import { snapshotDiff, formatDiffStat } from '../src/git/diff.ts';
@@ -60,6 +61,111 @@ describe('worktree path validation', () => {
 
   it('refuses relative paths', () => {
     assert.throws(() => assertRemovableWorktreePath('acme/widgets/issue-1', root), RelayError);
+  });
+});
+
+/**
+ * The same guard under Windows path semantics, simulated by injecting the
+ * style. `useRealpath` is off because a `C:\` path has no realpath on the OS
+ * running the tests; the real-Windows CI leg exercises the realpath branch.
+ * This guard is what stands between a bug and someone's home directory, so
+ * every Windows-only spelling — drive letters, UNC shares, verbatim prefixes,
+ * mixed case — gets its own verdict here.
+ */
+describe('worktree path validation on Windows (simulated)', () => {
+  const style: PathStyle = { path: win32, caseInsensitive: true, useRealpath: false };
+  const root = 'C:\\Users\\u\\.relay\\workspaces';
+
+  it('permits a run worktree under a drive-letter root', () => {
+    const candidate = 'C:\\Users\\u\\.relay\\workspaces\\acme\\widgets\\issue-1-abc';
+    assert.equal(assertRemovableWorktreePath(candidate, root, style), candidate);
+  });
+
+  it('accepts forward slashes, the way git reports Windows paths', () => {
+    const candidate = 'C:/Users/u/.relay/workspaces/acme/widgets/issue-9-xyz';
+    assert.equal(assertRemovableWorktreePath(candidate, root, style), win32.resolve(candidate));
+  });
+
+  it('compares case-insensitively without rewriting the caller\'s spelling', () => {
+    const candidate = 'c:\\USERS\\u\\.Relay\\Workspaces\\acme\\widgets\\issue-2-def';
+    assert.equal(assertRemovableWorktreePath(candidate, root, style), win32.resolve(candidate));
+  });
+
+  it('knows the root is the root in any capitalization', () => {
+    assert.throws(() => assertRemovableWorktreePath('C:\\USERS\\U\\.RELAY\\WORKSPACES', root, style), RelayError);
+  });
+
+  it('refuses a path on a different drive', () => {
+    assert.throws(
+      () => assertRemovableWorktreePath('D:\\Users\\u\\.relay\\workspaces\\acme\\widgets\\issue-1-abc', root, style),
+      RelayError,
+    );
+  });
+
+  it('refuses a drive-relative spelling, which depends on cmd.exe state', () => {
+    assert.throws(() => assertRemovableWorktreePath('C:acme\\widgets\\issue-1-abc', root, style), RelayError);
+  });
+
+  it('sees through the verbatim prefix in both directions', () => {
+    const candidate = '\\\\?\\C:\\Users\\u\\.relay\\workspaces\\acme\\widgets\\issue-3-ghi';
+    assert.equal(
+      assertRemovableWorktreePath(candidate, root, style),
+      'C:\\Users\\u\\.relay\\workspaces\\acme\\widgets\\issue-3-ghi',
+    );
+    // The verbatim spelling of the root itself is still the root.
+    assert.throws(() => assertRemovableWorktreePath('\\\\?\\C:\\Users\\u\\.relay\\workspaces', root, style), RelayError);
+  });
+
+  it('treats UNC roots share-by-share', () => {
+    const uncRoot = '\\\\server\\share\\relay\\workspaces';
+
+    const inside = '\\\\server\\share\\relay\\workspaces\\acme\\widgets\\issue-1-abc';
+    assert.equal(assertRemovableWorktreePath(inside, uncRoot, style), inside);
+
+    const mixedCase = '\\\\SERVER\\Share\\relay\\workspaces\\acme\\widgets\\issue-2-def';
+    assert.equal(assertRemovableWorktreePath(mixedCase, uncRoot, style), win32.resolve(mixedCase));
+
+    const verbatim = '\\\\?\\UNC\\server\\share\\relay\\workspaces\\acme\\widgets\\issue-4-jkl';
+    assert.equal(
+      assertRemovableWorktreePath(verbatim, uncRoot, style),
+      '\\\\server\\share\\relay\\workspaces\\acme\\widgets\\issue-4-jkl',
+    );
+
+    // A different share on the same server is a different filesystem.
+    assert.throws(
+      () => assertRemovableWorktreePath('\\\\server\\other\\relay\\workspaces\\acme\\widgets\\issue-1-abc', uncRoot, style),
+      RelayError,
+    );
+    // A UNC path is never inside a drive-letter root, nor the other way round.
+    assert.throws(() => assertRemovableWorktreePath(inside, root, style), RelayError);
+    assert.throws(
+      () => assertRemovableWorktreePath('C:\\Users\\u\\.relay\\workspaces\\acme\\widgets\\issue-1-abc', uncRoot, style),
+      RelayError,
+    );
+  });
+
+  it('refuses device-namespace paths outright', () => {
+    assert.throws(
+      () => assertRemovableWorktreePath('\\\\.\\C:\\Users\\u\\.relay\\workspaces\\acme\\widgets\\issue-1-abc', root, style),
+      RelayError,
+    );
+  });
+
+  it('refuses traversal, and anything shallower than a run worktree', () => {
+    assert.throws(
+      () =>
+        assertRemovableWorktreePath(
+          'C:\\Users\\u\\.relay\\workspaces\\acme\\widgets\\..\\..\\..\\..\\..\\Windows\\System32',
+          root,
+          style,
+        ),
+      RelayError,
+    );
+    assert.throws(() => assertRemovableWorktreePath('C:\\Users\\u\\.relay\\workspaces\\acme', root, style), RelayError);
+    assert.throws(
+      () => assertRemovableWorktreePath('C:\\Users\\u\\.relay\\workspaces\\acme\\widgets', root, style),
+      RelayError,
+    );
   });
 });
 

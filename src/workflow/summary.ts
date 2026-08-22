@@ -1,6 +1,7 @@
 import { formatFindingLine, type ReviewRound } from '../reviews/types.ts';
 import { reviewsCode } from '../storage/config.ts';
 import { formatDuration } from '../util/text.ts';
+import { mergeUnanswered } from './delivery.ts';
 import { PHASES, phaseLabel } from './phases.ts';
 import type { RunState } from './state.ts';
 import { formatUsage, unpricedTurns } from './usage.ts';
@@ -113,6 +114,16 @@ export function renderSummary(state: RunState): string {
         : `- Merged: into \`${state.merge.into}\` at \`${state.merge.sha?.slice(0, 8) ?? 'HEAD'}\`` +
             `${state.merge.fastForward === true ? ' (fast-forward)' : ''}`,
     );
+  } else if (state.pullRequest !== undefined) {
+    // What became of the merge question. An unanswered one is state, not a
+    // line that scrolled past — the record here is what makes it answerable.
+    if (mergeUnanswered(state)) {
+      lines.push('- Merge: **unanswered** — the pull request is open and nobody has said whether to merge it');
+    } else if (state.mergeOffer?.status === 'auto') {
+      lines.push('- Merge: auto-merge armed — GitHub merges the pull request when its checks pass');
+    } else if (state.mergeOffer?.status === 'declined') {
+      lines.push('- Merge: declined when asked');
+    }
   }
 
   const usage = state.usage;
@@ -205,7 +216,9 @@ export function renderSummary(state: RunState): string {
   if (state.workspace !== undefined) {
     lines.push('```bash');
     lines.push(`relay diff ${state.runId}            # review the full diff`);
-    if (state.merge === undefined) {
+    if (mergeUnanswered(state)) {
+      lines.push(`relay deliver ${state.runId} --to merge   # answer the merge question`);
+    } else if (state.merge === undefined) {
       lines.push(`relay deliver ${state.runId}         # take the delivery further`);
     }
     lines.push(`cd ${state.workspace.path}`);

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 
-import { AGENT_PROVIDERS, isAgentProvider } from '../../agents/index.ts';
+import { AGENT_PROVIDERS } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
 import { parseIssueRef } from '../../github/provider.ts';
@@ -16,6 +16,8 @@ import {
 import { listRuns, RunStore, RUN_FILES, resolveRun } from '../../storage/runs.ts';
 import {
   DELIVERY_POLICIES,
+  assertReviewRolesEnforceable,
+  configHarnesses,
   isDeliveryPolicy,
   reviewsCode,
   type DeliveryPolicy,
@@ -30,7 +32,7 @@ import {
   type ReviewLevel,
 } from '../../reviews/level.ts';
 import { WorkflowEngine } from '../../workflow/engine.ts';
-import { resolveCeiling, shortfall } from '../../workflow/delivery.ts';
+import { mergeUnanswered, resolveCeiling, shortfall } from '../../workflow/delivery.ts';
 import { delivering } from '../../workflow/phases/delivery.ts';
 import type { RunDisplay, RunObserver } from '../../workflow/observer.ts';
 import { renderSummary } from '../../workflow/summary.ts';
@@ -93,6 +95,8 @@ export interface RunOptions {
   deliver?: string;
   /** `--no-offer-merge`: finish without the one question. */
   offerMerge?: boolean;
+  /** `--allow-secret <path>`: let a file the secret scan flagged publish anyway. */
+  allowSecret?: string[];
   /** `-f`: no plan review, no code review. The shorthand for `--review none`. */
   fast?: boolean;
   /** `--review <level>`: how hard the agents are asked to look. */
@@ -227,6 +231,10 @@ export function applyOverrides(
   if (options.offerMerge === false) merged.workflow.offerMerge = false;
   if (options.prime === false) merged.workflow.primeReviewers = false;
   if (options.parallelTests === false) merged.workflow.concurrentTests = false;
+  if (options.allowSecret !== undefined && options.allowSecret.length > 0) {
+    merged.delivery.allowSecrets = [...(merged.delivery.allowSecrets ?? []), ...options.allowSecret];
+    say(dim(`Secret scan: ${options.allowSecret.join(', ')} allowed through by --allow-secret.`));
+  }
 
   // Review depth is set before the individual knobs below, so an explicit
   // `--max-code-rounds` on top of a level still wins — the same order the
@@ -244,16 +252,29 @@ export function applyOverrides(
   }
 
   if (options.planner !== undefined) {
-    assertProvider(options.planner, '--planner');
+    assertProvider(options.planner, '--planner', merged);
     merged.agents.planner = options.planner;
-    // Keeping the reviewer on the other model is the point of the workflow.
-    merged.agents.codeReviewer = merged.agents.planner;
+    // Keeping the reviewer on the other model is the point of the workflow —
+    // unless this agent cannot be confined to read-only, in which case the
+    // configured reviewer keeps the seat rather than breaking the guarantee.
+    if (canReview(merged, options.planner)) {
+      merged.agents.codeReviewer = merged.agents.planner;
+    } else {
+      say(warning(`Warning: ${options.planner} has no read-only mode, so it cannot review — the code reviewer stays ${merged.agents.codeReviewer}.`));
+    }
   }
   if (options.implementer !== undefined) {
-    assertProvider(options.implementer, '--implementer');
+    assertProvider(options.implementer, '--implementer', merged);
     merged.agents.implementer = options.implementer;
-    merged.agents.planReviewer = merged.agents.implementer;
+    if (canReview(merged, options.implementer)) {
+      merged.agents.planReviewer = merged.agents.implementer;
+    } else {
+      say(warning(`Warning: ${options.implementer} has no read-only mode, so it cannot review — the plan reviewer stays ${merged.agents.planReviewer}.`));
+    }
   }
+  // The backstop for every path that reshuffles roles: a reviewer that cannot
+  // be forced read-only is refused with the same message config load uses.
+  assertReviewRolesEnforceable(merged);
 
   if (options.maxPlanRounds !== undefined) {
     merged.workflow.maxPlanReviewRounds = parseRounds(options.maxPlanRounds, '--max-plan-rounds');
@@ -324,10 +345,17 @@ function announceReviewLevel(config: RelayConfig, level: ReviewLevel): void {
   out(dim(`  ${describeReview({ ...config.workflow, review: level })}.`));
 }
 
-function assertProvider(value: string, flag: string): void {
-  if (!isAgentProvider(value)) {
-    throw new RelayError(`${flag} must be one of ${AGENT_PROVIDERS.join(', ')} (got "${value}").`, { code: 'BAD_FLAG' });
+function assertProvider(value: string, flag: string, config: RelayConfig): void {
+  const known = [...AGENT_PROVIDERS, ...Object.keys(configHarnesses(config))];
+  if (!known.includes(value)) {
+    throw new RelayError(`${flag} must be one of ${known.join(', ')} (got "${value}").`, { code: 'BAD_FLAG' });
   }
+}
+
+/** Whether an agent may hold a review seat: shipped, or confinable to read-only. */
+function canReview(config: RelayConfig, provider: string): boolean {
+  const def = configHarnesses(config)[provider];
+  return def === undefined || def.readOnly !== undefined;
 }
 
 export function parseDeliver(value: string): DeliveryPolicy {
@@ -631,6 +659,14 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
   // The phases this run will take are already decided, but what it writes on
   // its way out is not: a resume is allowed to change the voice.
   if (options.tuff === true) previous.config.workflow.typos = true;
+  // A resume is exactly when a scan finding gets answered: the run stopped at
+  // `branch`, the user looked at the file, and this is the deliberate override.
+  if (options.allowSecret !== undefined && options.allowSecret.length > 0) {
+    previous.config.delivery = {
+      comment: previous.config.delivery?.comment ?? false,
+      allowSecrets: [...(previous.config.delivery?.allowSecrets ?? []), ...options.allowSecret],
+    };
+  }
 
   if (isTerminal(previous.phase)) {
     if (previous.phase === 'COMPLETE') {
@@ -672,10 +708,18 @@ export async function resumeCommand(runRef: string, options: RunOptions): Promis
  */
 export async function deliverRun(
   state: RunState,
-  options: { policy?: DeliveryPolicy; json?: boolean; command?: string; cli?: CliContext } = {},
+  options: { policy?: DeliveryPolicy; json?: boolean; command?: string; cli?: CliContext; allowSecrets?: string[] } = {},
 ): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   if (options.policy !== undefined) state.config.workflow.deliver = options.policy;
+  // `--allow-secret`: the deliberate answer to a scan finding, scoped to this
+  // run's snapshot — the repository's own config never learns it.
+  if (options.allowSecrets !== undefined && options.allowSecrets.length > 0) {
+    state.config.delivery = {
+      comment: state.config.delivery?.comment ?? false,
+      allowSecrets: [...(state.config.delivery?.allowSecrets ?? []), ...options.allowSecrets],
+    };
+  }
   const json = options.json === true;
 
   await delivering({
@@ -950,6 +994,9 @@ export function printNextSteps(state: RunState, store: RunStore): void {
   } else if (state.pullRequest !== undefined) {
     hint('Open for review:');
     command(state.pullRequest.url);
+    // Only while the merge question is still unanswered — an answered "no"
+    // was a decision, and this block is a report, not a second ask.
+    if (mergeUnanswered(state)) command(`relay deliver ${state.runId} --to merge`);
   } else if (state.commit !== undefined) {
     // When delivery stopped short, the reason is more useful than the command:
     // re-running it changes nothing until the thing that blocked it is fixed.

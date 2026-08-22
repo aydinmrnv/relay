@@ -1,9 +1,10 @@
 import { createHarnesses } from '../agents/index.ts';
+import { configHarnessRegistrations } from '../agents/configHarness.ts';
 import type { AgentHarness } from '../agents/types.ts';
 import type { IssueProvider } from '../github/types.ts';
 import { defaultIssueProvider } from '../issues/registry.ts';
 import { discoverRepository, type RepositoryInfo } from '../git/repository.ts';
-import { loadConfig, type AgentProvider, type RelayConfig } from '../storage/config.ts';
+import { configHarnesses, loadConfig, type AgentProvider, type RelayConfig } from '../storage/config.ts';
 
 export interface CliContext {
   repo: RepositoryInfo;
@@ -19,6 +20,11 @@ export async function createCliContext(cwd: string = process.cwd()): Promise<Cli
 
   // One harness per registered provider: nothing here names a CLI.
   const harnesses = createHarnesses(config.models);
+  // Plus one per harness the repository defined itself, addressable by roles
+  // exactly like a shipped CLI.
+  for (const registration of configHarnessRegistrations(configHarnesses(config))) {
+    harnesses[registration.name] = registration.create({});
+  }
 
   // Built through the provider registry, so a second tracker is a registry row
   // rather than an edit here.

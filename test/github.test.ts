@@ -1,11 +1,14 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { parseIssueRef, normalizeGhIssue, GitHubIssueProvider } from '../src/github/provider.ts';
 import { renderIssueMarkdown } from '../src/github/types.ts';
 import { parseRemoteUrl } from '../src/git/repository.ts';
 import { RelayError } from '../src/util/errors.ts';
-import { pullRequestNumber } from '../src/github/pullRequest.ts';
+import { autoMergeAllowed, enableAutoMerge, pullRequestNumber } from '../src/github/pullRequest.ts';
 import { pullRequestDraft } from '../src/workflow/publishRun.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { createRunState, type RunState } from '../src/workflow/state.ts';
@@ -288,5 +291,92 @@ describe('pull request drafts', () => {
   it('reads the number out of the URL gh reports', () => {
     assert.equal(pullRequestNumber('https://github.com/acme/widgets/pull/21'), 21);
     assert.equal(pullRequestNumber('https://github.com/acme/widgets'), null);
+  });
+});
+
+/**
+ * The auto-merge calls, against a fake `gh` that records its argv. What matters
+ * is the contract: which command each function runs, and what each answer — or
+ * refusal — is turned into.
+ */
+describe('auto-merge through gh', () => {
+  const dirs: string[] = [];
+
+  after(async () => {
+    for (const dir of dirs) await rm(dir, { recursive: true, force: true });
+  });
+
+  /** A fake `gh`: writes its argv to `argv.txt`, prints `stdout`, exits `code`. */
+  async function fakeGh(options: { stdout?: string; stderr?: string; code?: number } = {}): Promise<{
+    binary: string;
+    cwd: string;
+    argv: () => Promise<string>;
+  }> {
+    const dir = await mkdtemp(join(tmpdir(), 'relay-fake-gh-'));
+    dirs.push(dir);
+    const binary = join(dir, 'gh');
+    const argvFile = join(dir, 'argv.txt');
+    await writeFile(
+      binary,
+      [
+        '#!/bin/sh',
+        `printf '%s\\n' "$@" > "${argvFile}"`,
+        ...(options.stdout === undefined ? [] : [`printf '%s\\n' "${options.stdout}"`]),
+        ...(options.stderr === undefined ? [] : [`printf '%s\\n' "${options.stderr}" >&2`]),
+        `exit ${options.code ?? 0}`,
+        '',
+      ].join('\n'),
+    );
+    await chmod(binary, 0o755);
+    return {
+      binary,
+      cwd: dir,
+      argv: async () => (await readFile(argvFile, 'utf8')).trim().split('\n').join(' '),
+    };
+  }
+
+  it('reads availability from the repository settings, not by trying', async () => {
+    const gh = await fakeGh({ stdout: 'true' });
+    assert.equal(await autoMergeAllowed('acme/widgets', { cwd: gh.cwd, binary: gh.binary }), true);
+    assert.equal(
+      await gh.argv(),
+      'repo view acme/widgets --json autoMergeAllowed --jq .autoMergeAllowed',
+    );
+
+    const disabled = await fakeGh({ stdout: 'false' });
+    assert.equal(await autoMergeAllowed(undefined, { cwd: disabled.cwd, binary: disabled.binary }), false);
+    assert.equal(await disabled.argv(), 'repo view --json autoMergeAllowed --jq .autoMergeAllowed');
+  });
+
+  it('reads any failure to answer as "not available"', async () => {
+    const broken = await fakeGh({ stderr: 'unknown JSON field', code: 1 });
+    assert.equal(await autoMergeAllowed('acme/widgets', { cwd: broken.cwd, binary: broken.binary }), false);
+
+    // No gh at all is the same answer, not an error.
+    assert.equal(
+      await autoMergeAllowed('acme/widgets', { cwd: '/tmp', binary: '/nonexistent/gh' }),
+      false,
+    );
+  });
+
+  it('arms --auto with the configured method and merges nothing itself', async () => {
+    const gh = await fakeGh();
+    await enableAutoMerge('https://github.com/acme/widgets/pull/21', 'squash', {
+      cwd: gh.cwd,
+      binary: gh.binary,
+    });
+    assert.equal(await gh.argv(), 'pr merge https://github.com/acme/widgets/pull/21 --auto --squash');
+  });
+
+  it('surfaces a refusal with the pull request still open and named', async () => {
+    const gh = await fakeGh({ stderr: 'Pull request auto merge is not allowed for this repository', code: 1 });
+    await assert.rejects(
+      enableAutoMerge('https://github.com/acme/widgets/pull/21', 'merge', { cwd: gh.cwd, binary: gh.binary }),
+      (error: unknown) =>
+        error instanceof RelayError &&
+        error.code === 'AUTO_MERGE_FAILED' &&
+        /auto merge is not allowed/i.test(error.message) &&
+        /pull\/21/.test(error.hint ?? ''),
+    );
   });
 });

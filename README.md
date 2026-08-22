@@ -101,7 +101,18 @@ Tune against that, not against this list.
 
 **Relay never calls a model API.** It has no API keys, reads no credentials, and never sees a token. It launches the official CLIs you have already authenticated (`claude`, `codex`, `gh`) as child processes and lets each one own its own auth.
 
-**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/` and one row in `AGENT_REGISTRY` (`src/agents/index.ts`) — config validation, `relay doctor`, `relay init`, `relay start` and the `--planner` / `--implementer` flags all read that array, so none of them need touching. Each row also declares how that vendor is installed and how it is signed in, which is all onboarding needs to know to delegate.
+**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/`, one row in `AGENT_REGISTRY` (`src/agents/index.ts`), and one fixture set for the conformance suite — config validation, `relay doctor`, `relay init`, `relay start` and the `--planner` / `--implementer` flags all read that array, so none of them need touching. Each row also declares how that vendor is installed and how it is signed in, which is all onboarding needs to know to delegate. What a harness owes — event order, resume semantics, stdin-only prompts, failure shape, read-only enforcement, retry classification — is written as prose above the interface and enforced by a conformance suite (`test/helpers/conformance.ts`) that replays recorded stream fixtures against every registered harness, so a new harness is done when the suite passes.
+
+**A CLI Relay has not packaged can be added in config.** `.relay/config.json` takes a `harnesses` block — an argv, `promptOn: "stdin"`, a `jsonl` stream, a `$.field` mapping, and optional `resume` / `readOnly` flag templates with `{sessionId}` as the only substitution. No shell, no interpolation into command strings, no eval. A config harness appears in `relay doctor` and `relay init` and is assignable to roles like a shipped CLI, with one rule: a harness without `readOnly` flags is usable for implementation and refused for `planReviewer` and `codeReviewer`, because a reviewer that can edit the code it reviews breaks the guarantee reviews rest on.
+
+```json
+{ "harnesses": { "mytool": {
+  "command": "mytool", "args": ["run", "--json"], "promptOn": "stdin",
+  "stream": "jsonl", "map": { "text": "$.message", "usage": "$.usage", "sessionId": "$.session" },
+  "resume": ["--session", "{sessionId}"],
+  "readOnly": ["--sandbox", "read-only"]
+} } }
+```
 
 **Issue trackers use the same seam.** `IssueProvider` (`src/github/types.ts`) is implemented today only by `gh`, and `ISSUE_PROVIDER_REGISTRY` (`src/issues/registry.ts`) is where a second tracker plugs in: one implementation plus one row, carrying its own install command and its own login command. `relay start` asks where issues live by reading that array rather than by naming GitHub.
 
@@ -174,16 +185,17 @@ README — not a defended one.
 
 ## Safety
 
-1. Agents only ever run with the worktree as their working directory. Codex gets a real OS sandbox (`--sandbox read-only` / `workspace-write`); Claude gets a tool deny list.
-2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role. Publishing is the delivery phase's job, under a policy you set — never something a model can decide to do mid-turn.
+1. Agents only ever run with the worktree as their working directory, and read-only turns are enforced per harness — differently, and the difference is stated rather than implied. **Codex**: the CLI's own OS sandbox (`--sandbox read-only` / `workspace-write`); Relay does not wrap it again, because nesting a second sandbox inside it fails. **Claude**: the CLI only offers a tool deny list, so Relay wraps every read-only Claude turn in an OS sandbox of its own — `sandbox-exec` on macOS, bubblewrap (`bwrap`) on Linux — that denies all writes outside the CLI's own state and temp directories, with the deny list kept as a second layer. Where the platform offers no sandbox, the deny list is the only enforcement, the turn says so in its event stream, and `relay doctor` reports the enforcement mechanism per harness so you know which promise you are getting.
+2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role — asserted by a test against the argv each harness actually builds, parameterized over the harness registry so a newly added CLI cannot ship without proving how it denies them. Publishing is the delivery phase's job, under a policy you set — never something a model can decide to do mid-turn.
 3. Publishing is off by default. Push, pull request creation, and merge require their own explicit flag/config opt-in or a TTY confirmation that defaults to no. These commands remain forbidden to every agent; only Relay's delivery code can execute them. Merge additionally requires passing tests, resolved blocking findings, an approved reviewed plan, an unprotected base branch, and a pull request created by this run. Every skipped step is recorded with its reason.
-4. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
-5. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
-6. No shell, anywhere. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax.
-7. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
-8. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
-9. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
-10. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`.
+4. Nothing leaves the machine unscanned. Between commit and push, delivery runs the change through a secret scan: the high-signal credential patterns Relay already redacts logs with, an entropy heuristic for keys with no recognizable prefix, and filenames that should never be committed (`.env`, `id_rsa`, `*.pem`, credential JSON). A hit stops delivery at `branch` — committed locally, published nowhere — and reports the rule, the file and the line, never the secret itself. `--allow-secret <path>` is the deliberate one-off override; `.relay/secretsignore` is the repeatable one. A scan that cannot run blocks the same way.
+5. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
+6. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
+7. No shell, anywhere. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax.
+8. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
+9. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
+10. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
+11. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`.
 
 ## Commands
 
@@ -210,7 +222,7 @@ Every command above except `--update` takes `--json`, and exits with a code from
 a documented table. Both are below, under [Machine-readable
 output](#machine-readable-output) and [Exit codes](#exit-codes).
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--review <level>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, and `--tuff`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--review <level>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, `--allow-secret <path>`, and `--tuff`.
 
 The four worth typing by hand:
 
