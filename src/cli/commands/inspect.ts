@@ -12,7 +12,7 @@ import { transition, type RunState } from '../../workflow/state.ts';
 import { pidAlive } from '../../workflow/admission.ts';
 import { mergeUnanswered } from '../../workflow/delivery.ts';
 import { formatUsage } from '../../workflow/usage.ts';
-import { runLiveness } from '../../workflow/liveness.ts';
+import { canSignalStop, runLiveness } from '../../workflow/liveness.ts';
 import { replayEvents } from '../../workflow/replay.ts';
 import { rendererFor } from './run.ts';
 import { createCliContext } from '../context.ts';
@@ -410,7 +410,7 @@ export async function stopCommand(runRef: string, options: { json?: boolean } = 
   if (!json) out(`Cancellation requested for ${state.runId}.`);
 
   let signalled = false;
-  if (state.pid !== undefined) {
+  if (state.pid !== undefined && canSignalStop()) {
     try {
       // SIGINT so the owning process runs the same clean shutdown as Ctrl-C.
       process.kill(state.pid, 'SIGINT');
@@ -419,6 +419,9 @@ export async function stopCommand(runRef: string, options: { json?: boolean } = 
     } catch {
       if (!json) hint('The run process is no longer alive; the cancellation flag has been recorded.', '');
     }
+  } else if (state.pid !== undefined && !json) {
+    // Windows: the flag above is the whole mechanism. See `canSignalStop`.
+    hint('The run stops at its next phase boundary; Windows has no signal that means anything gentler.', '');
   }
 
   if (json) {

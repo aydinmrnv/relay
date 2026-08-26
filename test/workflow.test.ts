@@ -13,7 +13,7 @@ import {
 import { createRunState, transition, validateRunState, providerFor, recordAgentSession } from '../src/workflow/state.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { RelayError } from '../src/util/errors.ts';
-import { runLiveness } from '../src/workflow/liveness.ts';
+import { canSignalStop, runLiveness } from '../src/workflow/liveness.ts';
 import { replayEvents } from '../src/workflow/replay.ts';
 import { RecordingObserver } from '../src/workflow/observer.ts';
 
@@ -38,6 +38,16 @@ describe('phase machine', () => {
     assert.equal(runLiveness(state), 'stale');
     state.phase = 'COMPLETE';
     assert.equal(runLiveness(state), 'terminal');
+  });
+
+  // `relay stop` signals SIGINT so the run winds itself down. On Windows every
+  // signal is a hard kill, which would leave state claiming a phase is still in
+  // flight — so nothing is signalled there, and the cancellation flag stands
+  // alone. Getting this backwards is silent: the stop appears to work.
+  it('only signals a stop on platforms where a signal means wind down', () => {
+    assert.equal(canSignalStop('darwin'), true);
+    assert.equal(canSignalStop('linux'), true);
+    assert.equal(canSignalStop('win32'), false);
   });
 
   it('replays phases and structured agent events through an observer', () => {

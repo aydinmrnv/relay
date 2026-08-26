@@ -1,10 +1,11 @@
 import { homedir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import { realpathSync } from 'node:fs';
-import { rm, mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 
 import type { IssueIdentity } from '../issues/identity.ts';
 import { RelayError } from '../util/errors.ts';
+import { removeDirectory } from '../util/fs.ts';
 import { slugify } from '../util/text.ts';
 import { emptyTreeSha, git, resolveBaseRef, type RepositoryInfo } from './repository.ts';
 
@@ -339,7 +340,7 @@ export async function removeWorktree(
   // `git worktree remove` leaves the directory behind if it held untracked
   // files. Re-validate before touching the filesystem directly.
   if (await worktreeExists(safePath)) {
-    await rm(assertRemovableWorktreePath(safePath), { recursive: true, force: true });
+    await removeDirectory(assertRemovableWorktreePath(safePath));
   }
   await git(['worktree', 'prune'], { cwd: repoRoot });
 }

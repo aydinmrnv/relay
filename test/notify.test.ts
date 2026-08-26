@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { buildWebhookPayload } from '../src/notify/payload.ts';
 import { notifyRun } from '../src/notify/index.ts';
 import { completionArgs } from '../src/notify/command.ts';
+import { notifySystem } from '../src/notify/system.ts';
 import { createRunState, transition } from '../src/workflow/state.ts';
 import { RecordingObserver } from '../src/workflow/observer.ts';
 import { buildIssueComment, RUN_MARKER } from '../src/workflow/issueComment.ts';
@@ -65,5 +66,59 @@ describe('issue result comment', () => {
     assert.match(body, /\+4\/-1/);
     assert.match(body, /passed/);
     assert.ok(body.endsWith(RUN_MARKER(value.runId)));
+  });
+});
+
+describe('desktop notification', () => {
+  function recorder(available: readonly string[]) {
+    const calls: Array<{ command: string; args: readonly string[]; env?: Record<string, string | undefined> }> = [];
+    return {
+      calls,
+      resolve: async (name: string) => (available.includes(name) ? `/resolved/${name}` : null),
+      run: async (command: string, args: readonly string[], options: { env?: Record<string, string | undefined> } = {}) => {
+        calls.push({ command, args, ...(options.env === undefined ? {} : { env: options.env }) });
+        return { command, args, cwd: '/', exitCode: 0, signal: null, stdout: '', stderr: '', durationMs: 1, timedOut: false, aborted: false, ok: true };
+      },
+    };
+  }
+
+  it('raises a notification on Windows instead of reporting the platform unsupported', async () => {
+    const fake = recorder(['powershell']);
+    const detail = await notifySystem('Run relay-1 complete', { platform: 'win32', resolve: fake.resolve as never, run: fake.run as never });
+    assert.equal(detail, 'powershell');
+    assert.equal(fake.calls.length, 1);
+    assert.equal(fake.calls[0]!.command, '/resolved/powershell');
+  });
+
+  // The notification body is the one part of that command line Relay did not
+  // write, so it never becomes part of it: PowerShell reads it from the
+  // environment, where a `;` or a `$(...)` is text and stays text.
+  it('passes the body through the environment, never through the script', async () => {
+    const fake = recorder(['powershell']);
+    const body = 'Run $(Get-Process); rm -rf / complete';
+    await notifySystem(body, { platform: 'win32', resolve: fake.resolve as never, run: fake.run as never });
+    const call = fake.calls[0]!;
+    assert.equal(call.env?.['RELAY_NOTIFY_BODY'], body);
+    assert.ok(!call.args.some((arg) => arg.includes(body)), 'the body must not appear in argv');
+    assert.ok(call.args.some((arg) => arg.includes('$env:RELAY_NOTIFY_BODY')), 'the script must read it from the environment');
+    assert.ok(call.args.includes('-NoProfile'), 'a user profile must not be able to redefine the script');
+  });
+
+  it('falls back to pwsh, and reports the notifier missing when neither is installed', async () => {
+    const withPwsh = recorder(['pwsh']);
+    assert.equal(await notifySystem('done', { platform: 'win32', resolve: withPwsh.resolve as never, run: withPwsh.run as never }), 'pwsh');
+
+    const withNeither = recorder([]);
+    assert.equal(await notifySystem('done', { platform: 'win32', resolve: withNeither.resolve as never, run: withNeither.run as never }), 'notifier unavailable');
+    assert.equal(withNeither.calls.length, 0);
+  });
+
+  it('still uses each POSIX platform notifier', async () => {
+    const mac = recorder(['osascript']);
+    assert.equal(await notifySystem('done', { platform: 'darwin', resolve: mac.resolve as never, run: mac.run as never }), 'osascript');
+    const linux = recorder(['notify-send']);
+    assert.equal(await notifySystem('done', { platform: 'linux', resolve: linux.resolve as never, run: linux.run as never }), 'notify-send');
+    const other = recorder(['osascript']);
+    assert.equal(await notifySystem('done', { platform: 'aix', resolve: other.resolve as never, run: other.run as never }), 'unsupported platform');
   });
 });

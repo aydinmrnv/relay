@@ -6,6 +6,7 @@ import { RunStore, listRuns, resolveRun } from '../src/storage/runs.ts';
 import { mergeConfig, DEFAULT_CONFIG, loadConfig, writeConfig, AGENT_PROVIDERS, ROLES } from '../src/storage/config.ts';
 import { createRunState, transition } from '../src/workflow/state.ts';
 import { atomicWriteFile, readJsonFile } from '../src/storage/atomic.ts';
+import { isTransientReplaceError } from '../src/util/fs.ts';
 import { redact } from '../src/util/redact.ts';
 import { createRunId, isRunId } from '../src/util/ids.ts';
 import { RelayError } from '../src/util/errors.ts';
@@ -194,6 +195,21 @@ describe('atomic writes', () => {
     } finally {
       await repo.cleanup();
     }
+  });
+
+  // The replace at the end of every atomic write is the one step Windows can
+  // refuse: it cannot overwrite a file another process has open, which is any
+  // moment a `relay watch` is reading the state being written. Those refusals
+  // are transient there and permanent everywhere else.
+  it('retries a replace only for the Windows sharing violation', () => {
+    for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
+      assert.equal(isTransientReplaceError({ code }, 'win32'), true, code);
+      assert.equal(isTransientReplaceError({ code }, 'darwin'), false, code);
+      assert.equal(isTransientReplaceError({ code }, 'linux'), false, code);
+    }
+    assert.equal(isTransientReplaceError({ code: 'ENOENT' }, 'win32'), false);
+    assert.equal(isTransientReplaceError(new Error('no code at all'), 'win32'), false);
+    assert.equal(isTransientReplaceError(null, 'win32'), false);
   });
 
   it('returns undefined for missing or corrupt json', async () => {

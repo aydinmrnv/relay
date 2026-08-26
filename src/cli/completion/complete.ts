@@ -22,7 +22,25 @@ async function beforeDeadline<T>(promise: Promise<T>, signal: AbortSignal): Prom
   });
 }
 
-export async function completionCandidates(program: Command, words: readonly string[]): Promise<string[]> {
+/**
+ * Stands in for the word being typed when it is empty.
+ *
+ * Every shell tells `__complete` what is being completed by passing it as the
+ * last word, empty when the cursor is on a fresh one — `relay status ` asks for
+ * every run, `relay status la` asks for the ones starting `la`. Windows
+ * PowerShell drops empty arguments on their way to a native command, so that
+ * distinction does not survive the trip and `relay status ` would arrive
+ * looking like `relay status`, asking for runs named "status". The generated
+ * PowerShell script sends this instead of an empty word; nothing else does,
+ * and no real command line contains it.
+ */
+export const EMPTY_WORD = '--relay-empty-word';
+
+export async function completionCandidates(
+  program: Command,
+  rawWords: readonly string[],
+): Promise<string[]> {
+  const words = rawWords.map((word) => (word === EMPTY_WORD ? '' : word));
   const deadline = withDeadline();
   try {
     const commandToken = words[0] ?? '';

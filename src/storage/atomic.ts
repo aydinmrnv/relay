@@ -1,12 +1,17 @@
-import { mkdir, rename, writeFile, readFile, open } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, open } from 'node:fs/promises';
 import { dirname, join, basename } from 'node:path';
 
+import { replaceFile } from '../util/fs.ts';
 import { shortId } from '../util/ids.ts';
 
 /**
  * Writes via a temporary file in the same directory, then renames. Rename is
  * atomic within a filesystem, so an interrupted Relay leaves either the old
  * state or the new one — never a half-written `state.json`.
+ *
+ * The replace is where Windows differs: it cannot overwrite a file another
+ * process has open, and `state.json` is read by every `relay watch` and
+ * `relay status` while the engine writes it. `replaceFile` waits that out.
  */
 export async function atomicWriteFile(path: string, contents: string): Promise<void> {
   const dir = dirname(path);
@@ -22,7 +27,7 @@ export async function atomicWriteFile(path: string, contents: string): Promise<v
   } finally {
     await handle.close();
   }
-  await rename(tempPath, path);
+  await replaceFile(tempPath, path);
 }
 
 export async function atomicWriteJson(path: string, value: unknown): Promise<void> {
