@@ -64,6 +64,21 @@ export function isDeliveryPolicy(value: unknown): value is DeliveryPolicy {
   return typeof value === 'string' && (DELIVERY_POLICIES as readonly string[]).includes(value);
 }
 
+/**
+ * How far a run nobody asked for may carry its own work.
+ *
+ * It is `DELIVERY_POLICIES` with `merge` removed, and the removal is the point:
+ * an autonomous merge is the one thing this project exists not to do, so the
+ * ceiling on unattended delivery is a type that cannot spell it rather than a
+ * comparison somebody has to remember to write.
+ */
+export const UNATTENDED_POLICIES = ['none', 'branch', 'push', 'pr'] as const;
+export type UnattendedPolicy = (typeof UNATTENDED_POLICIES)[number];
+
+export function isUnattendedPolicy(value: unknown): value is UnattendedPolicy {
+  return typeof value === 'string' && (UNATTENDED_POLICIES as readonly string[]).includes(value);
+}
+
 export { MERGE_METHODS, type MergeMethod };
 
 function isMergeMethod(value: unknown): value is MergeMethod {
@@ -158,6 +173,54 @@ export interface RelayConfig {
      * nothing a machine reads back, which is checked in `src/util/typos.ts`.
      */
     typos: boolean;
+    /**
+     * The label that starts a run with nobody present.
+     *
+     * Read by `relay serve` and by the GitHub Action, and by nothing else: an
+     * attended `relay run` never consults it. It is deliberately a name with a
+     * colon in it — a label nobody applies by reflex — because applying it is
+     * the whole authorisation gesture, and the guardrails in `unattended` are
+     * what decide whether the gesture counts.
+     */
+    triggerLabel: string;
+  };
+  /**
+   * Runs that begin without a person: `relay serve` watching for the trigger
+   * label, and the GitHub Action doing the same thing on `issues.labeled`.
+   *
+   * Every key here is a guardrail, and none of them has a permissive default. A
+   * public repository where any drive-by can start a paid agent run by typing a
+   * label is a funded denial-of-wallet attack, so the shipped configuration
+   * cannot start anything at all: the switch is off, the allowlist is empty and
+   * both budgets are unset. `relay serve` refuses to run until somebody has
+   * answered all three deliberately.
+   */
+  unattended: {
+    /**
+     * The master switch, and one third of the kill switch. Re-read on every
+     * poll rather than captured at startup, so flipping it to `false` stops a
+     * running server from starting anything more.
+     */
+    enabled: boolean;
+    /** Logins that may start a run by labelling. Empty means nobody may. */
+    authors: string[];
+    /** `org/team` slugs whose members may. Empty means no team does. */
+    teams: string[];
+    /**
+     * Dollars unattended runs may report in one UTC day, across the whole
+     * repository. Reached means stop starting runs and say so — never queue
+     * them for tomorrow, which is the same spend with a delay in front of it.
+     */
+    maxDailyCostUsd: number | null;
+    /** Dollars any one unattended run may report before it stops itself. */
+    maxRunCostUsd: number | null;
+    /** Seconds between polls of the tracker. */
+    pollSeconds: number;
+    /**
+     * How far an unattended run delivers. Capped at `pr` by its type: nothing
+     * merges without a person, whatever `workflow.deliver` says.
+     */
+    deliver: UnattendedPolicy;
   };
   github: {
     autoPush: boolean;
@@ -236,6 +299,16 @@ export const DEFAULT_CONFIG: RelayConfig = {
     primeReviewers: true,
     concurrentTests: true,
     typos: false,
+    triggerLabel: 'relay:go',
+  },
+  unattended: {
+    enabled: false,
+    authors: [],
+    teams: [],
+    maxDailyCostUsd: null,
+    maxRunCostUsd: null,
+    pollSeconds: 60,
+    deliver: 'pr',
   },
   github: {
     autoPush: false,
@@ -527,6 +600,65 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
       if (workflow[key] === undefined) continue;
       config.workflow[key] = readMoney(workflow[key], `workflow.${key}`);
     }
+    if (workflow['triggerLabel'] !== undefined) {
+      const label = workflow['triggerLabel'];
+      if (typeof label !== 'string') {
+        throw new RelayError('config.workflow.triggerLabel must be a string.', { code: 'BAD_CONFIG' });
+      }
+      // Trimmed rather than rejected for whitespace: a label pasted out of the
+      // GitHub UI often carries some, and `" relay:go "` names the same label.
+      // Empty is legitimate and means "no label starts anything here".
+      config.workflow.triggerLabel = label.trim();
+    }
+  }
+
+  const unattended = raw['unattended'];
+  if (unattended !== undefined) {
+    if (!isRecord(unattended)) throw new RelayError('config.unattended must be an object.', { code: 'BAD_CONFIG' });
+    if (unattended['enabled'] !== undefined) {
+      if (typeof unattended['enabled'] !== 'boolean') {
+        throw new RelayError('config.unattended.enabled must be a boolean.', { code: 'BAD_CONFIG' });
+      }
+      config.unattended.enabled = unattended['enabled'];
+    }
+    if (unattended['authors'] !== undefined) {
+      config.unattended.authors = readLogins(unattended['authors'], 'unattended.authors');
+    }
+    if (unattended['teams'] !== undefined) {
+      const teams = readLogins(unattended['teams'], 'unattended.teams');
+      for (const team of teams) {
+        // `org/team` and nothing else: a bare name has no organisation to ask
+        // about membership of, and guessing one would widen an allowlist.
+        if (!/^[^/\s]+\/[^/\s]+$/.test(team)) {
+          throw new RelayError(
+            `config.unattended.teams: "${team}" must be an "org/team" slug, e.g. "acme/reviewers".`,
+            { code: 'BAD_CONFIG' },
+          );
+        }
+      }
+      config.unattended.teams = teams;
+    }
+    for (const key of ['maxDailyCostUsd', 'maxRunCostUsd'] as const) {
+      if (unattended[key] === undefined) continue;
+      config.unattended[key] = readMoney(unattended[key], `unattended.${key}`);
+    }
+    config.unattended.pollSeconds = readBoundedInt(
+      unattended['pollSeconds'], config.unattended.pollSeconds, 'unattended.pollSeconds', { min: 5, max: 3600 },
+    );
+    if (unattended['deliver'] !== undefined) {
+      if (!isUnattendedPolicy(unattended['deliver'])) {
+        // Naming `merge` here is the mistake worth its own sentence: it is not a
+        // typo, it is somebody asking for the thing the ceiling exists to refuse.
+        throw new RelayError(
+          isDeliveryPolicy(unattended['deliver'])
+            ? 'config.unattended.deliver cannot be "merge": a run nobody asked for never merges. ' +
+              `Valid values: ${UNATTENDED_POLICIES.join(' | ')}.`
+            : `config.unattended.deliver must be one of ${UNATTENDED_POLICIES.join(' | ')}.`,
+          { code: 'BAD_CONFIG' },
+        );
+      }
+      config.unattended.deliver = unattended['deliver'];
+    }
   }
 
   const retention = raw['retention'];
@@ -677,6 +809,14 @@ function readMoney(value: unknown, label: string): number | null {
     });
   }
   return value;
+}
+
+/** A list of non-empty, whitespace-free names: logins, or `org/team` slugs. */
+function readLogins(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || entry.trim().length === 0)) {
+    throw new RelayError(`config.${label} must be an array of non-empty strings.`, { code: 'BAD_CONFIG' });
+  }
+  return (value as string[]).map((entry) => entry.trim());
 }
 
 function readBoundedInt(

@@ -7,6 +7,7 @@ import { doctorCommand } from './commands/doctor.ts';
 import { collect, evalCommand } from './commands/eval.ts';
 import { EVAL_COMPARISON_NAMES, EVAL_CONFIG_NAMES } from '../eval/configs.ts';
 import { initCommand } from './commands/init.ts';
+import { serveCommand } from './commands/serve.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
 import { resumeCommand, runDetachedChild, type RunOptions } from './commands/run.ts';
@@ -80,6 +81,7 @@ export function defaultHelp(command: Command, width?: number): string {
 const HELP_GROUPS = [
   ['Setup', ['start', 'init', 'doctor']],
   ['Run', ['run', 'resume', 'stop']],
+  ['Unattended', ['serve']],
   ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats']],
   ['Deliver', ['deliver']],
   ['Measure', ['eval']],
@@ -226,6 +228,23 @@ export function buildProgram(version: string): Command {
   // `__` marks a command Relay spawns for itself: hidden from `--help`, and
   // skipped by the help, man page and completion generators alike.
   program.command('__run-detached <run-id>', { hidden: true }).action(wrap(runDetachedChild));
+
+  // Grouped apart from `run` in the help, because it is a different promise:
+  // everything else here starts when a person types it, and this one starts
+  // when somebody else labels an issue. The guardrails that makes acceptable
+  // are config, not flags — see `unattended` in .relay/config.json.
+  program
+    .command('serve')
+    .description('watch the tracker and start a run per labelled issue, inside a budget and an allowlist')
+    .option('--once', 'make one pass over the tracker and exit, instead of polling')
+    .option('--issue <ref>', 'consider only this issue (implies --once) — what the GitHub Action passes')
+    .option('--label <name>', 'trigger label to watch for, overriding workflow.triggerLabel')
+    .option('-i, --interval <seconds>', 'seconds between polls, overriding unattended.pollSeconds')
+    .option('--limit <n>', 'issues to look at per pass')
+    .option('--dry-run', 'decide everything, start nothing, and move no labels')
+    .option('-v, --verbose', 'log every pass, not only what changed')
+    .option('--json', `${JSON_FLAG} — one object per line as it decides, then a summary`)
+    .action(wrap(serveCommand));
 
   program
     .command('clean')

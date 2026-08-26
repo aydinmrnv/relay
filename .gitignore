@@ -6,6 +6,12 @@ dist/
 .relay/runs/
 .relay/onboarding.json
 
+# What `relay serve` has already picked up, and the three ways to stop it.
+# All of it describes one machine's server, never the repository.
+.relay/unattended.json
+.relay/STOP
+.relay/*.lock
+
 .DS_Store
 
 # Eval results are written here by default: local measurements, not the project.

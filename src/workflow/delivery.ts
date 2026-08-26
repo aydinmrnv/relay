@@ -192,6 +192,14 @@ function gateFor(
       if (caps.baseMissing === true) return `${base} does not exist yet — ${branch} is this repository's first commit`;
       return undefined;
     case 'merge': {
+      // The last gate on the one thing this project exists not to do. The
+      // policy an unattended run is given already caps at `pr`, so reaching
+      // here means something re-raised it afterwards — `relay deliver --to
+      // merge` on the run, a hand-edited state file — and the answer is still
+      // no. A run nobody asked for does not move a branch other people pull.
+      if (state.trigger !== undefined) {
+        return `this run started unattended (${state.trigger.label}), and unattended runs never merge`;
+      }
       // A local merge never leaves the machine, but the base branch it lands on
       // will: a flagged change is stopped here too, for the same reason.
       const secrets = secretGate(caps.secrets);
@@ -321,9 +329,18 @@ export function reachedPolicy(state: RunState): DeliveryPolicy {
  * whose tests failed, or that still carries blocking findings nobody answered,
  * is still worth opening — it is the evidence of the run — but it must not
  * arrive looking ready to merge.
+ *
+ * A run that started from a label is a draft whatever its evidence says. Not
+ * because the work is worse, but because nobody has looked at it: the whole
+ * shape of unattended Relay is that a person still says yes, and a pull request
+ * marked ready to merge is a pull request claiming somebody already did.
  */
 export function draftReasons(state: RunState): string[] {
   const reasons: string[] = [];
+
+  if (state.trigger !== undefined) {
+    reasons.push(`this run started from the ${state.trigger.label} label, so no person has seen it yet`);
+  }
 
   if (state.tests?.discovered === true && !state.tests.passed) {
     reasons.push(state.tests.timedOut ? 'the tests timed out' : 'the tests failed');
