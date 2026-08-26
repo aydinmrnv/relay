@@ -18,6 +18,8 @@ jobs:
     steps:
       # Relay's tests write files with \n and diff them byte-for-byte; a
       # CRLF-rewriting checkout would make every diff lie on Windows.
+      # `.gitattributes` pins this for everyone who clones; the runner is told
+      # too, so a checkout is right before any repository file is consulted.
       - name: Keep line endings as committed
         run: git config --global core.autocrlf false
 

@@ -7,7 +7,7 @@
  * harness that measured a simplified pipeline would be measuring the wrong
  * thing precisely where it matters.
  */
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 
 import type { AgentHarness } from '../agents/types.ts';
 import { assertRemovableWorktreePath, removeWorktree } from '../git/worktree.ts';
@@ -15,6 +15,7 @@ import { RunStore } from '../storage/runs.ts';
 import type { RelayConfig } from '../storage/config.ts';
 import { createRunId, shortId } from '../util/ids.ts';
 import { errorMessage } from '../util/errors.ts';
+import { removeDirectory } from '../util/fs.ts';
 import type { EngineContext } from '../workflow/context.ts';
 import { WorkflowEngine } from '../workflow/engine.ts';
 import type { RunObserver } from '../workflow/observer.ts';
@@ -260,7 +261,7 @@ export async function runEvalTask(task: EvalTask, deps: EvalRunnerDeps): Promise
         try {
           // Same guard `removeWorktree` uses: inside the workspaces root, at
           // least three levels deep, or nothing is removed at all.
-          await rm(assertRemovableWorktreePath(state.workspace.path), { recursive: true, force: true });
+          await removeDirectory(assertRemovableWorktreePath(state.workspace.path));
         } catch {
           deps.observer.warn(`${label}: could not remove the worktree at ${state.workspace.path}.`);
         }

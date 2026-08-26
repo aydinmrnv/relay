@@ -1,0 +1,12 @@
+# Relay writes files with \n and compares diffs byte-for-byte, so a checkout
+# that rewrote line endings would make its own tests fail — and, worse, make a
+# run's diff disagree with git. Windows clones default to core.autocrlf=true,
+# which is exactly that rewrite; this pins every text file to LF in the working
+# tree on every platform, so no contributor has to know to turn it off.
+* text=auto eol=lf
+
+# Generated and binary-ish artifacts git should not try to reason about.
+*.patch -text
+*.png binary
+*.gif binary
+*.ico binary

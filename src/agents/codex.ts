@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runProcess, resolveExecutable } from '../process/runner.ts';
 import { parseJsonLine } from '../process/lines.ts';
+import { removeDirectory } from '../util/fs.ts';
 import { oneLine } from '../util/text.ts';
 import type {
   AgentCapability,
@@ -431,7 +432,9 @@ export class CodexHarness implements AgentHarness {
       options.signal?.removeEventListener('abort', onAbort);
       this.active.delete(handle);
       if (sessionId !== undefined) this.active.delete(sessionId);
-      await rm(scratch, { recursive: true, force: true });
+      // The CLI has only just exited; on Windows its handles on this directory
+      // may not have closed yet, which `removeDirectory` waits out.
+      await removeDirectory(scratch);
     }
   }
 }

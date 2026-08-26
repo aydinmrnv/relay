@@ -185,13 +185,13 @@ README — not a defended one.
 
 ## Safety
 
-1. Agents only ever run with the worktree as their working directory, and read-only turns are enforced per harness — differently, and the difference is stated rather than implied. **Codex**: the CLI's own OS sandbox (`--sandbox read-only` / `workspace-write`); Relay does not wrap it again, because nesting a second sandbox inside it fails. **Claude**: the CLI only offers a tool deny list, so Relay wraps every read-only Claude turn in an OS sandbox of its own — `sandbox-exec` on macOS, bubblewrap (`bwrap`) on Linux — that denies all writes outside the CLI's own state and temp directories, with the deny list kept as a second layer. Where the platform offers no sandbox, the deny list is the only enforcement, the turn says so in its event stream, and `relay doctor` reports the enforcement mechanism per harness so you know which promise you are getting.
+1. Agents only ever run with the worktree as their working directory, and read-only turns are enforced per harness — differently, and the difference is stated rather than implied. **Codex**: the CLI's own OS sandbox (`--sandbox read-only` / `workspace-write`); Relay does not wrap it again, because nesting a second sandbox inside it fails. **Claude**: the CLI only offers a tool deny list, so Relay wraps every read-only Claude turn in an OS sandbox of its own — `sandbox-exec` on macOS, bubblewrap (`bwrap`) on Linux — that denies all writes outside the CLI's own state and temp directories, with the deny list kept as a second layer. Where the platform offers no sandbox — Windows, today — the deny list is the only enforcement, the turn says so in its event stream, and `relay doctor` reports the enforcement mechanism per harness so you know which promise you are getting.
 2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role — asserted by a test against the argv each harness actually builds, parameterized over the harness registry so a newly added CLI cannot ship without proving how it denies them. Publishing is the delivery phase's job, under a policy you set — never something a model can decide to do mid-turn.
 3. Publishing is off by default. Push, pull request creation, and merge require their own explicit flag/config opt-in or a TTY confirmation that defaults to no. These commands remain forbidden to every agent; only Relay's delivery code can execute them. Merge additionally requires passing tests, resolved blocking findings, an approved reviewed plan, an unprotected base branch, and a pull request created by this run. Every skipped step is recorded with its reason.
 4. Nothing leaves the machine unscanned. Between commit and push, delivery runs the change through a secret scan: the high-signal credential patterns Relay already redacts logs with, an entropy heuristic for keys with no recognizable prefix, and filenames that should never be committed (`.env`, `id_rsa`, `*.pem`, credential JSON). A hit stops delivery at `branch` — committed locally, published nowhere — and reports the rule, the file and the line, never the secret itself. `--allow-secret <path>` is the deliberate one-off override; `.relay/secretsignore` is the repeatable one. A scan that cannot run blocks the same way.
 5. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
 6. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
-7. No shell, anywhere. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax.
+7. No shell, anywhere — including Windows, where it costs the most. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax. `cmd.exe` is never an option there: Relay resolves `PATH`/`PATHEXT` itself and reads an npm `.cmd` shim to spawn the node script inside it directly, and refuses a batch file it cannot see through rather than handing it to a shell. One thing on the whole platform needs an interpreter and gets one — the opt-in Windows desktop notification, whose script is a constant and whose only variable, the message, travels in an environment variable rather than in the script.
 8. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
 9. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
 10. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
@@ -887,6 +887,80 @@ relabels nor suppresses it. Users with shell-level tracking may add
 
 Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed and already authenticated. Run `relay doctor` to check. Starting from a repository with no commits additionally needs git ≥ 2.42, for `git worktree add --orphan`.
 
+macOS, Linux and Windows 10/11 are all supported, and CI runs the whole suite on
+all three. Windows needs a little more saying, which is the next section.
+
+## Windows
+
+```powershell
+winget install OpenJS.NodeJS.LTS Git.Git GitHub.cli
+npm install -g github:aydinmrnv/relay
+
+npm install -g @anthropic-ai/claude-code    # whichever agent CLIs you want
+npm install -g @openai/codex
+
+relay start
+```
+
+`relay start` takes it from there — it checks each of those, runs the vendor's
+own login command for anything not signed in, writes a config, and offers a
+first run. `relay doctor` re-checks the same things later.
+
+**No command runs through `cmd.exe`.** The no-shell rule is not relaxed on
+Windows, it is enforced harder: Relay resolves a command through `PATH` and
+`PATHEXT` itself, and where the npm-installed `claude` turns out to be a `.cmd`
+shim, it reads the shim to find the script inside and spawns *that* with node
+and an explicit argv. `cmd.exe` re-interprets `&`, `|` and `%VAR%` inside
+arguments, which is exactly how issue text or agent output would become a
+command. A batch file Relay cannot see through is refused rather than run.
+
+The single exception is the desktop notification, which is off by default and
+is the only thing on the platform that can raise one: it runs a fixed
+PowerShell script under `-NoProfile`. The notification text is conspicuously
+not part of that script — it arrives in an environment variable, which
+PowerShell reads as a string and never parses, so a run whose title contains
+`$(...)` produces a notification that looks odd and does nothing else.
+
+**Read-only turns are not OS-sandboxed here.** macOS has `sandbox-exec` and
+Linux has bubblewrap; Windows has no equivalent Relay can wrap around a child
+process, so a read-only Claude turn falls back to the CLI's own tool deny list
+as its only enforcement. That is a weaker promise than the same run makes
+elsewhere, so it is stated rather than hidden: the turn emits a notice, and
+`relay doctor` reports it per harness. Codex is unaffected — it brings its own
+sandbox on every platform.
+
+**`relay stop` stops at the next phase boundary.** On POSIX it also sends
+SIGINT, which drops the agents in flight immediately. Windows has no signal
+that means anything gentler than "die", and killing a run mid-phase would
+strand its worktree and leave state claiming a phase is still running — so
+Relay does not send one. The cancellation is recorded and honoured at the next
+boundary, which is usually seconds and at worst one agent turn.
+
+**Long paths.** A run's worktree lives at
+`%USERPROFILE%\.relay\workspaces\<owner>\<repo>\<issue>-<id>`, and your
+repository's own deepest path is then nested under that. Windows' legacy 260
+character limit will refuse files well inside a normal project, so turn it off:
+
+```powershell
+git config --global core.longpaths true
+# and, once, as Administrator:
+New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+  -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
+```
+
+Set `RELAY_HOME` to somewhere shorter — `C:\r` — if you would rather not.
+
+**Use Windows Terminal.** The live run dashboard needs ANSI escape sequences,
+and a stock legacy console window handles neither those nor the glyphs Relay
+draws with. Relay detects this rather than corrupting the output: in a console
+that does not announce ANSI support, it prints plain, unstyled, ASCII-only
+lines. Windows Terminal, VS Code's terminal, ConEmu and the MSYS/Cygwin family
+all get the full display.
+
+**Shell completion** comes from `relay completion powershell` — see the section
+below. `man relay` has no Windows equivalent; `relay <command> --help` carries
+the same text.
+
 ## Updating
 
 ```bash
@@ -917,9 +991,16 @@ npm run build
 The test suite uses `FakeAgentHarness` (deterministic scripted responses) and real temporary git repositories, so workflows, review loops, round limits, cancellation and resume are all tested without a model in the loop. The overlapping work is tested for overlap rather than for its effects: the suite writes a marker as it starts, and the code review asserts the marker is already there.
 ## Shell completion and manual
 
-Generate completion definitions with `relay completion bash`, `relay completion zsh`, or
-`relay completion fish`; `relay completion --help` shows installation paths. The npm package
-also installs `relay(1)`, available with `man relay`.
+Generate completion definitions with `relay completion bash`, `relay completion zsh`,
+`relay completion fish`, or `relay completion powershell`; `relay completion --help` shows
+installation paths. Every one of them routes back through the same `relay __complete`
+dispatch, so branch names, run ids and option values stay live rather than being frozen
+into the generated script. The npm package also installs `relay(1)`, available with
+`man relay` — on Windows, `relay <command> --help` says the same thing.
+
+```powershell
+relay completion powershell >> $PROFILE
+```
 
 Relay observes `RELAY_HOME` for its data directory, `RELAY_ASCII` for an ASCII-only interface,
 and the standard `NO_COLOR` variable.

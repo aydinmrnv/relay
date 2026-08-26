@@ -496,8 +496,12 @@ async function startDetached(state: RunState): Promise<number> {
   await store.saveState(state);
   const entry = process.argv[1];
   if (entry === undefined) throw new RelayError('Cannot locate the Relay launcher.', { code: 'SPAWN_FAILED' });
+  // `windowsHide` is what makes detaching mean the same thing on both
+  // platforms: without it, `detached` on Windows means "in a console window of
+  // its own", which pops a blank window over whatever the user is doing and
+  // leaves it there for the length of the run.
   const child = spawn(process.execPath, [entry, '__run-detached', state.runId], {
-    cwd: state.repository.root, detached: true, stdio: 'ignore', env: process.env, shell: false,
+    cwd: state.repository.root, detached: true, stdio: 'ignore', env: process.env, shell: false, windowsHide: true,
   });
   try {
     await new Promise<void>((resolve, reject) => {

@@ -1,6 +1,14 @@
 import type { Command } from 'commander';
 
-export type CompletionShell = 'bash' | 'zsh' | 'fish';
+import { EMPTY_WORD } from './complete.ts';
+
+/**
+ * The shells `relay completion` can write a script for. PowerShell is here
+ * because on Windows none of the other three is the shell the user is in.
+ */
+export const COMPLETION_SHELLS = ['bash', 'zsh', 'fish', 'powershell'] as const;
+
+export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
 function commands(program: Command): string {
   return program.commands
@@ -32,9 +40,33 @@ _relay() {
 }
 compdef _relay relay
 `;
-  return `# fish completion for relay
+  if (shell === 'fish') return `# fish completion for relay
 complete -c relay -f
 complete -c relay -n 'not __fish_seen_subcommand_from ${names}' -a '${names}'
 complete -c relay -n '__fish_seen_subcommand_from ${names}' -a '(command relay __complete (commandline -opc | string escape)[2..] (commandline -ct | string escape))'
+`;
+
+  // PowerShell completes a native command through one script block. The words
+  // handed to `relay __complete` are the command line minus `relay` itself,
+  // ending with the word being typed — which `CommandElements` already carries
+  // when there is one, and which is `EMPTY_WORD` when the cursor is on a fresh
+  // word, because an empty argument would not survive the trip to a native
+  // command here. The filter is `StartsWith` rather than `-like`, which would
+  // read a `[` in a branch name as a wildcard.
+  return `# PowerShell completion for relay
+Register-ArgumentCompleter -Native -CommandName relay -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $words = @($commandAst.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.ToString() })
+    if (-not $wordToComplete) { $words += '${EMPTY_WORD}' }
+    if ($words.Count -le 1) {
+        $values = '${names}'.Split(' ')
+    } else {
+        $values = @(& relay __complete @words 2>$null)
+    }
+    $prefix = [string]$wordToComplete
+    $values | Where-Object { $_.StartsWith($prefix) } | ForEach-Object {
+        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+    }
+}
 `;
 }
