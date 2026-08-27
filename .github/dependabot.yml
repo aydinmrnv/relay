@@ -1,0 +1,33 @@
+# Dependency updates, proposed as pull requests.
+#
+# Two ecosystems, because this repository ships in two forms. `npm` covers what
+# `relay-orchestrator` installs; `github-actions` covers the actions this
+# repository's own workflows run, which is the supply chain nobody remembers
+# they have until an action they pinned to a moving tag changes underneath them.
+#
+# Everything arrives as a pull request against the protected default branch, so
+# a Dependabot update goes through the same review and the same CI as anybody
+# else's change. Nothing here can merge itself.
+
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      # One pull request for the routine bumps, so the review queue stays
+      # readable. Majors stay separate — those are the ones worth reading.
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, ci]

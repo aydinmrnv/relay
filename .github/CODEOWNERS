@@ -1,0 +1,29 @@
+# Who owns this repository, in the one place GitHub reads it.
+#
+# A public repository takes pull requests from strangers, which is the point.
+# What it must not take is a change that merges without the maintainer having
+# looked at it — and "the maintainer looked at it" is a rule GitHub will only
+# enforce if a CODEOWNERS entry says who the maintainer is.
+#
+# This file on its own enforces nothing. It becomes a guardrail when the
+# ruleset in .github/rulesets/main.json is active with `require_code_owner_review`
+# on, at which point every pull request against the default branch needs a
+# review from the owner named below before it can merge. See
+# .github/REPOSITORY-HARDENING.md for the settings that turn it on.
+#
+# The last matching pattern wins, so the catch-all comes first and anything
+# needing a narrower owner would come after it.
+
+*                       @aydinmrnv
+
+# The paths where a bad change is worst: CI runs with repository credentials,
+# the Action is what other people's workflows execute, and the guardrails in
+# .relay/ and src/unattended/ are the reason an unattended run is safe to
+# enable at all. Same owner today — listed separately so that stays true on
+# purpose rather than by accident if the catch-all is ever widened.
+/.github/               @aydinmrnv
+/.github/workflows/     @aydinmrnv
+/.relay/                @aydinmrnv
+/action.yml             @aydinmrnv
+/package.json           @aydinmrnv
+/src/unattended/        @aydinmrnv

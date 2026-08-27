@@ -38,8 +38,11 @@ branding:
 inputs:
   issue:
     description: >-
-      Issue to consider, as a number. Usually `${{ github.event.issue.number }}`
-      from an `issues.labeled` trigger.
+      Issue to consider, as a number. Usually the `github.event.issue.number`
+      of an `issues.labeled` trigger. Written without the expression braces on
+      purpose: a manifest's `inputs` are template-parsed when the Action loads,
+      the `github` context does not exist there, and an expression in a
+      description is therefore a syntax error that stops the whole file.
     required: true
   label:
     description: >-
