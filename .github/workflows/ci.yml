@@ -131,6 +131,24 @@ jobs:
           node "$GITHUB_WORKSPACE/bin/relay.mjs" serve --once --json | tee "$RUNNER_TEMP/second.jsonl"
           grep -q '"reason":"already started as ' "$RUNNER_TEMP/second.jsonl"
 
+          # Put the label back the way the run left it.
+          #
+          # This step is a probe: it re-labels #142 to prove a second pass
+          # starts nothing even so, and a refused pass correctly does not
+          # strip the label it refused. But the tracker is live state that
+          # later steps assert against — "the pipeline did what it promised"
+          # checks that the label came off before the run started, and reads
+          # the tracker to do it. A probe that leaves its mutation behind
+          # makes the step after it fail for something the run did right.
+          node -e '
+            const fs = require("node:fs");
+            const path = process.env.RELAY_FIXTURE_GH_STATE;
+            const state = JSON.parse(fs.readFileSync(path, "utf8"));
+            const issue = state.issues.find((issue) => issue.number === 142);
+            issue.labels = issue.labels.filter((label) => label !== "relay:go");
+            fs.writeFileSync(path, JSON.stringify(state, null, 2));
+          '
+
       - name: The pipeline did what it promised
         run: node scripts/unattended-fixture.mjs verify "$RUNNER_TEMP/fixture"
 

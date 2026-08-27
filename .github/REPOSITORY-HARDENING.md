@@ -31,6 +31,28 @@ what follows is to keep that true and to make it matter.
 **Settings → Rules → Rulesets → New ruleset → Import a ruleset**, once per file.
 Upload `.github/rulesets/main.json`, then `.github/rulesets/tags.json`.
 
+> **Do not import `main.json` until `main` is green.** It makes four CI jobs
+> *required*, and a required check that cannot pass is a repository in which
+> nothing can ever merge — including the pull request that would fix it.
+>
+> As of this commit, `main` is **red**, for two reasons found while writing
+> this file:
+>
+> - `unattended` — `action.yml` carried a `${{ … }}` expression in an input
+>   description, so the manifest failed to load and the published Action was
+>   unusable for everyone. **Fixed** in this branch, along with a step-ordering
+>   bug in `ci.yml` that the fix uncovered.
+> - `check (windows-latest)` — 377 of 1028 tests fail on Windows. Ubuntu and
+>   macOS pass. **Not fixed**, and not this branch's to fix: it is a
+>   pre-existing platform failure needing a Windows machine to diagnose.
+>
+> So the order is: merge this branch, get Windows green, *then* import. If you
+> want the rest of the protection before Windows is sorted, delete the
+> `{ "context": "check (windows-latest)" }` line from `main.json` before
+> importing and add it back once the suite passes — the other rules (no direct
+> push, no force-push, no deletion, code-owner review, conversation resolution)
+> do not depend on it.
+
 What `main.json` enforces on the default branch:
 
 - **No direct pushes.** Every change arrives as a pull request.
