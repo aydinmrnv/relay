@@ -15,6 +15,25 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege, stated rather than inherited.
+#
+# A workflow with no `permissions:` block gets whatever the repository-wide
+# default is, and that default is a setting somebody can widen later without
+# ever touching this file. Neither job here writes anything back to GitHub:
+# they check out, install, typecheck, test, and run the Action against a
+# fixture whose `gh` answers from a file. `contents: read` is the whole
+# requirement, so it is the whole grant — which matters more than usual on a
+# public repository, because `pull_request` builds code that came from a fork.
+permissions:
+  contents: read
+
+# A fork can open pull requests faster than CI can finish them. Superseding a
+# run cancels the one it supersedes, so a push loop costs one run and not a
+# queue of them.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     strategy:
