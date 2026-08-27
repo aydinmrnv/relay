@@ -1,6 +1,8 @@
-import { reviewsCode } from '../storage/config.ts';
+import { reviewsCode, type DeliveryPolicy } from '../storage/config.ts';
+import { dailySpend, unattendedRuns } from '../unattended/budget.ts';
 import { median, percentile } from '../util/stats.ts';
 import { DISPLAY_PHASES, isTerminal, type Phase } from './phases.ts';
+import { reachedPolicy } from './delivery.ts';
 import type { RunState } from './state.ts';
 import { phaseCosts, runElapsedMs } from './timeline.ts';
 import { unpricedTurns } from './usage.ts';
@@ -54,6 +56,59 @@ export interface Frequency {
   of: number;
 }
 
+/**
+ * One unattended run, as the five facts the issue asks to be auditable: which
+ * issue, who labelled it, what it cost, what it delivered, why it stopped.
+ *
+ * Every field is read from the run's own state rather than from a log line, so
+ * this is a record of what happened rather than of what was printed at the time.
+ */
+export interface UnattendedRunSummary {
+  runId: string;
+  /** Which issue. */
+  issueRef: string;
+  issueTitle: string | null;
+  issueUrl: string | null;
+  /** Who labelled it, and under what label. */
+  label: string;
+  actor: string | null;
+  team: string | null;
+  source: 'serve' | 'action';
+  /** What it cost, or null when no turn in it published a price. */
+  costUsd: number | null;
+  /** Turns that published none, so a cost that is present may be a floor. */
+  unpriced: number;
+  /** What it delivered: how far delivery actually got, and the link if any. */
+  delivered: DeliveryPolicy;
+  pullRequest: string | null;
+  /** Why it stopped: the terminal phase, plus the reason when it ended short. */
+  outcome: Phase;
+  stopped: string | null;
+  at: string;
+}
+
+/**
+ * What ran here without anybody starting it.
+ *
+ * Kept separate from the repository totals rather than folded into them,
+ * because the questions are different: the totals answer "is this workflow
+ * worth what it costs", and this answers "what did the label let happen, and
+ * who let it". A repository that never turns unattended runs on has an empty
+ * one, and `relay stats` says nothing about it at all.
+ */
+export interface UnattendedStats {
+  runs: number;
+  /** Reported cost across every unattended run, of any outcome. */
+  costUsd: number;
+  unpriced: number;
+  /** Today, against the daily budget — the number the server itself checks. */
+  today: { day: string; runs: number; costUsd: number };
+  /** Logins that have started runs here, most prolific first. */
+  actors: Array<{ actor: string; runs: number; costUsd: number }>;
+  /** Newest first. */
+  recent: UnattendedRunSummary[];
+}
+
 export interface RepositoryStats {
   runs: number;
   complete: number;
@@ -71,9 +126,11 @@ export interface RepositoryStats {
   planChanged?: Frequency;
   /** Runs whose code review requested changes, over runs that reviewed a diff. */
   codeBlocked?: Frequency;
+  /** Absent until something has started a run without a person. */
+  unattended?: UnattendedStats;
 }
 
-export function repositoryStats(runs: readonly RunState[]): RepositoryStats {
+export function repositoryStats(runs: readonly RunState[], now: Date = new Date()): RepositoryStats {
   const complete = runs.filter((run) => run.phase === 'COMPLETE');
   const failed = runs.filter((run) => run.phase === 'FAILED');
   const cancelled = runs.filter((run) => run.phase === 'CANCELLED');
@@ -108,6 +165,7 @@ export function repositoryStats(runs: readonly RunState[]): RepositoryStats {
     },
     ...frequency('planChanged', runs),
     ...frequency('codeBlocked', runs),
+    ...unattendedStats(runs, now),
   };
 }
 
@@ -178,4 +236,71 @@ function frequency(
 
 function distribution(values: readonly number[]): Distribution {
   return { median: median(values), p90: percentile(values, 0.9), runs: values.length };
+}
+
+/** How many unattended runs the summary lists before it stops listing them. */
+const RECENT_UNATTENDED = 10;
+
+function unattendedStats(runs: readonly RunState[], now: Date): { unattended?: UnattendedStats } {
+  const triggered = unattendedRuns(runs);
+  if (triggered.length === 0) return {};
+
+  let costUsd = 0;
+  let unpriced = 0;
+  const byActor = new Map<string, { runs: number; costUsd: number }>();
+
+  for (const run of triggered) {
+    const total = run.usage?.total;
+    if (total?.costUsd !== undefined) costUsd += total.costUsd;
+    if (total !== undefined) unpriced += unpricedTurns(total);
+    const actor = run.trigger?.actor ?? 'unknown';
+    const entry = byActor.get(actor) ?? { runs: 0, costUsd: 0 };
+    entry.runs += 1;
+    entry.costUsd += total?.costUsd ?? 0;
+    byActor.set(actor, entry);
+  }
+
+  const spend = dailySpend(runs, now);
+
+  return {
+    unattended: {
+      runs: triggered.length,
+      costUsd,
+      unpriced,
+      today: { day: spend.day, runs: spend.runs, costUsd: spend.spentUsd },
+      actors: [...byActor.entries()]
+        .map(([actor, entry]) => ({ actor, ...entry }))
+        .sort((a, b) => b.runs - a.runs || b.costUsd - a.costUsd),
+      // `listRuns` already hands them back newest-first; re-sorting on the
+      // recorded timestamp keeps that true for a caller that did not.
+      recent: [...triggered]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, RECENT_UNATTENDED)
+        .map(unattendedSummary),
+    },
+  };
+}
+
+function unattendedSummary(run: RunState): UnattendedRunSummary {
+  const trigger = run.trigger;
+  const total = run.usage?.total;
+  return {
+    runId: run.runId,
+    issueRef: run.issueRef,
+    issueTitle: run.issue?.title ?? null,
+    issueUrl: run.issue?.url === undefined || run.issue.url.length === 0 ? null : run.issue.url,
+    label: trigger?.label ?? '',
+    actor: trigger?.actor ?? null,
+    team: trigger?.team ?? null,
+    source: trigger?.source ?? 'serve',
+    costUsd: total?.costUsd ?? null,
+    unpriced: total === undefined ? 0 : unpricedTurns(total),
+    delivered: reachedPolicy(run),
+    pullRequest: run.pullRequest?.url ?? null,
+    outcome: run.phase,
+    // The reason it ended short, in the run's own words: a budget stop and a
+    // failure read identically in the phase alone.
+    stopped: run.stopped?.detail ?? run.error?.message ?? null,
+    at: trigger?.at ?? run.createdAt,
+  };
 }

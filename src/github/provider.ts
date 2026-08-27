@@ -266,6 +266,123 @@ export class GitHubIssueProvider implements IssueProvider {
     return { created: true, ...(url === undefined ? {} : { url }) };
   }
 
+  /** `owner/name` for a parsed ref, or undefined when neither it nor config says. */
+  private slugFor(parsed: ParsedIssueRef): string | undefined {
+    const owner = parsed.owner ?? this.defaultRepo?.owner;
+    const repo = parsed.repo ?? this.defaultRepo?.name;
+    return owner === undefined || repo === undefined ? undefined : `${owner}/${repo}`;
+  }
+
+  private async gh(args: string[], options: { signal?: AbortSignal } = {}): Promise<{
+    ok: boolean;
+    stdout: string;
+    stderr: string;
+  }> {
+    const result = await runProcess(this.binary, args, {
+      cwd: this.cwd,
+      timeoutMs: this.timeoutMs,
+      ...(options.signal ? { signal: options.signal } : {}),
+      env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+    });
+    if (!result.ok && /auth|logged in|authentication/i.test(result.stderr)) {
+      throw new RelayError('GitHub CLI is not authenticated.', {
+        code: 'GH_NOT_AUTHENTICATED',
+        hint: 'Run `gh auth login`, then `relay doctor`.',
+      });
+    }
+    return { ok: result.ok, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  /**
+   * Removes a label. A label that was not there is reported as `false` rather
+   * than raised: `relay serve` removes the trigger label to claim an issue, and
+   * "somebody else already claimed it" is an ordinary outcome of that race.
+   */
+  async removeLabel(ref: string, label: string, options: { signal?: AbortSignal } = {}): Promise<boolean> {
+    const parsed = parseIssueRef(ref);
+    const slug = this.slugFor(parsed);
+    const args = ['issue', 'edit', String(parsed.number), '--remove-label', label];
+    if (slug !== undefined) args.push('--repo', slug);
+    const result = await this.gh(args, options);
+    if (result.ok) return true;
+    const stderr = result.stderr.trim();
+    if (/not found|does not exist|Unable to find label|was not found on/i.test(stderr)) return false;
+    throw new RelayError(`Failed to remove label "${label}" from issue #${parsed.number}: ${lastLines(stderr)}`, {
+      code: 'GH_FAILED',
+      hint: 'Check that the token `gh` is using may write issues in this repository.',
+    });
+  }
+
+  /**
+   * The login that most recently applied this label, read from the issue's own
+   * event history — the only account of it GitHub will vouch for. Null means
+   * the history has no such event, which the callers treat as "unauthorised",
+   * never as "anyone".
+   */
+  async labelActor(ref: string, label: string, options: { signal?: AbortSignal } = {}): Promise<string | null> {
+    const parsed = parseIssueRef(ref);
+    const slug = this.slugFor(parsed);
+    if (slug === undefined) return null;
+    // `--paginate` rather than a single page: the endpoint returns events
+    // oldest-first, so on an issue with a long history the labelling that
+    // actually started this run would be on the last page. Missing it would be
+    // a refusal — safe, but wrong — so every page is read.
+    const result = await this.gh(
+      ['api', `repos/${slug}/issues/${parsed.number}/events`, '--paginate', '-X', 'GET', '-f', 'per_page=100'],
+      options,
+    );
+    if (!result.ok) {
+      throw new RelayError(`Failed to read the event history of issue #${parsed.number}: ${lastLines(result.stderr)}`, {
+        code: 'GH_FAILED',
+        hint: 'The token `gh` is using needs read access to issues in this repository.',
+      });
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(result.stdout);
+    } catch (error) {
+      throw new RelayError('GitHub returned an issue event history that was not valid JSON.', {
+        code: 'BAD_ISSUE_PAYLOAD',
+        cause: error,
+      });
+    }
+    return lastLabelActor(payload, label);
+  }
+
+  /**
+   * Team membership, asked one team at a time and stopping at the first hit.
+   *
+   * A 404 is the answer "not a member" — it is also the answer "no such team"
+   * and "this token cannot see that organisation", and all three mean the same
+   * thing here: this login does not get to spend money through that slug.
+   */
+  async teamMembership(
+    login: string,
+    teams: readonly string[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<string | null> {
+    for (const slug of teams) {
+      const [org, team] = slug.split('/');
+      if (org === undefined || team === undefined) continue;
+      const result = await this.gh(
+        ['api', `orgs/${org}/teams/${team}/memberships/${login}`, '-X', 'GET'],
+        options,
+      );
+      if (!result.ok) continue;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(result.stdout);
+      } catch {
+        continue;
+      }
+      // A pending invitation is not membership: the person has not accepted,
+      // and an unaccepted invitation must not authorise spending.
+      const state = (payload as { state?: unknown } | null)?.state;
+      if (state === 'active') return slug;
+    }
+    return null;
+  }
+
   /** Checks auth status without ever reading or printing the token itself. */
   async checkAvailability(): Promise<{ available: boolean; detail: string; hint?: string }> {
     const binaryPath = await resolveExecutable(this.binary);
@@ -292,4 +409,29 @@ export class GitHubIssueProvider implements IssueProvider {
     const account = /Logged in to \S+ account (\S+)/.exec(`${result.stdout}\n${result.stderr}`)?.[1];
     return { available: true, detail: account === undefined ? 'authenticated' : `authenticated as ${account}` };
   }
+}
+
+/**
+ * The actor on the last `labeled` event for this label.
+ *
+ * Read from the end of the list because a label can be added, removed and added
+ * again: the person who put it there *now* is the one who asked for the work,
+ * and the person who did it last week is not.
+ */
+export function lastLabelActor(payload: unknown, label: string): string | null {
+  if (!Array.isArray(payload)) return null;
+  for (let index = payload.length - 1; index >= 0; index -= 1) {
+    const event = payload[index] as
+      | { event?: unknown; label?: { name?: unknown } | null; actor?: { login?: unknown } | null }
+      | null;
+    if (event === null || typeof event !== 'object') continue;
+    if (event.event !== 'labeled' || event.label?.name !== label) continue;
+    const login = event.actor?.login;
+    return typeof login === 'string' && login.length > 0 ? login : null;
+  }
+  return null;
+}
+
+function lastLines(text: string): string {
+  return text.trim().split('\n').slice(-3).join(' ');
 }

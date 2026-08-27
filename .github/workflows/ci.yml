@@ -1,6 +1,13 @@
-# Typecheck and tests on every platform Relay claims to support. The
-# windows-latest leg is what keeps Windows support honest (#41): executable
-# resolution, shim spawning and the worktree guard regress silently without it.
+# Two jobs, and they check different kinds of thing.
+#
+# `check` is the typecheck and the test suite on every platform Relay claims to
+# support; the windows-latest leg is what keeps Windows support honest (#41),
+# because executable resolution, shim spawning and the worktree guard regress
+# silently without it.
+#
+# `unattended` is an integration test of the product as a whole (#38): Relay's
+# own GitHub Action, driving a real pipeline on a fixture repository, checked
+# against what it left behind rather than what it printed.
 name: CI
 
 on:
@@ -35,3 +42,101 @@ jobs:
       - run: npm run typecheck
 
       - run: npm test
+
+  # The unattended path, end to end, on a repository built for the purpose (#38).
+  #
+  # It runs the Action this repository publishes, against a fixture repository
+  # with a real git remote, a real test suite, a `gh` that answers from a file
+  # and a coding CLI that plugs in through the config-harness seam. Nothing
+  # inside Relay is stubbed — the pipeline plans, reviews, implements, reviews
+  # again, tests, commits, pushes and opens a draft pull request — so this is
+  # where the promises the guardrails make are checked against artifacts rather
+  # than against a log: the label came off before the run, the issue nobody was
+  # allowed to trigger was ignored, and `main` did not move.
+  #
+  # No credential is involved, which is the other thing it demonstrates: the
+  # Action puts vendors' environment variables in vendors' processes, and there
+  # is nowhere here for Relay to be handed a token even if somebody wanted to.
+  unattended:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the fixture repository
+        run: node scripts/unattended-fixture.mjs build "$RUNNER_TEMP/fixture"
+
+      - name: Put the fixture's gh on PATH
+        run: echo "$RUNNER_TEMP/fixture/bin" >> "$GITHUB_PATH"
+
+      - name: Run Relay's own Action on the fixture issue
+        id: relay
+        uses: ./
+        with:
+          issue: '142'
+          version: local
+          working-directory: ${{ runner.temp }}/fixture/work
+        env:
+          RELAY_HOME: ${{ runner.temp }}/fixture/home
+          RELAY_FIXTURE_GH_STATE: ${{ runner.temp }}/fixture/gh-state.json
+          RELAY_FIXTURE_AGENT_LOG: ${{ runner.temp }}/fixture/agent-turns.jsonl
+
+      - name: The Action reported what it did
+        run: |
+          set -euo pipefail
+          test "${{ steps.relay.outputs.started }}" = "true"
+          test -n "${{ steps.relay.outputs.run-id }}"
+          test "${{ steps.relay.outputs.stopped-by }}" = "once"
+
+      - name: A second pass must start nothing, even relabelled
+        env:
+          RELAY_HOME: ${{ runner.temp }}/fixture/home
+          RELAY_FIXTURE_GH_STATE: ${{ runner.temp }}/fixture/gh-state.json
+          RELAY_FIXTURE_AGENT_LOG: ${{ runner.temp }}/fixture/agent-turns.jsonl
+        working-directory: ${{ runner.temp }}/fixture/work
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const path = process.env.RELAY_FIXTURE_GH_STATE;
+            const state = JSON.parse(fs.readFileSync(path, "utf8"));
+            state.issues.find((issue) => issue.number === 142).labels.push("relay:go");
+            fs.writeFileSync(path, JSON.stringify(state, null, 2));
+          '
+          node "$GITHUB_WORKSPACE/bin/relay.mjs" serve --once --json | tee "$RUNNER_TEMP/second.jsonl"
+          grep -q '"reason":"already started as ' "$RUNNER_TEMP/second.jsonl"
+
+      - name: The pipeline did what it promised
+        run: node scripts/unattended-fixture.mjs verify "$RUNNER_TEMP/fixture"
+
+      - name: Every unattended run is auditable
+        working-directory: ${{ runner.temp }}/fixture/work
+        env:
+          RELAY_HOME: ${{ runner.temp }}/fixture/home
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/bin/relay.mjs" stats --json > "$RUNNER_TEMP/stats.json"
+          node -e '
+            const stats = require(process.env.RUNNER_TEMP + "/stats.json");
+            const unattended = stats.unattended;
+            if (unattended === null) throw new Error("relay stats reported no unattended runs");
+            const [run] = unattended.recent;
+            for (const [field, expected] of [["issueRef", "142"], ["actor", "maintainer"], ["label", "relay:go"], ["delivered", "pr"], ["outcome", "COMPLETE"]]) {
+              if (run[field] !== expected) throw new Error(`stats.unattended.recent[0].${field} is ${run[field]}, expected ${expected}`);
+            }
+            if (!(run.costUsd > 0)) throw new Error("the audit line reports no cost");
+            if (!run.pullRequest) throw new Error("the audit line names no pull request");
+          '
+
+      - name: Show what happened, when it did not
+        if: failure()
+        run: |
+          cat "$RUNNER_TEMP/fixture/gh-state.json" || true
+          cat "$RUNNER_TEMP/fixture/agent-turns.jsonl" || true
+          find "$RUNNER_TEMP/fixture/work/.relay/runs" -name events.jsonl -exec cat {} + || true

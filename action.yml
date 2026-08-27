@@ -1,0 +1,184 @@
+# Relay, as a GitHub Action.
+#
+# For teams who would rather not run a daemon. It is the same pipeline `relay
+# serve` runs, on one issue, in CI: the trigger label, the allowlist, the
+# budgets, the delivery ceiling and the audit trail are all read from the
+# repository's own `.relay/config.json`, not from the inputs below. There is
+# deliberately no input that can loosen a guardrail, because a workflow file is
+# editable by anyone who can open a pull request against it.
+#
+# ---------------------------------------------------------------------------
+# Credentials
+# ---------------------------------------------------------------------------
+# This is the one place Relay's "never handles a credential" rule needs saying
+# precisely, because CI is where somebody will otherwise assume it is fine to
+# hand Relay a token.
+#
+# Relay reads no credential, here or anywhere. What this Action does is put
+# each vendor's own environment variable into that vendor's own process:
+# `GH_TOKEN` is read by `gh`, `ANTHROPIC_API_KEY` by Claude Code, `OPENAI_API_KEY`
+# by Codex. Relay spawns those CLIs and inherits the environment; it never
+# reads, logs, forwards or persists any of those values, and it has no input,
+# flag or config key that accepts one. If you find yourself looking for where to
+# give Relay a token, the answer is that there is nowhere, and that is the
+# design. Set the vendor's variable in the job's `env:` from repository secrets
+# and let the vendor's CLI find it.
+#
+# The secret scan still runs between commit and push, so a change carrying
+# something credential-shaped stops at the branch in CI exactly as it does on a
+# laptop.
+name: Relay
+description: Run Relay on a labelled issue and open a draft pull request.
+author: Relay
+
+branding:
+  icon: git-pull-request
+  color: purple
+
+inputs:
+  issue:
+    description: >-
+      Issue to consider, as a number. Usually `${{ github.event.issue.number }}`
+      from an `issues.labeled` trigger.
+    required: true
+  label:
+    description: >-
+      Trigger label to require. Defaults to `workflow.triggerLabel` in
+      .relay/config.json, which is where it belongs — an issue that does not
+      carry it is ignored either way.
+    required: false
+    default: ''
+  working-directory:
+    description: Directory holding the checked-out repository.
+    required: false
+    default: '.'
+  version:
+    description: >-
+      Version of `relay-orchestrator` to install from npm. Use `local` to run
+      the copy in the checkout, which is what this repository's own CI does.
+    required: false
+    default: latest
+  args:
+    description: Extra arguments appended to `relay serve`.
+    required: false
+    default: ''
+
+outputs:
+  exit-code:
+    description: Relay's exit code, from the documented table in the README.
+    value: ${{ steps.relay.outputs.exit-code }}
+  run-id:
+    description: The run this Action started, or empty when it started nothing.
+    value: ${{ steps.relay.outputs.run-id }}
+  stopped-by:
+    description: Why it stopped — `once`, `budget`, `kill-switch` or `signal`.
+    value: ${{ steps.relay.outputs.stopped-by }}
+  started:
+    description: '`true` when a run was started, `false` when the issue was ignored.'
+    value: ${{ steps.relay.outputs.started }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Relay
+      shell: bash
+      env:
+        RELAY_VERSION: ${{ inputs.version }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        if [ "$RELAY_VERSION" = "local" ]; then
+          echo "RELAY_BIN=$ACTION_PATH/bin/relay.mjs" >> "$GITHUB_ENV"
+        else
+          npm install -g "relay-orchestrator@$RELAY_VERSION"
+          echo "RELAY_BIN=$(command -v relay)" >> "$GITHUB_ENV"
+        fi
+
+    - name: Identify the committer
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # Only if the job has not already set one. Relay commits the work it
+        # writes, and git refuses to commit without a name to put on it.
+        git config user.name >/dev/null 2>&1 || git config user.name "github-actions[bot]"
+        git config user.email >/dev/null 2>&1 || \
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+    - name: Run Relay
+      id: relay
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        RELAY_ISSUE: ${{ inputs.issue }}
+        RELAY_LABEL: ${{ inputs.label }}
+        RELAY_ARGS: ${{ inputs.args }}
+      run: |
+        set -uo pipefail
+        stream="${RUNNER_TEMP:-/tmp}/relay-serve.jsonl"
+        label_args=()
+        if [ -n "$RELAY_LABEL" ]; then label_args=(--label "$RELAY_LABEL"); fi
+
+        # `--json` puts the document on stdout and everything meant for a person
+        # on stderr, so the log stays readable while the stream stays parseable.
+        # `${a[@]+"${a[@]}"}` rather than `"${a[@]}"`: an empty array under
+        # `set -u` is an error on the bash 3.2 that macOS runners still ship.
+        # shellcheck disable=SC2086
+        node "$RELAY_BIN" serve --once --issue "$RELAY_ISSUE" \
+          ${label_args[@]+"${label_args[@]}"} $RELAY_ARGS --json | tee "$stream"
+        code=${PIPESTATUS[0]}
+
+        # The runs stream their own JSON on the same stdout, and they have
+        # summary lines too — so match on the command as well as the type.
+        summary=$(grep '"command":"serve"' "$stream" | grep '"type":"summary"' | tail -1 || true)
+        read_field() {
+          [ -z "$summary" ] && { echo ""; return; }
+          printf '%s' "$summary" | node -e "
+            let raw = '';
+            process.stdin.on('data', (chunk) => { raw += chunk; });
+            process.stdin.on('end', () => {
+              try {
+                const value = JSON.parse(raw);
+                const field = process.argv[1];
+                if (field === 'run-id') process.stdout.write(value.started?.[0]?.runId ?? '');
+                else if (field === 'started') process.stdout.write(String((value.started ?? []).length > 0));
+                else process.stdout.write(String(value.stoppedBy ?? ''));
+              } catch { process.stdout.write(''); }
+            });
+          " "$1"
+        }
+
+        {
+          echo "exit-code=$code"
+          echo "run-id=$(read_field run-id)"
+          echo "started=$(read_field started)"
+          echo "stopped-by=$(read_field stopped-by)"
+        } >> "$GITHUB_OUTPUT"
+        exit "$code"
+
+    - name: Summarise the run
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -uo pipefail
+        # Relay posts its own summary to the issue — an unattended run always
+        # comments, because nobody is watching the terminal it ran in. This is
+        # the other audience: the job page, for whoever is reading the Action.
+        {
+          echo "## Relay"
+          echo
+          if [ "${{ steps.relay.outputs.started }}" = "true" ]; then
+            echo "Started \`${{ steps.relay.outputs.run-id }}\` for issue #${{ inputs.issue }}, exit ${{ steps.relay.outputs.exit-code }}."
+            echo
+            echo '```'
+            node "$RELAY_BIN" status "${{ steps.relay.outputs.run-id }}" 2>&1 || true
+            echo '```'
+          else
+            echo "Nothing was started for issue #${{ inputs.issue }} (${{ steps.relay.outputs.stopped-by }})."
+            echo
+            echo "Relay refuses an issue whose trigger label came from somebody outside"
+            echo "\`unattended.authors\`/\`unattended.teams\`, and stops starting runs once"
+            echo "\`unattended.maxDailyCostUsd\` is committed. The job log above says which."
+          fi
+        } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"

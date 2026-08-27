@@ -213,6 +213,26 @@ export interface StopRecord {
   maxCostUsd?: number;
 }
 
+/**
+ * How a run started, when nobody started it.
+ *
+ * Present only on unattended runs, and the reason it exists is accountability:
+ * a run that nobody typed still has somebody behind it, and this is the record
+ * of who. `relay stats` reads it, the delivery ceiling checks it, and the daily
+ * budget counts the runs that carry it. Absent means a person ran the command.
+ */
+export interface TriggerRecord {
+  /** `serve` for the daemon, `action` for the same thing running in CI. */
+  source: 'serve' | 'action';
+  /** The label that was on the issue. */
+  label: string;
+  /** Who put it there, from the tracker's own event history. */
+  actor: string | null;
+  /** The `org/team` that authorised them, when membership is what did. */
+  team?: string;
+  at: string;
+}
+
 export interface RunState {
   version: 1;
   runId: string;
@@ -270,6 +290,8 @@ export interface RunState {
   error?: { message: string; phase: Phase; code?: string };
   /** PID of the process driving the run, so `relay stop` can signal it. */
   pid?: number;
+  /** Set when the run began without a person: who asked for it, and how. */
+  trigger?: TriggerRecord;
 }
 
 export interface CreateRunStateOptions {
@@ -282,6 +304,8 @@ export interface CreateRunStateOptions {
   config: RelayConfig;
   now?: Date;
   queued?: boolean;
+  /** Set when a label started this run rather than a person. */
+  trigger?: TriggerRecord;
 }
 
 export function createRunState(options: CreateRunStateOptions): RunState {
@@ -308,6 +332,7 @@ export function createRunState(options: CreateRunStateOptions): RunState {
     rounds: { planReview: 0, codeReview: 0 },
     reviews: [],
     planApproved: false,
+    ...(options.trigger === undefined ? {} : { trigger: options.trigger }),
   };
 }
 

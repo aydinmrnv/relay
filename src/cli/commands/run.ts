@@ -763,11 +763,24 @@ const cliObserver: RunObserver = {
   warn: (text) => out(warning(`  ${text}`)),
 };
 
+/**
+ * Signals and cancellation, when somebody above this run owns them.
+ *
+ * `relay serve` drives several runs from one process and gives Ctrl-C a
+ * different meaning — stop starting, let these finish — so it must be the only
+ * thing listening for it. A run handed an outer signal installs no handler of
+ * its own and simply cancels when that signal aborts.
+ */
+export interface RunSignals {
+  signal?: AbortSignal;
+}
+
 export async function executeRun(
   cli: CliContext,
   state: RunState,
   options: RunOptions,
   command: 'run' | 'resume',
+  signals: RunSignals = {},
 ): Promise<number> {
   const store = new RunStore(state.repository.root, state.runId);
   const controller = new AbortController();
@@ -797,16 +810,24 @@ export async function executeRun(
   const display: RunDisplay = stream ?? renderer ?? compact;
 
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
-  // than leaving state that claims a phase is still in flight.
+  // than leaving state that claims a phase is still in flight. A run started by
+  // something that already owns the signals cancels through that instead.
+  const cancel = (note: string): void => {
+    display.warn(note);
+    controller.abort();
+    void Promise.all(Object.values(cli.harnesses).map((harness) => harness.cancel()));
+  };
   let interrupted = false;
   const onSigint = (): void => {
     if (interrupted) process.exit(EXIT.cancelled);
     interrupted = true;
-    display.warn('Cancelling… (press Ctrl-C again to force quit)');
-    controller.abort();
-    void Promise.all(Object.values(cli.harnesses).map((harness) => harness.cancel()));
+    cancel('Cancelling… (press Ctrl-C again to force quit)');
   };
-  process.on('SIGINT', onSigint);
+  const outer = signals.signal;
+  const onOuterAbort = (): void => cancel('Cancelling…');
+  if (outer === undefined) process.on('SIGINT', onSigint);
+  else if (outer.aborted) onOuterAbort();
+  else outer.addEventListener('abort', onOuterAbort, { once: true });
 
   display.start();
 
@@ -829,7 +850,8 @@ export async function executeRun(
   } finally {
     renderer?.teardown();
     tracking.stop();
-    process.off('SIGINT', onSigint);
+    if (outer === undefined) process.off('SIGINT', onSigint);
+    else outer.removeEventListener('abort', onOuterAbort);
   }
 
   printOutcome(finalState, store);

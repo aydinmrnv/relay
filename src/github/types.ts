@@ -54,6 +54,33 @@ export interface IssueProvider {
     body: string,
     options?: { signal?: AbortSignal; marker?: string },
   ): Promise<{ url?: string; created: boolean }>;
+  /**
+   * Takes a label off an issue. `relay serve` calls this *before* it starts the
+   * run it decided to start, so a server that dies between the two restarts
+   * into a repository that no longer asks for the work twice.
+   *
+   * Returns false when the label was not there to remove, which is how two
+   * servers racing for the same issue tell the loser from the winner.
+   */
+  removeLabel?(ref: string, label: string, options?: { signal?: AbortSignal }): Promise<boolean>;
+  /**
+   * Who last put this label on, or null when the tracker keeps no such record.
+   *
+   * This is the authorisation question for everything unattended: the person
+   * who applied the label is the person who spent the money, and a tracker that
+   * cannot say who that was is a tracker Relay refuses to act on.
+   */
+  labelActor?(ref: string, label: string, options?: { signal?: AbortSignal }): Promise<string | null>;
+  /**
+   * The first of these `org/team` slugs the login belongs to, or null for none.
+   * Absent on trackers with no notion of a team, which is not an error — an
+   * allowlist that names teams simply matches nobody there.
+   */
+  teamMembership?(
+    login: string,
+    teams: readonly string[],
+    options?: { signal?: AbortSignal },
+  ): Promise<string | null>;
   checkAvailability(): Promise<{ available: boolean; detail: string; hint?: string }>;
 }
 

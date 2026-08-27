@@ -1,12 +1,12 @@
 import { listRuns } from '../../storage/runs.ts';
 import { formatDuration } from '../../util/text.ts';
 import { phaseLabel, type Phase } from '../../workflow/phases.ts';
-import { repositoryStats, type RepositoryStats } from '../../workflow/stats.ts';
+import { repositoryStats, type RepositoryStats, type UnattendedRunSummary } from '../../workflow/stats.ts';
 import { formatCost } from '../../workflow/usage.ts';
 import { createCliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
 import { emitJson } from '../json.ts';
-import { box, dim, emptyState, facts, gridLines, hint, out, rows, section } from '../output.ts';
+import { box, dim, emptyState, facts, gridLines, hint, out, rows, section, warning } from '../output.ts';
 
 export interface StatsOptions {
   json?: boolean;
@@ -118,6 +118,8 @@ export async function statsCommand(options: StatsOptions = {}): Promise<number> 
     ]);
   }
 
+  printUnattended(stats);
+
   section('What the reviews caught');
   rows([
     {
@@ -132,6 +134,68 @@ export async function statsCommand(options: StatsOptions = {}): Promise<number> 
   out();
 
   return 0;
+}
+
+/**
+ * The audit trail for everything that ran without a person.
+ *
+ * Printed only when there is something to print: a repository that has never
+ * turned unattended runs on should not be shown an empty section implying it
+ * should have. When there is, every row answers the same five questions —
+ * which issue, who labelled it, what it cost, what it delivered, why it
+ * stopped — because "an agent ran on its own and spent money" is exactly the
+ * event somebody eventually has to account for to somebody else.
+ */
+function printUnattended(stats: RepositoryStats): void {
+  const unattended = stats.unattended;
+  if (unattended === undefined) return;
+
+  section('Unattended');
+  rows([
+    {
+      label: 'Started by a label',
+      value: facts([
+        `${unattended.runs} run(s)`,
+        `${formatCost(unattended.costUsd)} in total`,
+        unattended.unpriced > 0 && dim(`${unattended.unpriced} unpriced turn(s), so that is a floor`),
+      ]),
+    },
+    {
+      label: `Today (${unattended.today.day})`,
+      value: facts([`${unattended.today.runs} run(s)`, formatCost(unattended.today.costUsd)]),
+    },
+    {
+      label: 'Who asked',
+      value:
+        unattended.actors.length === 0
+          ? dim('nobody the tracker could name')
+          : facts(unattended.actors.slice(0, 5).map((entry) => `${entry.actor} ${dim(`${entry.runs}`)}`)),
+    },
+  ]);
+
+  out();
+  for (const run of unattended.recent) out(`  ${unattendedLine(run)}`);
+  out();
+}
+
+/** One unattended run on one line: issue, who, cost, delivery, outcome. */
+function unattendedLine(run: UnattendedRunSummary): string {
+  const who = run.actor === null ? 'unknown' : run.actor + (run.team === null ? '' : ` via ${run.team}`);
+  const cost = run.costUsd === null ? 'no price reported' : formatCost(run.costUsd);
+  const delivered = run.pullRequest ?? (run.delivered === 'none' ? 'nothing delivered' : run.delivered);
+  const why =
+    run.outcome === 'COMPLETE'
+      ? undefined
+      : run.stopped === null
+        ? run.outcome.toLowerCase()
+        : `${run.outcome.toLowerCase()}: ${run.stopped}`;
+  return facts([
+    `#${run.issueRef}`,
+    dim(`${run.label} by ${who}`),
+    cost,
+    delivered,
+    why === undefined ? false : warning(why),
+  ]);
 }
 
 function share(frequency: { runs: number; of: number }): string {
@@ -158,6 +222,15 @@ export interface StatsJson {
   };
   planReviewChangedPlan: { runs: number; of: number } | null;
   codeReviewBlocked: { runs: number; of: number } | null;
+  /** Null until something has started a run in this repository without a person. */
+  unattended: {
+    runs: number;
+    costUsd: number;
+    unpricedTurns: number;
+    today: { day: string; runs: number; costUsd: number };
+    actors: Array<{ actor: string; runs: number; costUsd: number }>;
+    recent: UnattendedRunSummary[];
+  } | null;
 }
 
 export function statsToJson(repository: string, stats: RepositoryStats): StatsJson {
@@ -198,5 +271,16 @@ export function statsToJson(repository: string, stats: RepositoryStats): StatsJs
     },
     planReviewChangedPlan: stats.planChanged ?? null,
     codeReviewBlocked: stats.codeBlocked ?? null,
+    unattended:
+      stats.unattended === undefined
+        ? null
+        : {
+            runs: stats.unattended.runs,
+            costUsd: stats.unattended.costUsd,
+            unpricedTurns: stats.unattended.unpriced,
+            today: stats.unattended.today,
+            actors: stats.unattended.actors,
+            recent: stats.unattended.recent,
+          },
   };
 }

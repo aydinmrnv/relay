@@ -195,7 +195,8 @@ README — not a defended one.
 8. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
 9. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
 10. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
-11. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`.
+11. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`. The same holds in CI: [the Action](#unattended) puts each vendor's own environment variable into that vendor's own process, and Relay reads none of them.
+12. Nothing starts without a person unless somebody deliberately configured that, and even then it cannot merge. [`relay serve`](#unattended) refuses to run until the repository has named an allowlist and two budgets; an issue labelled by anybody else is ignored with a log line; unattended runs cap at a draft pull request whatever `workflow.deliver` says; and three separate kill switches stop new runs without touching the ones in flight.
 
 ## Commands
 
@@ -212,6 +213,7 @@ README — not a defended one.
 | `relay plan [run]` | print the approved plan |
 | `relay logs [run]` | print the event log |
 | `relay stats` | what this repository's runs have cost, taken, and caught |
+| `relay serve` | watch the tracker and start a run per labelled issue, inside a budget and an allowlist |
 | `relay resume <run>` | continue an interrupted or failed run |
 | `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
 | `relay stop [run]` | cancel a run at its next phase boundary |
@@ -513,6 +515,135 @@ local merge, `deliver: merge` (which already merged it), or a terminal nobody is
 watching, which gets `relay deliver <run> --to merge` instead. `--no-offer-merge`
 or `workflow.offerMerge: false` turns it off.
 
+## Unattended
+
+Every run so far began with a person typing a command. That is the right default
+and it stays the default. But a pipeline that verifies its own work
+mechanically, refuses to publish what it cannot vouch for, and opens a draft
+pull request when its evidence is weak is precisely the shape that can be
+trusted to start without one — so it can, by label.
+
+```bash
+relay serve                    # watch the tracker, start a run per labelled issue
+relay serve --once             # one pass, then exit
+relay serve --dry-run          # decide everything, start nothing, move no labels
+relay serve --issue 142        # consider one issue — what the GitHub Action passes
+```
+
+Label an issue `relay:go` and `relay serve` starts a run for it. It removes the
+label first, so a restart does not do the same work twice, and records the claim
+in `.relay/unattended.json` so the same is true across a crash.
+
+**The guardrails are the feature, not the caveat.** `relay serve` refuses to
+start at all until the repository has answered three questions, each of them
+about somebody else's ability to spend your money:
+
+```json
+"workflow": { "triggerLabel": "relay:go" },
+"unattended": {
+  "enabled": true,
+  "authors": ["you"],
+  "teams": ["acme/maintainers"],
+  "maxRunCostUsd": 2.50,
+  "maxDailyCostUsd": 20,
+  "deliver": "pr",
+  "pollSeconds": 60
+}
+```
+
+Nothing here has a permissive default. The switch ships off, the allowlist ships
+empty, and both budgets ship unset — and an empty allowlist is **refused**
+rather than read as "anyone", because on a public repository that reading is a
+funded denial-of-wallet attack with a UI.
+
+| | |
+|---|---|
+| **An allowlist** | Only issues carrying the trigger label, and only when the person who *applied* the label is on `unattended.authors` or in one of `unattended.teams`. The labeller, not the author: whoever put the label on is whoever spent the money. A tracker that will not say who that was is a refusal, never a default-allow. |
+| **A budget** | `maxRunCostUsd` stops one run at its next phase boundary; `maxDailyCostUsd` stops the server from starting more. Reached means **stop and say so**, not queue for tomorrow — the label stays on the issue, visibly outstanding. Each run in flight reserves its full per-run cap, so the server never commits past the day's ceiling on the strength of costs that have not been reported yet. |
+| **A ceiling on delivery** | Unattended runs cap at `pr` regardless of `workflow.deliver`, and their pull requests open as **drafts** — not because the work is worse, but because nobody has looked at it. `unattended.deliver` cannot even spell `merge`: the type has no such value, and writing one is a config error naming the rule. An autonomous merge is the one thing this project exists not to do. |
+| **A kill switch** | Three of them, all meaning *start nothing more, let what is running finish*: `touch .relay/STOP`, `unattended.enabled: false` (re-read every poll, so it reaches a live server), or a signal. A second Ctrl-C escalates to cancelling the runs too. None of them kills a run on its own — that work is already paid for, and `relay stop <run>` is how you end one by name. |
+
+An unattended run also always comments its summary back on the issue, because
+nobody is watching the terminal it ran in.
+
+**Everything unattended is auditable.** Which issue, who labelled it, what it
+cost, what it delivered, why it stopped — `relay stats` grows a section:
+
+```
+Unattended
+  Started by a label  6 run(s)  ·  $7.10 in total
+  Today (2026-08-25)  2 run(s)  ·  $2.40
+  Who asked           alice 4  ·  bob 2
+
+  #142  ·  relay:go by alice  ·  $1.20  ·  https://github.com/acme/widgets/pull/900
+  #139  ·  relay:go by bob    ·  $2.05  ·  branch  ·  cancelled: budget exceeded: $2.05 spent of $2.00
+```
+
+`relay stats --json` carries the same rows under `unattended`.
+
+### The GitHub Action
+
+For teams who would rather not run a daemon. It is the same code path —
+`relay serve --once --issue <n>` — so the allowlist, the budgets, the ceiling
+and the audit trail all come from `.relay/config.json` rather than from the
+workflow file. There is deliberately no input that can loosen a guardrail,
+because a workflow file is editable by anyone who can open a pull request.
+
+```yaml
+name: Relay
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  relay:
+    if: github.event.label.name == 'relay:go'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push the run branch
+      issues: write          # remove the label, post the summary
+      pull-requests: write   # open the draft pull request
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      # Each vendor's CLI, installed and authenticated the vendor's own way.
+      - run: npm install -g @anthropic-ai/claude-code @openai/codex
+
+      - uses: aydinmrnv/relay@v1
+        with:
+          issue: ${{ github.event.issue.number }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+```
+
+**Relay is handed none of those secrets, and this is the place to say it
+precisely** — CI is where somebody will otherwise assume it is fine to give
+Relay a token. What the block above does is put each vendor's own environment
+variable into that vendor's own process: `GH_TOKEN` is read by `gh`,
+`ANTHROPIC_API_KEY` by Claude Code, `OPENAI_API_KEY` by Codex. Relay spawns
+those CLIs and they inherit the environment; Relay itself never reads, logs,
+forwards or persists any of those values, and it has no input, flag or config
+key that accepts one. If you go looking for where to give Relay a credential,
+the answer is that there is nowhere — on a laptop or in a runner.
+
+The Action's outputs are `run-id`, `exit-code`, `stopped-by` and `started`, and
+it writes what happened to the job summary. Relay's own comment on the issue is
+the other half of that report.
+
+This is tested rather than described: Relay's CI runs this Action against a
+fixture repository with a real git remote, a real test suite, a `gh` that
+answers from a file and a scripted coding CLI plugged in through the
+[config-harness seam](#configuration) — a whole pipeline, plan through draft
+pull request, with no credential and no network anywhere in it. The job then
+checks what it left behind rather than what it printed: the label came off
+before the run, the issue nobody was allowed to trigger kept its label, the
+pull request is a draft, and `main` did not move.
+
 ## The session
 
 Answering those questions is not the end of the work — the next task is. So on
@@ -689,7 +820,8 @@ jq` works while the run is still printing.
 | `relay diff [run] --json` | the file list, the counts, and the patch (`--stat` drops the patch, keeps the files) |
 | `relay plan [run] --json` | the approved plan as markdown |
 | `relay logs [run] --json` | the event log, with `data` as recorded, plus usage by phase |
-| `relay stats --json` | what this repository's runs have cost, taken, and caught |
+| `relay stats --json` | what this repository's runs have cost, taken, and caught, including the [unattended audit trail](#unattended) |
+| `relay serve --json` | one object per line as it decides — considered, skipped, claimed, finished — then a summary |
 | `relay deliver [run] --json` | the run after delivery, ledger included |
 | `relay stop [run] --json` | what was signalled, and whether the process was still alive |
 
@@ -754,13 +886,23 @@ that decides whether anything downstream should happen at all.
 The table lives in `src/cli/exit.ts`, and the tests assert one invocation per
 code.
 
+[`relay serve`](#unattended) reports on the server rather than on one run: 0
+when a kill switch stopped it or `--once` finished with every run it started
+succeeding, and 1 when a run it started failed or when the daily budget stopped
+it. A budget-stopped server exits non-zero deliberately — a supervisor that
+restarts it will watch it stop again immediately, which is the visible,
+correct behaviour for "this repository has spent what it said it would today".
+
 ## Run state
 
 ```
 .relay/
   config.json
+  unattended.json            what `relay serve` has already picked up (local, gitignored)
+  STOP                       present means: start nothing more (one of three kill switches)
   runs/<run-id>/
-    state.json                 phase, sessions, rounds, diff summary, test results, token usage, commit
+    state.json                 phase, sessions, rounds, diff summary, test results, token usage, commit,
+                               and — on an unattended run — who labelled the issue, and with what
     issue.md                   the issue as the agents received it
     plan.md                    current plan (rewritten on each revision)
     implementation-notes.md
@@ -801,7 +943,17 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
     "offerMerge": true,
     "maxTransientRetries": 2,
     "maxCostUsd": null,
-    "confirmAboveUsd": null
+    "confirmAboveUsd": null,
+    "triggerLabel": "relay:go"
+  },
+  "unattended": {
+    "enabled": false,
+    "authors": [],
+    "teams": [],
+    "maxRunCostUsd": null,
+    "maxDailyCostUsd": null,
+    "pollSeconds": 60,
+    "deliver": "pr"
   },
   "tests": { "command": null },
   "delivery": { "comment": false },
@@ -837,6 +989,13 @@ reaching for before turning a review off.
 | `workflow.maxCostUsd` | dollars a run may report before it stops itself at the next phase boundary (default `null`, no ceiling; `--max-cost`) |
 | `workflow.confirmAboveUsd` | ask before starting a run whose estimate exceeds this (default `null`; non-interactively an exceeded threshold is a refusal) |
 | `workflow.primeReviewers` | let each reviewer read the repository during the phase it will review |
+| `workflow.triggerLabel` | the label that starts a run with nobody present (default `relay:go`). Read only by [`relay serve` and the Action](#unattended); an attended `relay run` never consults it |
+| `unattended.enabled` | the master switch, and one of the three kill switches (default `false`). Re-read every poll, so flipping it stops a running server |
+| `unattended.authors` / `teams` | logins, and `org/team` slugs, whose members may start a run by labelling (both default `[]`). Empty is **refused**, never read as "anyone" |
+| `unattended.maxRunCostUsd` | dollars one unattended run may report before it stops itself. Required; the tighter of it and `workflow.maxCostUsd` applies |
+| `unattended.maxDailyCostUsd` | dollars unattended runs may report in one UTC day before the server stops starting them. Required |
+| `unattended.deliver` | how far an unattended run delivers: `none`, `branch`, `push`, `pr` (default). `merge` is not a value — nothing unattended ever merges |
+| `unattended.pollSeconds` | seconds between polls of the tracker (default `60`; `relay serve -i`) |
 | `workflow.concurrentTests` | run the suite during the code review rather than after it |
 | `timeouts.primingMs` | cap on a read-ahead turn, which is speculative and must not stall a run |
 | `timeouts.primeGraceMs` | how long a review waits for a read-ahead that has not landed; past it the reader is abandoned and the review starts cold |
