@@ -71,6 +71,19 @@ describe('process runner', () => {
     assert.equal(result.aborted, true);
   });
 
+  it('honours an abort that arrives while the command is still being resolved', async () => {
+    // The abort lands after runProcess has checked the signal but before it
+    // has a process to kill — on Windows, while it reads a .cmd shim from disk.
+    // Lost there, it would start a process nobody could stop any more: this
+    // one never exits on its own, so the test hangs if the abort goes missing.
+    const controller = new AbortController();
+    const pending = runProcess('node', ['-e', 'setInterval(() => {}, 60000)'], { signal: controller.signal });
+    controller.abort();
+    const result = await pending;
+    assert.equal(result.aborted, true);
+    assert.equal(result.ok, false);
+  });
+
   it('raises an actionable error for a missing executable', async () => {
     await assert.rejects(
       () => runProcess('relay-definitely-not-installed', []),
@@ -286,9 +299,11 @@ describe('windows executable resolution (simulated)', () => {
   });
 
   it('refuses a launcher whose program variable is ever something other than node', async () => {
+    // The reassignment is unquoted on purpose: cmd accepts both spellings, so
+    // the check has to read both.
     await writeFile(
       join(dir, 'mixed.cmd'),
-      ['@ECHO OFF', 'SET "RUNNER=node"', 'SET "RUNNER=python"', 'SET "CLI=%~dp0\\mixed.js"', '"%RUNNER%" "%CLI%" %*', ''].join(
+      ['@ECHO OFF', 'SET "RUNNER=node"', 'SET RUNNER=python', 'SET "CLI=%~dp0\\mixed.js"', '"%RUNNER%" "%CLI%" %*', ''].join(
         '\r\n',
       ),
     );

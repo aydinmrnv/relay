@@ -59,26 +59,32 @@ export async function runProcess(
   const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
   const startedAt = Date.now();
 
-  if (options.signal?.aborted) {
-    return {
-      command,
-      args,
-      cwd,
-      exitCode: null,
-      signal: null,
-      stdout: '',
-      stderr: '',
-      durationMs: 0,
-      timedOut: false,
-      aborted: true,
-      ok: false,
-    };
-  }
+  const abortedBeforeStart = (): ProcessResult => ({
+    command,
+    args,
+    cwd,
+    exitCode: null,
+    signal: null,
+    stdout: '',
+    stderr: '',
+    durationMs: Date.now() - startedAt,
+    timedOut: false,
+    aborted: true,
+    ok: false,
+  });
+
+  if (options.signal?.aborted) return abortedBeforeStart();
 
   // On Windows the logical command may be a `.cmd` shim that cannot be spawned
   // without a shell; the invocation resolves it to a direct, shell-free argv.
   // On POSIX this is the identity. Results still report the logical command.
   const invocation = await resolveInvocation(command, args);
+
+  // Checked again: resolving reads the disk on Windows, and an abort that lands
+  // meanwhile has no listener yet to hear it. Missed here, the process would
+  // start after its caller had cancelled it, with nothing left to stop it.
+  // From here to the listener below there is no await, so no second gap.
+  if (options.signal?.aborted) return abortedBeforeStart();
 
   const child = spawn(invocation.command, [...invocation.args], {
     cwd,
@@ -482,15 +488,18 @@ async function resolveBatchShim(shimPath: string, platform: ExecutionPlatform): 
 const DP0 = /%~?dp0%?/i;
 
 /**
- * Every `SET "NAME=value"` in a shim, keyed by lowercased name — cmd variables
- * are case-insensitive. A name is often assigned more than once, on the two
- * branches of an IF, so every value is kept, in order.
+ * Every `SET "NAME=value"` in a shim, and every unquoted `SET NAME=value`,
+ * keyed by lowercased name — cmd variables are case-insensitive. A name is
+ * often assigned more than once, on the two branches of an IF, so every value
+ * is kept, in order: the node check below has to see all of them, or a later
+ * reassignment could slip a different program past it.
  */
 function shimAssignments(content: string): Map<string, string[]> {
   const assignments = new Map<string, string[]>();
-  for (const match of content.matchAll(/SET\s+"([^"=]+)=([^"]*)"/gi)) {
-    const name = (match[1] ?? '').toLowerCase();
-    assignments.set(name, [...(assignments.get(name) ?? []), match[2] ?? '']);
+  for (const match of content.matchAll(/\bSET\s+(?:"([^"=]+)=([^"]*)"|([^\s"=/]+)=([^\r\n]*))/gi)) {
+    const name = (match[1] ?? match[3] ?? '').toLowerCase();
+    const value = (match[2] ?? match[4] ?? '').trim();
+    assignments.set(name, [...(assignments.get(name) ?? []), value]);
   }
   return assignments;
 }
