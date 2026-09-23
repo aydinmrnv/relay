@@ -10,6 +10,7 @@ import { StatusBadge, STATUS_MEANING } from '@/components/app/status-badge';
 import { HelpTip } from '@/components/app/help-tip';
 import { TextShimmer } from '@/components/21st/text-shimmer';
 import { RunTimeline } from '@/components/runs/run-timeline';
+import { LabeledProgressIndicator } from '@/components/watermelon/labeled-progress-indicator';
 import type { Run, Workflow } from '@/lib/workflow/schema';
 import { formatUsd } from '@/lib/format';
 
@@ -90,7 +91,11 @@ export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onC
           >
             <ScrollArea className="h-[232px]">
               <div className="p-3">
-                {!running && run.summary !== undefined ? <p className="mb-3 rounded-lg border bg-muted/30 p-2.5 text-xs leading-relaxed whitespace-pre-line">{run.summary}</p> : null}
+                {running ? (
+                  <LabeledProgressIndicator size="sm" labels={[]} label={phase?.message ?? 'Starting…'} progress={`${Math.max(4, progress)}%`} className="mb-4 pt-1" />
+                ) : run.summary !== undefined ? (
+                  <p className="mb-3 rounded-lg border bg-muted/30 p-2.5 text-xs leading-relaxed whitespace-pre-line">{run.summary}</p>
+                ) : null}
                 <RunTimeline run={run} workflow={workflow} compact />
               </div>
             </ScrollArea>

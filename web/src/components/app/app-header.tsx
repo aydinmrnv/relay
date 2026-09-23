@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { useTheme } from 'next-themes';
-import { BookOpen, ChevronDown, CircleHelp, FilePlus2, Keyboard, LayoutTemplate, Moon, Play, Plus, Search, Sparkles, Sun, Workflow as WorkflowIcon } from 'lucide-react';
+import { BookOpen, ChevronDown, CircleHelp, FilePlus2, Keyboard, LayoutTemplate, Moon, Play, Plus, Search, Sparkles, Workflow as WorkflowIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Kbd } from '@/components/ui/kbd';
@@ -20,6 +20,7 @@ import { CONNECTORS } from '@/lib/connectors';
 import { TEMPLATES } from '@/lib/workflow/templates';
 import { isTypingTarget } from '@/lib/shortcuts';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
+import { SwitchMode } from '@/components/watermelon/switch-mode';
 import { ShortcutsDialog } from './shortcuts-dialog';
 
 const TITLES: Record<string, string> = {
@@ -143,10 +144,7 @@ export function AppHeader() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button variant="ghost" size="icon-sm" aria-label="Toggle light or dark theme" onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}>
-          <Sun className="hidden dark:block" />
-          <Moon className="dark:hidden" />
-        </Button>
+        <SwitchMode width={46} height={24} darkColor="#15131c" lightColor="#ffffff" knobDarkColor="#2b2838" knobLightColor="#f4f3f8" borderDarkColor="#3d3a4a" borderLightColor="#dddbe6" />
 
         <ButtonGroup>
           <Button size="sm" onClick={() => create.blank()}>

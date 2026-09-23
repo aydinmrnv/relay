@@ -9,13 +9,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PageHeader } from '@/components/app/page-header';
+import { FluidTabs } from '@/components/watermelon/fluid-tabs';
 import { StatusBadge } from '@/components/app/status-badge';
 import { Stagger, StaggerItem } from '@/components/motion/fade-in';
 import { GraphThumbnail } from '@/components/templates/graph-thumbnail';
@@ -182,21 +182,28 @@ export default function WorkflowsPage() {
               <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, app or repository…" className="pl-8" aria-label="Search workflows" />
             </div>
-            <ToggleGroup value={[filter]} onValueChange={(value) => setFilter((value[0] as Filter | undefined) ?? 'all')} variant="outline" size="sm">
-              {(
+            <FluidTabs
+              size="sm"
+              layoutId="workflow-filter"
+              aria-label="Filter workflows"
+              value={filter}
+              onChange={(id) => setFilter(id as Filter)}
+              tabs={(
                 [
                   ['all', 'All'],
                   ['active', 'Active'],
                   ['paused', 'Paused'],
                   ['attention', 'Needs attention'],
                 ] as const
-              ).map(([value, label]) => (
-                <ToggleGroupItem key={value} value={value} className="gap-1.5 text-xs">
-                  {label}
-                  <span className="text-muted-foreground tabular-nums">{counts[value]}</span>
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
+              ).map(([id, label]) => ({
+                id,
+                label: (
+                  <>
+                    {label} <span className="ml-0.5 font-normal text-muted-foreground tabular-nums">{counts[id]}</span>
+                  </>
+                ),
+              }))}
+            />
             <Select value={sort} onValueChange={(value) => setSort(value as Sort)} items={[{ value: 'edited', label: 'Recently edited' }, { value: 'run', label: 'Recently run' }, { value: 'name', label: 'Name' }]}>
               <SelectTrigger size="sm" className="ml-auto w-40" aria-label="Sort">
                 <SelectValue />

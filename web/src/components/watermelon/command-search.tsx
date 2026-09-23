@@ -5,7 +5,6 @@ import {
   useMemo,
   useEffect,
   useRef,
-  type KeyboardEvent,
   type FC,
 } from 'react';
 import type { ReactNode } from 'react';

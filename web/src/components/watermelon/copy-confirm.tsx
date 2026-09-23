@@ -4,7 +4,7 @@ import {
   CopyIcon,
   Settings2,
 } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'motion/react';
 import { type ReactNode, useState } from 'react';
 
 interface SkillCardProps {
@@ -105,19 +105,59 @@ export default function CopyConfirm({
   );
 }
 
+/**
+ * Adapted for the studio: the animated copy button from the card above, on
+ * its own, in the theme's colours and at toolbar size.
+ */
+export function CopyConfirmButton({ value, copyText = 'Copy', copiedText = 'Copied', onCopied, className = '' }: { value: string; copyText?: string; copiedText?: string; onCopied?: () => void; className?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    onCopied?.();
+    setTimeout(() => setCopied(false), 1800);
+  }
+
+  return (
+    <motion.button
+      type="button"
+      whileTap={{ scale: 0.97 }}
+      onClick={() => void handleCopy()}
+      aria-label={copied ? copiedText : copyText}
+      className={`relative flex h-6 items-center justify-center gap-1.5 overflow-hidden rounded-full px-2.5 text-xs font-medium transition-colors ${copied ? 'bg-success text-white' : 'bg-foreground text-background hover:bg-foreground/85'} ${className}`}
+    >
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={copied ? 'check' : 'copy'}
+          initial={{ opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
+          animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+          exit={{ opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
+          transition={{ type: 'spring', duration: 0.3, bounce: 0 }}
+        >
+          {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+        </motion.span>
+      </AnimatePresence>
+      <AnimatedText from={copyText} to={copiedText} isCopied={copied} small />
+    </motion.button>
+  );
+}
+
 const AnimatedText = ({
   from,
   to,
   isCopied,
+  small = false,
 }: {
   from: string;
   to: string;
   isCopied: boolean;
+  small?: boolean;
 }) => {
   const activeText = isCopied ? to : from;
 
   return (
-    <div className="flex text-lg tracking-tight will-change-transform">
+    <div className={`flex tracking-tight will-change-transform ${small ? 'text-xs' : 'text-lg'}`}>
       <AnimatePresence mode="popLayout" initial={false}>
         {activeText.split('').map((char, index) => {
           const displayChar = char === ' ' ? '\u00A0' : char;

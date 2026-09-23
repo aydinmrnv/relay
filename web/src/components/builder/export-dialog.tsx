@@ -1,13 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { AlertTriangle, Check, CircleAlert, Copy, Download, FileArchive, FileCode2, KeyRound } from 'lucide-react';
+import { useMemo } from 'react';
+import { AlertTriangle, CircleAlert, Download, FileArchive, FileCode2, KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { HelpTip } from '@/components/app/help-tip';
+import { CopyConfirmButton } from '@/components/watermelon/copy-confirm';
 import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import { slugify } from '@/lib/brand';
@@ -37,19 +38,11 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
   const markExported = useStudio((state) => state.markExported);
   const compiled = useMemo(() => (workflow === null ? null : compileWorkflow(workflow, brand, { auth })), [workflow, brand, auth]);
   const errors = useMemo(() => (workflow === null ? [] : validateWorkflow(workflow).issues.filter((issue) => issue.level === 'error')), [workflow]);
-  const [copied, setCopied] = useState<string | null>(null);
 
   if (workflow === null || compiled === null) return null;
 
   const secrets = [...new Map(compiled.secrets.map((secret) => [secret.name, secret])).values()];
   const triggerLabel = readTriggerLabel(compiled.files[0]?.content);
-
-  const copy = async (path: string, content: string) => {
-    await navigator.clipboard.writeText(content);
-    setCopied(path);
-    markExported(workflow.id);
-    setTimeout(() => setCopied(null), 1500);
-  };
 
   const downloadOne = (path: string, content: string) => {
     saveBlob(new Blob([content], { type: 'text/plain' }), path.split('/').pop() ?? path);
@@ -151,10 +144,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
                   <p className="text-xs text-muted-foreground">{file.description}</p>
                   <div className="relative min-h-0 rounded-lg border bg-muted/40">
                     <div className="absolute top-2 right-2 z-10 flex gap-1">
-                      <Button size="xs" variant="outline" className="bg-card" onClick={() => void copy(file.path, file.content)}>
-                        {copied === file.path ? <Check data-icon="inline-start" className="text-success" /> : <Copy data-icon="inline-start" />}
-                        {copied === file.path ? 'Copied' : 'Copy'}
-                      </Button>
+                      <CopyConfirmButton value={file.content} onCopied={() => markExported(workflow.id)} />
                       <Button size="icon-xs" variant="outline" className="bg-card" aria-label={`Download ${file.path}`} onClick={() => downloadOne(file.path, file.content)}>
                         <Download />
                       </Button>
