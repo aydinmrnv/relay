@@ -31,7 +31,11 @@ export type Term =
   | 'template'
   | 'variables'
   | 'unattended'
-  | 'cost';
+  | 'cost'
+  | 'coding-agent'
+  | 'worktree'
+  | 'secrets'
+  | 'execution';
 
 export interface GlossaryEntry {
   term: Term;
@@ -70,19 +74,19 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'port',
     title: 'Ports and colours',
     short: 'The dots on each node. Colours are types: a ticket only plugs into something that accepts a ticket.',
-    long: 'Blue ports carry a ticket (an issue with a title and a body). Violet carries a finished pipeline run. Indigo carries a change — a branch or a pull request. Grey is a plain event, and light grey accepts anything. The canvas refuses a connection whose colours do not fit, so a nonsense graph cannot be drawn in the first place.',
+    long: 'Sky-blue ports carry a ticket: an issue with a title and a body. Violet carries a finished pipeline run. Indigo carries a change: a branch or a pull request. Grey is a plain "this happened" event, and light grey accepts anything. Inputs are on the left of a node, outputs on the right. The canvas refuses a connection whose colours do not fit, so a nonsense graph cannot be drawn in the first place.',
   },
   gate: {
     term: 'gate',
     title: 'Guardrail gates',
     short: 'Checks that sit in front of the pipeline and refuse by default: budget, allowlist, approval, kill switch.',
-    long: 'Gates exist because anything that can be triggered by somebody else can spend your money. Each gate has a pass output and a refused output; wire the refused one to a Slack message and the team learns why nothing happened.',
+    long: 'Gates exist because anything that can be triggered by somebody else can spend your money. Each gate has a pass output and a refused output. Wire the refused one to a Slack message and the team learns why nothing happened, instead of wondering.',
   },
   budget: {
     term: 'budget',
     title: 'Budget gate',
     short: 'Refuses to start a run when it would cross a per-run or per-day spending ceiling.',
-    long: 'The pipeline reports what each agent turn cost, and the budget gate compares the running total against your ceilings before anything starts. It never queues work for tomorrow — a refused run is refused, and says why.',
+    long: 'The pipeline reports what each agent turn cost, and the budget gate compares the running totals against your per-run and per-day ceilings before anything starts. It never queues work for tomorrow: a refused run is refused, and says why. Unattended workflows should always have one; the exported Action will not start without the ceilings set.',
   },
   allowlist: {
     term: 'allowlist',
@@ -106,7 +110,7 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'pipeline',
     title: 'Agent pipeline',
     short: 'Plan → plan review → implement → code review → tests, in an isolated git worktree, by two different agents.',
-    long: `The pipeline is what ${PRODUCT} is for. One coding agent writes a plan, a different one attacks it against the real code, the plan is revised, one implements, the other reviews the diff, and the project's own test suite has the last word. Everything happens on its own branch in its own worktree, so your checkout is never touched. It takes a ticket in and hands a run out.`,
+    long: `The pipeline is what ${PRODUCT} is for. One coding agent writes a plan, a different one attacks it against the real code, the plan is revised, one implements, the other reviews the diff, and the project's own test suite has the last word. Everything happens on its own branch in its own worktree, so your checkout is never touched. It takes a ticket in and hands a finished run out. The Fast run variant skips both reviews for small, well-described tickets.`,
   },
   'review-level': {
     term: 'review-level',
@@ -130,7 +134,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'test-run',
     title: 'Test run',
     short: 'Plays the workflow back in your browser with a sample ticket. Free, instant, and nothing leaves this machine.',
-    long: 'A test run walks your graph node by node with the same phases, review rounds, budgets and refusals the real pipeline has, using a sample payload from the trigger (or one you type). It is seeded, so the same workflow replays the same run until you change it. Nothing is called, nothing is billed; costs shown are what the CLIs would report.',
+    long: 'A test run walks your graph node by node with the same phases, review rounds, budgets and refusals the real pipeline has, using a sample payload from the trigger (or one you type). It is seeded, so the same workflow replays the same run until you change it. Nothing is called and nothing is billed; the costs shown are realistic estimates of what the CLIs would report. How fast it plays back is a setting.',
+    href: '/workflows',
   },
   run: {
     term: 'run',
@@ -143,7 +148,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'phase',
     title: 'Pipeline phases',
     short: 'The steps inside the pipeline: fetch the issue, create the workspace, plan, review, implement, review, test.',
-    long: 'Each phase names the agent that did it, how long it took and what it cost, so you can see where the time and money went.',
+    long: 'Each phase names the agent that did it, how long it took and what it cost, so you can see where the time and money went. Plan review and code review repeat for as many rounds as the review level allows, and stop early once the reviewer has nothing left to raise.',
+    href: '/runs',
   },
   validation: {
     term: 'validation',
@@ -155,7 +161,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'export',
     title: 'Export',
     short: 'Compiles the workflow into files a repository needs to run it on its own GitHub Actions minutes.',
-    long: `You get .relay/config.json (what the ${PRODUCT} CLI reads), a GitHub Actions workflow, a SETUP.md listing the secrets to add, and the graph as JSON. Commit them, add the secrets, and the workflow runs on your repository with your own subscriptions — nothing is hosted or billed by ${PRODUCT}.`,
+    long: `You get .relay/config.json (what the ${PRODUCT} CLI reads), a GitHub Actions workflow under .github/workflows/, a SETUP.md listing the secrets to add, and the graph as JSON so it can be imported again. Commit them, add the secrets, and the workflow runs on your repository with your own subscriptions. Nothing is hosted or billed by ${PRODUCT}. Anything the canvas can express but those files cannot is listed as a warning, never silently dropped.`,
+    href: '/workflows',
   },
   connection: {
     term: 'connection',
@@ -168,8 +175,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'subscription',
     title: 'Bring your own subscription',
     short: 'Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. No API keys to paste.',
-    long: `The studio asks the CLIs on this machine whether they are signed in, and can start their own sign-in flow from Settings. It never sees or stores a token. For GitHub Actions, the export uses each vendor's supported way to carry a personal plan into CI (CLAUDE_CODE_OAUTH_TOKEN, CODEX_AUTH_JSON), or API keys if you prefer.`,
-    href: '/settings',
+    long: `The studio asks the CLIs on this machine whether they are signed in, and can start their own sign-in flow from Settings → Coding agents. It never sees or stores a token: the credential lands in the CLI, exactly as if you had signed in from a terminal. For GitHub Actions, the export uses each vendor's supported way to carry a personal plan into CI (CLAUDE_CODE_OAUTH_TOKEN, CODEX_AUTH_JSON), or API keys if you prefer.`,
+    href: '/settings#agents',
   },
   template: {
     term: 'template',
@@ -194,7 +201,35 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'cost',
     title: 'Cost',
     short: 'What the coding CLIs report each turn cost. On a subscription it counts against your plan’s usage.',
-    long: 'Costs in test runs are simulated from realistic ranges per phase. In a real run they are exactly what Claude Code and Codex report, summed per phase.',
+    long: 'Costs in test runs are simulated from realistic ranges per phase. In a real run they are exactly what Claude Code and Codex report, summed per phase. On a subscription nothing extra is billed, but the number is still what budget gates compare against, so a ceiling means the same thing on either kind of account.',
+    href: '/runs',
+  },
+  'coding-agent': {
+    term: 'coding-agent',
+    title: 'Coding agents',
+    short: 'The command-line tools that do the work, such as Claude Code and Codex, each signed in with its own account.',
+    long: `${PRODUCT} does not bring its own model. The pipeline drives coding CLIs you already use: Claude Code and Codex by default, with Gemini CLI and Aider as options for some roles. Each runs inside the run's worktree on its own account, so the plan you already pay for does the work. Two different agents checking each other is what makes the reviews worth having.`,
+    href: '/settings#agents',
+  },
+  worktree: {
+    term: 'worktree',
+    title: 'Isolated worktree',
+    short: 'A separate checkout on its own branch where a run does all its work, so your own checkout is never touched.',
+    long: 'Before any agent starts, the pipeline creates a git worktree on a fresh branch named after the branch prefix, the ticket and its title. Agents edit files there, tests run there, and delivery pushes from there. If a run fails or is stopped, the branch and the work so far stay behind for you to inspect.',
+  },
+  secrets: {
+    term: 'secrets',
+    title: 'Repository secrets',
+    short: 'Values the exported Action reads from your repository settings: agent credentials and webhook URLs. The studio never sees them.',
+    long: 'SETUP.md lists every secret an export needs, by name. Claude Code needs CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API key); Codex needs CODEX_AUTH_JSON (subscription) or OPENAI_API_KEY (API key); Slack, Discord and bridged actions add their webhook URLs. Add them under the repository’s Settings → Secrets and variables → Actions, or with gh secret set.',
+    href: '/settings#credentials',
+  },
+  execution: {
+    term: 'execution',
+    title: 'Where runs execute',
+    short: 'Real runs execute on your repository’s own GitHub Actions minutes. Hosted and self-hosted runners come later.',
+    long: `An exported workflow is a GitHub Actions workflow: it installs the coding CLIs on a GitHub runner and runs the pipeline there, on your own Actions minutes (free on public repositories). Hosted microVMs, one isolated VM per run, and a self-hosted runner in your own network are planned but not built. Test runs in the studio never execute anything; they are played back in your browser.`,
+    href: '/settings#running',
   },
 };
 
@@ -215,8 +250,10 @@ export const GLOSSARY_ORDER: Term[] = [
   'action',
   'port',
   'pipeline',
+  'coding-agent',
   'roles',
   'review-level',
+  'worktree',
   'gate',
   'budget',
   'allowlist',
@@ -231,6 +268,8 @@ export const GLOSSARY_ORDER: Term[] = [
   'cost',
   'variables',
   'export',
+  'secrets',
+  'execution',
   'connection',
   'subscription',
   'template',

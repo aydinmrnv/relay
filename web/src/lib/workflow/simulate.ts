@@ -447,6 +447,18 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * The payload a test run of this workflow would start with, for the "Run with
+ * my own payload" editor. Consumes the seeded generator in the same order as
+ * simulateRun, so an unedited payload replays the same run.
+ */
+export function samplePayload(workflow: Workflow): Record<string, unknown> {
+  const rng = mulberry32(hash(workflow.id + workflow.updatedAt));
+  rng();
+  const trigger = workflow.nodes.find((node) => getNodeType(node.data.typeId)?.kind === 'trigger');
+  return buildPayload(trigger === undefined ? undefined : getNodeType(trigger.data.typeId), rng);
+}
+
 function buildPayload(def: NodeTypeDef | undefined, rng: () => number): Record<string, unknown> {
   const titles = [
     'Fix the flaky timeout in the retry test',

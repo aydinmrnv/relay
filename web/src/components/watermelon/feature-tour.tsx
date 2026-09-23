@@ -125,17 +125,17 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
                     duration: 0.18,
                     ease: EASE_OUT,
                 }}
-                className={`relative w-full max-w-[400px] sm:aspect-[1/1.3] min-h-[520px] sm:min-h-0 rounded-[34px] border shadow-sm p-6 sm:p-8 flex flex-col items-center overflow-hidden transition-colors duration-300 bg-white border-neutral-200 dark:bg-neutral-900 dark:border-neutral-800 ${className}`}
+                className={`relative w-full max-w-[420px] min-h-[440px] rounded-[30px] border shadow-xl p-6 sm:p-8 flex flex-col items-center overflow-hidden transition-colors duration-300 bg-card border-border ${className}`}
             >
                 <button
                     onClick={onClose}
                     aria-label="Close tour"
-                    className="absolute top-6 right-6 p-2 rounded-full transition-colors z-50 bg-neutral-300 hover:bg-neutral-400 dark:bg-neutral-800 dark:hover:bg-neutral-700"
+                    className="absolute top-5 right-5 p-1.5 rounded-full transition-colors z-50 bg-muted hover:bg-accent"
                 >
                     <X
-                        size={20}
-                        strokeWidth={3}
-                        className="text-white dark:text-neutral-200"
+                        size={16}
+                        strokeWidth={2.5}
+                        className="text-muted-foreground"
                     />
                 </button>
 
@@ -173,14 +173,14 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
                                 layoutId="tour-icon-bg"
                                 transition={SPRING_BG}
                                 className="absolute w-24 h-24 rounded-3xl
-                           bg-neutral-100 dark:bg-neutral-800
+                           bg-primary/10
                            shadow-inner dark:shadow-black/40"
                             />
 
                             <motion.div
                                 layoutId="tour-icon"
                                 transition={SPRING_ICON}
-                                className="relative text-neutral-700 dark:text-neutral-200
+                                className="relative text-primary
                            drop-shadow-[0_4px_12px_rgba(0,0,0,0.12)]
                            dark:drop-shadow-[0_4px_16px_rgba(255,255,255,0.12)]"
                             >
@@ -209,13 +209,13 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
                                 duration: 0.16,
                                 ease: EASE_OUT,
                             }}
-                            className="space-y-2 px-4 mt-8 sm:mt-12 text-center"
+                            className="space-y-2 px-2 mt-6 text-center"
                         >
-                            <h2 className="text-[26px] font-bold text-neutral-900 dark:text-white">
+                            <h2 className="text-xl font-semibold tracking-tight text-foreground">
                                 {currentStep.title}
                             </h2>
 
-                            <p className="text-[20px] font-medium leading-tight text-neutral-500 dark:text-neutral-400">
+                            <p className="text-[15px] leading-relaxed text-muted-foreground">
                                 {currentStep.description}
                             </p>
 
@@ -239,7 +239,7 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
                 </div>
 
                 {/* Dots */}
-                <div className="mt-6 sm:mt-8 flex items-center gap-3" role="tablist">
+                <div className="mt-6 flex items-center gap-3" role="tablist">
                     {steps.map((step, index) => (
                         <button
                             key={step.id}
@@ -259,15 +259,37 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
                                     damping: 20,
                                 }}
                                 className={`h-[12px] w-[12px] rounded-full ${index === currentIndex
-                                    ? "bg-neutral-500 dark:bg-neutral-200"
-                                    : "bg-neutral-200 dark:bg-neutral-700"
+                                    ? "bg-primary"
+                                    : "bg-muted-foreground/25"
                                     }`}
                             />
                         </button>
                     ))}
                 </div>
 
-                <div className="absolute inset-0 pointer-events-none rounded-[40px] bg-linear-to-br from-white/20 via-transparent to-black/5 dark:from-white/5 dark:via-transparent dark:to-black/40" />
+                {/* Adapted for the studio: explicit Back / Next, since arrow keys are not discoverable. */}
+                <div className="mt-5 flex w-full items-center justify-between gap-3">
+                    <button
+                        type="button"
+                        onClick={goPrev}
+                        disabled={currentIndex === 0}
+                        className="rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-0"
+                    >
+                        Back
+                    </button>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                        {currentIndex + 1} of {steps.length}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={currentIndex === steps.length - 1 ? onClose : goNext}
+                        className="rounded-full bg-primary px-5 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                    >
+                        {currentIndex === steps.length - 1 ? "Start building" : "Next"}
+                    </button>
+                </div>
+
+                <div className="absolute inset-0 pointer-events-none rounded-[30px] bg-linear-to-br from-white/20 via-transparent to-black/5 dark:from-white/5 dark:via-transparent dark:to-black/30" />
             </motion.div>
         </div>
     );

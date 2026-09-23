@@ -1,6 +1,7 @@
 'use client';
 
-import { motion, useReducedMotionConfig, type HTMLMotionProps, type Variants } from 'motion/react';
+import { motion, type HTMLMotionProps, type Variants } from 'motion/react';
+import { useCalmMotion } from './use-calm-motion';
 
 /**
  * The studio's two entrance animations, built on motion.dev. Kept small and
@@ -12,7 +13,7 @@ import { motion, useReducedMotionConfig, type HTMLMotionProps, type Variants } f
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 export function FadeIn({ delay = 0, y = 8, children, ...props }: HTMLMotionProps<'div'> & { delay?: number; y?: number }) {
-  const reduce = useReducedMotionConfig();
+  const reduce = useCalmMotion();
   return (
     <motion.div
       initial={reduce ? false : { opacity: 0, y }}
@@ -36,7 +37,7 @@ const item: Variants = {
 };
 
 export function Stagger({ children, ...props }: HTMLMotionProps<'div'>) {
-  const reduce = useReducedMotionConfig();
+  const reduce = useCalmMotion();
   return (
     <motion.div variants={container} initial={reduce ? false : 'hidden'} animate="show" {...props}>
       {children}

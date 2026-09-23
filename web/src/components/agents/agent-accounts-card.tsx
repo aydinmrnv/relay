@@ -1,47 +1,62 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Check, Copy, ExternalLink, KeyRound, LogOut, RefreshCw, Smartphone, TerminalSquare } from 'lucide-react';
+import { ArrowRight, ExternalLink, KeyRound, LogOut, RefreshCw, Smartphone, TerminalSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { getConnector } from '@/lib/connectors';
-import { useAgentsStore } from '@/hooks/use-agent-accounts';
-import { useStudio } from '@/lib/store';
+import { useAgentsStore, type BridgeState } from '@/hooks/use-agent-accounts';
+import { useNow } from '@/hooks/use-now';
+import { timeAgo } from '@/lib/format';
 import { AGENT_IDS, AGENT_META, type AgentAccount, type AgentId, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
 
 const CONNECTOR_FOR: Record<AgentId, string> = { claude: 'claude-code', codex: 'codex-cli' };
 
+/**
+ * Sign-in state of the coding CLIs on this machine, and buttons that start
+ * their own login flows through the local bridge (/api/agents). The studio
+ * never holds a credential: it asks, and it starts the CLI's login.
+ */
 export function AgentAccountsCard() {
   const bridge = useAgentsStore((state) => state.bridge);
   const status = useAgentsStore((state) => state.status);
   const loading = useAgentsStore((state) => state.loading);
   const refresh = useAgentsStore((state) => state.refresh);
-  const repository = useStudio((state) => state.settings.defaultRepository);
+  const now = useNow();
   const [signing, setSigning] = useState<{ agent: AgentId; mode: LoginMode } | null>(null);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center justify-between gap-2">
-          <span>Agent accounts</span>
-          <Button variant="ghost" size="icon-xs" aria-label="Refresh" onClick={() => void refresh()} disabled={loading}>
-            <RefreshCw className={loading ? 'animate-spin' : ''} />
-          </Button>
-        </CardTitle>
+        <CardTitle>Agent accounts</CardTitle>
         <CardDescription>
-          Bring your own subscription. Each coding agent signs in with its own CLI and its own account. The studio never sees a key or a token: it asks the CLI whether it is signed in and can start the CLI’s login for you.
+          {bridge === 'unavailable'
+            ? 'Could not reach the CLIs on this machine.'
+            : status === null
+              ? 'Asking the CLIs on this machine…'
+              : `Read live from the CLIs on this machine, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
         </CardDescription>
+        <CardAction>
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Check sign-in again" onClick={() => void refresh()} disabled={loading} />}>
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </TooltipTrigger>
+            <TooltipContent>Check sign-in again</TooltipContent>
+          </Tooltip>
+        </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3">
         {bridge === 'unavailable' ? (
-          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+          <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-pretty text-amber-800 dark:text-warning">
             The local bridge is not reachable, so sign-in from the browser is off. Run the studio on the machine where the CLIs live (<span className="font-mono">npm run dev</span>), or sign in from a terminal with{' '}
             <span className="font-mono">claude auth login</span> and <span className="font-mono">codex login</span>.
           </div>
@@ -49,14 +64,19 @@ export function AgentAccountsCard() {
         {AGENT_IDS.map((id) => (
           <AgentRow key={id} id={id} account={status?.agents[id] ?? null} bridge={bridge} onSignIn={(mode) => setSigning({ agent: id, mode })} />
         ))}
-        <ActionsSecrets repository={repository} />
       </CardContent>
+      <CardFooter className="flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+        <span>These sign-ins are for this machine. GitHub Actions needs its own secrets.</span>
+        <Link href="/settings#credentials" className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline">
+          Credentials for exported workflows <ArrowRight className="size-3" aria-hidden />
+        </Link>
+      </CardFooter>
       <SignInDialog request={signing} onClose={() => setSigning(null)} />
     </Card>
   );
 }
 
-function AgentRow({ id, account, bridge, onSignIn }: { id: AgentId; account: AgentAccount | null; bridge: string; onSignIn: (mode: LoginMode) => void }) {
+function AgentRow({ id, account, bridge, onSignIn }: { id: AgentId; account: AgentAccount | null; bridge: BridgeState; onSignIn: (mode: LoginMode) => void }) {
   const meta = AGENT_META[id];
   const connector = getConnector(CONNECTOR_FOR[id]);
   const logout = useAgentsStore((state) => state.logout);
@@ -64,25 +84,34 @@ function AgentRow({ id, account, bridge, onSignIn }: { id: AgentId; account: Age
 
   const signedIn = account?.loggedIn === true;
   const installed = account?.installed === true;
+  const canStart = bridge === 'available' && installed;
+  const alternative =
+    id === 'codex'
+      ? { mode: 'device' as const, icon: Smartphone, label: 'Sign in with a device code instead', hint: 'Shows a one-time code to type on OpenAI’s page. Handy when this browser is not where you are signed in.' }
+      : { mode: 'console' as const, icon: KeyRound, label: 'Use an Anthropic Console API account instead', hint: 'Signs Claude Code in with a Console account. Usage is billed per token to it, not to a Claude plan.' };
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
       {connector === undefined ? null : <ConnectorIcon connector={connector} size={18} />}
       <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 text-sm font-medium">
+        <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
           {meta.name}
           {account?.version !== null && account?.version !== undefined ? <span className="font-mono text-[10px] text-muted-foreground">v{account.version}</span> : null}
           {signedIn ? (
-            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-300">
+            <Badge variant="outline" className="border-success/40 bg-success/10 text-[10px] text-success">
               {account?.method === 'subscription' ? 'Subscription' : account?.method === 'api-key' ? 'API key' : 'Signed in'}
               {account?.plan !== null && account?.plan !== undefined ? ` · ${account.plan}` : ''}
             </Badge>
+          ) : bridge === 'unknown' ? (
+            <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground">
+              <Spinner className="size-2.5" /> Checking
+            </Badge>
           ) : bridge === 'available' && account !== null && !installed ? (
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-[10px] text-muted-foreground">
               Not installed
             </Badge>
           ) : bridge === 'available' ? (
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="border-warning/40 bg-warning/10 text-[10px] text-amber-700 dark:text-warning">
               Not signed in
             </Badge>
           ) : null}
@@ -115,68 +144,24 @@ function AgentRow({ id, account, bridge, onSignIn }: { id: AgentId; account: Age
               }
             }}
           >
-            <LogOut data-icon="inline-start" /> Sign out
+            {busy ? <Spinner data-icon="inline-start" /> : <LogOut data-icon="inline-start" />} Sign out
           </Button>
         ) : (
           <>
-            <Button size="sm" disabled={bridge !== 'available' || !installed} onClick={() => onSignIn('browser')}>
+            <Button size="sm" disabled={!canStart} onClick={() => onSignIn('browser')}>
               {id === 'claude' ? 'Sign in with Claude' : 'Sign in with ChatGPT'}
             </Button>
-            {id === 'codex' ? (
-              <Button size="sm" variant="ghost" disabled={bridge !== 'available' || !installed} onClick={() => onSignIn('device')} title="Device code">
-                <Smartphone />
-              </Button>
-            ) : (
-              <Button size="sm" variant="ghost" disabled={bridge !== 'available' || !installed} onClick={() => onSignIn('console')} title="Use an Anthropic Console API account instead">
-                <KeyRound />
-              </Button>
-            )}
+            <Tooltip>
+              <TooltipTrigger render={<Button size="icon-sm" variant="ghost" aria-label={alternative.label} disabled={!canStart} onClick={() => onSignIn(alternative.mode)} />}>
+                <alternative.icon />
+              </TooltipTrigger>
+              <TooltipContent className="max-w-64">
+                <span className="font-medium">{alternative.label}.</span> {alternative.hint}
+              </TooltipContent>
+            </Tooltip>
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-function ActionsSecrets({ repository }: { repository: string }) {
-  const repo = repository.trim() || 'owner/repo';
-  return (
-    <details className="rounded-lg border bg-muted/30 p-3 text-xs">
-      <summary className="cursor-pointer font-medium">Use the same subscriptions in GitHub Actions</summary>
-      <p className="mt-2 text-muted-foreground">
-        Exported workflows run on GitHub’s runners, where nobody can click a sign-in page. Each vendor has a supported way to carry a subscription there. Run these in your own terminal; the studio never sees the values.
-      </p>
-      <div className="mt-3 grid gap-3">
-        <CommandLine label="Claude Code · a long-lived subscription token (valid one year)" command={`claude setup-token\ngh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${repo}   # paste the token when asked`} />
-        <CommandLine label="Codex · the sign-in file the CLI already keeps (OpenAI’s documented CI method)" command={`codex login\ngh secret set CODEX_AUTH_JSON -R ${repo} < ~/.codex/auth.json`} />
-      </div>
-      <p className="mt-3 text-muted-foreground">
-        OpenAI asks that the auth.json method not be used on public repositories. The Claude token is tied to the person who created it and counts against that plan.
-      </p>
-    </details>
-  );
-}
-
-function CommandLine({ label, command }: { label: string; command: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div>
-      <p className="mb-1 flex items-center justify-between text-[11px] font-medium">
-        {label}
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Copy"
-          onClick={async () => {
-            await navigator.clipboard.writeText(command);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
-          }}
-        >
-          {copied ? <Check /> : <Copy />}
-        </Button>
-      </p>
-      <pre className="overflow-x-auto rounded-md bg-background p-2 font-mono text-[11px]">{command}</pre>
     </div>
   );
 }
@@ -267,7 +252,7 @@ function SignInFlow({ agent, mode, onClose }: { agent: AgentId; mode: LoginMode;
         </DialogHeader>
 
         {error !== null ? (
-          <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{error}</div>
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
         ) : session === null ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Spinner /> Starting {meta.name}…

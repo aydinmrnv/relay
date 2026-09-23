@@ -30,10 +30,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
  * only choice that also works where the browser is not painting frames.
  */
 function MotionPreference({ children }: { children: React.ReactNode }) {
+  const hydrated = useStudio((state) => state.hydrated);
   const preference = useStudio((state) => state.settings.motion);
   useEffect(() => {
-    MotionGlobalConfig.skipAnimations = preference === 'reduced';
-  }, [preference]);
+    // The hydrating render still sees the default setting; acting on it would
+    // switch skipping off again just after the store switched it on.
+    if (hydrated) MotionGlobalConfig.skipAnimations = preference === 'reduced';
+  }, [hydrated, preference]);
   return <MotionConfig reducedMotion={preference === 'full' ? 'never' : preference === 'reduced' ? 'always' : 'user'}>{children}</MotionConfig>;
 }
 

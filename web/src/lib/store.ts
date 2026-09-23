@@ -9,6 +9,7 @@ import { brandFromName, DEFAULT_BRAND, type Brand } from './brand';
 import { DEFAULT_SETTINGS, type Connection, type Run, type Settings, type Workflow, type WorkflowEdge, type WorkflowNode } from './workflow/schema';
 import { instantiateTemplate, TEMPLATES } from './workflow/templates';
 import { simulateRun } from './workflow/simulate';
+import { repairEdges, repairKnownTemplateIssues } from './workflow/repair';
 
 export interface StudioState {
   hydrated: boolean;
@@ -226,7 +227,8 @@ export const useStudio = create<StudioState>()(
             ? { ...run, status: 'cancelled' as const, finishedAt: run.finishedAt ?? run.events.at(-1)?.at ?? run.startedAt, summary: run.summary ?? 'Interrupted: the tab was closed or reloaded while this test run was playing.' }
             : run,
         );
-        return { ...current, ...saved, runs, settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}), auth: { ...DEFAULT_SETTINGS.auth, ...(saved.settings?.auth ?? {}) } } };
+        const workflows = Object.fromEntries(Object.entries(saved.workflows ?? current.workflows).map(([id, workflow]) => [id, repairKnownTemplateIssues(repairEdges(workflow))]));
+        return { ...current, ...saved, workflows, runs, settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}), auth: { ...DEFAULT_SETTINGS.auth, ...(saved.settings?.auth ?? {}) } } };
       },
       onRehydrateStorage: () => (state) => {
         // Before the first animation can start, not after the first effect.

@@ -1,33 +1,24 @@
 'use client';
 
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useCallback, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Check, Plug, Search, Unplug } from 'lucide-react';
+import { Globe, Plug, Search, SearchX, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { IntegrationsCard, type IntegrationItem } from '@/components/watermelon/integration-card';
-import { ConnectorIcon } from '@/components/connectors/connector-icon';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { PageHeader } from '@/components/app/page-header';
+import { CategoryRail, CategorySelect, filterLabel, inFilter, type Filter } from '@/components/integrations/category-rail';
+import { ConnectDialog } from '@/components/integrations/connect-dialog';
+import { ConnectorCard } from '@/components/integrations/connector-card';
+import { ConnectorSheet } from '@/components/integrations/connector-sheet';
+import { matchConnector, SORT_LABELS, sortMatches, tokenize, type ConnectorMatch, type SortKey } from '@/components/integrations/connector-meta';
 import { useStudio } from '@/lib/store';
-import { CATALOG_STATS, CATEGORY_LABELS, CONNECTORS, connectorsByCategory, type AuthKind, type Connector } from '@/lib/connectors';
-import { cn } from '@/lib/utils';
-
-const AUTH_LABEL: Record<AuthKind, string> = {
-  oauth: 'OAuth',
-  'api-key': 'API key',
-  token: 'Token',
-  app: 'App install',
-  local: 'Runs locally',
-  none: 'No auth',
-};
+import { CATALOG_STATS, CONNECTORS, getConnector } from '@/lib/connectors';
 
 export default function IntegrationsPage() {
+  // useSearchParams needs a Suspense boundary so the page can still prerender.
   return (
     <Suspense fallback={null}>
       <IntegrationsInner />
@@ -35,201 +26,270 @@ export default function IntegrationsPage() {
   );
 }
 
+/**
+ * Updates the query string without a navigation. Next keeps useSearchParams in
+ * step with history.replaceState, so `?app=` and `?q=` stay shareable and the
+ * ⌘K palette's `/integrations?app=<id>` links land on an open sheet.
+ */
+function writeParams(patch: Record<string, string | null>) {
+  const next = new URLSearchParams(window.location.search);
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null || value.length === 0) next.delete(key);
+    else next.set(key, value);
+  }
+  const search = next.toString();
+  window.history.replaceState(null, '', search.length > 0 ? `?${search}` : window.location.pathname);
+}
+
+const SORT_ITEMS = (Object.keys(SORT_LABELS) as SortKey[]).map((key) => ({ value: key, label: SORT_LABELS[key] }));
+
 function IntegrationsInner() {
   const params = useSearchParams();
-  const [query, setQuery] = useState(params.get('q') ?? '');
-  const [category, setCategory] = useState<string>('all');
-  const [connecting, setConnecting] = useState<Connector | null>(null);
+  const appId = params.get('app');
+  const [query, setQuery] = useState(() => params.get('q') ?? '');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [sort, setSort] = useState<SortKey>('recommended');
+  const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [connectOpen, setConnectOpen] = useState(false);
   const connections = useStudio((state) => state.connections);
   const connect = useStudio((state) => state.connect);
   const disconnect = useStudio((state) => state.disconnect);
 
-  const groups = useMemo(() => connectorsByCategory(), []);
-  const needle = query.trim().toLowerCase();
-  const filtered = useMemo(() => {
-    return CONNECTORS.filter((connector) => connector.category !== 'core')
-      .filter((connector) => category === 'all' || connector.category === category || (category === 'connected' && connections[connector.id] !== undefined))
-      .filter((connector) => {
-        if (needle.length === 0) return true;
-        const hay = `${connector.name} ${connector.description} ${(connector.tags ?? []).join(' ')} ${CATEGORY_LABELS[connector.category]}`.toLowerCase();
-        return hay.includes(needle);
-      });
-  }, [category, needle, connections]);
+  // The sheet follows `?app=`. Remember the last app shown so its content stays
+  // on screen while the sheet slides closed after the param is cleared.
+  const [shownId, setShownId] = useState<string | null>(appId);
+  if (appId !== null && appId !== shownId) setShownId(appId);
+  const sheetOpen = appId !== null && getConnector(appId) !== undefined;
+  const shown = shownId === null ? undefined : getConnector(shownId);
 
-  const popular: IntegrationItem[] = CONNECTORS.filter((connector) => connector.popular && connector.category !== 'core')
-    .slice(0, 8)
-    .map((connector) => ({
-      id: connector.id,
-      name: connector.name,
-      entities: CATEGORY_LABELS[connector.category],
-      description: connector.description,
-      tags: (connector.tags ?? []).slice(0, 3),
-      triggers: connector.triggers.length,
-      actions: connector.actions.length,
-      available: true,
-      icon: <ConnectorIcon connector={connector} size={18} variant="mark" />,
-    }));
+  const tokens = useMemo(() => tokenize(query), [query]);
+  const matches = useMemo(() => CONNECTORS.map((connector) => matchConnector(connector, tokens)).filter((match): match is ConnectorMatch => match !== null), [tokens]);
+
+  const isConnected = useCallback((id: string) => connections[id] !== undefined, [connections]);
+
+  const counts = useMemo(() => {
+    const result: Record<string, number> = { all: matches.length, popular: 0, connected: 0 };
+    for (const { connector } of matches) {
+      result[connector.category] = (result[connector.category] ?? 0) + 1;
+      if (connector.popular === true) result['popular'] = (result['popular'] ?? 0) + 1;
+      if (isConnected(connector.id)) result['connected'] = (result['connected'] ?? 0) + 1;
+    }
+    return result;
+  }, [matches, isConnected]);
+
+  const visible = useMemo(() => sortMatches(matches.filter((match) => inFilter(match.connector, filter, isConnected)), sort, isConnected), [matches, filter, sort, isConnected]);
+
+  const onSearch = (value: string) => {
+    setQuery(value);
+    writeParams({ q: value.trim().length > 0 ? value : null });
+  };
+
+  const openApp = useCallback((id: string) => writeParams({ app: id }), []);
+  const onConnect = useCallback((id: string) => {
+    setConnectingId(id);
+    setConnectOpen(true);
+  }, []);
+  const onDisconnect = useCallback(
+    (id: string) => {
+      const connector = getConnector(id);
+      const account = useStudio.getState().connections[id]?.account;
+      disconnect(id);
+      toast(`Disconnected ${connector?.name ?? id}`, account === undefined ? undefined : { action: { label: 'Undo', onClick: () => connect(id, account) } });
+    },
+    [connect, disconnect],
+  );
+
+  const connectedCount = Object.keys(connections).length;
+  const filtered = filter !== 'all' || tokens.length > 0;
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-          <p className="text-sm text-muted-foreground">
-            {CATALOG_STATS.connectors} connectors across {CATALOG_STATS.categories} categories. Connections are mocked locally so you can design against the whole catalog.
-          </p>
-        </div>
-        <div className="relative w-full sm:w-80">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search apps, triggers, actions…" className="pl-8" />
-        </div>
-      </div>
-
-      <Tabs value={category} onValueChange={(value) => setCategory(String(value))}>
-        <ScrollArea className="w-full whitespace-nowrap">
-          <TabsList variant="line" className="w-max">
-            <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="connected">Connected ({Object.keys(connections).length})</TabsTrigger>
-            {groups
-              .filter((group) => group.category !== 'core')
-              .map((group) => (
-                <TabsTrigger key={group.category} value={group.category}>
-                  {group.label} <span className="ml-1 text-muted-foreground">{group.connectors.length}</span>
-                </TabsTrigger>
-              ))}
-          </TabsList>
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
-      </Tabs>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-        {filtered.map((connector) => {
-          const connection = connections[connector.id];
-          return (
-            <Card key={connector.id} size="sm" className={cn('flex flex-col', connection !== undefined ? 'border-emerald-500/40' : '')}>
-              <CardHeader>
-                <div className="flex items-start gap-3">
-                  <ConnectorIcon connector={connector} size={20} />
-                  <div className="min-w-0 flex-1">
-                    <CardTitle className="flex items-center gap-2 text-sm">
-                      <span className="truncate">{connector.name}</span>
-                      {connection !== undefined ? <Check className="size-3.5 text-emerald-600" /> : null}
-                    </CardTitle>
-                    <CardDescription className="line-clamp-2 text-xs">{connector.description}</CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="mt-auto flex flex-col gap-2">
-                <div className="flex flex-wrap gap-1">
-                  <Badge variant="secondary" className="text-[10px]">
-                    {CATEGORY_LABELS[connector.category]}
-                  </Badge>
-                  <Badge variant="outline" className="text-[10px]">
-                    {AUTH_LABEL[connector.auth]}
-                  </Badge>
-                  <Badge variant="outline" className="text-[10px]">
-                    {connector.triggers.length} triggers · {connector.actions.length} actions
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-xs text-muted-foreground">{connection === undefined ? 'Not connected' : connection.account}</span>
-                  {connection === undefined ? (
-                    <Button size="xs" variant="outline" onClick={() => setConnecting(connector)}>
-                      <Plug data-icon="inline-start" /> Connect
-                    </Button>
-                  ) : (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => {
-                        disconnect(connector.id);
-                        toast(`Disconnected ${connector.name}`);
-                      }}
-                    >
-                      <Unplug data-icon="inline-start" /> Disconnect
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-      {filtered.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">Nothing matches “{query}”.</p> : null}
-
-      {needle.length === 0 && category === 'all' ? (
-        <section className="mt-6 hidden flex-col items-center gap-3 lg:flex">
-          <div className="text-center">
-            <h2 className="text-lg font-semibold tracking-tight">Popular, as a marketplace card</h2>
-            <p className="text-sm text-muted-foreground">The same catalog rendered with Watermelon UI’s integration card.</p>
-          </div>
-          <IntegrationsCard title="Popular" items={popular} />
-        </section>
-      ) : null}
-
-      <ConnectDialog
-        connector={connecting}
-        onClose={() => setConnecting(null)}
-        onConnect={(account) => {
-          if (connecting === null) return;
-          connect(connecting.id, account);
-          toast.success(`Connected ${connecting.name} (mock)`);
-          setConnecting(null);
-        }}
+      <PageHeader
+        title="Integrations"
+        term="connection"
+        description={
+          <>
+            {CATALOG_STATS.connectors} apps your workflows can listen to and act on, built-in nodes included. A <strong className="font-medium text-foreground">trigger</strong> starts a workflow when something happens in an app; an{' '}
+            <strong className="font-medium text-foreground">action</strong> does something there. Connections in this prototype are local flags, not real sign-ins, so you can design against every app without connecting any.
+          </>
+        }
+        actions={
+          <dl className="grid grid-cols-3 gap-x-6 text-right max-sm:w-full max-sm:text-left">
+            <Stat label="Apps" value={CATALOG_STATS.connectors} />
+            <Stat label="Triggers" value={CATALOG_STATS.triggers} />
+            <Stat label="Actions" value={CATALOG_STATS.actions} />
+          </dl>
+        }
       />
+
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+        <aside className="hidden [scrollbar-width:thin] lg:sticky lg:top-16 lg:block lg:max-h-[calc(100dvh-5rem)] lg:overflow-y-auto lg:pb-4">
+          <CategoryRail value={filter} onChange={setFilter} counts={counts} />
+        </aside>
+
+        <div className="flex min-w-0 flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <InputGroup className="h-9 min-w-0 flex-1 basis-60">
+              <InputGroupAddon>
+                <Search />
+              </InputGroupAddon>
+              <InputGroupInput value={query} onChange={(event) => onSearch(event.target.value)} placeholder="Search apps, triggers and actions…" aria-label="Search apps, triggers and actions" />
+              {query.length > 0 ? (
+                <InputGroupAddon align="inline-end">
+                  <InputGroupButton size="icon-xs" aria-label="Clear search" onClick={() => onSearch('')}>
+                    <X />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              ) : null}
+            </InputGroup>
+            <CategorySelect value={filter} onChange={setFilter} counts={counts} className="data-[size=default]:h-9 lg:hidden" />
+            <Select value={sort} onValueChange={(next) => setSort((next ?? 'recommended') as SortKey)} items={SORT_ITEMS}>
+              <SelectTrigger className="data-[size=default]:h-9" aria-label="Sort">
+                <span className="text-muted-foreground">Sort:</span>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                {SORT_ITEMS.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span aria-live="polite">
+              {visible.length === counts['all'] && filter === 'all' && tokens.length === 0
+                ? `${visible.length} apps · ${connectedCount} connected`
+                : `${visible.length} ${visible.length === 1 ? 'result' : 'results'}${filter === 'all' ? '' : ` in ${filterLabel(filter)}`}${tokens.length > 0 ? ` for “${query.trim()}”` : ''}`}
+            </span>
+            {filtered ? (
+              <Button
+                variant="link"
+                size="xs"
+                className="h-auto px-0 text-xs"
+                onClick={() => {
+                  setFilter('all');
+                  onSearch('');
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : null}
+          </div>
+
+          {visible.length === 0 ? (
+            <NoResults
+              query={query.trim()}
+              filter={filter}
+              matchesElsewhere={filter === 'all' ? 0 : (counts['all'] ?? 0)}
+              onShowAll={() => setFilter('all')}
+              onClear={() => onSearch('')}
+              onOpenHttp={() => openApp('http')}
+            />
+          ) : (
+            // Keyed by filter so switching category replays the stagger; typing does not.
+            // Columns follow the space the grid actually has (container queries), not the
+            // window, so the sidebar and the rail never squeeze cards below ~300px.
+            <div key={filter} className="@container">
+              <div className="grid gap-3 @[40rem]:grid-cols-2 @[60rem]:grid-cols-3 @[82rem]:grid-cols-4">
+                {visible.map((match, index) => (
+                  <ConnectorCard
+                    key={match.connector.id}
+                    match={match}
+                    index={index}
+                    connection={connections[match.connector.id]}
+                    onOpen={openApp}
+                    onConnect={onConnect}
+                    onDisconnect={onDisconnect}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <ConnectorSheet connector={shown} open={sheetOpen} onOpenChange={(open) => (open ? undefined : writeParams({ app: null }))} onOpenApp={openApp} />
+      <ConnectDialog connector={connectingId === null ? null : (getConnector(connectingId) ?? null)} open={connectOpen} onOpenChange={setConnectOpen} />
     </div>
   );
 }
 
-function ConnectDialog({ connector, onClose, onConnect }: { connector: Connector | null; onClose: () => void; onConnect: (account: string) => void }) {
-  const [account, setAccount] = useState('');
-  const open = connector !== null;
-  const defaultAccount = connector === null ? '' : connector.auth === 'local' ? 'this machine' : `acme (${connector.name})`;
+function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <Dialog open={open} onOpenChange={(next) => (!next ? onClose() : undefined)}>
-      <DialogContent>
-        {connector === null ? null : (
-          <>
-            <DialogHeader>
-              <div className="flex items-center gap-3">
-                <ConnectorIcon connector={connector} size={22} />
-                <div>
-                  <DialogTitle>Connect {connector.name}</DialogTitle>
-                  <DialogDescription>{AUTH_LABEL[connector.auth]} · {connector.triggers.length} triggers · {connector.actions.length} actions</DialogDescription>
-                </div>
-              </div>
-            </DialogHeader>
-            <div className="rounded-lg border border-dashed bg-muted/40 p-3 text-sm text-muted-foreground">
-              {connector.auth === 'oauth' || connector.auth === 'app'
-                ? `In the hosted product this opens ${connector.name}'s consent screen. The prototype records a local, fake connection so you can build against it.`
-                : connector.auth === 'local'
-                  ? `${connector.name} runs on your own machine through the local runner. Nothing to authorise; the prototype just marks it available.`
-                  : `In the hosted product you would paste a key here and it would be stored encrypted, scoped to this workspace. The prototype stores nothing but the fact that you connected.`}
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="account">Account label</Label>
-              <Input id="account" value={account} onChange={(event) => setAccount(event.target.value)} placeholder={defaultAccount} />
-            </div>
-            <div className="grid gap-1 text-xs text-muted-foreground">
-              <p className="font-medium text-foreground">What this unlocks</p>
-              <ul className="list-disc pl-4">
-                {connector.triggers.slice(0, 3).map((trigger) => (
-                  <li key={trigger.id}>Trigger: {trigger.name}</li>
-                ))}
-                {connector.actions.slice(0, 3).map((action) => (
-                  <li key={action.id}>Action: {action.name}</li>
-                ))}
-              </ul>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button onClick={() => onConnect(account.trim() || defaultAccount)}>Connect</Button>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+    <div>
+      <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
+      <dd className="text-xl font-semibold tracking-tight tabular-nums">{value.toLocaleString('en-US')}</dd>
+    </div>
+  );
+}
+
+function NoResults({
+  query,
+  filter,
+  matchesElsewhere,
+  onShowAll,
+  onClear,
+  onOpenHttp,
+}: {
+  query: string;
+  filter: Filter;
+  matchesElsewhere: number;
+  onShowAll: () => void;
+  onClear: () => void;
+  onOpenHttp: () => void;
+}) {
+  if (filter === 'connected' && query.length === 0) {
+    return (
+      <Empty className="border py-14">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Plug />
+          </EmptyMedia>
+          <EmptyTitle>Nothing connected yet</EmptyTitle>
+          <EmptyDescription>You do not need to connect anything to build or test a workflow. Connect an app when you want its nodes to stop reminding you.</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" onClick={onShowAll}>
+            Browse all apps
+          </Button>
+        </EmptyContent>
+      </Empty>
+    );
+  }
+  return (
+    <Empty className="border py-14">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <SearchX />
+        </EmptyMedia>
+        <EmptyTitle>
+          {query.length > 0 ? `No app matches “${query}”` : 'No apps here'}
+          {filter === 'all' ? '' : ` in ${filterLabel(filter)}`}
+        </EmptyTitle>
+        <EmptyDescription>
+          Anything with a URL still works. Start a workflow from an <span className="font-medium text-foreground">Incoming webhook</span>, or call the app’s API with an{' '}
+          <span className="font-medium text-foreground">HTTP request</span> step.
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button onClick={onOpenHttp}>
+            <Globe data-icon="inline-start" /> Open HTTP & webhooks
+          </Button>
+          {matchesElsewhere > 0 ? (
+            <Button variant="outline" onClick={onShowAll}>
+              Show {matchesElsewhere} {matchesElsewhere === 1 ? 'match' : 'matches'} in all apps
+            </Button>
+          ) : query.length > 0 ? (
+            <Button variant="outline" onClick={onClear}>
+              Clear search
+            </Button>
+          ) : null}
+        </div>
+      </EmptyContent>
+    </Empty>
   );
 }

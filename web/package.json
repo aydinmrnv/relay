@@ -10,7 +10,7 @@
     "gen:icons": "node scripts/gen-icons.mjs",
     "predev": "node scripts/gen-icons.mjs",
     "prebuild": "node scripts/gen-icons.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

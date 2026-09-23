@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -11,18 +11,21 @@ import {
   useReactFlow,
   type Connection,
   type EdgeChange,
+  type FinalConnectionState,
   type IsValidConnection,
   type NodeChange,
   type OnConnect,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { getNodeType, type NodeTypeDef } from '@/lib/connectors';
+import { getNodeType, type NodeTypeDef, type PortSpec } from '@/lib/connectors';
 import { portsCompatible } from '@/lib/workflow/validate';
 import { WorkflowNode } from './node';
+import { WorkflowEdge } from './edge';
 import { DRAG_MIME } from './palette';
 import type { CanvasEdge, CanvasNode } from './types';
 
 const NODE_TYPES = { wf: WorkflowNode };
+const EDGE_TYPES = { wf: WorkflowEdge };
 
 interface Props {
   nodes: CanvasNode[];
@@ -32,12 +35,16 @@ interface Props {
   onConnect: OnConnect;
   onSelect: (nodeId: string | null) => void;
   onDrop: (def: NodeTypeDef, position: { x: number; y: number }) => void;
+  /** A connection dragged from a port and let go over empty canvas: offer to add a node there. */
+  onDropConnection: (source: { nodeId: string; port: PortSpec }, position: { x: number; y: number }) => void;
+  /** Called once before a drag moves nodes, so the move can be undone. */
+  onBeforeChange: () => void;
   readOnly?: boolean;
   children?: React.ReactNode;
+  empty?: React.ReactNode;
 }
 
-export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onSelect, onDrop, readOnly = false, children }: Props) {
-  const wrapper = useRef<HTMLDivElement>(null);
+export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onSelect, onDrop, onDropConnection, onBeforeChange, readOnly = false, children, empty }: Props) {
   const { screenToFlowPosition } = useReactFlow();
 
   const isValidConnection: IsValidConnection<CanvasEdge> = useCallback(
@@ -59,17 +66,37 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
     [nodes, edges],
   );
 
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+      if (readOnly || state.isValid === true || state.toNode !== null || state.fromNode === null || state.fromHandle === null) return;
+      // Only when dragging out of an output: dropping an input's wire on the pane has no obvious meaning.
+      if (state.fromHandle.type !== 'source') return;
+      const def = getNodeType((state.fromNode.data as CanvasNode['data']).typeId);
+      const port = def?.outputs.find((candidate) => candidate.id === state.fromHandle?.id) ?? def?.outputs[0];
+      if (port === undefined) return;
+      const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+      if (point === undefined) return;
+      const position = screenToFlowPosition({ x: point.clientX, y: point.clientY });
+      onDropConnection({ nodeId: state.fromNode.id, port }, { x: position.x, y: position.y - 36 });
+    },
+    [readOnly, screenToFlowPosition, onDropConnection],
+  );
+
   return (
-    <div ref={wrapper} className="h-full w-full">
+    <div className="relative h-full w-full">
       <ReactFlow<CanvasNode, CanvasEdge>
         nodes={nodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
+        edgeTypes={EDGE_TYPES}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
+        onNodeDragStart={onBeforeChange}
+        onSelectionDragStart={onBeforeChange}
         isValidConnection={isValidConnection}
-        onSelectionChange={({ nodes: selected }) => onSelect(selected[0]?.id ?? null)}
+        onSelectionChange={({ nodes: selected }) => onSelect(selected.length === 1 ? (selected[0]?.id ?? null) : null)}
         onPaneClick={() => onSelect(null)}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes(DRAG_MIME)) {
@@ -84,32 +111,38 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
           const def = getNodeType(typeId);
           if (def === undefined) return;
           const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-          onDrop(def, { x: position.x - 128, y: position.y - 30 });
+          onDrop(def, { x: position.x - 136, y: position.y - 36 });
         }}
         nodesDraggable={!readOnly}
         nodesConnectable={!readOnly}
         elementsSelectable
+        selectionOnDrag={false}
+        multiSelectionKeyCode={['Meta', 'Shift']}
         deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
         fitView
-        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+        fitViewOptions={{ padding: 0.14, maxZoom: 1, minZoom: 0.5 }}
         minZoom={0.2}
         maxZoom={1.75}
-        defaultEdgeOptions={{ type: 'default' }}
+        defaultEdgeOptions={{ type: 'wf' }}
+        connectionRadius={28}
         proOptions={{ hideAttribution: false }}
         className="bg-background"
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />
         <Controls position="bottom-left" showInteractive={false} />
         <MiniMap
           position="bottom-right"
           pannable
           zoomable
+          ariaLabel="Overview of the whole workflow"
           nodeColor={(node) => getNodeType((node as CanvasNode).data.typeId)?.connector.icon.color ?? '#94a3b8'}
-          nodeStrokeWidth={2}
-          className="!rounded-lg !border !border-border"
+          nodeBorderRadius={6}
+          style={{ width: 168, height: 108 }}
+          className="!rounded-lg !border !border-border !shadow-xs"
         />
         {children === undefined ? null : <Panel position="top-center">{children}</Panel>}
       </ReactFlow>
+      {nodes.length === 0 && empty !== undefined ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">{empty}</div> : null}
     </div>
   );
 }

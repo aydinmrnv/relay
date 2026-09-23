@@ -1,10 +1,11 @@
 'use client';
 
-import { motion, useReducedMotionConfig } from 'motion/react';
+import { motion } from 'motion/react';
+import { useCalmMotion } from '@/components/motion/use-calm-motion';
 
 /** A short fade between screens. Next remounts a template on every navigation, which is what makes this run. */
 export default function AppTemplate({ children }: { children: React.ReactNode }) {
-  const reduce = useReducedMotionConfig();
+  const reduce = useCalmMotion();
   return (
     <motion.div
       className="flex min-h-0 flex-1 flex-col"
