@@ -1138,6 +1138,14 @@ reinstalls dependencies only if the manifest moved, and rebuilds `dist/` only
 if there is one to go stale — `bin/relay.mjs` runs the sources directly when
 there is not.
 
+## Web studio (prototype)
+
+`web/` is a browser-only prototype of a cloud product built on this pipeline: a node-based, drag-and-drop workflow builder with a catalog of a few hundred app connectors, simulated runs, and an export that produces the `.relay/config.json` and GitHub Actions workflow a repository needs to run the flow for real. It hosts nothing and costs nothing, and it signs in to Claude Code and Codex with your own subscriptions through each CLI's login rather than with API keys. The product name is a setting, not a constant. See `web/README.md`.
+
+```bash
+cd web && npm install && npm run dev
+```
+
 ## Development
 
 ```bash
