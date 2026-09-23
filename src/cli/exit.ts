@@ -50,6 +50,7 @@ const PRECONDITION_CODES: ReadonlySet<string> = new Set([
   'UNKNOWN_AGENT',
   'GH_NOT_INSTALLED',
   'GH_NOT_AUTHENTICATED',
+  'LINEAR_AUTH',
 ]);
 
 export function isCommanderError(error: unknown): error is CommanderError {

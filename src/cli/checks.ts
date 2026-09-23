@@ -3,9 +3,14 @@ import { configHarnessRegistrations } from '../agents/configHarness.ts';
 import { detectOsSandbox } from '../agents/sandbox.ts';
 import { describeCommand, probeAuth, type AuthState, type AuthSupport } from '../auth/delegated.ts';
 import { discoverRepository } from '../git/repository.ts';
-import { ISSUE_TRACKER_REGISTRY } from '../issues/registry.ts';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+import { LINEAR_KEY_VARIABLE } from '../issues/linear.ts';
+import { ISSUE_TRACKER_REGISTRY, issueTrackerRegistration } from '../issues/registry.ts';
+import { detectWebhookFormat, resolveWebhookFormat } from '../notify/format.ts';
 import { resolveExecutable, runProcess } from '../process/runner.ts';
-import { configHarnesses, loadConfig } from '../storage/config.ts';
+import { configHarnesses, loadConfig, type RelayConfig } from '../storage/config.ts';
 
 export interface Check {
   label: string;
@@ -156,8 +161,12 @@ export async function agentAuthChecks(cwd: string, agents?: readonly AgentCheck[
 }
 
 export async function githubCheck(cwd: string): Promise<Check> {
-  const registration = ISSUE_TRACKER_REGISTRY[0]!;
-  const result = await registration.create({ cwd }).checkAvailability();
+  return trackerCheck('github', cwd);
+}
+
+async function trackerCheck(name: 'github' | 'linear', cwd: string, config?: RelayConfig): Promise<Check> {
+  const registration = issueTrackerRegistration(name) ?? ISSUE_TRACKER_REGISTRY[0]!;
+  const result = await registration.create({ cwd, issues: config?.issues }).checkAvailability();
   return {
     label: `${registration.label} authentication`,
     status: result.available ? 'ok' : 'fail',
@@ -236,11 +245,11 @@ export async function repositoryChecks(cwd: string): Promise<{ root?: string; ch
  */
 async function configuredHarnesses(
   root: string | undefined,
-): Promise<{ registrations: HarnessRegistration[]; check?: Check }> {
+): Promise<{ registrations: HarnessRegistration[]; check?: Check; config?: RelayConfig }> {
   if (root === undefined) return { registrations: [] };
   try {
     const config = await loadConfig(root);
-    return { registrations: configHarnessRegistrations(configHarnesses(config)) };
+    return { registrations: configHarnessRegistrations(configHarnesses(config)), config };
   } catch (error) {
     return {
       registrations: [],
@@ -252,6 +261,68 @@ async function configuredHarnesses(
       },
     };
   }
+}
+
+/**
+ * The trackers this repository reads from: GitHub always, because a bare
+ * reference and delivery both lean on it, and Linear when config points there
+ * or a key is present — a key nobody meant to use is still worth confirming.
+ */
+async function trackerChecks(cwd: string, config: RelayConfig | undefined): Promise<Check[]> {
+  const checks = [softenToWarning(await trackerCheck('github', cwd, config), WITHOUT_A_TRACKER)];
+  const linearConfigured = config?.issues?.provider === 'linear';
+  if (linearConfigured || (process.env[LINEAR_KEY_VARIABLE]?.trim() ?? '') !== '') {
+    const linear = await trackerCheck('linear', cwd, config);
+    checks.push(softenToWarning(linear, linearConfigured ? WITHOUT_A_TRACKER : 'Linear is optional; unset the key to silence this.'));
+  }
+  return checks;
+}
+
+/**
+ * The outward-facing integrations, checked without sending anything: a doctor
+ * that posted to a Slack channel every time it ran would be switched off.
+ * `relay notify` is the command that actually sends.
+ */
+export async function integrationChecks(config: RelayConfig): Promise<Check[]> {
+  const checks: Check[] = [];
+  const webhook = config.notify?.webhook;
+  if (webhook != null) {
+    const detected = detectWebhookFormat(webhook);
+    const format = resolveWebhookFormat(webhook, config.notify.webhookFormat);
+    let host = webhook;
+    try { host = new URL(webhook).host; } catch { /* validated when the config loaded */ }
+    const mismatch = detected !== 'json' && format !== detected;
+    checks.push({
+      label: 'Webhook',
+      status: mismatch ? 'warn' : 'ok',
+      detail: `${format} to ${host}`,
+      ...(mismatch
+        ? { hint: `This looks like a ${detected} URL but is sent as ${format}; ${detected} will likely reject it. Set notify.webhookFormat to "auto".` }
+        : { hint: 'Run `relay notify` to send a test.' }),
+    });
+  }
+  if (config.notify?.system === true) {
+    const notifier = process.platform === 'darwin' ? 'osascript' : process.platform === 'linux' ? 'notify-send' : 'powershell';
+    const found = (await resolveExecutable(notifier)) !== null || (process.platform === 'win32' && (await resolveExecutable('pwsh')) !== null);
+    checks.push(found
+      ? { label: 'Desktop notifications', status: 'ok', detail: notifier }
+      : { label: 'Desktop notifications', status: 'warn', detail: `${notifier} not found`, hint: process.platform === 'linux' ? 'Install libnotify (`notify-send`).' : 'Set notify.system to false.' });
+  }
+  if (Array.isArray(config.notify?.command)) {
+    const executable = config.notify.command[0]!;
+    const found = (await resolveExecutable(executable)) !== null;
+    checks.push(found
+      ? { label: 'Notify command', status: 'ok', detail: executable }
+      : { label: 'Notify command', status: 'warn', detail: `${executable} not found`, hint: 'notify.command[0] must be an executable on PATH or an absolute path.' });
+  }
+  if (config.tracking?.enabled === true) {
+    const cli = join(homedir(), '.wakatime', process.platform === 'win32' ? 'wakatime-cli.exe' : 'wakatime-cli');
+    const found = (await resolveExecutable(cli)) !== null || (await resolveExecutable('wakatime-cli')) !== null;
+    checks.push(found
+      ? { label: 'WakaTime', status: 'ok', detail: 'wakatime-cli found' }
+      : { label: 'WakaTime', status: 'warn', detail: 'wakatime-cli not found', hint: 'Install any WakaTime editor plugin once (it installs ~/.wakatime/wakatime-cli), or set tracking.enabled to false.' });
+  }
+  return checks;
 }
 
 /** Everything a run depends on, in the order `relay doctor` reports it. */
@@ -271,7 +342,8 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
   checks.push(...(await agentAuthChecks(repository.root ?? cwd, agents)));
   checks.push(...repository.checks);
   if (configured.check !== undefined) checks.push(configured.check);
-  checks.push(softenToWarning(await githubCheck(repository.root ?? cwd), WITHOUT_A_TRACKER));
+  checks.push(...(await trackerChecks(repository.root ?? cwd, configured.config)));
+  if (configured.config !== undefined) checks.push(...(await integrationChecks(configured.config)));
 
   return checks;
 }

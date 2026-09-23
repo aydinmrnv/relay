@@ -205,7 +205,8 @@ README — not a defended one.
 | `relay` | the home screen and a prompt: describe the work in plain words, name an issue, or type a `/command` |
 | `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
-| `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth |
+| `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth, Linear, and the configured notification channels |
+| `relay notify [run]` | send a test notification on every configured channel, or re-send a finished run's |
 | `relay run <issue\|file>` | run the full workflow on a tracker issue or on work that has no ticket, deliver the result, then wait for the next issue |
 | `relay status [run]` | list runs, or print one run's summary |
 | `relay watch [run]` | follow a run's events live |
@@ -224,7 +225,7 @@ Every command above except `--update` takes `--json`, and exits with a code from
 a documented table. Both are below, under [Machine-readable
 output](#machine-readable-output) and [Exit codes](#exit-codes).
 
-`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--review <level>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, `--allow-secret <path>`, and `--tuff`.
+`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, a [Linear](#linear) identifier such as `ENG-142` or a linear.app URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--review <level>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, `--allow-secret <path>`, and `--tuff`.
 
 The four worth typing by hand:
 
@@ -957,7 +958,8 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
   },
   "tests": { "command": null },
   "delivery": { "comment": false },
-  "notify": { "webhook": null, "bell": false, "system": false, "command": null },
+  "issues": { "provider": "github", "team": null },
+  "notify": { "webhook": null, "webhookFormat": "auto", "bell": false, "system": false, "command": null },
   "tracking": {
     "enabled": false,
     "plugin": "relay/<version> relay-wakatime/<version>",
@@ -1002,10 +1004,21 @@ reaching for before turning a review off.
 | `tracking.enabled` | opt in to WakaTime-compatible reporting of Relay orchestration (default `false`) |
 | `tracking.includeAgentPhases` | report during agent-driven phases too (default `true`); disable to reduce overlap with agent CLIs |
 | `delivery.comment` | post one short, idempotent result comment after a run creates a pull request (default `false`) |
-| `notify.webhook` | HTTP(S) endpoint receiving one best-effort JSON POST when any run finishes (default `null`) |
+| `issues.provider` | the tracker a bare `142` means: `github` (default) or `linear`. `ENG-142` reaches Linear and `owner/repo#142` reaches GitHub whatever this says |
+| `issues.team` | Linear's default team key, so `relay run 142` means `ENG-142` (default `null`) |
+| `notify.webhook` | HTTP(S) endpoint receiving one best-effort POST when any run finishes (default `null`). A Slack, Discord or Teams webhook URL works as pasted |
+| `notify.webhookFormat` | `auto` (default: Slack, Discord and Teams URLs get their own message shape, anything else the JSON document below), or force `json`, `slack`, `discord`, `teams` |
 | `notify.bell` | Ring the terminal bell when an attached run or watch finishes (default `false`) |
 | `notify.system` | Use the platform desktop notifier when available (default `false`) |
-| `notify.command` | Explicit argv template with `{{runId}}`, `{{outcome}}`, and `{{url}}` tokens (default `null`; no shell) |
+| `notify.command` | Explicit argv template with `{{runId}}`, `{{outcome}}`, `{{url}}`, `{{title}}` and `{{headline}}` tokens (default `null`; no shell), e.g. `["say", "{{headline}}"]` |
+
+A Slack, Discord or Teams webhook receives a message rather than a document: a
+headline that says how the run went (`✅ Relay run succeeded: ENG-142 Retry the
+flaky upload`), a link to the pull request, and the diff, test, delivery, time
+and cost facts — no paths and no file names, because a channel is a wider
+audience than a terminal. Discord messages never ping anyone. `relay notify`
+sends a labelled test on every configured channel and reports what each
+endpoint answered; `relay notify latest` re-sends the last run's.
 
 Webhook documents use the same additive `schema` version as Relay's CLI JSON.
 They contain `runId`, `shortId`, the issue, terminal outcome and stopping reason,
@@ -1041,6 +1054,30 @@ timestamp. A missing or failing CLI produces one notice and cannot fail a run.
 Agent CLIs and editor extensions may report overlapping activity; Relay neither
 relabels nor suppresses it. Users with shell-level tracking may add
 `~/.relay/workspaces/` to the `exclude` patterns in `~/.wakatime.cfg`.
+
+### Linear
+
+Linear has no CLI to delegate to, so Relay reads a personal API key from
+`LINEAR_API_KEY` at the moment it makes a request — it is never written to
+`.relay/`, logged, or asked for, and `lin_api_…` is in the redaction patterns.
+Create one at <https://linear.app/settings/account/security>, then:
+
+```bash
+export LINEAR_API_KEY=lin_api_…
+relay run ENG-142                                   # or a linear.app issue URL
+relay run 142                                       # with "issues": { "provider": "linear", "team": "ENG" }
+```
+
+The issue arrives with its description, labels, state, parent and every
+comment, oldest first. The branch is `relay/eng-142-<run>` and the pull request
+ends in `Fixes ENG-142`, which is what Linear's GitHub integration reads to link
+the pull request to the issue and close it on merge. `delivery.comment` posts
+the result back onto the Linear issue, once per run. `relay start` asks where
+issues live when a Linear key is present, and `relay doctor` checks the key.
+
+Unattended mode stays GitHub-only for now: Relay only acts on a label when the
+tracker can say who applied it, and it does not read that from Linear yet, so
+`relay serve` against Linear refuses every issue rather than guessing.
 
 ## Requirements
 

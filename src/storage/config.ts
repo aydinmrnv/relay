@@ -85,6 +85,11 @@ function isMergeMethod(value: unknown): value is MergeMethod {
   return typeof value === 'string' && (MERGE_METHODS as readonly string[]).includes(value);
 }
 
+export const ISSUE_TRACKERS = ['github', 'linear'] as const;
+export type IssueTrackerName = (typeof ISSUE_TRACKERS)[number];
+export const WEBHOOK_FORMATS = ['auto', 'json', 'slack', 'discord', 'teams'] as const;
+export type WebhookFormat = (typeof WEBHOOK_FORMATS)[number];
+
 export interface RelayConfig {
   version: 1;
   /**
@@ -253,7 +258,28 @@ export interface RelayConfig {
      */
     allowSecrets?: string[];
   };
-  notify: { webhook: string | null; bell: boolean; system: boolean; command: string[] | null };
+  issues: {
+    /**
+     * Where a bare reference like `142` is looked up. `ENG-142` and a
+     * linear.app URL reach Linear whatever this says, and `owner/repo#142`
+     * reaches GitHub.
+     */
+    provider: IssueTrackerName;
+    /** Linear's default team key (`ENG`), so `relay run 142` means `ENG-142`. */
+    team: string | null;
+  };
+  notify: {
+    webhook: string | null;
+    /**
+     * The body the webhook receives. `auto` recognises Slack, Discord and
+     * Microsoft Teams URLs and sends each the message shape it renders; any
+     * other URL gets Relay's JSON document.
+     */
+    webhookFormat: WebhookFormat;
+    bell: boolean;
+    system: boolean;
+    command: string[] | null;
+  };
   tracking: {
     enabled: boolean;
     plugin: string;
@@ -330,7 +356,8 @@ export const DEFAULT_CONFIG: RelayConfig = {
     command: null,
   },
   delivery: { comment: false },
-  notify: { webhook: null, bell: false, system: false, command: null },
+  issues: { provider: 'github', team: null },
+  notify: { webhook: null, webhookFormat: 'auto', bell: false, system: false, command: null },
   tracking: {
     enabled: false,
     plugin: 'relay/<version> relay-wakatime/<version>',
@@ -768,6 +795,24 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
     }
   }
 
+  const issues = raw['issues'];
+  if (issues !== undefined) {
+    if (!isRecord(issues)) throw new RelayError('config.issues must be an object.', { code: 'BAD_CONFIG' });
+    if (issues['provider'] !== undefined) {
+      if (!ISSUE_TRACKERS.includes(issues['provider'] as IssueTrackerName)) {
+        throw new RelayError(`config.issues.provider must be one of ${ISSUE_TRACKERS.join(' | ')}.`, { code: 'BAD_CONFIG' });
+      }
+      config.issues.provider = issues['provider'] as IssueTrackerName;
+    }
+    if (issues['team'] !== undefined) {
+      const team = issues['team'];
+      if (team !== null && (typeof team !== 'string' || !/^[A-Za-z][A-Za-z0-9]{0,9}$/.test(team))) {
+        throw new RelayError('config.issues.team must be a Linear team key such as "ENG", or null.', { code: 'BAD_CONFIG' });
+      }
+      config.issues.team = team === null ? null : (team as string).toUpperCase();
+    }
+  }
+
   const notify = raw['notify'];
   if (notify !== undefined) {
     if (!isRecord(notify)) throw new RelayError('config.notify must be an object.', { code: 'BAD_CONFIG' });
@@ -777,6 +822,12 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
         throw new RelayError('config.notify.webhook must be a non-empty http(s) URL or null.', { code: 'BAD_CONFIG' });
       }
       config.notify.webhook = webhook as string | null;
+    }
+    if (notify['webhookFormat'] !== undefined) {
+      if (!WEBHOOK_FORMATS.includes(notify['webhookFormat'] as WebhookFormat)) {
+        throw new RelayError(`config.notify.webhookFormat must be one of ${WEBHOOK_FORMATS.join(' | ')}.`, { code: 'BAD_CONFIG' });
+      }
+      config.notify.webhookFormat = notify['webhookFormat'] as WebhookFormat;
     }
     for (const key of ['bell', 'system'] as const) {
       if (notify[key] !== undefined) {

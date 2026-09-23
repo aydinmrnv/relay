@@ -49,7 +49,7 @@ export async function fetchingIssue(context: EngineContext): Promise<PhaseResult
   await store.writeArtifact(RUN_FILES.issue, markdown);
   context.issueMarkdown = markdown;
 
-  state.issue = { id: issue.id, number: issue.number, title: issue.title, url: issue.url, state: issue.state };
+  state.issue = { id: issue.id, number: issue.number, ...(issue.key === undefined ? {} : { key: issue.key }), title: issue.title, url: issue.url, state: issue.state };
   if (issue.repository !== null) {
     state.repository.owner ??= issue.repository.owner;
     state.repository.name ??= issue.repository.name;

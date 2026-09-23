@@ -190,7 +190,7 @@ function unattendedLine(run: UnattendedRunSummary): string {
         ? run.outcome.toLowerCase()
         : `${run.outcome.toLowerCase()}: ${run.stopped}`;
   return facts([
-    `#${run.issueRef}`,
+    /^\d+$/.test(run.issueRef) ? `#${run.issueRef}` : run.issueRef,
     dim(`${run.label} by ${who}`),
     cost,
     delivered,
