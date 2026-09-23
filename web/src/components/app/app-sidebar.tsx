@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BookTemplate, Cable, LayoutDashboard, Play, Settings, Workflow } from 'lucide-react';
+import { motion } from 'motion/react';
+import { BookOpen, Cable, LayoutDashboard, LayoutTemplate, Play, Settings, Workflow } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -17,19 +18,42 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from '@/components/ui/sidebar';
-import { Badge } from '@/components/ui/badge';
 import { useBrand } from '@/hooks/use-brand';
+import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useStudio } from '@/lib/store';
-import { CATALOG_STATS } from '@/lib/connectors';
+import { AGENT_IDS, AGENT_META } from '@/lib/agents/types';
+import { cn } from '@/lib/utils';
 import { BrandMark } from './brand-mark';
 
-const NAV = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/workflows', label: 'Workflows', icon: Workflow },
-  { href: '/runs', label: 'Runs', icon: Play },
-  { href: '/integrations', label: 'Integrations', icon: Cable },
-  { href: '/templates', label: 'Templates', icon: BookTemplate },
-] as const;
+interface NavItem {
+  href: string;
+  label: string;
+  icon: typeof Workflow;
+  /** Shown as the tooltip when the sidebar is collapsed, and to screen readers. */
+  hint: string;
+}
+
+const GROUPS: Array<{ label: string; items: NavItem[] }> = [
+  {
+    label: 'Build',
+    items: [
+      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, hint: 'Overview: recent runs, spend and what to do next' },
+      { href: '/workflows', label: 'Workflows', icon: Workflow, hint: 'Your workflows, and the canvas to edit them' },
+      { href: '/templates', label: 'Templates', icon: LayoutTemplate, hint: 'Ready-made workflows to start from' },
+    ],
+  },
+  {
+    label: 'Operate',
+    items: [
+      { href: '/runs', label: 'Runs', icon: Play, hint: 'Every test run, with its timeline and cost' },
+      { href: '/integrations', label: 'Integrations', icon: Cable, hint: 'Apps your workflows can listen to and act on' },
+    ],
+  },
+  {
+    label: 'Learn',
+    items: [{ href: '/guide', label: 'Guide', icon: BookOpen, hint: 'How the studio works, and what every part does' }],
+  },
+];
 
 export function AppSidebar() {
   const pathname = usePathname();
@@ -38,80 +62,121 @@ export function AppSidebar() {
   const running = useStudio((state) => state.runs.filter((run) => run.status === 'running').length);
   const connected = useStudio((state) => Object.keys(state.connections).length);
 
+  const badgeFor = (href: string): React.ReactNode => {
+    if (href === '/workflows' && workflows > 0) return workflows;
+    if (href === '/integrations' && connected > 0) return connected;
+    if (href === '/runs' && running > 0) {
+      return (
+        <span className="flex items-center gap-1 text-primary">
+          <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+          {running}
+        </span>
+      );
+    }
+    return null;
+  };
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/dashboard" />} tooltip={brand.name}>
+            <SidebarMenuButton size="lg" render={<Link href="/" />} tooltip={`${brand.name} home`}>
               <BrandMark className="size-8" />
               <div className="grid flex-1 text-left leading-tight">
-                <span className="truncate font-semibold">{brand.name}</span>
-                <span className="truncate text-xs text-muted-foreground">Workflow studio · prototype</span>
+                <span className="truncate font-semibold tracking-tight">{brand.name}</span>
+                <span className="truncate text-xs text-muted-foreground">Workflow studio</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Build</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {NAV.map((item) => {
-                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                const badge = item.href === '/workflows' ? workflows : item.href === '/runs' ? running : item.href === '/integrations' ? connected : 0;
-                return (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton isActive={active} tooltip={item.label} render={<Link href={item.href} />}>
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                    {badge > 0 ? <SidebarMenuBadge>{badge}</SidebarMenuBadge> : null}
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Catalog</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Connectors" render={<Link href="/integrations" />}>
-                  <Activity />
-                  <span>{CATALOG_STATS.connectors} connectors</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Triggers and actions" render={<Link href="/integrations" />}>
-                  <Cable />
-                  <span>
-                    {CATALOG_STATS.triggers} triggers · {CATALOG_STATS.actions} actions
-                  </span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {GROUPS.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  const badge = badgeFor(item.href);
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        isActive={active}
+                        tooltip={item.hint}
+                        render={<Link href={item.href} />}
+                        className="relative data-active:bg-transparent data-active:font-medium"
+                      >
+                        {active ? (
+                          <motion.span
+                            layoutId="sidebar-active"
+                            className="absolute inset-0 rounded-md bg-sidebar-accent shadow-xs ring-1 ring-sidebar-border"
+                            transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                          />
+                        ) : null}
+                        <item.icon className={cn('relative', active ? 'text-primary' : '')} />
+                        <span className="relative">{item.label}</span>
+                      </SidebarMenuButton>
+                      {badge === null ? null : <SidebarMenuBadge>{badge}</SidebarMenuBadge>}
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
       <SidebarFooter>
+        <AgentsFooter />
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton isActive={pathname.startsWith('/settings')} tooltip="Settings" render={<Link href="/settings" />}>
+            <SidebarMenuButton
+              isActive={pathname.startsWith('/settings')}
+              tooltip="Settings: product name, sign-ins, execution, your data"
+              render={<Link href="/settings" />}
+            >
               <Settings />
               <span>Settings</span>
             </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem className="px-2 pb-1 group-data-[collapsible=icon]:hidden">
-            <Badge variant="outline" className="w-full justify-center text-[10px] text-muted-foreground">
-              Local only · nothing is hosted · $0
-            </Badge>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
+  );
+}
+
+/** Which coding agents are signed in on this machine: the one thing a real run cannot do without. */
+function AgentsFooter() {
+  const bridge = useAgentsStore((state) => state.bridge);
+  const status = useAgentsStore((state) => state.status);
+  return (
+    <Link
+      href="/settings#agents"
+      className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs transition-colors hover:bg-background group-data-[collapsible=icon]:hidden"
+    >
+      <span className="font-medium text-foreground">Coding agents</span>
+      {bridge === 'unavailable' ? (
+        <span className="text-muted-foreground">Can’t reach this machine’s CLIs. Run the studio locally to sign in.</span>
+      ) : (
+        AGENT_IDS.map((id) => {
+          const account = status?.agents[id];
+          const state = account === undefined ? 'checking' : account.loggedIn ? 'signed in' : account.installed ? 'not signed in' : 'not installed';
+          return (
+            <span key={id} className="flex items-center gap-2 text-muted-foreground">
+              <span
+                className={cn(
+                  'size-1.5 rounded-full',
+                  account === undefined ? 'animate-pulse bg-muted-foreground/40' : account.loggedIn ? 'bg-success' : account.installed ? 'bg-warning' : 'bg-muted-foreground/40',
+                )}
+              />
+              <span className="text-foreground">{AGENT_META[id].name}</span>
+              <span className="ml-auto">{state}</span>
+            </span>
+          );
+        })
+      )}
+    </Link>
   );
 }

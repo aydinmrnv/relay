@@ -105,7 +105,7 @@ export const CommandSearch: FC<Props> = ({ items = DEFAULT_ITEMS }) => {
   }, [isOpen]);
 
   useEffect(() => {
-    const handleKeyDown = (e: any) => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
       if (
         e.key.toLowerCase() === 'f' &&
         !isOpen &&
@@ -149,7 +149,7 @@ export const CommandSearch: FC<Props> = ({ items = DEFAULT_ITEMS }) => {
     }));
   }, [filteredItems]);
 
-  const handleKeyDown = (e: KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActiveIndex((prev) => (prev + 1) % filteredItems.length);
@@ -268,7 +268,7 @@ export const CommandSearch: FC<Props> = ({ items = DEFAULT_ITEMS }) => {
               <div className="custom-scrollbar flex-1 overflow-y-auto p-1.5 md:max-h-[380px]">
                 {filteredItems.length === 0 ? (
                   <div className="py-12 text-center text-sm text-zinc-500">
-                    No results found for "{query}"
+                    No results found for &ldquo;{query}&rdquo;
                   </div>
                 ) : (
                   <div className="space-y-4 py-1">

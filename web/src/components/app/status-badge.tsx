@@ -2,19 +2,21 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { NodeRunStatus, RunStatus } from '@/lib/workflow/schema';
 
-const STYLES: Record<RunStatus | NodeRunStatus, string> = {
-  running: 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-300',
-  succeeded: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-  done: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-  failed: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300',
-  refused: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
-  cancelled: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-300',
-  waiting: 'border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300',
-  pending: 'border-border bg-muted text-muted-foreground',
-  skipped: 'border-border bg-transparent text-muted-foreground line-through',
+type Status = RunStatus | NodeRunStatus;
+
+const STYLES: Record<Status, { chip: string; dot: string }> = {
+  running: { chip: 'border-primary/25 bg-primary/10 text-primary', dot: 'bg-primary animate-pulse' },
+  succeeded: { chip: 'border-success/25 bg-success/10 text-success', dot: 'bg-success' },
+  done: { chip: 'border-success/25 bg-success/10 text-success', dot: 'bg-success' },
+  failed: { chip: 'border-destructive/25 bg-destructive/10 text-destructive', dot: 'bg-destructive' },
+  refused: { chip: 'border-warning/30 bg-warning/12 text-amber-700 dark:text-warning', dot: 'bg-warning' },
+  cancelled: { chip: 'border-border bg-muted text-muted-foreground', dot: 'bg-muted-foreground/60' },
+  waiting: { chip: 'border-info/25 bg-info/10 text-info', dot: 'bg-info animate-pulse' },
+  pending: { chip: 'border-border bg-muted text-muted-foreground', dot: 'bg-muted-foreground/40' },
+  skipped: { chip: 'border-border bg-transparent text-muted-foreground', dot: 'bg-muted-foreground/30' },
 };
 
-const LABELS: Partial<Record<RunStatus | NodeRunStatus, string>> = {
+const LABELS: Record<Status, string> = {
   running: 'Running',
   succeeded: 'Succeeded',
   done: 'Done',
@@ -26,11 +28,22 @@ const LABELS: Partial<Record<RunStatus | NodeRunStatus, string>> = {
   skipped: 'Skipped',
 };
 
-export function StatusBadge({ status, className }: { status: RunStatus | NodeRunStatus; className?: string }) {
+/** What each run status means, for tooltips and the guide. */
+export const STATUS_MEANING: Record<RunStatus, string> = {
+  running: 'Playing right now.',
+  succeeded: 'Every node that ran finished, and the pipeline delivered.',
+  failed: 'A node failed — usually the tests, or an agent that could not finish.',
+  refused: 'A guardrail said no before any money was spent: budget, allowlist, approval or kill switch.',
+  cancelled: 'Stopped by you, or interrupted by closing the tab.',
+  waiting: 'Paused on a human approval or a wait step.',
+};
+
+export function StatusBadge({ status, className }: { status: Status; className?: string }) {
+  const style = STYLES[status];
   return (
-    <Badge variant="outline" className={cn('gap-1.5 font-medium', STYLES[status], className)}>
-      {status === 'running' ? <span className="size-1.5 animate-pulse rounded-full bg-current" /> : null}
-      {LABELS[status] ?? status}
+    <Badge variant="outline" className={cn('gap-1.5 font-medium', style.chip, className)}>
+      <span className={cn('size-1.5 rounded-full', style.dot)} />
+      {LABELS[status]}
     </Badge>
   );
 }

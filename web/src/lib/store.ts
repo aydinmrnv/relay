@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
+import { MotionGlobalConfig } from 'motion/react';
 import { brandFromName, DEFAULT_BRAND, type Brand } from './brand';
 import { DEFAULT_SETTINGS, type Connection, type Run, type Settings, type Workflow, type WorkflowEdge, type WorkflowNode } from './workflow/schema';
 import { instantiateTemplate, TEMPLATES } from './workflow/templates';
@@ -22,12 +23,20 @@ export interface StudioState {
   upsertWorkflow: (workflow: Workflow) => void;
   setGraph: (id: string, nodes: WorkflowNode[], edges: WorkflowEdge[]) => void;
   renameWorkflow: (id: string, name: string, description?: string) => void;
+  updateWorkflowMeta: (id: string, patch: Partial<Pick<Workflow, 'name' | 'description' | 'repository'>>) => void;
+  markExported: (id: string) => void;
   toggleWorkflow: (id: string, enabled: boolean) => void;
   deleteWorkflow: (id: string) => void;
   duplicateWorkflow: (id: string) => Workflow | undefined;
   addRun: (run: Run) => void;
   updateRun: (run: Run) => void;
   clearRuns: () => void;
+  deleteRun: (id: string) => void;
+  /** Guided tours already seen, by id, so each shows once. */
+  toursSeen: Record<string, boolean>;
+  markTourSeen: (id: string, seen?: boolean) => void;
+  checklistDismissed: boolean;
+  dismissChecklist: (dismissed: boolean) => void;
   connect: (connectorId: string, account: string) => void;
   disconnect: (connectorId: string) => void;
   updateSettings: (patch: Partial<Settings>) => void;
@@ -50,6 +59,8 @@ export const useStudio = create<StudioState>()(
       runs: [],
       connections: {},
       settings: DEFAULT_SETTINGS,
+      toursSeen: {},
+      checklistDismissed: false,
 
       markHydrated: () => set({ hydrated: true }),
 
@@ -70,6 +81,20 @@ export const useStudio = create<StudioState>()(
           const existing = state.workflows[id];
           if (existing === undefined) return {};
           return { workflows: { ...state.workflows, [id]: { ...existing, name, description: description ?? existing.description, updatedAt: new Date().toISOString() } } };
+        }),
+
+      updateWorkflowMeta: (id, patch) =>
+        set((state) => {
+          const existing = state.workflows[id];
+          if (existing === undefined) return {};
+          return { workflows: { ...state.workflows, [id]: { ...existing, ...patch, updatedAt: new Date().toISOString() } } };
+        }),
+
+      markExported: (id) =>
+        set((state) => {
+          const existing = state.workflows[id];
+          if (existing === undefined) return {};
+          return { workflows: { ...state.workflows, [id]: { ...existing, exportedAt: new Date().toISOString() } } };
         }),
 
       toggleWorkflow: (id, enabled) =>
@@ -98,6 +123,10 @@ export const useStudio = create<StudioState>()(
       addRun: (run) => set((state) => ({ runs: [run, ...state.runs].slice(0, 200) })),
       updateRun: (run) => set((state) => ({ runs: state.runs.map((existing) => (existing.id === run.id ? run : existing)) })),
       clearRuns: () => set({ runs: [] }),
+      deleteRun: (id) => set((state) => ({ runs: state.runs.filter((run) => run.id !== id) })),
+
+      markTourSeen: (id, seen = true) => set((state) => ({ toursSeen: { ...state.toursSeen, [id]: seen } })),
+      dismissChecklist: (dismissed) => set({ checklistDismissed: dismissed }),
 
       connect: (connectorId, account) =>
         set((state) => ({
@@ -142,7 +171,7 @@ export const useStudio = create<StudioState>()(
         set({ workflows, runs, connections, seeded: true });
       },
 
-      resetAll: () => set({ workflows: {}, runs: [], connections: {}, seeded: false, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND }),
+      resetAll: () => set({ workflows: {}, runs: [], connections: {}, seeded: false, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND, toursSeen: {}, checklistDismissed: false }),
 
       exportAll: () => {
         const { brand, workflows, runs, connections, settings } = get();
@@ -184,12 +213,24 @@ export const useStudio = create<StudioState>()(
         runs: state.runs,
         connections: state.connections,
         settings: state.settings,
+        toursSeen: state.toursSeen,
+        checklistDismissed: state.checklistDismissed,
       }),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<StudioState>;
-        return { ...current, ...saved, settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}), auth: { ...DEFAULT_SETTINGS.auth, ...(saved.settings?.auth ?? {}) } } };
+        // A run still marked running after a reload was interrupted: the
+        // simulator lived in the tab that went away. Say so instead of
+        // leaving it spinning forever.
+        const runs = (saved.runs ?? current.runs).map((run) =>
+          run.status === 'running'
+            ? { ...run, status: 'cancelled' as const, finishedAt: run.finishedAt ?? run.events.at(-1)?.at ?? run.startedAt, summary: run.summary ?? 'Interrupted: the tab was closed or reloaded while this test run was playing.' }
+            : run,
+        );
+        return { ...current, ...saved, runs, settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}), auth: { ...DEFAULT_SETTINGS.auth, ...(saved.settings?.auth ?? {}) } } };
       },
       onRehydrateStorage: () => (state) => {
+        // Before the first animation can start, not after the first effect.
+        MotionGlobalConfig.skipAnimations = state?.settings.motion === 'reduced';
         state?.markHydrated();
       },
     },
