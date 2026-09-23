@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, rm, writeFile, realpath } from 'node:fs/promises';
-import { devNull, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runProcess } from '../../src/process/runner.ts';
@@ -12,6 +12,32 @@ export interface TempRepo {
   git(...args: string[]): Promise<string>;
   writeFile(relativePath: string, contents: string): Promise<void>;
   commit(message: string): Promise<void>;
+}
+
+/**
+ * Environment for a test's own git commands: a fixed identity, and no global
+ * or system config, so a developer's aliases, hooks or `core.autocrlf` cannot
+ * change what a test builds.
+ *
+ * The config files are an empty file of our own rather than the null device.
+ * Git for Windows cannot open `os.devNull` (`\\.\nul`) as a config file — it
+ * fails every command with "unable to access '//./nul'" — and a real empty
+ * file means the same thing to git on every platform.
+ * `GIT_CONFIG_NOSYSTEM` is belt and braces for a git older than 2.32, which
+ * ignores `GIT_CONFIG_SYSTEM`.
+ */
+export async function isolatedGitEnv(dir: string): Promise<Record<string, string>> {
+  const emptyConfig = join(dir, 'empty.gitconfig');
+  await writeFile(emptyConfig, '', 'utf8');
+  return {
+    GIT_AUTHOR_NAME: 'Relay Test',
+    GIT_AUTHOR_EMAIL: 'test@relay.invalid',
+    GIT_COMMITTER_NAME: 'Relay Test',
+    GIT_COMMITTER_EMAIL: 'test@relay.invalid',
+    GIT_CONFIG_GLOBAL: emptyConfig,
+    GIT_CONFIG_SYSTEM: emptyConfig,
+    GIT_CONFIG_NOSYSTEM: '1',
+  };
 }
 
 /**
@@ -29,22 +55,10 @@ export async function createTempRepo(
   const relayHome = join(base, 'relay-home');
   await mkdir(root, { recursive: true });
   await mkdir(relayHome, { recursive: true });
+  const env = await isolatedGitEnv(base);
 
   const git = async (...args: string[]): Promise<string> => {
-    const result = await runProcess('git', args, {
-      cwd: root,
-      env: {
-        GIT_AUTHOR_NAME: 'Relay Test',
-        GIT_AUTHOR_EMAIL: 'test@relay.invalid',
-        GIT_COMMITTER_NAME: 'Relay Test',
-        GIT_COMMITTER_EMAIL: 'test@relay.invalid',
-        // `os.devNull` rather than a literal `/dev/null`: on Windows the null
-        // device is `\\.\nul`, and pointing git at a path that does not exist
-        // would fail instead of isolating the test from the user's config.
-        GIT_CONFIG_GLOBAL: devNull,
-        GIT_CONFIG_SYSTEM: devNull,
-      },
-    });
+    const result = await runProcess('git', args, { cwd: root, env });
     if (!result.ok) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
     return result.stdout.trim();
   };

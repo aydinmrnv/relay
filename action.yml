@@ -37,9 +37,12 @@ branding:
 
 inputs:
   issue:
+    # No expression syntax in this text, not even quoted: GitHub evaluates
+    # action metadata, and an expression here fails every workflow using the
+    # Action before its first step runs.
     description: >-
-      Issue to consider, as a number. Usually `${{ github.event.issue.number }}`
-      from an `issues.labeled` trigger.
+      Issue to consider, as a number. Usually `github.event.issue.number` from
+      an `issues.labeled` trigger.
     required: true
   label:
     description: >-

@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, after, afterEach, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,7 @@ import { describeInstallation, type Installation } from '../src/update/installat
 import { runProcess } from '../src/process/runner.ts';
 import { isRelayError } from '../src/util/errors.ts';
 import type { Theme } from '../src/ui/theme.ts';
+import { isolatedGitEnv } from './helpers/tempRepo.ts';
 
 const PIPED: Theme = { color: false, unicode: true, interactive: false };
 
@@ -29,18 +30,22 @@ async function scratch(prefix: string): Promise<string> {
   return base;
 }
 
+// One isolated git environment for the whole file: every repository below is
+// built by the same fixed identity, with nobody's own git config involved.
+let gitHome: string;
+let gitEnv: Record<string, string>;
+
+before(async () => {
+  gitHome = await mkdtemp(join(tmpdir(), 'relay-update-git-'));
+  gitEnv = await isolatedGitEnv(gitHome);
+});
+
+after(async () => {
+  await rm(gitHome, { recursive: true, force: true });
+});
+
 async function git(args: readonly string[], cwd: string): Promise<string> {
-  const result = await runProcess('git', args, {
-    cwd,
-    env: {
-      GIT_AUTHOR_NAME: 'Relay Test',
-      GIT_AUTHOR_EMAIL: 'test@relay.invalid',
-      GIT_COMMITTER_NAME: 'Relay Test',
-      GIT_COMMITTER_EMAIL: 'test@relay.invalid',
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_CONFIG_SYSTEM: '/dev/null',
-    },
-  });
+  const result = await runProcess('git', args, { cwd, env: gitEnv });
   if (!result.ok) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
   return result.stdout.trim();
 }
@@ -264,7 +269,9 @@ describe('relay --update, from a checkout', () => {
 
     const { error } = await update(await installation(install.root), new Npm());
     assert.ok(isRelayError(error) && error.code === 'UPDATE_DETACHED', String(error));
-    assert.match(error.hint ?? '', new RegExp(install.root));
+    // A substring, not a RegExp built from the path: a Windows path is full of
+    // backslashes, which a pattern would read as escapes.
+    assert.ok((error.hint ?? '').includes(install.root), error.hint);
   });
 
   it('will not guess what "latest" means for a branch that tracks nothing', async () => {
