@@ -117,7 +117,7 @@ async function deliveringUnlocked(context: DeliveryContext): Promise<PhaseResult
     state.delivery.comment = { status: 'skipped', detail: 'no pull request to link', at: now() };
   } else if (context.issueProvider?.comment === undefined) {
     state.delivery.comment = { status: 'skipped', detail: 'this provider cannot comment', at: now() };
-  } else if (state.issue?.number == null) {
+  } else if (state.issue?.number == null && state.issue?.key === undefined) {
     state.delivery.comment = { status: 'skipped', detail: 'this run has no tracker issue', at: now() };
   } else {
     try {

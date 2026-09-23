@@ -1,11 +1,12 @@
 import type { EngineContext } from '../workflow/context.ts';
 import { notifyCommand } from './command.ts';
+import { desktopBody } from './format.ts';
 import { notifySystem } from './system.ts';
 
 export async function notifyCompletion(context: Pick<EngineContext, 'state' | 'observer'>): Promise<void> {
   const { state, observer } = context;
   state.notification ??= {};
-  const body = `Run ${state.runId} ${state.phase.toLowerCase()}`;
+  const body = desktopBody(state);
   if (state.config.notify.system === true) await record('system', () => notifySystem(body));
   const command = state.config.notify.command;
   if (Array.isArray(command)) await record('command', async () => { await notifyCommand(command, state); return 'command completed'; });

@@ -30,6 +30,7 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   { id: 'anthropic-key', pattern: /\bsk-ant-[A-Za-z0-9_-]{16,}/g, replacement: '[redacted:anthropic-key]', highSignal: true },
   { id: 'api-key', pattern: /\bsk-[A-Za-z0-9]{20,}/g, replacement: '[redacted:api-key]', highSignal: true },
   { id: 'aws-key-id', pattern: /\bAKIA[0-9A-Z]{16}\b/g, replacement: '[redacted:aws-key-id]', highSignal: true },
+  { id: 'linear-key', pattern: /\blin_(?:api|oauth)_[A-Za-z0-9]{20,}/g, replacement: '[redacted:linear-key]', highSignal: true },
   { id: 'slack-token', pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/g, replacement: '[redacted:slack-token]', highSignal: true },
   { id: 'jwt', pattern: /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, replacement: '[redacted:jwt]', highSignal: true },
   {

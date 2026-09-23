@@ -1,4 +1,5 @@
 import { parseIssueRef } from '../github/provider.ts';
+import { isTrackerRef } from '../issues/registry.ts';
 import { looksLikePath } from '../issues/local.ts';
 import { composerSupported, composerWidth, readComposer } from '../ui/composer.ts';
 import { Prompter, isPromptCancelled, type PromptSession } from '../ui/prompt.ts';
@@ -225,7 +226,7 @@ async function startRun(deps: SessionDeps, issueRef: string | undefined, options
  * looser on purpose: there, anything that is not a reference is the task.
  */
 export function validateIssueRef(value: string): string | undefined {
-  if (value.trim().length === 0 || looksLikePath(value)) return undefined;
+  if (value.trim().length === 0 || looksLikePath(value) || isTrackerRef(value)) return undefined;
   try {
     parseIssueRef(value);
     return undefined;

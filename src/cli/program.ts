@@ -4,6 +4,7 @@ import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
 import { DELIVERY_POLICIES, REVIEW_LEVELS } from '../storage/config.ts';
 import { deliverCommand } from './commands/deliver.ts';
 import { doctorCommand } from './commands/doctor.ts';
+import { notifyCommand } from './commands/notify.ts';
 import { collect, evalCommand } from './commands/eval.ts';
 import { EVAL_COMPARISON_NAMES, EVAL_CONFIG_NAMES } from '../eval/configs.ts';
 import { initCommand } from './commands/init.ts';
@@ -79,7 +80,7 @@ export function defaultHelp(command: Command, width?: number): string {
 }
 
 const HELP_GROUPS = [
-  ['Setup', ['start', 'init', 'doctor']],
+  ['Setup', ['start', 'init', 'doctor', 'notify']],
   ['Run', ['run', 'resume', 'stop']],
   ['Unattended', ['serve']],
   ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats']],
@@ -188,6 +189,13 @@ export function buildProgram(version: string): Command {
     .description(`check that git, gh, ${AGENT_LABELS} and the repo are installed and authenticated`)
     .option('--json', JSON_FLAG)
     .action(wrap(doctorCommand));
+
+  program
+    .command('notify')
+    .argument('[run]', 'a run id, short id or `latest` to re-send; omit to send a test')
+    .description('send a finished run\'s notification now, to test the webhook, desktop and command channels')
+    .option('--json', JSON_FLAG)
+    .action(wrap(notifyCommand));
 
   program
     .command('run')

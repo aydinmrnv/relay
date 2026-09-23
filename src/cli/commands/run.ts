@@ -4,7 +4,7 @@ import { rm } from 'node:fs/promises';
 import { AGENT_PROVIDERS } from '../../agents/index.ts';
 import { createRunId, shortId } from '../../util/ids.ts';
 import { RelayError } from '../../util/errors.ts';
-import { parseIssueRef } from '../../github/provider.ts';
+import { isTrackerRef } from '../../issues/registry.ts';
 import type { IssueListFilters, IssueProvider } from '../../github/types.ts';
 import {
   LocalIssueProvider,
@@ -176,15 +176,6 @@ export async function resolveIssueSource(
   return { kind: 'local', task: await readTaskFile(ref!, cwd) };
 }
 
-/** Whether the provider would understand this, without making it throw to find out. */
-function isTrackerRef(ref: string): boolean {
-  try {
-    parseIssueRef(ref);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * The provider this run reads its issue through. A run carrying its own task

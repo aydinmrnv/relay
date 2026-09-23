@@ -39,6 +39,8 @@ interface WorldOptions {
   /** Sign-in state each binary reports once its login command has been run. */
   afterLogin?: Record<string, AuthState>;
   ghAvailable?: boolean;
+  /** Whether LINEAR_API_KEY resolves to a working key in this world. */
+  linearKey?: boolean;
   initExitCode?: number;
   runExitCode?: number;
 }
@@ -92,6 +94,11 @@ class World {
       installed: async (binary: string) => this.installedNames().includes(binary),
       providerCheck: async (registration) => {
         if (this.options.ghAvailable === false) return { available: false, detail: 'not authenticated' };
+        if (registration.auth === undefined) {
+          return this.options.linearKey === true
+            ? { available: true, detail: 'authenticated as Ada (Acme)' }
+            : { available: false, detail: 'LINEAR_API_KEY not set' };
+        }
         const state = this.stateOf(registration.auth.login.command);
         return state === 'authenticated'
           ? { available: true, detail: 'authenticated as octocat' }

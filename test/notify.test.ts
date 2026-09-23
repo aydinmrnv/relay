@@ -122,3 +122,97 @@ describe('desktop notification', () => {
     assert.equal(await notifySystem('done', { platform: 'aix', resolve: other.resolve as never, run: other.run as never }), 'unsupported platform');
   });
 });
+
+describe('webhook formats', () => {
+  // Imported lazily so the rest of this file reads as it did before formats existed.
+  const load = () => import('../src/notify/format.ts');
+
+  function finished() {
+    const value = state();
+    value.phase = 'COMPLETE';
+    value.pullRequest = { url: 'https://github.com/acme/relay/pull/7', number: 7, base: 'main', head: 'run', createdByRun: true, at: value.updatedAt };
+    return value;
+  }
+
+  it('recognises Slack, Discord and Teams URLs, and leaves everything else as JSON', async () => {
+    const { detectWebhookFormat } = await load();
+    assert.equal(detectWebhookFormat('https://hooks.slack.com/services/T0/B0/xyz'), 'slack');
+    assert.equal(detectWebhookFormat('https://discord.com/api/webhooks/1/abc'), 'discord');
+    assert.equal(detectWebhookFormat('https://discordapp.com/api/webhooks/1/abc'), 'discord');
+    assert.equal(detectWebhookFormat('https://acme.webhook.office.com/webhookb2/x'), 'teams');
+    assert.equal(detectWebhookFormat('https://prod-01.westus.logic.azure.com/workflows/x'), 'teams');
+    assert.equal(detectWebhookFormat('https://hooks.example/run'), 'json');
+    assert.equal(detectWebhookFormat('https://discord.com/channels/1'), 'json');
+  });
+
+  it('lets config override detection', async () => {
+    const { resolveWebhookFormat } = await load();
+    assert.equal(resolveWebhookFormat('https://hooks.example/run', 'slack'), 'slack');
+    assert.equal(resolveWebhookFormat('https://hooks.slack.com/services/x', 'auto'), 'slack');
+    assert.equal(resolveWebhookFormat('https://hooks.slack.com/services/x', undefined), 'slack');
+  });
+
+  it('sends Slack a message it renders, linking the pull request', async () => {
+    const { webhookBody } = await load();
+    const body = webhookBody(finished(), 'slack') as { text: string; blocks: Array<{ text?: { text: string } }> };
+    assert.equal(body.text, '✅ Relay run succeeded: #35 Notify');
+    assert.match(body.blocks[0]!.text!.text, /<https:\/\/github\.com\/acme\/relay\/pull\/7\|#35 Notify>/);
+    assert.doesNotMatch(JSON.stringify(body), /secret\.ts|secret\/workspace/);
+  });
+
+  it('sends Discord an embed that can never ping anyone', async () => {
+    const { webhookBody } = await load();
+    const value = finished();
+    value.issue!.title = '@everyone look';
+    const body = webhookBody(value, 'discord') as { allowed_mentions: { parse: string[] }; embeds: Array<{ color: number; url: string }> };
+    assert.deepEqual(body.allowed_mentions, { parse: [] });
+    assert.equal(body.embeds[0]!.url, 'https://github.com/acme/relay/pull/7');
+    assert.equal(body.embeds[0]!.color, 0x2da44e);
+  });
+
+  it('sends Teams an adaptive card', async () => {
+    const { webhookBody } = await load();
+    const body = webhookBody(finished(), 'teams') as { attachments: Array<{ contentType: string; content: { type: string } }> };
+    assert.equal(body.attachments[0]!.contentType, 'application/vnd.microsoft.card.adaptive');
+    assert.equal(body.attachments[0]!.content.type, 'AdaptiveCard');
+  });
+
+  it('says a failed run failed, and where', async () => {
+    const { digestRun } = await load();
+    const value = state();
+    value.phase = 'FAILED';
+    value.error = { message: 'tests failed', phase: 'TESTING' };
+    const digest = digestRun(value);
+    assert.equal(digest.outcome, 'failed');
+    assert.ok(digest.facts.some((fact) => fact.label === 'Error' && fact.value === 'tests failed (in testing)'));
+  });
+
+  it('posts the detected format and records it', async () => {
+    const value = finished();
+    value.config.notify.webhook = 'https://hooks.slack.com/services/T0/B0/xyz';
+    let sent: unknown;
+    const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+      sent = JSON.parse(String(init?.body));
+      return new Response('ok', { status: 200 });
+    };
+    await notifyRun({ state: value, observer: new RecordingObserver() }, { fetch: fetch as typeof globalThis.fetch, sleep: async () => {} });
+    assert.equal((sent as { text: string }).text, '✅ Relay run succeeded: #35 Notify');
+    assert.match(value.notification?.webhook?.detail ?? '', /^slack: HTTP 200/);
+  });
+
+  it('gives the desktop a sentence rather than a run id', async () => {
+    const { desktopBody } = await load();
+    assert.equal(desktopBody(finished()), 'Succeeded: #35 Notify — PR acme/relay/pull/7');
+  });
+
+  it('offers the title and headline to a notify command', () => {
+    const value = finished();
+    assert.deepEqual(completionArgs(['say', '{{headline}}', '{{title}}'], value), ['say', 'Relay run succeeded: #35 Notify', '#35 Notify']);
+  });
+
+  it('rejects an unknown webhook format in config', async () => {
+    const { mergeConfig } = await import('../src/storage/config.ts');
+    assert.equal(mergeConfig(DEFAULT_CONFIG, { notify: { webhookFormat: 'discord' } }).notify.webhookFormat, 'discord');
+    assert.throws(() => mergeConfig(DEFAULT_CONFIG, { notify: { webhookFormat: 'irc' } }));
+  });
+});

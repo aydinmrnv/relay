@@ -305,6 +305,7 @@ export function issueLinkFor(state: RunState): Omit<IssueLinkRecord, 'at'> | und
   const issue = state.issue;
   if (issue === undefined) return { status: 'skipped', detail: 'this run has no issue' };
   if (issue.number === null) {
+    if (issue.key !== undefined) return { status: 'done', detail: `fixes ${issue.key}` };
     return { status: 'skipped', detail: `${state.issueRef} has no tracker issue to close` };
   }
   return { status: 'done', detail: `closes #${issue.number}` };

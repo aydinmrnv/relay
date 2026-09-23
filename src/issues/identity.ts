@@ -16,6 +16,8 @@ export type IssueIdentity = number | string;
 export interface NamedIssue {
   /** The tracker's own number, or null for a tracker that does not number issues. */
   number: number | null;
+  /** A tracker key that is not a number, such as Linear's `ENG-142`. */
+  key?: string;
   title: string;
 }
 
@@ -28,7 +30,10 @@ export interface NamedIssue {
  * issue is stable, safe, and the same for the same issue.
  */
 export function issueIdentity(issue: NamedIssue): IssueIdentity {
-  return issue.number ?? slugify(issue.title, 'issue');
+  // Linear links a pull request to its issue by finding the identifier in the
+  // branch name, so `relay/eng-142-x7f2q3` is not just tidier than a title
+  // slug — it is the integration.
+  return issue.number ?? (issue.key !== undefined ? issue.key.toLowerCase() : slugify(issue.title, 'issue'));
 }
 
 /**
@@ -37,7 +42,8 @@ export function issueIdentity(issue: NamedIssue): IssueIdentity {
  * is worse than no number at all.
  */
 export function issueHeadline(issue: NamedIssue): string {
-  return issue.number === null ? issue.title : `#${issue.number} ${issue.title}`;
+  if (issue.number !== null) return `#${issue.number} ${issue.title}`;
+  return issue.key === undefined ? issue.title : `${issue.key} ${issue.title}`;
 }
 
 /**
@@ -47,5 +53,6 @@ export function issueHeadline(issue: NamedIssue): string {
  * `(#null)`, when there is not.
  */
 export function issueTitle(issue: NamedIssue): string {
-  return issue.number === null ? issue.title : `${issue.title} (#${issue.number})`;
+  if (issue.number !== null) return `${issue.title} (#${issue.number})`;
+  return issue.key === undefined ? issue.title : `${issue.title} (${issue.key})`;
 }

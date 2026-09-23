@@ -24,6 +24,8 @@ export interface IssueSummary {
    * and the pull request's `Closes` line all read this rather than assume it.
    */
   number: number | null;
+  /** A non-numeric tracker key such as Linear's `ENG-142`, when there is one. */
+  key?: string;
   title: string;
   url: string;
   state: string;
