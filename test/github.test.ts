@@ -306,7 +306,14 @@ describe('auto-merge through gh', () => {
     for (const dir of dirs) await rm(dir, { recursive: true, force: true });
   });
 
-  /** A fake `gh`: writes its argv to `argv.txt`, prints `stdout`, exits `code`. */
+  /**
+   * A fake `gh`: writes its argv to `argv.txt`, prints `stdout`, exits `code`.
+   *
+   * It is a Node script, installed the way a CLI is on each platform: behind a
+   * `#!/bin/sh` wrapper on POSIX, and behind an npm-style `gh.cmd` on Windows,
+   * which cannot spawn a script at all. Either way the binary handed to Relay
+   * is the extensionless `gh`, so Windows also proves PATHEXT finds the shim.
+   */
   async function fakeGh(options: { stdout?: string; stderr?: string; code?: number } = {}): Promise<{
     binary: string;
     cwd: string;
@@ -315,19 +322,25 @@ describe('auto-merge through gh', () => {
     const dir = await mkdtemp(join(tmpdir(), 'relay-fake-gh-'));
     dirs.push(dir);
     const binary = join(dir, 'gh');
+    const script = join(dir, 'gh.mjs');
     const argvFile = join(dir, 'argv.txt');
     await writeFile(
-      binary,
+      script,
       [
-        '#!/bin/sh',
-        `printf '%s\\n' "$@" > "${argvFile}"`,
-        ...(options.stdout === undefined ? [] : [`printf '%s\\n' "${options.stdout}"`]),
-        ...(options.stderr === undefined ? [] : [`printf '%s\\n' "${options.stderr}" >&2`]),
-        `exit ${options.code ?? 0}`,
+        "import { writeFileSync } from 'node:fs';",
+        `writeFileSync(${JSON.stringify(argvFile)}, process.argv.slice(2).map((arg) => arg + '\\n').join(''));`,
+        ...(options.stdout === undefined ? [] : [`process.stdout.write(${JSON.stringify(`${options.stdout}\n`)});`]),
+        ...(options.stderr === undefined ? [] : [`process.stderr.write(${JSON.stringify(`${options.stderr}\n`)});`]),
+        `process.exitCode = ${options.code ?? 0};`,
         '',
       ].join('\n'),
     );
-    await chmod(binary, 0o755);
+    if (process.platform === 'win32') {
+      await writeFile(`${binary}.cmd`, ['@ECHO off', '"node"  "%~dp0\\gh.mjs" %*', ''].join('\r\n'));
+    } else {
+      await writeFile(binary, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`);
+      await chmod(binary, 0o755);
+    }
     return {
       binary,
       cwd: dir,

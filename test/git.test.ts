@@ -173,7 +173,8 @@ describe('worktree naming', () => {
   it('derives a stable path from owner, repo and issue', () => {
     process.env['RELAY_HOME'] = '/tmp/relay-home';
     const path = worktreePathFor({ owner: 'Acme', name: 'Widgets', root: '/x' }, 142, 'a1b2c3');
-    assert.equal(path, '/tmp/relay-home/workspaces/acme/widgets/issue-142-a1b2c3');
+    // Joined with the platform's separator, as the worktree itself will be.
+    assert.equal(path, join('/tmp/relay-home', 'workspaces', 'acme', 'widgets', 'issue-142-a1b2c3'));
     delete process.env['RELAY_HOME'];
   });
 
@@ -181,7 +182,7 @@ describe('worktree naming', () => {
     process.env['RELAY_HOME'] = '/tmp/relay-home';
     const path = worktreePathFor({ owner: '../evil', name: 'a b/c', root: '/x' }, 1, 'id');
     assert.ok(!path.includes('..'));
-    assert.match(path, /workspaces\/evil\/a-b-c\/issue-1-id$/);
+    assert.match(path, /workspaces[\\/]evil[\\/]a-b-c[\\/]issue-1-id$/);
     delete process.env['RELAY_HOME'];
   });
 

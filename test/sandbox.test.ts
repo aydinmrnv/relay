@@ -151,7 +151,7 @@ describe('read-only turns through the claude harness', () => {
   it('gives the CLI its own state paths and nothing in the worktree', () => {
     const paths = claudeWritablePaths('/home/me', '/tmp/scratch');
     assert.ok(paths.includes('/tmp/scratch'));
-    assert.ok(paths.includes('/home/me/.claude'));
+    assert.ok(paths.includes(join('/home/me', '.claude')));
     assert.ok(paths.every((path) => !path.includes('worktree')));
   });
 });
