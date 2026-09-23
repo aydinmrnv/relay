@@ -58,10 +58,20 @@ export const CONFORMANCE_CLAUSES = [
 
 export type ConformanceClause = (typeof CONFORMANCE_CLAUSES)[number];
 
-export const PLAYER = fileURLToPath(new URL('./fake-cli.mjs', import.meta.url));
+const PLAYER_SCRIPT = fileURLToPath(new URL('./fake-cli.mjs', import.meta.url));
 // The exec bit does not survive every checkout, and a silent ENOEXEC would
 // fail every clause with the least useful message available.
-chmodSync(PLAYER, 0o755);
+chmodSync(PLAYER_SCRIPT, 0o755);
+
+/**
+ * The executable each harness under test is pointed at. POSIX runs the script
+ * by its shebang. Windows cannot — spawning it is EFTYPE — so there it is the
+ * npm-style `fake-cli.cmd` beside the script, which Relay's executable
+ * resolution sees through to node and the script: the same path an
+ * npm-installed `claude.cmd` takes, so the suite proves that too.
+ */
+export const PLAYER =
+  process.platform === 'win32' ? fileURLToPath(new URL('./fake-cli.cmd', import.meta.url)) : PLAYER_SCRIPT;
 
 const PROMPT_MARKER = 'RELAY-CONFORMANCE-PROMPT';
 const PROMPT = `${PROMPT_MARKER}: read the issue and do the work.`;

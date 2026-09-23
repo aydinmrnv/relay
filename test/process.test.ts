@@ -156,7 +156,12 @@ describe('windows executable resolution (simulated)', () => {
     await writeFile(join(dir, 'codex'), '#!/usr/bin/env node\n');
     await chmod(join(dir, 'codex'), 0o755);
     assert.equal(await resolveExecutable('codex', { platform: winPlatform([dir]) }), null);
-    assert.notEqual(await resolveExecutable('codex', { platform: posixPlatform([dir]) }), null);
+    // The POSIX half cannot be simulated on a real Windows host: the temp
+    // directory starts with a drive letter, and its colon is the POSIX PATH
+    // delimiter, so a POSIX PATH has no way to name it.
+    if (process.platform !== 'win32') {
+      assert.notEqual(await resolveExecutable('codex', { platform: posixPlatform([dir]) }), null);
+    }
   });
 
   it('respects PATHEXT order within a directory and PATH order across them', async () => {
@@ -239,6 +244,59 @@ describe('windows executable resolution (simulated)', () => {
     assert.equal(invocation.command, FAKE_NODE);
     assert.equal(invocation.args[0], join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'));
     assert.deepEqual([...invocation.args.slice(1)], ['install']);
+  });
+
+  it("sees through npm's own launcher, which names node and the script through variables", async () => {
+    // `npm.cmd` as it ships beside node.exe. It is how `npm test` — the most
+    // common test command there is — gets run on Windows at all.
+    const nodeDir = join(dir, 'nodejs');
+    await mkdir(join(nodeDir, 'node_modules', 'npm', 'bin'), { recursive: true });
+    await writeFile(join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'), 'console.log("npm")\n');
+    await writeFile(
+      join(nodeDir, 'npm.cmd'),
+      [
+        ":: Created by npm, please don't edit manually.",
+        '@ECHO OFF',
+        '',
+        'SETLOCAL',
+        '',
+        'SET "NODE_EXE=%~dp0\\node.exe"',
+        'IF NOT EXIST "%NODE_EXE%" (',
+        '  SET "NODE_EXE=node"',
+        ')',
+        '',
+        'SET "NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js"',
+        'SET "NPM_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npm-cli.js"',
+        'FOR /F "delims=" %%F IN (\'CALL "%NODE_EXE%" "%NPM_PREFIX_JS%"\') DO (',
+        '  SET "NPM_PREFIX_NPM_CLI_JS=%%F\\node_modules\\npm\\bin\\npm-cli.js"',
+        ')',
+        'IF EXIST "%NPM_PREFIX_NPM_CLI_JS%" (',
+        '  SET "NPM_CLI_JS=%NPM_PREFIX_NPM_CLI_JS%"',
+        ')',
+        '',
+        '"%NODE_EXE%" "%NPM_CLI_JS%" %*',
+        '',
+      ].join('\r\n'),
+    );
+
+    const invocation = await resolveInvocation('npm', ['test'], winPlatform([nodeDir]));
+    assert.equal(invocation.command, FAKE_NODE);
+    assert.equal(invocation.args[0], join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'));
+    assert.deepEqual([...invocation.args.slice(1)], ['test']);
+  });
+
+  it('refuses a launcher whose program variable is ever something other than node', async () => {
+    await writeFile(
+      join(dir, 'mixed.cmd'),
+      ['@ECHO OFF', 'SET "RUNNER=node"', 'SET "RUNNER=python"', 'SET "CLI=%~dp0\\mixed.js"', '"%RUNNER%" "%CLI%" %*', ''].join(
+        '\r\n',
+      ),
+    );
+    await writeFile(join(dir, 'mixed.js'), '');
+    await assert.rejects(
+      () => resolveInvocation('mixed', [], winPlatform([dir])),
+      (error: unknown) => error instanceof RelayError && error.code === 'BATCH_SHIM_UNSUPPORTED',
+    );
   });
 
   it('refuses a batch file it cannot see through, rather than spawning a shell', async () => {

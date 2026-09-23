@@ -1,3 +1,5 @@
+import { join, normalize } from 'node:path';
+
 import { RelayError } from '../util/errors.ts';
 import { runProcess } from '../process/runner.ts';
 
@@ -49,7 +51,17 @@ export async function repositoryRoot(
   cwd: string,
   options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<string> {
-  return git(['rev-parse', '--show-toplevel'], { cwd, ...options });
+  return nativePath(await git(['rev-parse', '--show-toplevel'], { cwd, ...options }));
+}
+
+/**
+ * A path git printed, in the platform's own spelling. Git for Windows reports
+ * `C:/Users/me/repo`; everything Relay joins onto it uses backslashes, so left
+ * alone a root would turn into `C:/Users/me/repo\.relay\runs` in run state
+ * and in what Relay prints. On POSIX git's output is already native.
+ */
+function nativePath(path: string): string {
+  return normalize(path);
 }
 
 export async function listLocalBranches(
@@ -72,15 +84,17 @@ async function gitQuiet(args: readonly string[], cwd: string): Promise<string | 
 }
 
 export async function discoverRepository(cwd: string): Promise<RepositoryInfo> {
-  const root = await gitQuiet(['rev-parse', '--show-toplevel'], cwd);
-  if (root === null) {
+  const reportedRoot = await gitQuiet(['rev-parse', '--show-toplevel'], cwd);
+  if (reportedRoot === null) {
     throw new RelayError('Not inside a git repository.', {
       code: 'NOT_A_REPOSITORY',
       hint: 'Run relay from inside a git repository, or run `git init` first.',
     });
   }
+  const root = nativePath(reportedRoot);
 
-  const gitDir = (await gitQuiet(['rev-parse', '--path-format=absolute', '--git-common-dir'], root)) ?? `${root}/.git`;
+  const reportedGitDir = await gitQuiet(['rev-parse', '--path-format=absolute', '--git-common-dir'], root);
+  const gitDir = reportedGitDir === null ? join(root, '.git') : nativePath(reportedGitDir);
   const branchRaw = await gitQuiet(['rev-parse', '--abbrev-ref', 'HEAD'], root);
   // An unborn HEAD resolves to no commit, but it still names the branch the
   // first commit will create — which is the honest answer to "what branch is

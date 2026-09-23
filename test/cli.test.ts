@@ -13,14 +13,26 @@ import { createRunState, transition, type RunState } from '../src/workflow/state
 import { recordTurnUsage } from '../src/workflow/usage.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
+import { setTheme } from '../src/cli/output.ts';
+import type { Theme } from '../src/ui/theme.ts';
+
+/**
+ * The output assertions below are written against Relay's unicode rendering,
+ * so the theme is pinned rather than detected: a Windows runner's console
+ * announces no ANSI-capable terminal, and detection rightly gives it the ASCII
+ * fallbacks instead.
+ */
+const PIPED: Theme = { color: false, unicode: true, interactive: false };
 
 let repo: TempRepo;
 
 beforeEach(async () => {
+  setTheme(PIPED);
   repo = await createTempRepo();
 });
 
 afterEach(async () => {
+  setTheme(undefined);
   await repo.cleanup();
 });
 
