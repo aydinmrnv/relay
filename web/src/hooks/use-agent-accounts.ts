@@ -2,9 +2,13 @@
 
 import { useEffect } from 'react';
 import { create } from 'zustand';
-import { HOSTED_DEMO } from '@/lib/hosted';
+import { companionFetch, useCompanion } from '@/lib/companion/client';
 import type { AgentId, AgentsStatus, LoginMode, LoginSessionView } from '@/lib/agents/types';
 
+/**
+ * `available`: a paired `relay connect` answered. `unavailable`: there is no
+ * machine to ask — not paired, or the companion is not running.
+ */
 export type BridgeState = 'unknown' | 'available' | 'unavailable';
 
 interface AgentsStore {
@@ -19,13 +23,10 @@ interface AgentsStore {
   logout: (agent: AgentId) => Promise<void>;
 }
 
-async function expectJson<T>(response: Response): Promise<T> {
-  const body = (await response.json().catch(() => ({}))) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
-  return body;
-}
-
-/** Live sign-in state of the vendor CLIs on this machine. Never persisted: it is re-asked, not remembered. */
+/**
+ * Live sign-in state of the coding CLIs on the paired machine, asked through
+ * `relay connect`. Never persisted: it is re-asked, not remembered.
+ */
 export const useAgentsStore = create<AgentsStore>()((set, get) => ({
   bridge: 'unknown',
   status: null,
@@ -33,49 +34,51 @@ export const useAgentsStore = create<AgentsStore>()((set, get) => ({
 
   refresh: async () => {
     if (get().loading) return;
-    if (HOSTED_DEMO) {
+    const companion = useCompanion.getState();
+    if (!companion.hydrated) return;
+    if (companion.pairing === null) {
       set({ bridge: 'unavailable', status: null });
       return;
     }
     set({ loading: true });
+    await companion.refresh();
+    if (useCompanion.getState().status !== 'connected') {
+      set({ bridge: 'unavailable', status: null, loading: false });
+      return;
+    }
     try {
-      const response = await fetch('/api/agents', { cache: 'no-store' });
-      if (!response.ok) {
-        set({ bridge: 'unavailable', status: null, loading: false });
-        return;
-      }
-      const status = (await response.json()) as AgentsStatus;
+      const status = await companionFetch<AgentsStatus>('/v1/agents');
       set({ bridge: 'available', status, loading: false });
     } catch {
       set({ bridge: 'unavailable', status: null, loading: false });
     }
   },
 
-  startLogin: async (agent, mode) => {
-    const response = await fetch(`/api/agents/${agent}/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode }) });
-    return expectJson<LoginSessionView>(response);
-  },
+  startLogin: (agent, mode) => companionFetch<LoginSessionView>(`/v1/agents/${agent}/login`, { method: 'POST', body: { mode } }),
 
-  pollLogin: async (id) => expectJson<LoginSessionView>(await fetch(`/api/agents/login/${id}`, { cache: 'no-store' })),
+  pollLogin: (id) => companionFetch<LoginSessionView>(`/v1/logins/${encodeURIComponent(id)}`),
 
   submitCode: async (id, code) => {
-    await expectJson<{ ok: boolean }>(await fetch(`/api/agents/login/${id}/code`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }) }));
+    await companionFetch<{ ok: boolean }>(`/v1/logins/${encodeURIComponent(id)}/code`, { method: 'POST', body: { code } });
   },
 
   cancelLogin: async (id) => {
-    await fetch(`/api/agents/login/${id}`, { method: 'DELETE' }).catch(() => undefined);
+    await companionFetch(`/v1/logins/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => undefined);
   },
 
   logout: async (agent) => {
-    await expectJson<{ ok: boolean; detail: string }>(await fetch(`/api/agents/${agent}/logout`, { method: 'POST' }));
+    await companionFetch<{ ok: boolean; detail: string }>(`/v1/agents/${agent}/logout`, { method: 'POST' });
     await get().refresh();
   },
 }));
 
-/** Mount once. Polls while the tab is visible and re-checks on focus. */
+/** Mount once. Polls while the tab is visible, re-checks on focus, and follows pairing changes. */
 export function useAgentsPoller(intervalMs = 30_000): void {
   const refresh = useAgentsStore((state) => state.refresh);
+  const hydrated = useCompanion((state) => state.hydrated);
+  const pairing = useCompanion((state) => state.pairing);
   useEffect(() => {
+    if (!hydrated) return;
     void refresh();
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') void refresh();
@@ -86,10 +89,10 @@ export function useAgentsPoller(intervalMs = 30_000): void {
       clearInterval(timer);
       window.removeEventListener('focus', onFocus);
     };
-  }, [refresh, intervalMs]);
+  }, [refresh, intervalMs, hydrated, pairing]);
 }
 
-/** Convenience selector: which agents are signed in, keyed by id. Empty when the bridge is unavailable. */
+/** Convenience selector: which agents are signed in, keyed by id. Empty when no machine is connected. */
 export function useSignedIn(): Partial<Record<AgentId, boolean>> {
   const status = useAgentsStore((state) => state.status);
   if (status === null) return {};

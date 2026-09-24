@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
-import { AlertTriangle, CircleAlert, Download, FileArchive, FileCode2, KeyRound } from 'lucide-react';
+import Link from 'next/link';
+import { useMemo, useState } from 'react';
+import { AlertTriangle, CircleAlert, Download, FileArchive, FileCode2, FolderInput, KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -17,6 +18,9 @@ import { createZip, saveBlob } from '@/lib/zip';
 import { useBrand } from '@/hooks/use-brand';
 import { useStudio } from '@/lib/store';
 import { cn } from '@/lib/utils';
+import { Spinner } from '@/components/ui/spinner';
+import { companionFetch, useCompanion, useCompanionCan } from '@/lib/companion/client';
+import { repositoryLabel, type InstallResponse } from '@/lib/companion/types';
 
 interface Props {
   workflow: Workflow | null;
@@ -38,6 +42,9 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
   const markExported = useStudio((state) => state.markExported);
   const compiled = useMemo(() => (workflow === null ? null : compileWorkflow(workflow, brand, { auth })), [workflow, brand, auth]);
   const errors = useMemo(() => (workflow === null ? [] : validateWorkflow(workflow).issues.filter((issue) => issue.level === 'error')), [workflow]);
+  const canInstall = useCompanionCan('install');
+  const machine = useCompanion((state) => state.hello);
+  const [installing, setInstalling] = useState(false);
 
   if (workflow === null || compiled === null) return null;
 
@@ -47,6 +54,29 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
   const downloadOne = (path: string, content: string) => {
     saveBlob(new Blob([content], { type: 'text/plain' }), path.split('/').pop() ?? path);
     markExported(workflow.id);
+  };
+
+  const machineRepo = repositoryLabel(machine?.repository);
+
+  /** Writes the export into the repository `relay connect` runs in. SETUP.md stays here: its steps are on this screen. */
+  const install = async () => {
+    setInstalling(true);
+    try {
+      const files = compiled.files.filter((file) => file.path !== 'SETUP.md').map((file) => ({ path: file.path, content: file.content }));
+      const result = await companionFetch<InstallResponse>('/v1/install', { method: 'POST', body: { files } });
+      markExported(workflow.id);
+      const changed = result.files.filter((file) => file.status !== 'unchanged');
+      toast.success(changed.length === 0 ? `${machineRepo ?? 'The repository'} already had this export` : `Installed into ${machineRepo ?? 'your repository'}`, {
+        description:
+          changed.length === 0
+            ? 'Every file was already up to date.'
+            : `${changed.map((file) => `${file.status} ${file.path}`).join(', ')}. Review, commit and push them. The existing config was merged, not replaced.`,
+      });
+    } catch (error) {
+      toast.error('Could not install the export', { description: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setInstalling(false);
+    }
   };
 
   const downloadZip = () => {
@@ -83,11 +113,34 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
 
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto md:grid-cols-[260px_1fr] md:overflow-visible">
           <ol className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1 text-sm">
-            <Step n={1} title="Download">
-              <Button size="sm" className="mt-1.5 w-full" onClick={downloadZip}>
-                <FileArchive data-icon="inline-start" /> Download .zip
-              </Button>
-              <p className="mt-1.5 text-xs text-muted-foreground">Unzip at the root of {workflow.repository === undefined || workflow.repository === '' ? 'your repository' : <span className="font-mono">{workflow.repository}</span>}.</p>
+            <Step n={1} title={canInstall ? 'Put it in the repository' : 'Download'}>
+              {canInstall ? (
+                <>
+                  <Button size="sm" className="mt-1.5 w-full" onClick={() => void install()} disabled={installing || errors.length > 0}>
+                    {installing ? <Spinner data-icon="inline-start" /> : <FolderInput data-icon="inline-start" />} Install into {machineRepo ?? 'the repository'}
+                  </Button>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Written by relay connect on {machine?.machine ?? 'your machine'}; an existing config is merged, not replaced.{' '}
+                    <button type="button" className="underline underline-offset-2" onClick={downloadZip}>
+                      Download the .zip
+                    </button>{' '}
+                    instead.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Button size="sm" className="mt-1.5 w-full" onClick={downloadZip}>
+                    <FileArchive data-icon="inline-start" /> Download .zip
+                  </Button>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Unzip at the root of {workflow.repository === undefined || workflow.repository === '' ? 'your repository' : <span className="font-mono">{workflow.repository}</span>}, or{' '}
+                    <Link href="/connect" className="underline underline-offset-2">
+                      connect your machine
+                    </Link>{' '}
+                    to install it there directly.
+                  </p>
+                </>
+              )}
             </Step>
             <Step n={2} title="Add the secrets">
               <ul className="mt-1 grid gap-1.5">

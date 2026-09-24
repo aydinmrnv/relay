@@ -2,8 +2,10 @@ import { buildProgram } from './cli/program.ts';
 import { exitCodeFor, isCommanderError } from './cli/exit.ts';
 import { reportError } from './cli/output.ts';
 import { packageVersion } from './update/installation.ts';
+import { adoptConfigOverlay } from './storage/config.ts';
 
 async function main(): Promise<void> {
+  adoptConfigOverlay();
   let version = 'unknown';
   try {
     version = await packageVersion();

@@ -448,18 +448,50 @@ export function runsDir(repoRoot: string): string {
   return join(relayDir(repoRoot), 'runs');
 }
 
+/**
+ * A config file layered over the repository's for one invocation. `relay
+ * connect` sets it on the `relay run` it starts for the studio, so a workflow
+ * can shape a run without rewriting the repository's committed config.
+ */
+export const CONFIG_OVERLAY_VARIABLE = 'RELAY_CONFIG_OVERLAY';
+
+let overlayPath: string | undefined;
+
+/** Layers a config file over the repository's for the rest of this process; `undefined` removes it. */
+export function setConfigOverlay(path: string | undefined): void {
+  overlayPath = path === undefined || path.length === 0 ? undefined : path;
+}
+
+/**
+ * Takes `RELAY_CONFIG_OVERLAY` out of the environment and into this process.
+ * Out, because everything a run spawns inherits the environment — the agents,
+ * the repository's own test suite, which may well run Relay — and a shape meant
+ * for this one run must not become theirs.
+ */
+export function adoptConfigOverlay(env: NodeJS.ProcessEnv = process.env): void {
+  const path = env[CONFIG_OVERLAY_VARIABLE];
+  delete env[CONFIG_OVERLAY_VARIABLE];
+  if (path !== undefined && path.length > 0) setConfigOverlay(path);
+}
+
 /** Loads repository config, falling back to defaults when absent. */
 export async function loadConfig(repoRoot: string): Promise<RelayConfig> {
-  const path = configPath(repoRoot);
+  const config = await readConfigFile(configPath(repoRoot), DEFAULT_CONFIG);
+  return overlayPath === undefined ? config : readConfigFile(overlayPath, config, { required: true });
+}
+
+async function readConfigFile(path: string, base: RelayConfig, options: { required?: boolean } = {}): Promise<RelayConfig> {
   let contents: string;
   try {
     contents = await readFile(path, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return structuredClone(DEFAULT_CONFIG);
+    // A missing repository config means defaults. A missing overlay means the
+    // caller asked for a shape it will not get, which is not the same thing.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT' && options.required !== true) return structuredClone(base);
     throw error;
   }
   try {
-    return mergeConfig(DEFAULT_CONFIG, JSON.parse(contents) as unknown);
+    return mergeConfig(base, JSON.parse(contents) as unknown);
   } catch (error) {
     if (error instanceof RelayError) throw error;
     throw new RelayError(`${path} must contain valid JSON.`, { code: 'BAD_CONFIG', cause: error });

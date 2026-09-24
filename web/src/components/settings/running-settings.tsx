@@ -101,7 +101,7 @@ export function RunningSettings() {
             Where runs execute <HelpTip term="execution" />
           </span>
         }
-        description="Where an exported workflow does its work. Test runs in the studio are always played back in this browser, whatever you pick."
+        description="Where an exported workflow does its unattended work. A run you start from the builder on your machine happens there, through relay connect; test runs are always played back in this browser."
       >
         <ChoiceCards name="tier" label="Where runs execute" value={tier} onValueChange={(value) => updateSettings({ executionTier: value })} options={tiers} />
       </SettingBlock>

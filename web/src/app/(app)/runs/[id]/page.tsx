@@ -38,7 +38,7 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { FadeIn, Stagger, StaggerItem } from '@/components/motion/fade-in';
 import { CopyButton } from '@/components/runs/copy-button';
 import { PhaseList } from '@/components/runs/phase-list';
-import { StartedAt } from '@/components/runs/run-bits';
+import { MachineRunCard, RunSourceBadge, StartedAt } from '@/components/runs/run-bits';
 import { DeleteRunDialog } from '@/components/runs/run-dialogs';
 import { LiveStep, RunStatusBadge } from '@/components/runs/run-status';
 import { RunTimeline } from '@/components/runs/run-timeline';
@@ -69,6 +69,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
   if (run === undefined) return <RunNotFound />;
 
   const live = isLive(run.status);
+  const machine = run.source === 'machine' ? run.machine : undefined;
   // Gated on status too: the launcher's controller map is not reactive, the run's status is.
   const cancellable = live && canCancel(run.id);
   const connector = getConnector(run.trigger.connectorId);
@@ -101,6 +102,12 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
                 {connector === undefined ? null : <ConnectorIcon connector={connector} size={14} variant="mark" />}
                 {run.trigger.label}
               </span>
+              {machine === undefined ? null : (
+                <>
+                  <span aria-hidden>·</span>
+                  <RunSourceBadge run={run} />
+                </>
+              )}
               <span aria-hidden>·</span>
               <span>
                 started <StartedAt iso={run.startedAt} now={now} className="text-foreground" />
@@ -122,7 +129,9 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
               <TooltipTrigger render={<Button variant={live ? 'outline' : 'default'} onClick={() => runAgain(workflow.id, { payload: run.trigger.payload, navigate: true })} />}>
                 <RotateCcw data-icon="inline-start" /> Run again
               </TooltipTrigger>
-              <TooltipContent className="max-w-64">Plays the current version of {workflow.name} with the same ticket. Free; nothing is called.</TooltipContent>
+              <TooltipContent className="max-w-64">
+                Plays the current version of {workflow.name} with the same ticket as a test run. Free; nothing is called.{machine === undefined ? '' : ' To run it for real again, use Run on this machine in the builder.'}
+              </TooltipContent>
             </Tooltip>
           ) : (
             <Tooltip>
@@ -144,7 +153,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
               <TooltipTrigger render={<Button variant="outline" nativeButton={false} render={<a href={run.prUrl} target="_blank" rel="noreferrer" />} />}>
                 PR #{prNumber(run.prUrl)} <ExternalLink data-icon="inline-end" />
               </TooltipTrigger>
-              <TooltipContent className="max-w-64">Simulated: the test run made this number up, so GitHub will not find it.</TooltipContent>
+              <TooltipContent className="max-w-64">{machine === undefined ? 'Simulated: the test run made this number up, so GitHub will not find it.' : `Opened by the run on ${machine.host}.`}</TooltipContent>
             </Tooltip>
           ) : null}
           <DropdownMenu>
@@ -180,7 +189,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
                 ? `Counting as it plays · ${run.phases.length} ${run.phases.length === 1 ? 'phase' : 'phases'} so far`
                 : run.phases.length === 0 && run.costUsd === 0
                   ? 'No agent work, so nothing to pay for'
-                  : `Simulated · ${run.phases.length} ${run.phases.length === 1 ? 'phase' : 'phases'}`
+                  : `${machine === undefined ? 'Simulated' : 'Reported by the CLIs'} · ${run.phases.length} ${run.phases.length === 1 ? 'phase' : 'phases'}`
             }
           />
         </StaggerItem>
@@ -197,7 +206,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
                 </span>
               )
             }
-            hint={run.diff === undefined ? (live ? 'Nothing written yet' : 'No code was written') : `${run.diff.files} files · simulated, counted from git`}
+            hint={run.diff === undefined ? (live ? 'Nothing written yet' : 'No code was written') : `${run.diff.files} files · ${machine === undefined ? 'simulated, ' : ''}counted from git`}
           />
         </StaggerItem>
         <StaggerItem>
@@ -205,7 +214,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
             icon={run.tests === undefined ? <FlaskConical /> : run.tests.passed ? <CheckCircle2 className="text-success" /> : <XCircle className="text-destructive" />}
             label="Tests"
             value={run.tests === undefined ? (live ? 'Pending' : 'Not run') : run.tests.passed ? 'Passed' : 'Failed'}
-            hint={run.tests === undefined ? (live ? 'Not reached yet' : 'The pipeline did not reach the test phase') : `${run.tests.command} · ${formatMs(run.tests.durationMs)} · simulated`}
+            hint={run.tests === undefined ? (live ? 'Not reached yet' : 'The pipeline did not reach the test phase') : `${run.tests.command} · ${formatMs(run.tests.durationMs)}${machine === undefined ? ' · simulated' : ''}`}
           />
         </StaggerItem>
         <StaggerItem>
@@ -235,7 +244,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
             <CardHeader>
               <CardTitle>Timeline</CardTitle>
               <CardDescription>
-                Every node the run touched, in order, with what it did. {live ? 'Updating live.' : 'Offsets are simulated time since the start.'}
+                Every node the run touched, in order, with what it did. {live ? 'Updating live.' : machine === undefined ? 'Offsets are simulated time since the start.' : 'Offsets are time since the start.'}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -245,6 +254,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
         </FadeIn>
 
         <FadeIn delay={0.12} className="flex flex-col gap-6 lg:col-span-2">
+          {machine === undefined ? null : <MachineRunCard machine={machine} />}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-1.5">
@@ -252,7 +262,9 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
               </CardTitle>
               <CardDescription>
                 {run.phases.length > 0 || openPhase(run) !== null
-                  ? 'Where the time and money went, agent by agent. Simulated from realistic ranges.'
+                  ? machine === undefined
+                    ? 'Where the time and money went, agent by agent. Simulated from realistic ranges.'
+                    : 'Where the time and money went, agent by agent, as the coding CLIs reported it.'
                   : live
                     ? 'Phases appear here as the pipeline reaches them.'
                     : run.status === 'cancelled'

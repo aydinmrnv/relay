@@ -7,6 +7,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { useStudio } from '@/lib/store';
 import { useAgentsPoller } from '@/hooks/use-agent-accounts';
+import { useCompanion } from '@/lib/companion/client';
+import { attachMachineRun } from '@/lib/run-launcher';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -16,6 +18,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <SeedOnce />
           <BrandTitle />
           <AgentsPoller />
+          <MachineRunsFollower />
           {children}
           <Toaster richColors position="bottom-right" />
         </TooltipProvider>
@@ -66,5 +69,21 @@ function SeedOnce() {
 /** Keeps the vendor CLIs' sign-in state fresh for every screen that shows it. */
 function AgentsPoller() {
   useAgentsPoller();
+  return null;
+}
+
+/**
+ * Runs on the paired machine outlive the tab that started them. Once the
+ * machine answers, any still marked running are followed again from their
+ * first line; the launcher ignores the ones already being followed.
+ */
+function MachineRunsFollower() {
+  const hydrated = useStudio((state) => state.hydrated);
+  const runs = useStudio((state) => state.runs);
+  const connected = useCompanion((state) => state.status === 'connected');
+  useEffect(() => {
+    if (!hydrated || !connected) return;
+    for (const run of runs) if (run.source === 'machine' && run.status === 'running') void attachMachineRun(run);
+  }, [hydrated, connected, runs]);
   return null;
 }

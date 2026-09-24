@@ -33,6 +33,12 @@ Override Relay's data directory.
 .B RELAY_ASCII
 Use ASCII-only interface characters.
 .TP
+.B RELAY_STUDIO_URL
+The studio relay connect pairs with, instead of the hosted one.
+.TP
+.B RELAY_COMPANION_PORT
+The port relay connect listens on, instead of 4477.
+.TP
 .B NO_COLOR
 Disable colored output.
 .SH EXIT STATUS

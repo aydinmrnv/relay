@@ -36,9 +36,9 @@ export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onC
       <div className="flex h-10 items-center gap-2.5 px-3">
         <button type="button" onClick={onToggle} className="flex items-center gap-1.5 text-xs font-semibold" aria-expanded={open}>
           {open ? <ChevronDown className="size-3.5" /> : <ChevronUp className="size-3.5" />}
-          Test run
+          {run?.source === 'machine' ? `Run on ${run.machine?.host ?? 'your machine'}` : 'Test run'}
         </button>
-        <HelpTip term="test-run" side="top" />
+        <HelpTip term={run?.source === 'machine' ? 'companion' : 'test-run'} side="top" />
         {run === null ? (
           <span className="truncate text-xs text-muted-foreground">Press Test run to play this workflow with a sample ticket. It’s free and nothing leaves this browser.</span>
         ) : (
@@ -54,7 +54,7 @@ export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onC
               <span className="min-w-0 truncate text-xs text-muted-foreground">{String(run.trigger.payload['title'] ?? run.trigger.label)}</span>
             )}
             {running ? <Progress value={progress} className="hidden w-28 md:flex" aria-label="Run progress" /> : null}
-            <span className="ml-auto text-xs text-muted-foreground tabular-nums" title="Simulated cost: what the coding CLIs would report">
+            <span className="ml-auto text-xs text-muted-foreground tabular-nums" title={run.source === 'machine' ? 'What the coding CLIs reported for this run' : 'Simulated cost: what the coding CLIs would report'}>
               {formatUsd(run.costUsd)}
             </span>
             {run.prUrl !== undefined ? (

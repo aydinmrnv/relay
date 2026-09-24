@@ -126,14 +126,14 @@ describe('home screen', { concurrency: 1 }, () => {
     assert.match(result.output, new RegExp(`Next  relay deliver ${run.runId}`));
   });
 
-  it('prints the introduction and start outside a repository', async () => {
+  it('introduces the studio companion outside a repository', async () => {
     const outside = await mkdtemp(join(tmpdir(), 'relay-home-outside-'));
     process.chdir(outside);
     try {
       const result = await captureStdout(showHome);
       assert.equal(result.screen.ready, false);
-      assert.match(result.output, /Relay coordinates/);
-      assert.match(result.output, /relay start/);
+      assert.match(result.output, /workflow studio’s companion/);
+      assert.match(result.output, /relay connect/);
     } finally {
       process.chdir(originalCwd);
       await rm(outside, { recursive: true, force: true });

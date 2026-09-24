@@ -7,6 +7,8 @@ import { doctorCommand } from './commands/doctor.ts';
 import { notifyCommand } from './commands/notify.ts';
 import { collect, evalCommand } from './commands/eval.ts';
 import { EVAL_COMPARISON_NAMES, EVAL_CONFIG_NAMES } from '../eval/configs.ts';
+import { DEFAULT_COMPANION_PORT } from '../studio/protocol.ts';
+import { connectCommand } from './commands/connect.ts';
 import { initCommand } from './commands/init.ts';
 import { serveCommand } from './commands/serve.ts';
 import { startCommand } from './commands/start.ts';
@@ -80,6 +82,7 @@ export function defaultHelp(command: Command, width?: number): string {
 }
 
 const HELP_GROUPS = [
+  ['Studio', ['connect']],
   ['Setup', ['start', 'init', 'doctor', 'notify']],
   ['Run', ['run', 'resume', 'stop']],
   ['Unattended', ['serve']],
@@ -118,8 +121,10 @@ export function buildProgram(version: string): Command {
   program
     .name('relay')
     .description(
-      `Coordinate locally installed coding agents (${AGENT_LABELS}) to plan, review, implement\n` +
-        'and critique work on an issue, a spec file or a prompt, inside an isolated git worktree.',
+      `The workflow studio's companion on this machine. \`relay connect\` lets the studio sign in\n` +
+        `the coding agents here (${AGENT_LABELS}), run its workflows for real in this repository and\n` +
+        'install their exports; every other command is the engine behind the Agent pipeline node —\n' +
+        'plan, review, implement and critique an issue, a spec file or a prompt in an isolated worktree.',
     )
     .version(version)
     .option('--update', 'update Relay itself to the latest version')
@@ -166,6 +171,21 @@ export function buildProgram(version: string): Command {
       return EXIT.error;
     }),
   );
+
+  // First in the help because it is how the studio and this machine meet:
+  // everything the studio does for real — sign-ins, runs, installing an export
+  // — goes through the server this starts.
+  program
+    .command('connect')
+    .description('pair this machine with the workflow studio: agent sign-in, real runs, installing exports')
+    .option('-p, --port <n>', `port on 127.0.0.1 to listen on (default ${DEFAULT_COMPANION_PORT}, or RELAY_COMPANION_PORT)`)
+    .option('--studio <url>', 'the studio to pair with (default the hosted studio, or RELAY_STUDIO_URL)')
+    .option('--allow-origin <origin>', 'another studio origin allowed to connect (repeatable)', collect, [])
+    .option('--open', 'open the pairing page even when this machine is already paired')
+    .option('--no-open', 'never open a browser; print the pairing link instead')
+    .option('--new-token', 'rotate the pairing token, unpairing every studio that had the old one')
+    .option('--json', `${JSON_FLAG} — one object per line: listening, then each event`)
+    .action(wrap(connectCommand));
 
   program
     .command('start')

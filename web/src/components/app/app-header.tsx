@@ -31,6 +31,7 @@ const TITLES: Record<string, string> = {
   templates: 'Templates',
   settings: 'Settings',
   guide: 'Guide',
+  connect: 'Your machine',
 };
 
 const PAGES = ['dashboard', 'workflows', 'templates', 'runs', 'integrations', 'guide', 'settings'] as const;

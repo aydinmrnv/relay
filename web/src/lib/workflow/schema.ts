@@ -99,6 +99,23 @@ export interface Run {
   summary?: string;
   /** Set when a real GitHub Actions run is behind this record (not in the prototype). */
   externalUrl?: string;
+  /** Where the run happened. Absent on runs recorded before there was a choice: those were simulated. */
+  source?: 'simulated' | 'machine';
+  /** For a run on the paired machine: which machine, which repository, and the engine's own run id. */
+  machine?: MachineRunInfo;
+}
+
+export interface MachineRunInfo {
+  /** The machine's hostname, as `relay connect` reported it. */
+  host: string;
+  /** `owner/name`, or the folder, of the repository the companion runs in. */
+  repository: string | null;
+  /** The companion's handle on the run, for following and stopping it. */
+  companionRunId: string;
+  /** The engine's run id, once it announced one: what `relay status`, `relay diff` and `relay logs` take. */
+  runId: string | null;
+  task: { kind: 'issue'; ref: string } | { kind: 'prompt'; text: string };
+  exitCode?: number | null;
 }
 
 /* ------------------------------------------------------------------ */
