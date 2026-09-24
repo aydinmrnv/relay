@@ -130,9 +130,10 @@ export async function showHome(options: HomeOptions = {}): Promise<HomeScreen> {
     // caller asking for JSON gets the same answer as any unmet precondition,
     // because that is exactly what this is.
     if (options.json === true) throw error;
-    out('Relay coordinates your coding agents to plan, review, implement and deliver GitHub issues.');
-    out('Run it inside the repository you want Relay to work on.');
-    command('relay start');
+    out('Relay is the workflow studio’s companion on this machine. Pair it with the studio from');
+    out('the repository your workflows run on, and the studio can sign in your coding agents,');
+    out('run workflows for real and install their exports there:');
+    command('relay connect');
     return { ready: false };
   }
 
@@ -194,7 +195,7 @@ export async function showHome(options: HomeOptions = {}): Promise<HomeScreen> {
       dim('Recent runs'),
       ...runLines,
     ],
-    footer: [`Next  ${chooseNextCommand(configured, runs)}`],
+    footer: [`Next  ${chooseNextCommand(configured, runs)}`, dim('Studio  relay connect  · draw the workflow, run it here')],
   });
   return { ready: configured };
 }

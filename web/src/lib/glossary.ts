@@ -35,7 +35,8 @@ export type Term =
   | 'coding-agent'
   | 'worktree'
   | 'secrets'
-  | 'execution';
+  | 'execution'
+  | 'companion';
 
 export interface GlossaryEntry {
   term: Term;
@@ -224,11 +225,18 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     long: 'SETUP.md lists every secret an export needs, by name. Claude Code needs CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API key); Codex needs CODEX_AUTH_JSON (subscription) or OPENAI_API_KEY (API key); Slack, Discord and bridged actions add their webhook URLs. Add them under the repository’s Settings → Secrets and variables → Actions, or with gh secret set.',
     href: '/settings#credentials',
   },
+  companion: {
+    term: 'companion',
+    title: 'Your machine (relay connect)',
+    short: 'The Relay CLI on your computer, paired with the studio: it signs in your coding agents, runs workflows for real and installs exports.',
+    long: `The studio draws, checks and compiles workflows in your browser; your coding agents, their sign-ins and your repository are on your computer. \`relay connect\`, run inside a repository, starts a small server on 127.0.0.1 that only a paired studio may use, and prints a link that pairs this browser with it. From then on the studio can start Claude Code’s and Codex’s own sign-ins, run a workflow’s pipeline for real in that repository — streaming every phase back to the canvas — and install an export straight into it. Test runs stay free and in the browser either way. The pairing token never leaves the browser and your machine, and the companion never sees an agent credential.`,
+    href: '/connect',
+  },
   execution: {
     term: 'execution',
     title: 'Where runs execute',
-    short: 'Real runs execute on your repository’s own GitHub Actions minutes. Hosted and self-hosted runners come later.',
-    long: `An exported workflow is a GitHub Actions workflow: it installs the coding CLIs on a GitHub runner and runs the pipeline there, on your own Actions minutes (free on public repositories). Hosted microVMs, one isolated VM per run, and a self-hosted runner in your own network are planned but not built. Test runs in the studio never execute anything; they are played back in your browser.`,
+    short: 'Real runs execute on your own machine through relay connect, or on your repository’s GitHub Actions minutes once exported. Hosted runners come later.',
+    long: `There are two ways a workflow runs for real today. From the studio, on your own machine: with \`relay connect\` running in the repository, "Run on this machine" runs the pipeline there with your own sign-ins and streams it back. Unattended, from your repository: an exported workflow is a GitHub Actions workflow that installs the coding CLIs on a GitHub runner and runs the pipeline there, on your own Actions minutes (free on public repositories). Hosted microVMs, one isolated VM per run, and a self-hosted runner in your own network are planned but not built. Test runs never execute anything; they are played back in your browser.`,
     href: '/settings#running',
   },
 };
@@ -270,6 +278,7 @@ export const GLOSSARY_ORDER: Term[] = [
   'export',
   'secrets',
   'execution',
+  'companion',
   'connection',
   'subscription',
   'template',

@@ -179,10 +179,11 @@ function StartSteps() {
   const steps: Array<{ key: keyof typeof done; title: string; body: string; href: string; cta: string; extra?: { href: string; label: string } }> = [
     {
       key: 'agents',
-      title: 'Sign in your coding agents',
-      body: 'Claude Code with your Claude plan and Codex with your ChatGPT plan. The studio starts each CLI’s own login on this machine and never sees a token.',
-      href: '/settings#agents',
-      cta: 'Settings → Coding agents',
+      title: 'Connect your machine and sign in your agents',
+      body: 'Run relay connect in your repository and open the link it prints. Then sign in Claude Code with your Claude plan and Codex with your ChatGPT plan: the studio starts each CLI’s own login on your machine and never sees a token.',
+      href: '/connect',
+      cta: 'Connect your machine',
+      extra: { href: '/settings#agents', label: 'Settings → Coding agents' },
     },
     {
       key: 'template',
@@ -318,13 +319,15 @@ type Reality = 'real' | 'simulated' | 'later';
 const REALITY: Array<{ what: string; status: Reality; detail: string }> = [
   { what: 'The catalog, the canvas and validation', status: 'real', detail: 'Every node and rule you see is the one the export and the CLI use.' },
   { what: 'The compiler and its files', status: 'real', detail: 'Export produces a config, an Actions workflow and a SETUP.md you can commit today.' },
-  { what: 'Signing in to Claude Code and Codex', status: 'real', detail: 'Runs the vendors’ own CLI logins on this machine and reads their status.' },
+  { what: 'Signing in to Claude Code and Codex', status: 'real', detail: 'Through relay connect: runs the vendors’ own CLI logins on your machine and reads their status.' },
+  { what: 'Running a workflow on your machine', status: 'real', detail: 'Through relay connect: the pipeline runs in your repository with your sign-ins and streams back to the canvas.' },
+  { what: 'Installing an export into your repository', status: 'real', detail: 'Through relay connect, or by unzipping the download yourself.' },
   { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions.' },
   { what: 'Renaming the product, importing and exporting your data', status: 'real', detail: 'Stored in this browser; the export is a plain JSON file.' },
   { what: 'Test runs', status: 'simulated', detail: 'Phases, review rounds, costs, refusals and pull request numbers are played back, seeded per workflow.' },
   { what: 'Connections to apps', status: 'simulated', detail: '“Connect” stores a local flag so you can design against the whole catalog. No app is signed in to.' },
   { what: 'Human approvals', status: 'simulated', detail: 'In a test run, an approval gate approves itself after a short pause.' },
-  { what: 'Hosted and self-hosted runners', status: 'later', detail: 'Only your own GitHub Actions exists today. The others are shown in Settings as “later”.' },
+  { what: 'Hosted and self-hosted runners', status: 'later', detail: 'Your own machine and your own GitHub Actions are what exist today. The others are shown in Settings as “later”.' },
 ];
 
 const REALITY_BADGE: Record<Reality, { label: string; className: string }> = {
@@ -410,7 +413,7 @@ function Faq({ productName, slug }: { productName: string; slug: string }) {
       question: 'Where is my data kept?',
       answer: (
         <p>
-          In this browser’s local storage. Workflows, runs, connections, the product name and your settings never leave this machine. Download all of it, import it elsewhere or start over under{' '}
+          In this browser’s local storage. Workflows, runs, connections, the product name and your settings never leave this browser, apart from what you send your own machine through relay connect. Download all of it, import it elsewhere or start over under{' '}
           <Link href="/settings#data" className={link}>
             Settings → Your data
           </Link>
@@ -423,8 +426,8 @@ function Faq({ productName, slug }: { productName: string; slug: string }) {
       question: 'Does the studio see my Claude or ChatGPT credentials?',
       answer: (
         <p>
-          No. Signing in runs the vendor’s own CLI login on this machine, and the credential lands in the CLI exactly as if you had signed in from a terminal. The studio only asks the CLI whether it is signed in and
-          gets back the method, plan and account label. An authorization code you paste is handed straight to the CLI and not kept.
+          No. Signing in runs the vendor’s own CLI login on your machine, through relay connect, and the credential lands in the CLI exactly as if you had signed in from a terminal. The studio only asks the CLI
+          whether it is signed in and gets back the method, plan and account label. An authorization code you paste is handed straight to the CLI and not kept.
         </p>
       ),
     },
@@ -433,8 +436,9 @@ function Faq({ productName, slug }: { productName: string; slug: string }) {
       question: 'Where do runs actually execute?',
       answer: (
         <p>
-          Test runs execute nowhere: they are played back in this tab. Real runs execute on GitHub Actions in your repository, once you export a workflow and commit its files. The Action installs Claude Code and
-          Codex on a GitHub runner and runs the pipeline there. Hosted and self-hosted runners are planned, not built.
+          Test runs execute nowhere: they are played back in this tab. Real runs execute in one of two places. On your machine, when you start one from the builder with relay connect running: the pipeline works
+          in your repository with your own sign-ins and streams back here. Or on GitHub Actions in your repository, once you export a workflow and commit its files: the Action installs Claude Code and Codex on
+          a GitHub runner and runs the pipeline there, unattended. Hosted and self-hosted runners are planned, not built.
         </p>
       ),
     },
@@ -443,7 +447,7 @@ function Faq({ productName, slug }: { productName: string; slug: string }) {
       question: 'What exactly does Export produce?',
       answer: (
         <>
-          <p>One .zip that unzips at the root of your repository, with four plain-text files you can read before committing:</p>
+          <p>Four plain-text files you can read before committing — installed straight into your repository by relay connect, or as one .zip that unzips at its root:</p>
           <ul className="mb-3 grid gap-1 pl-4 [&>li]:list-disc">
             <li>
               <span className="font-mono text-xs">.relay/config.json</span>: what the CLI reads.

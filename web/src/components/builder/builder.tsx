@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ReactFlowProvider, addEdge, applyEdgeChanges, applyNodeChanges, useReactFlow, type EdgeChange, type NodeChange, type OnConnect } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import { AlertTriangle, Check, ChevronDown, CircleAlert, FileCode2, FileJson, LayoutTemplate, Loader2, PanelLeft, PanelRight, Play, Plus, Redo2, Sparkles, Undo2, Wand2, Zap } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, CircleAlert, FileCode2, FileJson, Laptop, LayoutTemplate, Loader2, PanelLeft, PanelRight, Play, Plug, Plus, Redo2, Sparkles, Undo2, Wand2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -24,7 +24,9 @@ import { defaultConfig, getNodeType, type NodeTypeDef, type PortSpec } from '@/l
 import { useStudio } from '@/lib/store';
 import { useSignedIn } from '@/hooks/use-agent-accounts';
 import { validateWorkflow, type ValidationIssue } from '@/lib/workflow/validate';
-import { launchRun, cancelRun } from '@/lib/run-launcher';
+import { launchRun, launchMachineRun, cancelRun } from '@/lib/run-launcher';
+import { useCompanion, useCompanionCan } from '@/lib/companion/client';
+import type { RunTask } from '@/lib/companion/types';
 import { isTypingTarget } from '@/lib/shortcuts';
 import type { Run, RunEvent, Workflow, WorkflowEdge, WorkflowNode } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
@@ -34,6 +36,7 @@ import { Inspector } from './inspector';
 import { RunPanel } from './run-panel';
 import { ExportDialog } from './export-dialog';
 import { PayloadDialog } from './payload-dialog';
+import { MachineRunDialog } from './machine-run-dialog';
 import { BuilderTour } from './builder-tour';
 import { NodePicker, compatibleInput, type PickerSource } from './node-picker';
 import { BuilderActionsContext, type BuilderActions } from './builder-context';
@@ -90,6 +93,9 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   const [showInspector, setShowInspector] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1680);
   const [exportOpen, setExportOpen] = useState(false);
   const [payloadOpen, setPayloadOpen] = useState(false);
+  const [machineOpen, setMachineOpen] = useState(false);
+  const canRunOnMachine = useCompanionCan('runs');
+  const machineHost = useCompanion((state) => state.hello?.machine);
   const [picker, setPicker] = useState<{ open: boolean; source: PickerSource | null; position: { x: number; y: number } | null }>({ open: false, source: null, position: null });
   const [runOpen, setRunOpen] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
@@ -504,6 +510,43 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
     [workflow, running, validation, applyEvent],
   );
 
+  /** The same as a test run, except that it happens: on the paired machine, through `relay connect`. */
+  const machineRun = useCallback(
+    async (task: RunTask) => {
+      if (workflow === null || running) return;
+      if (validation !== null && !validation.ok) {
+        toast.error(`Fix ${validation.errors} problem${validation.errors === 1 ? '' : 's'} before running`, { description: validation.issues.find((issue) => issue.level === 'error')?.message });
+        return;
+      }
+      setRunning(true);
+      setRunOpen(true);
+      setShowRunState(true);
+      setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: 'pending', phase: undefined } })));
+      try {
+        const result = await launchMachineRun(workflow, task, {
+          onEvent: (event, snapshot) => {
+            runIdRef.current = snapshot.id;
+            applyEvent(event, snapshot);
+          },
+        });
+        setRun(result);
+        setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: result.nodeStatus[node.id], phase: undefined } })));
+        const where = result.machine?.host ?? 'your machine';
+        if (result.status === 'succeeded') toast.success(`Finished on ${where}${result.costUsd > 0 ? ` · $${result.costUsd.toFixed(2)}` : ''}`, { description: result.prUrl ?? 'The work is on its run branch.' });
+        else if (result.status === 'failed') toast.error(`The run on ${where} failed`, { description: result.summary });
+        else if (result.status === 'cancelled') toast(`Stopped the run on ${where}`, { description: result.summary });
+      } catch (error) {
+        setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: undefined, phase: undefined } })));
+        setShowRunState(false);
+        toast.error('The run did not start', { description: error instanceof Error ? error.message : String(error) });
+      } finally {
+        setRunning(false);
+        runIdRef.current = null;
+      }
+    },
+    [workflow, running, validation, applyEvent],
+  );
+
   const clearRunState = useCallback(() => {
     setShowRunState(false);
     setNodes((current) => current.map((node) => (node.data.status === undefined && node.data.phase === undefined ? node : { ...node, data: { ...node.data, status: undefined, phase: undefined } })));
@@ -513,7 +556,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   /* Keyboard                                                           */
   /* ---------------------------------------------------------------- */
 
-  const dialogOpen = picker.open || exportOpen || payloadOpen;
+  const dialogOpen = picker.open || exportOpen || payloadOpen || machineOpen;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (dialogOpen || isTypingTarget(event.target)) return;
@@ -657,6 +700,18 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>For real</DropdownMenuLabel>
+                    <DropdownMenuItem onClick={() => setMachineOpen(true)} disabled={!canRunOnMachine || !hasTrigger}>
+                      <Laptop /> {canRunOnMachine ? `Run on ${machineHost ?? 'this machine'}…` : 'Run on this machine…'}
+                    </DropdownMenuItem>
+                    {canRunOnMachine ? null : (
+                      <DropdownMenuItem render={<Link href="/connect" />}>
+                        <Plug /> Connect your machine
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem render={<Link href="/settings#appearance" />}>
                     <Sparkles /> Playback speed: {speed}
                   </DropdownMenuItem>
@@ -722,6 +777,15 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
           onRun={(payload) => {
             setPayloadOpen(false);
             void testRun(payload);
+          }}
+        />
+        <MachineRunDialog
+          workflow={workflow}
+          open={machineOpen}
+          onOpenChange={setMachineOpen}
+          onRun={(task) => {
+            setMachineOpen(false);
+            void machineRun(task);
           }}
         />
         <NodePicker open={picker.open} onOpenChange={(open) => setPicker((current) => ({ ...current, open }))} source={picker.source} needsTrigger={!hasTrigger} onPick={onPick} />

@@ -219,11 +219,12 @@ export const useStudio = create<StudioState>()(
       }),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<StudioState>;
-        // A run still marked running after a reload was interrupted: the
+        // A test run still marked running after a reload was interrupted: the
         // simulator lived in the tab that went away. Say so instead of
-        // leaving it spinning forever.
+        // leaving it spinning forever. A run on the paired machine did not
+        // live here, and is picked back up once the machine answers.
         const runs = (saved.runs ?? current.runs).map((run) =>
-          run.status === 'running'
+          run.status === 'running' && run.source !== 'machine'
             ? { ...run, status: 'cancelled' as const, finishedAt: run.finishedAt ?? run.events.at(-1)?.at ?? run.startedAt, summary: run.summary ?? 'Interrupted: the tab was closed or reloaded while this test run was playing.' }
             : run,
         );

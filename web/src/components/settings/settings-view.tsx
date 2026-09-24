@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Database, Palette, Rocket, Tag } from 'lucide-react';
+import { Bot, Database, Laptop, Palette, Rocket, Tag } from 'lucide-react';
 import { PageHeader } from '@/components/app/page-header';
 import { AgentAccountsCard } from '@/components/agents/agent-accounts-card';
+import { MachineCard } from '@/components/companion/machine-card';
 import { SectionChips, SectionNav, type SectionLink } from '@/components/guide/section-nav';
 import { FadeIn } from '@/components/motion/fade-in';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -16,6 +17,7 @@ import { DataSettings } from './data-settings';
 
 const SECTIONS: SectionLink[] = [
   { id: 'general', label: 'General', icon: Tag },
+  { id: 'machine', label: 'This machine', icon: Laptop },
   { id: 'agents', label: 'Coding agents', icon: Bot },
   { id: 'running', label: 'Running & exporting', icon: Rocket },
   { id: 'appearance', label: 'Appearance', icon: Palette },
@@ -72,11 +74,21 @@ export function SettingsView() {
                 </SettingsSection>
 
                 <SettingsSection
+                  id="machine"
+                  icon={Laptop}
+                  term="companion"
+                  title="This machine"
+                  description="The Relay CLI on your computer, paired with this studio by relay connect. It is how sign-ins, real runs and installing an export reach your machine; the pairing is kept in this browser only, apart from your other data."
+                >
+                  <MachineCard />
+                </SettingsSection>
+
+                <SettingsSection
                   id="agents"
                   icon={Bot}
                   term="subscription"
                   title="Coding agents"
-                  description="The pipeline’s work is done by coding CLIs on your own plan: Claude Code with a Claude subscription, Codex with a ChatGPT one. No API keys to paste. Sign in once; the studio asks the CLIs whether they are signed in and never sees a token."
+                  description="The pipeline’s work is done by coding CLIs on your own plan: Claude Code with a Claude subscription, Codex with a ChatGPT one. No API keys to paste. Sign in once; the studio asks the CLIs on your machine whether they are signed in and never sees a token."
                 >
                   <AgentAccountsCard />
                 </SettingsSection>

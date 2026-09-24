@@ -51,7 +51,7 @@ export function RunActionsMenu({ run, workflowExists, onDelete, className }: Pro
             <ExternalLink />
             <span className="flex flex-col">
               Open pull request #{prNumber(run.prUrl)}
-              <span className="text-xs text-muted-foreground">Simulated: the number is made up</span>
+              <span className="text-xs text-muted-foreground">{run.source === 'machine' ? `Opened by the run on ${run.machine?.host ?? 'your machine'}` : 'Simulated: the number is made up'}</span>
             </span>
           </DropdownMenuItem>
         ) : null}

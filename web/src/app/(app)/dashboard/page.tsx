@@ -23,7 +23,8 @@ import { DEFAULT_BRAND } from '@/lib/brand';
 import { CONNECTORS } from '@/lib/connectors';
 import { useStudio, useWorkflows } from '@/lib/store';
 import { validateWorkflow } from '@/lib/workflow/validate';
-import { HOSTED_DEMO } from '@/lib/hosted';
+import { useCompanion } from '@/lib/companion/client';
+import { repositoryLabel } from '@/lib/companion/types';
 
 export default function DashboardPage() {
   const brand = useBrand();
@@ -37,6 +38,7 @@ export default function DashboardPage() {
   const hydrated = useStudio((state) => state.hydrated);
   const checklistDismissed = useStudio((state) => state.checklistDismissed);
   const bridge = useAgentsStore((state) => state.bridge);
+  const machine = useCompanion((state) => (state.status === 'connected' ? state.hello : null));
   const signedIn = useSignedIn();
 
   const validity = useMemo(() => workflows.map((workflow) => ({ workflow, ok: validateWorkflow(workflow).ok })), [workflows]);
@@ -59,18 +61,20 @@ export default function DashboardPage() {
 
   const steps: ChecklistStep[] = [
     {
+      id: 'machine',
+      title: 'Connect your machine',
+      why: 'Run relay connect in your repository. The studio can then sign in your coding agents, run workflows for real there and install exports — test runs stay free either way.',
+      done: machine !== null,
+      doneNote: `Connected to ${machine?.machine ?? 'your machine'}${repositoryLabel(machine?.repository) === null ? '' : `, in ${repositoryLabel(machine?.repository)}`}.`,
+      action: { label: 'How to connect', href: '/connect' },
+    },
+    {
       id: 'agent',
       title: 'Sign in a coding agent',
       why: 'The pipeline runs on Claude Code or Codex with your own subscription. Nothing to paste; the studio never sees a token.',
       done: agentNames.length > 0,
-      doneNote: `${agentNames.join(' and ')} ${agentNames.length === 1 ? 'is' : 'are'} signed in on this machine.`,
-      ...(bridge === 'unavailable'
-        ? {
-            warning: HOSTED_DEMO
-              ? 'This is the hosted demo, which cannot see the CLIs on your computer. Sign-in works when the studio runs on your machine.'
-              : 'The local bridge is not answering, so the studio cannot ask the CLIs. Sign-in works when the studio runs on your machine.',
-          }
-        : {}),
+      doneNote: `${agentNames.join(' and ')} ${agentNames.length === 1 ? 'is' : 'are'} signed in on ${machine?.machine ?? 'your machine'}.`,
+      ...(bridge === 'unavailable' ? { warning: 'Sign-in from the browser goes through your machine: connect it first, or sign in from a terminal.' } : {}),
       action: { label: 'Open Settings', href: '/settings#agents' },
     },
     {

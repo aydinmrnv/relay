@@ -18,14 +18,15 @@ import { useAgentsStore, type BridgeState } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
 import { AGENT_IDS, AGENT_META, type AgentAccount, type AgentId, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
-import { HOSTED_DEMO } from '@/lib/hosted';
+import { useCompanion } from '@/lib/companion/client';
+import { machineStatusText } from '@/components/companion/machine-card';
 
 const CONNECTOR_FOR: Record<AgentId, string> = { claude: 'claude-code', codex: 'codex-cli' };
 
 /**
- * Sign-in state of the coding CLIs on this machine, and buttons that start
- * their own login flows through the local bridge (/api/agents). The studio
- * never holds a credential: it asks, and it starts the CLI's login.
+ * Sign-in state of the coding CLIs on the paired machine, and buttons that
+ * start their own login flows through `relay connect`. The studio never holds
+ * a credential: it asks, and it starts the CLI's login.
  */
 export function AgentAccountsCard() {
   const bridge = useAgentsStore((state) => state.bridge);
@@ -33,6 +34,8 @@ export function AgentAccountsCard() {
   const loading = useAgentsStore((state) => state.loading);
   const refresh = useAgentsStore((state) => state.refresh);
   const now = useNow();
+  const companion = useCompanion((state) => state.status);
+  const host = useCompanion((state) => state.hello?.machine);
   const [signing, setSigning] = useState<{ agent: AgentId; mode: LoginMode } | null>(null);
 
   return (
@@ -41,12 +44,10 @@ export function AgentAccountsCard() {
         <CardTitle>Agent accounts</CardTitle>
         <CardDescription>
           {bridge === 'unavailable'
-            ? HOSTED_DEMO
-              ? 'The hosted demo cannot see the CLIs on your computer.'
-              : 'Could not reach the CLIs on this machine.'
+            ? `${machineStatusText(companion, host)}, so the studio cannot ask the CLIs.`
             : status === null
-              ? 'Asking the CLIs on this machine…'
-              : `Read live from the CLIs on this machine, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
+              ? `Asking the CLIs on ${host ?? 'your machine'}…`
+              : `Read live from the CLIs on ${host ?? 'your machine'}, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
         </CardDescription>
         <CardAction>
           <Tooltip>
@@ -60,8 +61,7 @@ export function AgentAccountsCard() {
       <CardContent className="grid gap-3">
         {bridge === 'unavailable' ? (
           <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-pretty text-amber-800 dark:text-warning">
-            {HOSTED_DEMO ? 'This is the hosted demo, so sign-in from the browser is off.' : 'The local bridge is not reachable, so sign-in from the browser is off.'} Run the studio on the machine where the CLIs live (
-            <span className="font-mono">npm run dev</span>), or sign in from a terminal with{' '}
+            Sign-in from the browser goes through your machine. Run <span className="font-mono">relay connect</span> in your repository and open the link it prints (see This machine, above), or sign in from a terminal with{' '}
             <span className="font-mono">claude auth login</span> and <span className="font-mono">codex login</span>.
           </div>
         ) : null}
@@ -70,7 +70,7 @@ export function AgentAccountsCard() {
         ))}
       </CardContent>
       <CardFooter className="flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-        <span>These sign-ins are for this machine. GitHub Actions needs its own secrets.</span>
+        <span>These sign-ins live in the CLIs on your machine. GitHub Actions needs its own secrets.</span>
         <Link href="/settings#credentials" className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline">
           Credentials for exported workflows <ArrowRight className="size-3" aria-hidden />
         </Link>

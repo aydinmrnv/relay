@@ -20,7 +20,7 @@ export function RecentRuns({ runs, total, now, onTest, testLabel, className }: {
     <Card className={className}>
       <CardHeader>
         <CardTitle>Recent runs</CardTitle>
-        <CardDescription>Simulated end to end: the phases, costs and refusals are what the real pipeline would report.</CardDescription>
+        <CardDescription>Test runs are simulated end to end; runs on your machine are real and carry its name.</CardDescription>
         {total > 0 ? (
           <CardAction>
             <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/runs" />}>

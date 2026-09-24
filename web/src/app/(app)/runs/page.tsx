@@ -16,7 +16,7 @@ import { PageHeader } from '@/components/app/page-header';
 import { StatusBadge } from '@/components/app/status-badge';
 import { FadeIn } from '@/components/motion/fade-in';
 import { RunActionsMenu } from '@/components/runs/run-actions-menu';
-import { RunResult, RunTrigger, StartedAt } from '@/components/runs/run-bits';
+import { RunResult, RunSourceBadge, RunTrigger, StartedAt } from '@/components/runs/run-bits';
 import { ClearRunsDialog, DeleteRunDialog } from '@/components/runs/run-dialogs';
 import { LiveStep, RunStatusBadge } from '@/components/runs/run-status';
 import { formatRunDuration, isLive, triggerKey, triggerTitle } from '@/components/runs/run-utils';
@@ -131,7 +131,7 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
       <PageHeader
         title="Runs"
         term="run"
-        description="Every test run played in this browser, newest first. Runs are simulated — nothing was called or billed — and they are stored only here. Open one for its step-by-step timeline."
+        description="Every run this browser has seen, newest first: test runs, played back for free, and runs on your machine, performed for real through relay connect and marked with its name. They are stored only here. Open one for its step-by-step timeline."
         actions={
           <>
             {runs.length > 0 ? (
@@ -226,7 +226,7 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
           ) : (
             <>
               <p className="text-xs text-muted-foreground">
-                {filtered ? `${visible.length} of ${runs.length} runs` : `${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`} · {formatUsd(visibleSpend)} simulated
+                {filtered ? `${visible.length} of ${runs.length} runs` : `${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`} · {formatUsd(visibleSpend)}{visible.some((run) => run.source === 'machine') ? '' : ' simulated'}
                 {counts.running > 0 ? ` · ${counts.running} playing now` : ''}
               </p>
 
@@ -237,7 +237,10 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
                     <Link href={`/runs/${run.id}`} className="absolute inset-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/50" aria-label={`Open run ${run.shortId} of ${run.workflowName}`} />
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{run.workflowName}</p>
+                        <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                          <span className="truncate">{run.workflowName}</span>
+                          <RunSourceBadge run={run} />
+                        </p>
                         <RunTrigger run={run} className="mt-0.5 text-xs" />
                       </div>
                       <RunActionsMenu run={run} workflowExists={workflowMap[run.workflowId] !== undefined} onDelete={() => askDelete(run)} className="relative z-10 -mt-1 -mr-1" />
@@ -292,6 +295,7 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
                               {run.workflowName}
                             </Link>
                             {!exists ? <span className="text-xs text-muted-foreground">workflow deleted</span> : null}
+                            <RunSourceBadge run={run} className="mt-1" />
                           </TableCell>
                           <TableCell className="hidden max-w-72 lg:table-cell">
                             <RunTrigger run={run} />

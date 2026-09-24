@@ -1,9 +1,16 @@
-# The Relay engine and CLI
+# The Relay CLI
 
-Every Relay workflow has an **Agent pipeline** node in the middle of it. This
-document is what that node does. The engine is the `relay` CLI in `src/`: it is
-what an exported workflow's GitHub Action runs, and it is a complete tool on its
-own when you would rather drive a run from a terminal than from a canvas.
+The `relay` CLI is the workflow studio's side of your machine. It does two jobs:
+
+- **The companion.** `relay connect` pairs a studio — hosted or local — with
+  this machine, so the studio can sign in your coding agents, run a workflow
+  for real in your repository and install its export there. See [The studio
+  companion](#the-studio-companion).
+- **The engine.** Every Relay workflow has an **Agent pipeline** node in the
+  middle of it, and the rest of this document is what that node does. It is
+  what a run started from the studio performs on your machine, what an
+  exported workflow's GitHub Action runs, and a complete tool on its own when
+  you would rather drive a run from a terminal than from a canvas.
 
 > New to Relay? Start with the [README](../README.md), which covers the workflow
 > studio. Come here for how a run actually works, what it guarantees, and every
@@ -14,6 +21,7 @@ Relay takes a GitHub issue — or a spec file, or a one-line prompt — and coor
 It is not "run several agents in parallel". The point is that **specialized agents review and challenge each other's actual engineering work**, and that every claim they make is checked against git rather than taken at face value.
 
 ```bash
+relay connect     # pair this machine with the studio: sign-ins, real runs, installs
 relay start       # one command: dependencies, sign-in, config, and a first run
 relay             # the home screen, and a prompt for the next issue
 relay run 142
@@ -42,6 +50,96 @@ with the terminal handed over, and then asks that CLI again whether it worked.
 that actually shapes a run — which model reviews the work another model
 produced. `relay init --yes` skips every prompt and writes the detected
 defaults, which is what CI and scripts should use.
+
+## The studio companion
+
+```bash
+cd ~/code/api            # the repository your workflows run on
+relay connect            # listens on 127.0.0.1:4477 and opens the studio to pair
+```
+
+The studio draws, validates and compiles workflows in the browser. The coding
+CLIs, their sign-ins and the repository are on your computer. `relay connect`
+is the door between them: a small HTTP server on the loopback interface that a
+paired studio uses to
+
+- **report and start sign-ins.** It asks `claude auth status` and `codex login
+  status`, and starts each vendor's own login — the same delegated sign-in
+  `relay start` does, with the browser where the terminal was. A pasted
+  authorization code goes to the CLI's stdin and is not kept.
+- **run a workflow for real.** The studio sends the workflow compiled to a
+  `.relay/config.json`; the companion runs `relay run --json` on the issue or
+  description you gave it, with that config layered over the repository's own
+  (below), and streams the engine's [JSON lines](#machine-readable-output)
+  back verbatim. The canvas lights up from measured phases, costs and diffs,
+  and the studio can stop the run the way Ctrl-C would.
+- **install an export.** The files Export produces are written into the
+  repository — `.relay/config.json` merged into the existing one rather than
+  replacing it, so the tracker, harnesses and test command `relay init` wrote
+  survive.
+
+Started outside a repository it still serves sign-ins, and says that runs and
+installs need one.
+
+**Pairing is one link.** The first `relay connect` creates a pairing token in
+`~/.relay/studio.json` (readable only by you) and opens
+`<studio>/connect#port=4477&token=…`. The token rides in the URL fragment,
+which a browser never sends to a server; the studio reads it once, takes it out
+of the address bar, checks it against the companion and keeps it in its own
+storage key, apart from your exported data. After that the studio finds the
+companion whenever it is running, and a later `relay connect` only prints the
+link. `--new-token` rotates it and unpairs every studio that had the old one.
+The studio never probes for a companion it was not paired with, so a visitor
+who never ran `relay connect` is never asked by their browser about reaching
+their machine.
+
+**Three locks, because it can start agents that write code.**
+
+1. It binds to 127.0.0.1 and refuses any request whose `Host` is not this port
+   on a loopback name, which defeats DNS rebinding.
+2. It answers only studio origins: the hosted studio (or `--studio <url>` /
+   `RELAY_STUDIO_URL`), a studio running from a checkout on
+   `localhost:3000`, and any `--allow-origin`. Every other page is refused
+   before the token is looked at, and gets no CORS headers to read the refusal
+   with.
+3. Every route but the greeting needs the token, compared in constant time,
+   and the greeting says nothing about the machine without it.
+
+**What a studio run takes from the workflow.** The agents, the review level
+and rounds, the base branch and branch prefix, whether tests run (and a test
+command, if the workflow names one), the per-run cost cap and delivery. The
+repository keeps everything else: tracker, harnesses, models, notifications,
+the unattended guardrails. Three things are fixed: delivery stops at a pull
+request — a merge is for a person looking at it — and the merge and cost
+questions are off, because the confirmation happened in the studio and there
+is no terminal to ask on. The layering is `RELAY_CONFIG_OVERLAY`, a config
+file `loadConfig` merges over the repository's for one invocation.
+
+The trigger and the guardrails in front of the pipeline are not run for a run
+you start from the studio — they decide whether an *event* may start a run,
+and here a person pressed the button — and the actions after delivery run in
+the exported workflow. The studio marks those nodes skipped and says why.
+
+**Stopping.** Ctrl-C stops the companion. With runs in flight the first one
+only warns; the second stops them as `relay stop` would — their work so far
+stays committed on their branches — and quits. Runs started from the studio
+run in their own process group, so a Ctrl-C meant for the companion never
+reaches them by accident. A studio that reloads mid-run picks the run back up
+from its first line.
+
+| | |
+|---|---|
+| `relay connect --port <n>` | listen elsewhere (default 4477, or `RELAY_COMPANION_PORT`); the pairing link carries the port |
+| `relay connect --studio <url>` | pair with another studio, e.g. `http://localhost:3000` |
+| `relay connect --allow-origin <origin>` | let another studio origin connect (repeatable) |
+| `relay connect --no-open` / `--open` | never / always open the pairing page (default: only when the token is new) |
+| `relay connect --new-token` | rotate the pairing token |
+| `relay connect --json` | one line when listening — URL, port, pairing link, repository — then one per event |
+
+Browsers ask before a web page may reach a service on your own machine; allow
+it for the studio. If yours will not let an HTTPS page reach
+`http://127.0.0.1`, run the studio from a checkout (`cd web && npm run dev`)
+and pair that instead.
 
 ## What actually happens
 
@@ -211,6 +309,7 @@ README — not a defended one.
 
 | Command | |
 |---|---|
+| `relay connect` | pair this machine with the workflow studio: agent sign-in, real runs and installing exports, from the browser ([details](#the-studio-companion)) |
 | `relay` | the home screen and a prompt: describe the work in plain words, name an issue, or type a `/command` |
 | `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
@@ -825,6 +924,7 @@ jq` works while the run is still printing.
 | | |
 |---|---|
 | `relay --json` | the home screen: repository, config, recent runs, next command |
+| `relay connect --json` | a `listening` line — URL, port, origins, pairing link, repository — then one `event` line per thing the studio did, and `stopped` |
 | `relay doctor --json` | every readiness check with its status, detail and remedy |
 | `relay start --json` | the same checks (implies `--check`: a guided walkthrough has no JSON form) |
 | `relay init --json` | the config it wrote, the test command it detected, the agents it found (implies `--yes`) |
@@ -1194,11 +1294,12 @@ there is not.
 The engine is one node in a larger workflow: a trigger in front of it,
 guardrails between the trigger and the agents, and delivery and notifications
 after it. That workflow is drawn in the studio under `web/` — see the
-[README](../README.md) and [`web/README.md`](../web/README.md). Exporting a
-workflow writes the `.relay/config.json` described under
-[Configuration](#configuration) and a GitHub Actions workflow that runs
-[the Action](#the-github-action), so everything on this page applies to a run a
-workflow started.
+[README](../README.md) and [`web/README.md`](../web/README.md). A run started
+from the studio goes through [the companion](#the-studio-companion) to this
+engine on your machine; exporting a workflow writes the `.relay/config.json`
+described under [Configuration](#configuration) and a GitHub Actions workflow
+that runs [the Action](#the-github-action). Everything on this page applies to
+a run a workflow started, either way.
 
 ## Development
 

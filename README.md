@@ -30,27 +30,32 @@ as a commit, a branch or a draft pull request, as far as you allow.
 
 ## Quick start
 
-**Try it in the browser:** <https://relay-olive-omega.vercel.app> is a live demo
-of the studio. Everything runs in your browser and test runs are simulated.
+**Open the studio:** <https://relay-olive-omega.vercel.app>. Workflows live in
+your browser and test runs are simulated, so it costs nothing to try.
 
-To run the studio yourself, which also lets it sign in to your own Claude Code
-and Codex:
+**Connect your machine** to make it real. The `relay` CLI is the studio's
+companion: run it in the repository your workflows work on, and the studio can
+sign in your own Claude Code and Codex, run a workflow for real there, and
+install its export.
 
 ```bash
-git clone https://github.com/aydinmrnv/relay
-cd relay/web
-npm install
-npm run dev            # http://localhost:3000
+npm install -g github:aydinmrnv/relay
+cd ~/code/your-repo
+relay connect          # opens the studio with a one-time pairing link
 ```
 
 1. **Open the studio** and start from a template, or from a blank canvas.
 2. **Test-run it** with a sample ticket or your own JSON payload. Nodes and edges
    light up as the run travels, with the same phases, review rounds, budgets and
    refusals as a real run — and it costs nothing, because it is simulated.
-3. **Export it.** You get one `.zip` that unzips into your repository: the
-   engine's config, a GitHub Actions workflow, and a `SETUP.md` listing each
-   secret to add and where it comes from. Commit it, and the workflow runs for
-   real on your own Actions minutes.
+3. **Run it on your machine.** With `relay connect` running, pick *Run on this
+   machine* next to Test run, name an issue or describe the change, and watch
+   the same canvas light up from a real run: the plan, the reviews, the diff,
+   the tests and the pull request, with what the CLIs actually charged.
+4. **Export it** to run unattended. *Install into your repository* writes the
+   engine's config and a GitHub Actions workflow straight into it (or download
+   them as a `.zip`), and the export lists each secret to add. Commit them, and
+   the workflow runs for real on your own Actions minutes.
 
 The **Guide** (`/guide`) walks through the same path and explains every concept
 the studio uses.
@@ -88,7 +93,19 @@ every check it has not passed.
 
 ## Running a workflow for real
 
-Export compiles the graph into files your repository already knows how to run:
+There are two ways, and they use the same engine.
+
+**On your machine, from the studio.** With `relay connect` running in your
+repository, *Run on this machine* sends the compiled workflow to the companion,
+which runs the pipeline there with your own sign-ins and streams every phase
+back to the canvas. The trigger and the guardrails in front of the pipeline
+decide whether an *event* may start a run, so a person pressing the button
+passes over them; the per-run cost cap still applies, and delivery stops at a
+pull request. Reload the tab mid-run and the studio picks the run back up.
+
+**Unattended, from your repository.** Export compiles the graph into files your
+repository already knows how to run — installed straight into it through
+`relay connect`, or downloaded as a `.zip`:
 
 | File | What it is |
 |---|---|
@@ -112,8 +129,9 @@ its trigger switched off.
 ## Bring your own subscription
 
 There are no API keys to paste. Claude Code signs in with your Claude plan and
-Codex with your ChatGPT plan: a studio running on your machine starts each CLI's
-own login and then asks that CLI whether it worked. Relay never sees a token.
+Codex with your ChatGPT plan: through `relay connect`, the studio starts each
+CLI's own login on your machine and then asks that CLI whether it worked. Relay
+never sees a token.
 
 In GitHub Actions the export uses each vendor's supported way of carrying a
 personal plan into CI — `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and
@@ -150,26 +168,38 @@ The full list, and how each rule is enforced, is under
 Relay is being built as an online product. Today the studio is public as a
 [live demo](https://relay-olive-omega.vercel.app), and you can run it yourself.
 Either way nothing is billed and your workflows stay in your browser's storage.
-The demo cannot reach a CLI on your machine, so it has no agent sign-in; the
-studio does that only when you run it locally. Hosted runs are the next step.
+Everything that needs your machine — agent sign-in, real runs, installing an
+export — goes through `relay connect`, which pairs with the hosted studio as
+readily as with a local one. Hosted runs are the next step.
 
 | Works today | Simulated in the studio | Planned for the hosted product |
 |---|---|---|
 | The builder, validation, the plain-English description and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A fresh runner per run |
-| Signing in to Claude Code and Codex, and reading their status, from a studio running locally | App connections: "Connect" stores a local flag | Real webhooks for every connector |
+| Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your machine, installing an export | App connections: "Connect" stores a local flag | Real webhooks for every connector |
 | Exported workflows running on GitHub Actions, through the engine | Approvals: auto-approved after a delay | Approvals from Slack and email |
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
 
 The engine reads issues from GitHub and Linear today. The studio lets you design
 against all 240 apps, and the export says which parts need the bridge.
 
-## The engine
+## The CLI: the studio's companion, and the engine
 
-Behind the Agent pipeline node is the `relay` CLI in `src/`. It is what the
-exported GitHub Action runs, and it works on its own from a terminal:
+The `relay` CLI in `src/` is the studio's side of your machine.
+
+`relay connect` is how the two meet: a small server on 127.0.0.1 that only a
+paired studio can use — loopback only, studio origins only, and a pairing
+token that travels once, in the fragment of the link it opens. Through it the
+studio starts the vendor CLIs' own sign-ins, runs a workflow's pipeline in your
+repository and streams it back, and installs an export. A run started this way
+takes the pipeline's shape from the workflow and everything else from the
+repository's own config, and stops at a pull request.
+
+Behind the Agent pipeline node is the engine — the same CLI. It is what a run
+from the studio performs on your machine, what the exported GitHub Action
+runs, and it works on its own from a terminal:
 
 ```bash
-npm install -g github:aydinmrnv/relay
+relay connect                                 # pair with the studio
 relay start                                   # dependencies, sign-in, config, and a first run
 relay run 142                                 # a GitHub issue, a Linear ID, or a spec file
 relay run --prompt "Fix the flaky timeout in the retry test"
@@ -190,9 +220,10 @@ issue
   → delivery                (commit → push → pull request → merge, as far as the policy allows)
 ```
 
-**[The engine and CLI reference](docs/cli.md)** covers the rest: the design, the
-safety rules, every command, review depth, cost and budgets, delivery,
-unattended runs and the GitHub Action, configuration, exit codes, and Windows.
+**[The CLI reference](docs/cli.md)** covers the rest: the companion and its
+security, the design, the safety rules, every command, review depth, cost and
+budgets, delivery, unattended runs and the GitHub Action, configuration, exit
+codes, and Windows.
 
 ## Measuring the claim
 
@@ -209,9 +240,9 @@ support the design, the defaults change.
 | Path | What |
 |---|---|
 | [`web/`](web/README.md) | The workflow studio: a Next.js app with the builder, templates, runs, integrations and the export |
-| `src/` | The engine and the `relay` CLI (TypeScript, Node ≥ 22.6) |
+| `src/` | The `relay` CLI (TypeScript, Node ≥ 22.6): the studio companion in `src/studio/`, and the engine |
 | `action.yml` | The GitHub Action that exported workflows run |
-| [`docs/cli.md`](docs/cli.md) | The engine and CLI reference |
+| [`docs/cli.md`](docs/cli.md) | The CLI reference: the companion and the engine |
 | [`eval/`](eval/README.md) | The eval harness and its fixtures |
 | `test/`, `scripts/`, `bin/` | The engine's tests, CI fixtures and entry point |
 
