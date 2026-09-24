@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- The social card and Hack Club banner. scripts/gen-brand.mjs --png swaps the lockup in for the marker below and renders it at 1200×630. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+    color: #f4f3ff;
+    background:
+      radial-gradient(ellipse 60% 70% at 18% 0%, rgba(139, 92, 246, 0.32), transparent 70%),
+      radial-gradient(ellipse 50% 60% at 100% 100%, rgba(94, 234, 212, 0.14), transparent 70%),
+      #0c0b16;
+    position: relative;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px);
+    background-size: 36px 36px;
+    mask-image: radial-gradient(ellipse 80% 80% at 30% 30%, #000 30%, transparent 100%);
+  }
+  .content { position: absolute; inset: 0; padding: 72px 80px; display: flex; flex-direction: column; }
+  .logo svg { height: 84px; width: auto; display: block; }
+  h1 { margin-top: 56px; font-size: 62px; line-height: 1.04; letter-spacing: -0.035em; font-weight: 650; }
+  h1 span { color: #a78bfa; }
+  p { margin-top: 22px; font-size: 25px; line-height: 1.4; color: #b9b6d3; max-width: 900px; letter-spacing: -0.01em; }
+  .pipeline { margin-top: auto; display: flex; align-items: center; gap: 10px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 17px; }
+  .step { padding: 8px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #dcdaf0; }
+  .step.review { border-color: rgba(94, 234, 212, 0.45); color: #5eead4; background: rgba(94, 234, 212, 0.07); }
+  .step.pr { border-color: rgba(167, 139, 250, 0.6); color: #c4b5fd; background: rgba(139, 92, 246, 0.14); }
+  .arrow { color: #5d5a7a; }
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+  <div class="content">
+    <div class="logo"><!--LOGO--></div>
+    <h1>Tickets in.<br><span>Reviewed pull requests out.</span></h1>
+    <p>Claude Code and Codex plan, implement and review each other's work in an isolated git worktree. Every claim is checked against git.</p>
+    <div class="pipeline">
+      <span class="step">plan</span><span class="arrow">→</span>
+      <span class="step review">plan review</span><span class="arrow">→</span>
+      <span class="step">implement</span><span class="arrow">→</span>
+      <span class="step review">code review</span><span class="arrow">→</span>
+      <span class="step">tests</span><span class="arrow">→</span>
+      <span class="step pr">pull request</span>
+    </div>
+  </div>
+</body>
+</html>

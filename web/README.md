@@ -19,6 +19,16 @@ Every screen says what it is for, and every concept has a "?" that explains it; 
 - **Workflows**, **Runs** (filters, live progress, run again, cancel, delete, per-run timeline and phase breakdown), **Integrations** (every app with what each trigger and action does, and "start a workflow from this trigger"), **Templates** (graph previews and a step-by-step walkthrough), **Dashboard** (getting-started checklist, activity, spend, what needs attention), **Settings** and the **Guide**.
 - **Landing page** at `/`: what the product does and how, with an animated diagram of the pipeline (21st.dev animated beams), the real compiler output for a template, honest pricing and a FAQ.
 
+## The hosted demo
+
+A build deployed anywhere public is a demo: there is no CLI behind a public URL for the local bridge to ask. `NEXT_PUBLIC_HOSTED_DEMO=1` (on by default for any build Vercel runs) switches the bridge off on the server, stops the browser asking it, and puts a one-line banner on every screen saying what is simulated. Nothing else changes — the builder, validation, export and test runs already run entirely in the browser, and a first visit is seeded with the starter workflows and a few runs.
+
+```bash
+cd web
+npx vercel@latest --prod                       # Vercel: nothing to configure
+NEXT_PUBLIC_HOSTED_DEMO=1 npm run build        # anywhere else that runs `next start`
+```
+
 ## Bring your own subscription
 
 There are no API keys to paste. Claude Code signs in with your Claude plan and Codex with your ChatGPT plan, and the studio can start either CLI's own login from the browser because it runs on your machine:
@@ -42,6 +52,8 @@ NEXT_PUBLIC_PRODUCT_NAME="Conductor" npm run dev
 | Path | What |
 |---|---|
 | `src/lib/brand.ts` | The product name and everything derived from it |
+| `scripts/gen-brand.mjs` | Draws the logo from the CLI's pixel font (`../src/ui/logo.ts`): `src/app/icon.svg`, `src/lib/pixel-font.generated.ts` and `public/brand/`. Run `npm run gen:brand` by hand after changing the font or the mark; `-- --png` also renders the PNGs, favicon.ico and the social card (`scripts/brand-banner.html`) with a local Chrome, Brave or Edge |
+| `src/lib/hosted.ts` | Whether this build is the public demo |
 | `src/lib/glossary.ts` | Every concept the studio explains, once; help popovers and the guide read from here |
 | `src/lib/connectors/` | Connector catalog (`catalog/core.ts`, `catalog/dev.ts`, `catalog/business.ts`), node-type registry, search |
 | `src/lib/workflow/schema.ts` | Saved shape of a workflow and a run, free of React Flow types |

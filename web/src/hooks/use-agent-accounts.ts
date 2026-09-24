@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { create } from 'zustand';
+import { HOSTED_DEMO } from '@/lib/hosted';
 import type { AgentId, AgentsStatus, LoginMode, LoginSessionView } from '@/lib/agents/types';
 
 export type BridgeState = 'unknown' | 'available' | 'unavailable';
@@ -32,6 +33,10 @@ export const useAgentsStore = create<AgentsStore>()((set, get) => ({
 
   refresh: async () => {
     if (get().loading) return;
+    if (HOSTED_DEMO) {
+      set({ bridge: 'unavailable', status: null });
+      return;
+    }
     set({ loading: true });
     try {
       const response = await fetch('/api/agents', { cache: 'no-store' });

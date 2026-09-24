@@ -1,5 +1,6 @@
 'use client';
 
+import { DemoBanner } from '@/components/app/demo-banner';
 import { SiteHeader } from './site-header';
 import { Hero } from './hero';
 import { HowItWorks } from './how-it-works';
@@ -18,6 +19,7 @@ import { FinalCta, SiteFooter } from './closing';
 export function Landing() {
   return (
     <div className="flex min-h-full flex-col">
+      <DemoBanner />
       <SiteHeader />
       <main className="flex-1">
         <Hero />

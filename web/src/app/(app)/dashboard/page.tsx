@@ -23,6 +23,7 @@ import { DEFAULT_BRAND } from '@/lib/brand';
 import { CONNECTORS } from '@/lib/connectors';
 import { useStudio, useWorkflows } from '@/lib/store';
 import { validateWorkflow } from '@/lib/workflow/validate';
+import { HOSTED_DEMO } from '@/lib/hosted';
 
 export default function DashboardPage() {
   const brand = useBrand();
@@ -63,7 +64,13 @@ export default function DashboardPage() {
       why: 'The pipeline runs on Claude Code or Codex with your own subscription. Nothing to paste; the studio never sees a token.',
       done: agentNames.length > 0,
       doneNote: `${agentNames.join(' and ')} ${agentNames.length === 1 ? 'is' : 'are'} signed in on this machine.`,
-      ...(bridge === 'unavailable' ? { warning: 'The local bridge is not answering, so the studio cannot ask the CLIs. Sign-in works when the studio runs on your machine.' } : {}),
+      ...(bridge === 'unavailable'
+        ? {
+            warning: HOSTED_DEMO
+              ? 'This is the hosted demo, which cannot see the CLIs on your computer. Sign-in works when the studio runs on your machine.'
+              : 'The local bridge is not answering, so the studio cannot ask the CLIs. Sign-in works when the studio runs on your machine.',
+          }
+        : {}),
       action: { label: 'Open Settings', href: '/settings#agents' },
     },
     {
