@@ -36,6 +36,8 @@ export class WakatimeTracker {
   private inFlight = false;
   private disabled = false;
   private stopped = false;
+  /** The disabling notice's write, kept so a caller can wait for it instead of racing it. */
+  private notice: Promise<void> = Promise.resolve();
   private lastSentAt = Number.NEGATIVE_INFINITY;
   private readonly options: WakatimeTrackerOptions;
 
@@ -92,7 +94,7 @@ export class WakatimeTracker {
     const detail = error instanceof Error ? error.message : String(error);
     const message = redact(`Relay activity tracking disabled: ${detail}. The run will continue.`);
     this.options.observer.warn(message);
-    void this.options.store.logEvent({
+    this.notice = this.options.store.logEvent({
       timestamp: new Date().toISOString(),
       runId: this.options.state.runId,
       phase: this.options.state.phase,
@@ -100,5 +102,10 @@ export class WakatimeTracker {
       type: 'notice',
       message,
     }).catch(() => {});
+  }
+
+  /** Resolves once any notice this tracker raised is on disk. Never rejects. */
+  flushed(): Promise<void> {
+    return this.notice;
   }
 }

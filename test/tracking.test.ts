@@ -96,6 +96,8 @@ describe('WakaTime tracking', () => {
       const runner = run as TrackingRunner | undefined;
       const tracker = new WakatimeTracker({ ...f, tracking: f.state.config.tracking, version: '1', resolve: async () => runner === undefined ? null : '/cli', ...(runner === undefined ? {} : { run: runner }), minimumIntervalMs: 0 });
       tracker.heartbeat(); await settle(); tracker.heartbeat(); await settle();
+      // The notice is written without blocking the run; wait for it rather than racing a slow disk.
+      await tracker.flushed();
       const notices = (await f.store.readEvents()).filter((event) => event.type === 'notice');
       assert.equal(notices.length, 1);
       assert.equal(f.observer.warnings.length, 1);
