@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="web/public/brand/relay-logo-dark.svg">
+    <img alt="Relay" src="web/public/brand/relay-logo-light.svg" height="64">
+  </picture>
+</p>
+
 # Relay
 
 **Tickets in. Reviewed pull requests out.**
@@ -22,6 +29,12 @@ as a commit, a branch or a draft pull request, as far as you allow.
 ```
 
 ## Quick start
+
+**Try it in the browser:** <https://relay-olive-omega.vercel.app> is a live demo
+of the studio. Everything runs in your browser and test runs are simulated.
+
+To run the studio yourself, which also lets it sign in to your own Claude Code
+and Codex:
 
 ```bash
 git clone https://github.com/aydinmrnv/relay
@@ -99,8 +112,8 @@ its trigger switched off.
 ## Bring your own subscription
 
 There are no API keys to paste. Claude Code signs in with your Claude plan and
-Codex with your ChatGPT plan: the studio starts each CLI's own login and then
-asks that CLI whether it worked. Relay never sees a token.
+Codex with your ChatGPT plan: a studio running on your machine starts each CLI's
+own login and then asks that CLI whether it worked. Relay never sees a token.
 
 In GitHub Actions the export uses each vendor's supported way of carrying a
 personal plan into CI — `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and
@@ -134,14 +147,16 @@ The full list, and how each rule is enforced, is under
 
 ## Status
 
-Relay is being built as an online product. Today the studio is a web app you run
-yourself: nothing is hosted, nothing is billed, and your workflows stay in your
-browser's storage. The hosted version is the next step.
+Relay is being built as an online product. Today the studio is public as a
+[live demo](https://relay-olive-omega.vercel.app), and you can run it yourself.
+Either way nothing is billed and your workflows stay in your browser's storage.
+The demo cannot reach a CLI on your machine, so it has no agent sign-in; the
+studio does that only when you run it locally. Hosted runs are the next step.
 
 | Works today | Simulated in the studio | Planned for the hosted product |
 |---|---|---|
 | The builder, validation, the plain-English description and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A fresh runner per run |
-| Signing in to Claude Code and Codex, and reading their status | App connections: "Connect" stores a local flag | Real webhooks for every connector |
+| Signing in to Claude Code and Codex, and reading their status, from a studio running locally | App connections: "Connect" stores a local flag | Real webhooks for every connector |
 | Exported workflows running on GitHub Actions, through the engine | Approvals: auto-approved after a delay | Approvals from Slack and email |
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
 

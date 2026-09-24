@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "gen:icons": "node scripts/gen-icons.mjs",
+    "gen:brand": "node scripts/gen-brand.mjs",
     "predev": "node scripts/gen-icons.mjs",
     "prebuild": "node scripts/gen-icons.mjs",
     "typecheck": "next typegen && tsc --noEmit"

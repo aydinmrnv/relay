@@ -783,6 +783,11 @@ session opens with — `relay start`, `relay doctor` — print the wordmark firs
 The wordmark is drawn from a 5×5 pixel font (`src/ui/logo.ts`) rather than
 pasted as art, so one drawing serves both alphabets: the ink is a block on a
 unicode terminal and `#` everywhere else, and the two can never drift apart.
+The logo is the same drawing a third time: `web/scripts/gen-brand.mjs` reads
+the glyphs from `src/ui/logo.ts` and draws the favicon, the app mark and the
+files in `web/public/brand/` from them — the R drawn twice, the second pass a
+quarter-cell behind the first, because nothing Relay ships was made in one
+pass.
 
 The display resolves colour, unicode and interactivity once, from the
 environment, and everything routes through those primitives:

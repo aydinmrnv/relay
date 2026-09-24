@@ -2,7 +2,7 @@
 
 The Relay product: an n8n-style, node-based workflow builder for coding agents. A workflow is a trigger, the guardrails in front of the agents, the agent pipeline, and delivery and notifications after it; the studio is where you draw one, test-run it, and export it to run for real. The [root README](../README.md) describes the product; this file is how the studio is built.
 
-Relay is headed for a hosted, online product. Today the studio is a web app you run yourself: it keeps everything in your browser's storage, costs nothing, and hosts nothing, and exported workflows run on your own GitHub Actions minutes through the engine in `src/` ([reference](../docs/cli.md)).
+Relay is headed for a hosted, online product. Today the studio is public as a [live demo](https://relay-olive-omega.vercel.app) (see [The hosted demo](#the-hosted-demo)) and runs locally with the commands below. Either way it keeps everything in your browser's storage and costs nothing, and exported workflows run on your own GitHub Actions minutes through the engine in `src/` ([reference](../docs/cli.md)).
 
 ```bash
 cd web
@@ -20,6 +20,16 @@ Every screen says what it is for, and every concept has a "?" that explains it; 
 - **Export** compiles the graph to `.relay/config.json` (what the CLI reads today), a GitHub Actions workflow that runs it on your own minutes, a SETUP.md and the graph JSON, as one `.zip` that unzips into the repository at the right paths, with the secrets to add and where each comes from. What the canvas cannot express in those files is listed as a warning, never dropped. A paused workflow exports with its trigger switched off.
 - **Workflows**, **Runs** (filters, live progress, run again, cancel, delete, per-run timeline and phase breakdown), **Integrations** (every app with what each trigger and action does, and "start a workflow from this trigger"), **Templates** (graph previews and a step-by-step walkthrough), **Dashboard** (getting-started checklist, activity, spend, what needs attention), **Settings** and the **Guide**.
 - **Landing page** at `/`: what the product does and how, with an animated diagram of the pipeline (21st.dev animated beams), the real compiler output for a template, honest pricing and a FAQ.
+
+## The hosted demo
+
+A build deployed anywhere public is a demo: there is no CLI behind a public URL for the local bridge to ask. `NEXT_PUBLIC_HOSTED_DEMO=1` (on by default for any build Vercel runs) switches the bridge off on the server, stops the browser asking it, and puts a one-line banner on every screen saying what is simulated. Nothing else changes — the builder, validation, export and test runs already run entirely in the browser, and a first visit is seeded with the starter workflows and a few runs.
+
+```bash
+cd web
+npx vercel@latest --prod                       # Vercel: nothing to configure
+NEXT_PUBLIC_HOSTED_DEMO=1 npm run build        # anywhere else that runs `next start`
+```
 
 ## Bring your own subscription
 
@@ -44,6 +54,8 @@ NEXT_PUBLIC_PRODUCT_NAME="Conductor" npm run dev
 | Path | What |
 |---|---|
 | `src/lib/brand.ts` | The product name and everything derived from it |
+| `scripts/gen-brand.mjs` | Draws the logo from the CLI's pixel font (`../src/ui/logo.ts`): `src/app/icon.svg`, `src/lib/pixel-font.generated.ts` and `public/brand/`. Run `npm run gen:brand` by hand after changing the font or the mark; `-- --png` also renders the PNGs, favicon.ico and the social card (`scripts/brand-banner.html`) with a local Chrome, Brave or Edge |
+| `src/lib/hosted.ts` | Whether this build is the public demo |
 | `src/lib/glossary.ts` | Every concept the studio explains, once; help popovers and the guide read from here |
 | `src/lib/connectors/` | Connector catalog (`catalog/core.ts`, `catalog/dev.ts`, `catalog/business.ts`), node-type registry, search |
 | `src/lib/workflow/schema.ts` | Saved shape of a workflow and a run, free of React Flow types |

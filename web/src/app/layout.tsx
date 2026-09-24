@@ -11,6 +11,9 @@ const geistMono = Geist_Mono({ variable: '--font-mono', subsets: ['latin'] });
 export const metadata: Metadata = {
   title: { default: DEFAULT_BRAND.name, template: `%s · ${DEFAULT_BRAND.name}` },
   description: DEFAULT_BRAND.tagline,
+  // The image itself is app/opengraph-image.png, drawn by scripts/gen-brand.mjs.
+  openGraph: { title: DEFAULT_BRAND.name, description: DEFAULT_BRAND.tagline, siteName: DEFAULT_BRAND.name, type: 'website' },
+  twitter: { card: 'summary_large_image' },
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
