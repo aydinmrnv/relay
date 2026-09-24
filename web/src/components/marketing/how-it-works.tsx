@@ -16,45 +16,47 @@ export function HowItWorks() {
   const steps: Array<{ title: string; body: string; visual: ReactNode }> = [
     {
       title: 'Pick what starts a run',
-      body: 'An issue assigned in Linear, a label on GitHub, a new Sentry error, a schedule or a webhook. The trigger hands a ticket to the rest of the flow.',
+      body: 'Choose an issue, a label, a schedule, or a webhook. The trigger passes a ticket into your workflow.',
       visual: <TriggerVisual slug={brand.slug} />,
     },
     {
       title: 'Put guardrails in front',
-      body: 'Budgets, an author allowlist, a human approval and a kill switch sit between the ticket and the agents. Each one refuses by default and says why.',
+      body: 'Set a budget, restrict who can start a run, and add approval where it matters. Failed checks stop the run.',
       visual: <GuardrailVisual />,
     },
     {
       title: 'Let the agents check each other',
-      body: 'Claude Code plans and Codex attacks the plan against the real code. Codex implements and Claude Code reviews the diff. Only blocking findings go back, and rounds are capped.',
+      body: 'One agent writes the plan and code. Another reviews both against your repository. Blocking findings go back for a fix.',
       visual: <ReviewVisual />,
     },
     {
       title: 'Deliver as far as you allow',
-      body: 'A commit, a pushed branch or a draft pull request, after a secret scan. A run nobody started by hand can open a PR and can never merge one.',
+      body: 'Choose a commit, branch, or draft pull request. Unattended runs stop at a draft PR, leaving the merge to you.',
       visual: <DeliveryVisual slug={brand.slug} />,
     },
   ];
 
   return (
-    <section id="how" className="scroll-mt-16 border-t py-20 sm:py-28">
-      <div className="container">
+    <section id="how" className="scroll-mt-16 border-t py-16 sm:py-24">
+      <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="How it works"
-          title="From ticket to pull request in four nodes"
-          description={`You draw the flow once. After that, ${brand.name} runs the same steps every time a ticket arrives, and stops wherever a guardrail says no.`}
+          title="A clear path from ticket to pull request"
+          description={`Build the workflow once. ${brand.name} handles each handoff and stops when a guardrail says no.`}
         />
-        <ol className="mt-14 grid grid-cols-1 gap-4 md:grid-cols-2 lg:gap-5">
+        <ol className="mt-10 sm:mt-12 grid grid-cols-1 gap-4 md:grid-cols-2 lg:gap-5">
           {steps.map((step, index) => (
             <li key={step.title}>
               <Reveal delay={(index % 2) * 0.08} className="h-full">
                 <article className="flex h-full flex-col overflow-hidden rounded-2xl border bg-card">
                   <div className="flex flex-col gap-2 p-6 pb-5">
                     <div className="flex items-center gap-3">
-                      <span className="inline-flex size-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground tabular-nums">{index + 1}</span>
+                      <span className="inline-flex size-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground tabular-nums">
+                        {index + 1}
+                      </span>
                       <h3 className="text-lg font-semibold tracking-tight">{step.title}</h3>
                     </div>
-                    <p className="text-sm text-pretty text-muted-foreground">{step.body}</p>
+                    <p className="text-sm leading-relaxed text-pretty text-muted-foreground">{step.body}</p>
                   </div>
                   <div className="flex flex-1 flex-col justify-center border-t bg-muted/30 p-4 sm:p-5">{step.visual}</div>
                 </article>
@@ -107,7 +109,7 @@ function GuardrailVisual() {
     <div className="flex flex-col gap-2">
       {gates.map(({ icon: Icon, name, detail, verdict }) => (
         <Row key={name}>
-          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
+          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-success/10 text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">
             <Icon className="size-3.5" />
           </span>
           <div className="min-w-0 flex-1">
@@ -115,11 +117,11 @@ function GuardrailVisual() {
             <p className="truncate text-xs text-muted-foreground">{detail}</p>
           </div>
           {verdict === 'pass' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">
               <Check className="size-3" /> Within budget
             </span>
           ) : verdict === 'refused' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-[color-mix(in_oklch,var(--destructive)_80%,var(--foreground))] dark:text-destructive">
               <ShieldX className="size-3" /> Refused
             </span>
           ) : (
@@ -139,9 +141,11 @@ function ReviewVisual() {
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Codex</span> reviews the plan
-            <span className="rounded bg-destructive/10 px-1.5 py-px font-mono text-[10px] font-semibold text-destructive">BLOCKING</span>
+            <span className="rounded bg-destructive/10 px-1.5 py-px font-mono text-[10px] font-semibold text-[color-mix(in_oklch,var(--destructive)_80%,var(--foreground))] dark:text-destructive">BLOCKING</span>
           </p>
-          <p className="mt-1 text-sm text-pretty">The plan adds a retry inside withTimeout, which already retries. Two layers multiply the wait.</p>
+          <p className="mt-1 text-sm text-pretty">
+            The plan adds a retry inside withTimeout, which already retries. Two layers multiply the wait.
+          </p>
         </div>
       </Row>
       <Row className="ml-6 items-start">
@@ -149,12 +153,14 @@ function ReviewVisual() {
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Claude Code</span> answers
-            <span className="rounded bg-success/10 px-1.5 py-px font-mono text-[10px] font-semibold text-success">ACCEPT</span>
+            <span className="rounded bg-success/10 px-1.5 py-px font-mono text-[10px] font-semibold text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">ACCEPT</span>
           </p>
           <p className="mt-1 text-sm text-pretty">Revised: retry once, at the call site. Plan v2 goes to implementation.</p>
         </div>
       </Row>
-      <p className="px-1 pt-1 font-mono text-[11px] text-muted-foreground">round 1 of 2 · the diff is computed from git, not taken from the agent</p>
+      <p className="px-1 pt-1 font-mono text-[11px] text-muted-foreground">
+        round 1 of 2 · the diff is computed from git, not taken from the agent
+      </p>
     </div>
   );
 }
@@ -169,7 +175,7 @@ function DeliveryVisual({ slug }: { slug: string }) {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-pretty">Fix the flaky timeout in the retry test</p>
             <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-              #412 · {slug}/eng-142 → main · <span className="text-success">+84</span> <span className="text-destructive">−12</span>
+              #412 · {slug}/eng-142 → main · <span className="text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">+84</span> <span className="text-[color-mix(in_oklch,var(--destructive)_80%,var(--foreground))] dark:text-destructive">−12</span>
             </p>
           </div>
           <span className="shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Draft</span>
@@ -177,7 +183,7 @@ function DeliveryVisual({ slug }: { slug: string }) {
         <ul className="mt-2.5 flex flex-col gap-1 border-t pt-2.5">
           {checks.map((check) => (
             <li key={check} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <CheckCircle2 className="size-3.5 text-success" />
+              <CheckCircle2 className="size-3.5 text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success" />
               {check}
             </li>
           ))}
@@ -190,7 +196,8 @@ function DeliveryVisual({ slug }: { slug: string }) {
       <Row>
         <AppMark connector="slack" size={14} />
         <p className="min-w-0 flex-1 truncate text-xs">
-          <span className="font-medium">#eng-agents</span> <span className="text-muted-foreground">PR #412 is ready for review · cost $1.84</span>
+          <span className="font-medium">#eng-agents</span>{' '}
+          <span className="text-muted-foreground">PR #412 is ready for review · cost $1.84</span>
         </p>
       </Row>
     </div>

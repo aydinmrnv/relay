@@ -1,157 +1,340 @@
 'use client';
 
-import { useRef, type ReactNode, type Ref } from 'react';
-import { CheckCircle2, GitPullRequestDraft, ShieldCheck, Workflow } from 'lucide-react';
-import { AnimatedBeam } from '@/components/21st/animated-beam';
-import { BorderBeam } from '@/components/21st/border-beam';
-import { useBrand } from '@/hooks/use-brand';
+import { useId, useRef, useState, type KeyboardEvent } from 'react';
+import Link from 'next/link';
+import { motion } from 'motion/react';
+import {
+  ArrowRight,
+  ArrowUpRight,
+  ChevronRight,
+  FileCode2,
+  GitBranch,
+  GitPullRequestDraft,
+  ShieldCheck,
+  Terminal,
+  Workflow,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AppMark, AppTile, useCalmMotion } from './primitives';
+import { AppMark, useCalmMotion } from './primitives';
 
-const SOURCES = [
-  { id: 'linear', name: 'Linear', event: 'Issue assigned' },
-  { id: 'github', name: 'GitHub', event: 'Label added' },
-  { id: 'sentry', name: 'Sentry', event: 'New error' },
+const STAGES = [
+  {
+    id: 'issue',
+    label: 'Issue',
+    agent: 'GitHub',
+    connector: 'github',
+    heading: 'Start with the ticket.',
+    description:
+      'A labeled issue brings the task and repository into the workflow. Author permissions and budget limits are checked before the agents start.',
+    file: 'issue #142',
+    kind: 'input',
+    lines: [
+      'Fix the flaky retry test',
+      '',
+      'Repository   acme/api',
+      'Label        agent-ready',
+      'Expected     Deterministic retries in CI',
+    ],
+    output: 'Task and repository context',
+  },
+  {
+    id: 'plan',
+    label: 'Plan',
+    agent: 'Claude Code',
+    connector: 'claude-code',
+    heading: 'A plan, with a second opinion.',
+    description:
+      'Claude reads the repository and proposes a change. Codex checks the plan against the code before implementation begins.',
+    file: 'plan.md',
+    kind: 'plan',
+    lines: [
+      '01  Inspect the retry test and timer setup',
+      '02  Replace real delays with a fake clock',
+      '03  Advance the clock before assertions',
+      '04  Run the focused test, then the suite',
+      '',
+      'Codex → plan reviewed',
+    ],
+    output: 'Reviewed implementation plan',
+  },
+  {
+    id: 'build',
+    label: 'Build',
+    agent: 'Codex',
+    connector: 'codex-cli',
+    heading: 'The change gets its own worktree.',
+    description:
+      'Codex implements the reviewed plan in an isolated git worktree. Your working directory stays available while the agent works.',
+    file: 'test/retry.test.ts',
+    kind: 'diff',
+    lines: [
+      '  test("retries a failed request", async () => {',
+      '+   vi.useFakeTimers();',
+      '    const result = retry(request);',
+      '-   await sleep(1000);',
+      '+   await vi.advanceTimersByTimeAsync(1000);',
+      '    expect(await result).toEqual(response);',
+      '+   vi.useRealTimers();',
+      '  });',
+    ],
+    output: 'A diff ready for independent review',
+  },
+  {
+    id: 'review',
+    label: 'Review',
+    agent: 'Claude Code',
+    connector: 'claude-code',
+    heading: 'Fresh eyes on the actual diff.',
+    description:
+      'Claude reviews the implementation against the plan and the repository. Blocking findings go back for a fix, with a cap on review rounds.',
+    file: 'review.md',
+    kind: 'review',
+    lines: [
+      '✓  Change matches the reviewed plan',
+      '✓  Retry assertions remain intact',
+      '✓  Timer state restored after the test',
+      '',
+      'Blocking findings    0',
+      'Review outcome       Approved',
+    ],
+    output: 'Reviewed code and recorded findings',
+  },
+  {
+    id: 'test',
+    label: 'Test',
+    agent: 'Your test suite',
+    connector: null,
+    heading: 'Let the repository prove it.',
+    description:
+      'Run your configured test command and scan the change for secrets. A failed check stops delivery and preserves the result for inspection.',
+    file: 'terminal',
+    kind: 'test',
+    lines: [
+      '$ npm test -- retry.test.ts',
+      '',
+      '✓ retries a failed request',
+      '✓ stops after the retry limit',
+      '',
+      'Tests        2 passed',
+      'Secret scan  passed',
+    ],
+    output: 'Test results and secret-scan checks',
+  },
+  {
+    id: 'delivery',
+    label: 'Draft PR',
+    agent: 'GitHub',
+    connector: 'github',
+    heading: 'Ready for your review.',
+    description:
+      'The diff, review, and test results arrive in a draft pull request. You inspect the change and decide when it is ready to merge.',
+    file: 'pull request',
+    kind: 'delivery',
+    lines: [
+      'DRAFT  Fix the flaky retry test',
+      '',
+      'acme/api ← agent/issue-142',
+      '',
+      '✓ Independent review',
+      '✓ Tests and secret scan',
+      '○ Awaiting your review',
+    ],
+    output: 'Draft pull request · merge stays with you',
+  },
 ] as const;
 
-/** The five pipeline phases, each owned by the agent the default config gives it. */
-const PHASES: Array<{ agent: 'claude-code' | 'codex-cli' | null; label: string; meta: string }> = [
-  { agent: 'claude-code', label: 'Plan', meta: 'plan.md' },
-  { agent: 'codex-cli', label: 'Review the plan', meta: '3 findings' },
-  { agent: 'codex-cli', label: 'Implement', meta: '+84 −12' },
-  { agent: 'claude-code', label: 'Review the diff', meta: 'approved' },
-  { agent: null, label: 'Run your tests', meta: 'exit 0' },
-];
-
-// Violet into sky reads on both backgrounds; the resting path uses currentColor.
-const BEAM = { gradientStartColor: '#8b5cf6', gradientStopColor: '#38bdf8', pathColor: 'currentColor', pathOpacity: 0.45, pathWidth: 1.5, duration: 4 };
-
-/**
- * The default workflow as the hero shows it: where a ticket comes from, what
- * stands in front of the agents, what the agents do, and where the result
- * goes. Beams are drawn between the boxes' centres and recomputed on resize,
- * so the same markup lays out as a row on desktop and a column on phones.
- * With reduced motion the beams rest as plain lines and nothing is hidden.
- */
 export function PipelinePreview() {
-  const brand = useBrand();
+  const [active, setActive] = useState(2);
+  const id = useId();
+  const tabs = useRef<Array<HTMLButtonElement | null>>([]);
   const reduce = useCalmMotion();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const linearRef = useRef<HTMLDivElement>(null);
-  const githubRef = useRef<HTMLDivElement>(null);
-  const sentryRef = useRef<HTMLDivElement>(null);
-  const gateRef = useRef<HTMLDivElement>(null);
-  const pipelineRef = useRef<HTMLDivElement>(null);
-  const prRef = useRef<HTMLDivElement>(null);
-  const slackRef = useRef<HTMLDivElement>(null);
+  const stage = STAGES[active];
+
+  function navigate(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let next = index;
+    if (event.key === 'ArrowRight') next = (index + 1) % STAGES.length;
+    else if (event.key === 'ArrowLeft') next = (index + STAGES.length - 1) % STAGES.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = STAGES.length - 1;
+    else return;
+    event.preventDefault();
+    setActive(next);
+    tabs.current[next]?.focus({ preventScroll: true });
+    tabs.current[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+  }
 
   return (
-    <div
-      ref={containerRef}
-      className="relative mx-auto flex w-full max-w-5xl flex-col items-center gap-9 text-muted-foreground lg:flex-row lg:items-center lg:justify-between lg:gap-4"
-    >
-      {/* Where the work comes from */}
-      <div className="grid w-full max-w-md grid-cols-3 gap-2 lg:flex lg:w-44 lg:max-w-none lg:flex-col lg:gap-3">
-        <SourceNode ref={linearRef} source={SOURCES[0]} />
-        <SourceNode ref={githubRef} source={SOURCES[1]} />
-        <SourceNode ref={sentryRef} source={SOURCES[2]} />
+    <div className="overflow-hidden rounded-xl border bg-card text-left" aria-label="Interactive workflow example">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6">
+        <div className="flex items-center gap-2.5">
+          <Workflow className="size-4 text-primary" />
+          <h2 className="text-xs font-medium sm:text-sm">Issue to pull request</h2>
+          <span className="rounded border px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground uppercase">
+            Example
+          </span>
+        </div>
+        <Link
+          href="/templates"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Explore templates <ArrowUpRight className="size-3.5" />
+        </Link>
       </div>
 
-      {/* What stands in front of the agents */}
-      <Box ref={gateRef} className="w-full max-w-72 flex-col items-stretch gap-2 p-3 lg:w-44">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex size-7 items-center justify-center rounded-lg bg-success/12 text-success">
-            <ShieldCheck className="size-4" />
+      <div className="bg-grid border-b">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 text-[11px] sm:px-6">
+          <span className="text-muted-foreground">
+            <span className="mr-2 font-mono">#142</span> Fix the flaky retry test
           </span>
-          <div className="min-w-0">
-            <p className="text-[13px] font-semibold text-foreground">Guardrails</p>
-            <p className="text-[11px] text-muted-foreground">refuse by default</p>
+          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+            <GitBranch className="size-3" /> acme/api
+          </span>
+        </div>
+        <div className="px-4 pt-6 pb-6 sm:px-6" role="tablist" aria-label="Workflow stages">
+          <div className="grid grid-cols-3 items-center gap-x-4 gap-y-4 lg:flex lg:gap-0">
+            {STAGES.map((item, index) => (
+              <div key={item.id} className="relative flex min-w-0 flex-1 items-center lg:mr-7 lg:last:mr-0">
+                <button
+                  ref={(element) => {
+                    tabs.current[index] = element;
+                  }}
+                  type="button"
+                  role="tab"
+                  id={`${id}-${item.id}`}
+                  aria-selected={index === active}
+                  aria-controls={`${id}-detail`}
+                  tabIndex={index === active ? 0 : -1}
+                  onClick={() => setActive(index)}
+                  onKeyDown={(event) => navigate(event, index)}
+                  className={cn(
+                    'relative flex min-w-0 flex-1 flex-col gap-3 rounded-lg border bg-card p-2.5 text-left sm:p-3 transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+                    index === active && 'border-primary bg-accent shadow-[0_0_0_3px_var(--background)]',
+                  )}
+                >
+                  <span className="flex w-full items-center justify-between">
+                    <span className="flex size-7 items-center justify-center rounded-md border bg-background">
+                      {item.id === 'delivery' ? (
+                        <GitPullRequestDraft className="size-3.5" />
+                      ) : item.connector ? (
+                        <AppMark connector={item.connector} size={14} />
+                      ) : (
+                        <Terminal className="size-3.5" />
+                      )}
+                    </span>
+                    <span className="font-mono text-[9px] text-muted-foreground">0{index + 1}</span>
+                  </span>
+                  <span className="block w-full text-xs font-medium">
+                    {item.label}
+                    <span className="mt-1 block truncate text-[9px] sm:text-[10px] font-normal text-muted-foreground">
+                      {item.agent}
+                    </span>
+                  </span>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'absolute top-1/2 -left-1 size-1.5 rounded-full border bg-card',
+                      index === active && 'border-primary',
+                    )}
+                  />
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'absolute top-1/2 -right-1 size-1.5 rounded-full border bg-card',
+                      index === active && 'border-primary',
+                    )}
+                  />
+                </button>
+                {index < STAGES.length - 1 && (
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'absolute top-1/2 -right-4 h-px w-4 bg-border lg:-right-7 lg:w-7',
+                      index === 2 && 'hidden lg:block',
+                    )}
+                  >
+                    <ChevronRight className="absolute -top-[5.5px] right-0 size-3 text-muted-foreground" />
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
         </div>
-        <div className="flex flex-wrap gap-1">
-          {['$6 / run', 'Allowlist', 'Kill switch'].map((gate) => (
-            <span key={gate} className="rounded-md border bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-foreground/80">
-              {gate}
-            </span>
-          ))}
-        </div>
-      </Box>
+      </div>
 
-      {/* What the agents do */}
-      <Box ref={pipelineRef} className="w-full max-w-80 flex-col items-stretch gap-0 overflow-hidden p-0 shadow-lg shadow-primary/5 lg:w-72">
-        <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2.5">
-          <span className="inline-flex size-7 items-center justify-center rounded-lg bg-primary/12 text-primary">
-            <Workflow className="size-4" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[13px] font-semibold text-foreground">Agent pipeline</p>
-            <p className="truncate text-[11px] text-muted-foreground">isolated worktree · {brand.slug}/eng-142</p>
+      <div
+        role="tabpanel"
+        id={`${id}-detail`}
+        aria-labelledby={`${id}-${stage.id}`}
+        tabIndex={0}
+        className="focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+      >
+        <motion.div
+          key={stage.id}
+          initial={reduce ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: reduce ? 0 : 0.16 }}
+          className="grid md:min-h-[290px] md:grid-cols-[0.9fr_1.1fr]"
+        >
+          <div className="flex flex-col items-start p-5 sm:p-6 lg:p-7">
+            <p className="font-mono text-[10px] tracking-wider text-primary uppercase">
+              0{active + 1} / {stage.label}
+            </p>
+            <h3 className="mt-3 text-xl leading-snug font-medium tracking-tight sm:text-2xl">{stage.heading}</h3>
+            <p className="mt-3 max-w-md text-[13px] leading-relaxed text-muted-foreground">{stage.description}</p>
+            <p className="mt-6 flex items-center gap-2 pt-3 text-[11px] text-muted-foreground md:mt-auto">
+              <ArrowRight className="size-3.5 shrink-0 text-primary" />
+              {stage.output}
+            </p>
           </div>
-        </div>
-        <ol className="flex flex-col gap-0.5 p-2">
-          {PHASES.map((phase, index) => (
-            <li key={phase.label} className="flex items-center gap-2.5 rounded-md px-1.5 py-1.5">
-              <span className="inline-flex size-5 shrink-0 items-center justify-center">
-                {phase.agent === null ? <CheckCircle2 className="size-4 text-success" /> : <AppMark connector={phase.agent} size={15} />}
+          <div className="min-w-0 border-t bg-muted/20 md:border-t-0 md:border-l">
+            <div className="flex items-center justify-between gap-2 border-b px-5 py-3 font-mono text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-2">
+                <FileCode2 className="size-3.5" />
+                {stage.file}
               </span>
-              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-                <span className="mr-1.5 text-muted-foreground tabular-nums">{index + 1}</span>
-                {phase.label}
-              </span>
-              <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{phase.meta}</span>
-            </li>
-          ))}
-        </ol>
-        {reduce ? null : <BorderBeam size={90} duration={7} colorFrom="#8b5cf6" colorTo="#38bdf8" />}
-      </Box>
-
-      {/* Where the result goes */}
-      <div className="grid w-full max-w-80 grid-cols-2 gap-2 lg:flex lg:w-44 lg:flex-col lg:gap-3">
-        <Box ref={prRef} className="gap-2 p-2.5">
-          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-info/12 text-info">
-            <GitPullRequestDraft className="size-4" />
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-semibold text-foreground">Draft PR</p>
-            <p className="truncate text-[11px] text-muted-foreground">never merges itself</p>
+              <span>sample output</span>
+            </div>
+            <pre
+              tabIndex={0}
+              aria-label={`${stage.label} sample output`}
+              className="min-h-[220px] overflow-x-auto py-4 font-mono text-[11px] leading-6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+            >
+              <code>
+                {stage.lines.map((line, index) => (
+                  <span
+                    key={index}
+                    className={cn(
+                      'block min-w-max px-5',
+                      stage.kind === 'diff' && line.startsWith('+') && 'bg-primary/[0.06] text-primary',
+                      stage.kind === 'diff' &&
+                        line.startsWith('-') &&
+                        'bg-destructive/[0.05] text-[color-mix(in_oklch,var(--destructive)_85%,var(--foreground))]',
+                    )}
+                  >
+                    <span aria-hidden className="mr-5 inline-block w-3 select-none text-right text-muted-foreground/70">
+                      {index + 1}
+                    </span>
+                    {line || ' '}
+                    {'\n'}
+                  </span>
+                ))}
+              </code>
+            </pre>
           </div>
-        </Box>
-        <Box ref={slackRef} className="gap-2 p-2.5">
-          <AppTile connector="slack" size={15} />
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-semibold text-foreground">Slack</p>
-            <p className="truncate text-[11px] text-muted-foreground">#eng-agents</p>
-          </div>
-        </Box>
+        </motion.div>
       </div>
-
-      <AnimatedBeam containerRef={containerRef} fromRef={linearRef} toRef={gateRef} {...BEAM} delay={0} />
-      <AnimatedBeam containerRef={containerRef} fromRef={githubRef} toRef={gateRef} {...BEAM} delay={0.2} />
-      <AnimatedBeam containerRef={containerRef} fromRef={sentryRef} toRef={gateRef} {...BEAM} delay={0.4} />
-      <AnimatedBeam containerRef={containerRef} fromRef={gateRef} toRef={pipelineRef} {...BEAM} delay={0.8} />
-      <AnimatedBeam containerRef={containerRef} fromRef={pipelineRef} toRef={prRef} {...BEAM} delay={1.6} />
-      <AnimatedBeam containerRef={containerRef} fromRef={pipelineRef} toRef={slackRef} {...BEAM} delay={1.8} />
-    </div>
-  );
-}
-
-function SourceNode({ ref, source }: { ref: Ref<HTMLDivElement>; source: (typeof SOURCES)[number] }) {
-  return (
-    <Box ref={ref} className="flex-col gap-1.5 px-2 py-2.5 text-center lg:flex-row lg:gap-2.5 lg:p-2.5 lg:text-left">
-      <AppTile connector={source.id} size={15} />
-      <div className="min-w-0">
-        <p className="truncate text-xs font-semibold text-foreground lg:text-[13px]">{source.name}</p>
-        <p className="truncate text-[11px] text-muted-foreground">{source.event}</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3 text-[10px] text-muted-foreground sm:px-6">
+        <span className="flex items-center gap-1.5">
+          <ShieldCheck className="size-3.5 text-primary" /> Your machine. Your keys. Your approval.
+        </span>
+        <button
+          type="button"
+          onClick={() => setActive((active + 1) % STAGES.length)}
+          className="inline-flex items-center gap-1.5 rounded-sm py-1 text-foreground transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          {active === STAGES.length - 1 ? 'Back to the issue' : 'Next step'} <ArrowRight className="size-3" />
+        </button>
       </div>
-    </Box>
-  );
-}
-
-/** A node-shaped card that sits above the beams. */
-function Box({ ref, className, children }: { ref: Ref<HTMLDivElement>; className?: string; children: ReactNode }) {
-  return (
-    <div ref={ref} className={cn('relative z-10 flex items-center rounded-xl border bg-card text-left shadow-sm', className)}>
-      {children}
     </div>
   );
 }
