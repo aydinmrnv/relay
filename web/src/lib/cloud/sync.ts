@@ -140,6 +140,8 @@ class SyncEngine {
   private flushing: Promise<void> | null = null;
   private again = false;
   private retryMs = 0;
+  /** Signed out underneath us: keep recording changes, send nothing until someone signs in again. */
+  private paused = false;
   private readonly unsubscribe: () => void;
 
   constructor(readonly owner: string, pending: Pending) {
@@ -155,6 +157,12 @@ class SyncEngine {
     this.unsubscribe();
     window.removeEventListener('pagehide', this.onPageHide);
     window.removeEventListener('online', this.onOnline);
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  pause(): void {
+    this.paused = true;
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
   }
@@ -228,6 +236,7 @@ class SyncEngine {
   }
 
   private schedule(delay = QUIET_MS): void {
+    if (this.paused) return;
     const now = Date.now();
     if (this.timer === null) this.firstDirtyAt = now;
     else clearTimeout(this.timer);
@@ -239,6 +248,7 @@ class SyncEngine {
   }
 
   async flush(): Promise<void> {
+    if (this.paused) return;
     if (this.flushing !== null) {
       this.again = true;
       return this.flushing;
@@ -361,7 +371,7 @@ class SyncEngine {
   /** Best effort as the tab goes away: small requests that the browser finishes after the page is gone. */
   private onPageHide = () => {
     const state = useStudio.getState();
-    if (state.owner !== this.owner) return;
+    if (this.paused || state.owner !== this.owner) return;
     let budget = 60_000;
     const send = (path: string, method: string, body?: unknown) => {
       const size = body === undefined ? 0 : JSON.stringify(body).length;
@@ -576,8 +586,8 @@ export function forgetAccount(): void {
 }
 
 async function sessionExpired(): Promise<void> {
-  engine?.stop();
-  engine = null;
+  // The queue keeps growing in localStorage; signing back in sends it.
+  engine?.pause();
   setSessionHint(false);
   useAccount.setState({ status: 'guest', user: null });
   useSyncStatus.setState({ state: 'error', message: 'Signed out. Sign in again to save your changes.' });
