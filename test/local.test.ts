@@ -228,11 +228,11 @@ describe('the local provider', () => {
 
   it('is in the registry, and is not a tracker', () => {
     assert.ok(ISSUE_PROVIDER_REGISTRY.some((entry) => entry.name === 'local'));
-    assert.ok(!ISSUE_TRACKER_REGISTRY.some((entry) => entry.name === 'local'));
+    assert.ok(!ISSUE_TRACKER_REGISTRY.some((entry) => (entry.name as string) === 'local'));
     // Nothing about it can be asked "are you installed?" — that is the point.
     assert.deepEqual(
       ISSUE_TRACKER_REGISTRY.map((entry) => entry.name),
-      ['github'],
+      ['github', 'linear'],
     );
   });
 

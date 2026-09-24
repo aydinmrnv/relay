@@ -13,7 +13,8 @@
  * also what the composer's caption reads back while you type — the interpretation
  * is shown before Enter, not discovered after it.
  */
-import { parseIssueRef } from '../github/provider.ts';
+import { parseLinearRef } from '../issues/linear.ts';
+import { isTrackerRef } from '../issues/registry.ts';
 import { looksLikePath } from '../issues/local.ts';
 import { DELIVERY_POLICIES, isDeliveryPolicy } from '../storage/config.ts';
 import { AGENT_PROVIDERS, isAgentProvider } from '../agents/index.ts';
@@ -61,14 +62,6 @@ export function parseChatInput(input: string): ChatIntent {
   return { kind: 'task', text };
 }
 
-function isTrackerRef(text: string): boolean {
-  try {
-    parseIssueRef(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * The caption under the composer: what pressing Enter would do right now.
@@ -87,7 +80,7 @@ export function describeChatInput(input: string): string {
     case 'exit':
       return 'leave';
     case 'issue':
-      return `issue ${intent.ref.startsWith('#') || /^\d+$/.test(intent.ref) ? `#${intent.ref.replace(/^#/, '')}` : intent.ref}`;
+      return `issue ${intent.ref.startsWith('#') || /^\d+$/.test(intent.ref) ? `#${intent.ref.replace(/^#/, '')}` : parseLinearRef(intent.ref) ?? intent.ref}`;
     case 'file':
       return `spec file ${intent.path}`;
     case 'command': {

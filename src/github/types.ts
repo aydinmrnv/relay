@@ -13,6 +13,12 @@ export interface Issue {
    * Everything downstream reads identity from `id` and naming from the title.
    */
   number: number | null;
+  /**
+   * The tracker's own human key when it has one that is not a number —
+   * Linear's `ENG-142`. Branch names, pull-request titles and the closing
+   * line use it, which is what lets the tracker link the work back by itself.
+   */
+  key?: string;
   title: string;
   body: string;
   url: string;
@@ -32,6 +38,8 @@ export interface IssueListFilters {
 
 export interface IssueSummary {
   number: number;
+  /** What to pass back to `getIssue` when it is not the number: `ENG-142`. */
+  ref?: string;
   title: string;
   labels: string[];
   createdAt: string;
@@ -87,7 +95,7 @@ export interface IssueProvider {
 /** Renders an issue as the markdown artifact agents receive and `issue.md` stores. */
 export function renderIssueMarkdown(issue: Issue): string {
   const lines: string[] = [];
-  lines.push(issue.number === null ? `# ${issue.title}` : `# Issue #${issue.number}: ${issue.title}`);
+  lines.push(issue.number !== null ? `# Issue #${issue.number}: ${issue.title}` : issue.key !== undefined ? `# ${issue.key}: ${issue.title}` : `# ${issue.title}`);
   lines.push('');
   // A task written on this machine has no URL to print, and a blank one reads
   // like a fetch that half-failed.

@@ -234,7 +234,7 @@ export async function serve(deps: ServeDeps): Promise<ServeOutcome> {
     if (label.length === 0) return [];
     const summaries = await deps.provider.listIssues({ labels: [label], limit: deps.limit ?? DEFAULT_LIMIT });
     if (summaries === null) return [];
-    return summaries.map((summary) => String(summary.number));
+    return summaries.map((summary) => summary.ref ?? String(summary.number));
   }
 
   /** Everything that has to be true about one issue before a run starts. */

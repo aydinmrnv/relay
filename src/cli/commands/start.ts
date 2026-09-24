@@ -15,7 +15,8 @@ import {
   type IssueTrackerRegistration,
 } from '../../issues/registry.ts';
 import { resolveExecutable } from '../../process/runner.ts';
-import { configPath, loadConfig, reviewLevelOf, type RelayConfig } from '../../storage/config.ts';
+import { configPath, loadConfig, reviewLevelOf, writeConfig, type IssueTrackerName, type RelayConfig } from '../../storage/config.ts';
+import { LINEAR_KEY_VARIABLE } from '../../issues/linear.ts';
 import { describeReview } from '../../reviews/level.ts';
 import { RelayError } from '../../util/errors.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
@@ -103,7 +104,8 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
     authState: (support, cwd) => probeAuth(support, { cwd }),
     login: (support, cwd) => delegateLogin(support, { cwd }),
     installed: async (binary) => (await resolveExecutable(binary)) !== null,
-    providerCheck: (registration, cwd) => registration.create({ cwd }).checkAvailability(),
+    providerCheck: async (registration, cwd) =>
+      registration.create({ cwd, issues: (await loadConfig(cwd).catch(() => undefined))?.issues }).checkAvailability(),
     init: initCommand,
     // The first run ends on the home screen rather than on a shell prompt: what
     // follows a run is the next issue, and onboarding is where that starts.
@@ -187,11 +189,13 @@ async function guidedStart(repo: RepositoryInfo, deps: StartDeps, options: Start
     command('relay run --prompt "A CLI that renders markdown tables"', '    ');
   }
 
-  const blockers = [...(await ensureAgents(repo, deps)), ...(await ensureIssueProvider(repo, deps))];
+  const agentBlockers = await ensureAgents(repo, deps);
+  const tracker = await ensureIssueProvider(repo, deps);
+  const blockers = [...agentBlockers, ...tracker.blockers];
 
   const configCode = await ensureConfig(repo, deps);
   if (configCode !== 0) return configCode;
-  const config = await loadConfig(repo.root);
+  const config = await rememberTracker(repo, tracker);
 
   section('5. How a run works');
   const onboarding = await loadOnboarding(repo.root);
@@ -242,32 +246,44 @@ async function ensureAgents(repo: RepositoryInfo, deps: StartDeps): Promise<stri
  * person deciding whether this tool is worth adopting can find that out before
  * they file anything.
  */
-async function ensureIssueProvider(repo: RepositoryInfo, deps: StartDeps): Promise<string[]> {
+async function ensureIssueProvider(repo: RepositoryInfo, deps: StartDeps): Promise<TrackerChoice> {
   section('3. Issues');
 
-  let chosen = ISSUE_TRACKER_REGISTRY[0]!;
-  if (ISSUE_TRACKER_REGISTRY.length > 1) {
-    const choices: Array<Choice<string>> = ISSUE_TRACKER_REGISTRY.map((entry) => ({
-      value: entry.name,
-      label: entry.label,
-    }));
-    const name = await deps.prompter.choice('  Where do your issues live?', choices, chosen.name);
-    chosen = issueTrackerRegistration(name) ?? chosen;
+  const current = await loadConfig(repo.root).catch(() => undefined);
+  const hasLinearKey = (process.env[LINEAR_KEY_VARIABLE]?.trim() ?? '') !== '';
+  let chosen = issueTrackerRegistration(current?.issues?.provider ?? 'github') ?? ISSUE_TRACKER_REGISTRY[0]!;
+  // Only a question when there is something to choose between: somebody with a
+  // Linear key, or a repository already pointed at Linear. Everyone else gets
+  // GitHub — the answer they would have given — and one line on how to change it.
+  if (hasLinearKey || chosen.name !== 'github') {
+    const choices: Array<Choice<string>> = ISSUE_TRACKER_REGISTRY.map((entry) => ({ value: entry.name, label: entry.label }));
+    const suggested = current?.issues?.provider ?? (repo.owner === null && hasLinearKey ? 'linear' : 'github');
+    chosen = issueTrackerRegistration(await deps.prompter.choice('  Where do your issues live?', choices, suggested)) ?? chosen;
   } else {
-    // Naming the one supported tracker beats a question with a single answer.
-    out(dim(`  Issues come from ${chosen.label}, the only tracker Relay supports today.`));
+    out(dim(`  Issues come from ${chosen.label}. Tracking work in Linear? Export ${LINEAR_KEY_VARIABLE} and run \`relay start\` again.`));
   }
 
-  if (!(await deps.installed(chosen.binary))) {
+  let team: string | null = current?.issues?.team ?? null;
+  if (chosen.name === 'linear') {
+    const answer = await deps.prompter.text(
+      '  Default Linear team, so `relay run 142` means TEAM-142 (blank for none)',
+      team ?? '',
+      (value) => (value.trim() === '' || /^[A-Za-z][A-Za-z0-9]{0,9}$/.test(value.trim()) ? undefined : 'A team is letters and digits, like ENG.'),
+    );
+    team = answer.trim() === '' ? null : answer.trim().toUpperCase();
+  }
+  const result: TrackerChoice = { blockers: [], tracker: chosen.name, team };
+
+  if (chosen.binary !== undefined && !(await deps.installed(chosen.binary))) {
     warn(`${chosen.label}  ${dim(`${chosen.binary} not found`)}`);
     hint('Install it if your issues live there:', '    ');
-    command(chosen.installCommand, '    ');
+    if (chosen.installCommand !== undefined) command(chosen.installCommand, '    ');
     withoutATracker();
-    return [];
+    return result;
   }
 
   let status = await deps.providerCheck(chosen, repo.root);
-  if (!status.available) {
+  if (!status.available && chosen.auth !== undefined) {
     fail(`${chosen.label}  ${dim(status.detail)}`);
     await offerLogin(chosen.label, chosen.auth, 'unauthenticated', repo.root, deps);
     status = await deps.providerCheck(chosen, repo.root);
@@ -275,12 +291,39 @@ async function ensureIssueProvider(repo: RepositoryInfo, deps: StartDeps): Promi
 
   if (status.available) {
     ok(`${chosen.label}  ${dim(status.detail)}`);
-    return [];
+    return result;
   }
 
   warn(`${chosen.label}  ${dim(status.detail)}`);
+  // A tracker with no CLI has no login to hand over to. Relay never asks for
+  // the key itself: it says where one comes from and where it goes.
+  if (chosen.credential !== undefined) {
+    hint(`Create a personal API key at ${chosen.credential.page}, then add it to your shell profile:`, '    ');
+    command(`export ${chosen.credential.variable}=lin_api_…`, '    ');
+  }
   withoutATracker();
-  return [];
+  return result;
+}
+
+interface TrackerChoice {
+  blockers: string[];
+  tracker: IssueTrackerName;
+  team: string | null;
+}
+
+/**
+ * Records the tracker step 3 chose once `relay init` has written a config to
+ * record it in. Only a change is written: re-running `start` on a repository
+ * that already says `github` leaves its file byte-for-byte alone.
+ */
+async function rememberTracker(repo: RepositoryInfo, choice: TrackerChoice): Promise<RelayConfig> {
+  const config = await loadConfig(repo.root);
+  const before = config.issues ?? { provider: 'github', team: null };
+  if (before.provider === choice.tracker && (choice.tracker !== 'linear' || before.team === choice.team)) return config;
+  config.issues = { provider: choice.tracker, team: choice.tracker === 'linear' ? choice.team : before.team };
+  await writeConfig(repo.root, config);
+  ok(`Issues  ${dim(`bare references now mean ${choice.tracker === 'linear' && choice.team !== null ? `${choice.team}-<n> on Linear` : choice.tracker}`)}`);
+  return config;
 }
 
 /** The other half of step 3: work that has no ticket, which needs no tracker. */
@@ -721,22 +764,29 @@ async function reportReadiness(
 
   // A tracker is a warning, not a failure: a run can start from a file or a
   // prompt without one, so `--check` must not claim Relay is unusable.
-  const provider = ISSUE_TRACKER_REGISTRY[0]!;
+  const configured = (await loadConfig(repo.root).catch(() => undefined))?.issues?.provider ?? 'github';
+  const provider = issueTrackerRegistration(configured) ?? ISSUE_TRACKER_REGISTRY[0]!;
   const withoutIt = 'Or work without a tracker: `relay run ./spec.md`, `relay run --prompt "…"`.';
-  if (!(await deps.installed(provider.binary))) {
+  if (provider.binary !== undefined && !(await deps.installed(provider.binary))) {
     checks.push({
       label: provider.label,
       status: 'warn',
       detail: `${provider.binary} not found`,
-      hint: `${provider.installCommand}\n${withoutIt}`,
+      hint: `${provider.installCommand ?? ''}\n${withoutIt}`.trim(),
     });
   } else {
     const status = await deps.providerCheck(provider, repo.root);
+    const fix =
+      provider.auth !== undefined
+        ? `Run \`${describeCommand(provider.auth.login)}\`.`
+        : provider.credential !== undefined
+          ? `Export ${provider.credential.variable} (create one at ${provider.credential.page}).`
+          : status.hint ?? '';
     checks.push({
       label: provider.label,
       status: status.available ? 'ok' : 'warn',
       detail: status.detail,
-      ...(status.available ? {} : { hint: `Run \`${describeCommand(provider.auth.login)}\`.\n${withoutIt}` }),
+      ...(status.available ? {} : { hint: `${fix}\n${withoutIt}`.trim() }),
     });
   }
 

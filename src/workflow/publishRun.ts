@@ -244,6 +244,10 @@ export function pullRequestDraft(state: RunState, approvedPlan?: string): {
   // ledger records that as a skip rather than leaving a gap.
   if (issue?.number != null) {
     lines.push('', `Closes #${issue.number}`);
+  } else if (issue?.key !== undefined) {
+    // Linear's magic word: with its GitHub integration installed, merging this
+    // pull request moves the issue to Done.
+    lines.push('', `Fixes ${issue.key}`);
   }
 
   const repo =

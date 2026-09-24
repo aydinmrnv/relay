@@ -31,6 +31,7 @@ export async function createCliContext(cwd: string = process.cwd()): Promise<Cli
   const issueProvider = defaultIssueProvider({
     cwd: repo.root,
     defaultRepo: repo.owner !== null && repo.name !== null ? { owner: repo.owner, name: repo.name } : null,
+    issues: config.issues,
   });
 
   return { repo, config, harnesses, issueProvider };
