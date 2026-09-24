@@ -14,10 +14,12 @@ export async function POST(request: Request) {
     if (!parsed.success) throw new ApiError(400, 'INVALID', describeZodError(parsed.error as z.ZodError));
     let workflows = 0;
     let runs = 0;
+    const revisions: Record<string, string> = {};
     const skipped: string[] = [];
     for (const raw of parsed.data.workflows) {
       try {
-        await saveWorkflow(user.id, parseWorkflow(raw));
+        const parsedWorkflow = parseWorkflow(raw);
+        revisions[parsedWorkflow.id] = (await saveWorkflow(user.id, parsedWorkflow, { baseRevision: null, force: true })).revision;
         workflows += 1;
       } catch (error) {
         if (error instanceof ApiError && error.code === 'TOO_MANY_WORKFLOWS') throw error;
@@ -32,7 +34,7 @@ export async function POST(request: Request) {
         skipped.push(describe(raw, error));
       }
     }
-    return json({ ok: true, workflows, runs, skipped });
+    return json({ ok: true, workflows, runs, skipped, revisions });
   });
 }
 

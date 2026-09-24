@@ -127,7 +127,7 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
               <Link2 data-icon="inline-start" /> Copy link
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">Remixing makes your own copy, paused, with your repository. Secrets and people’s logins were removed from this public copy.</p>
+          <p className="text-xs text-muted-foreground">Remixing makes your own copy, paused, with your repository. Secrets, links, addresses and people’s logins were removed from this public copy.</p>
         </section>
 
         <GraphView workflow={workflow} className="h-72 shrink-0 rounded-2xl border sm:h-[28rem]" />

@@ -1,8 +1,8 @@
 /**
  * Schema changes, applied in order the first time a server instance touches
- * the database (see `index.ts`). Each one runs once, inside a transaction,
- * under an advisory lock, so two cold starts racing each other cannot both
- * apply it. Never edit a migration that has shipped; add the next one.
+ * the database (see `index.ts`). Pending ones run together in one
+ * transaction, under an advisory lock, so two cold starts racing each other
+ * cannot both apply them. Never edit a migration that has shipped; add the next one.
  *
  * `schema.ts` describes the same tables for queries; keep the two in step.
  */

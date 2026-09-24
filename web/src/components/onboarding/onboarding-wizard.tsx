@@ -117,7 +117,9 @@ export function OnboardingWizard() {
   const repoValid = repo.trim().length === 0 || /^[\w.-]+\/[\w.-]+$/.test(repo.trim());
   const effectiveRepo = repo.trim().length > 0 ? repo.trim() : 'your-org/your-repo';
 
-  const guestWork = useMemo(() => (typeof window === 'undefined' ? [] : importableGuestWorkflows(readGuestBackup())), []);
+  const inAccount = useStudio((state) => state.workflows);
+  // Read once the account has loaded: signing in (GitHub's redirect included) sets the guest's work aside first.
+  const guestWork = useMemo(() => (status !== 'signed-in' || typeof window === 'undefined' ? [] : importableGuestWorkflows(readGuestBackup(), inAccount)), [status, inAccount]);
   const chosenImports = importIds ?? new Set(guestWork.map((workflow) => workflow.id));
 
   const sentence = useMemo(() => madeForYouSentence(sources, destinations, review, role), [sources, destinations, review, role]);

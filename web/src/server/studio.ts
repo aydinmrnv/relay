@@ -7,6 +7,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { customAlphabet, nanoid } from 'nanoid';
 import type { ShareSummary, VersionSummary } from '@/lib/cloud/types';
 import type { Run, Workflow } from '@/lib/workflow/schema';
+import { redactForSharing } from '@/lib/workflow/redact';
 import { ApiError } from './api';
 import { getDb } from './db';
 import { run, share, workflow, workflowVersion, workspace } from './db/schema';
@@ -15,6 +16,7 @@ import type { OnboardingAnswers } from './validate';
 const MAX_WORKFLOWS = 300;
 const MAX_RUNS = 300;
 const MAX_AUTO_VERSIONS = 40;
+const MAX_NAMED_VERSIONS = 50;
 /** While someone is editing, keep at most one automatic version per this long. */
 const AUTO_VERSION_EVERY_MS = 10 * 60_000;
 
@@ -31,6 +33,8 @@ export interface WorkspaceRecord {
 export interface WorkspacePayload {
   workspace: WorkspaceRecord;
   workflows: Workflow[];
+  /** Workflow id → the server's revision of it, which the next save must name. */
+  revisions: Record<string, string>;
   runs: Run[];
   /** Workflow id → share slug, for the ones that are public. */
   shares: Record<string, string>;
@@ -56,13 +60,14 @@ export async function loadWorkspace(userId: string): Promise<WorkspacePayload> {
   const db = await getDb();
   const record = await ensureWorkspace(userId);
   const [workflows, runs, shares] = await Promise.all([
-    db.select({ data: workflow.data }).from(workflow).where(eq(workflow.userId, userId)),
+    db.select({ data: workflow.data, updatedAt: workflow.updatedAt }).from(workflow).where(eq(workflow.userId, userId)),
     db.select({ data: run.data }).from(run).where(eq(run.userId, userId)).orderBy(desc(run.startedAt)).limit(200),
     db.select({ workflowId: share.workflowId, slug: share.slug }).from(share).where(eq(share.userId, userId)),
   ]);
   return {
     workspace: record,
     workflows: workflows.map((row) => row.data as Workflow),
+    revisions: Object.fromEntries(workflows.map((row) => [(row.data as Workflow).id, row.updatedAt.toISOString()])),
     runs: runs.map((row) => row.data as Run),
     shares: Object.fromEntries(shares.map((row) => [row.workflowId, row.slug])),
   };
@@ -90,34 +95,54 @@ export async function completeOnboarding(userId: string, answers: OnboardingAnsw
 /* Workflows                                                            */
 /* ------------------------------------------------------------------ */
 
-export interface SaveResult {
-  /** The server already had a newer copy (another tab or device), and kept it. */
-  stale: boolean;
+export interface SaveOptions {
+  /**
+   * The revision the client last saw, `null` for a workflow it believes is
+   * new. A save against anything but the current revision is a conflict:
+   * the server keeps its copy and hands it back, rather than letting a stale
+   * tab or device silently replace newer work.
+   */
+  baseRevision: string | null;
+  /** Imports skip the check: they bring in copies that have never been synced. */
+  force?: boolean;
 }
 
-export async function saveWorkflow(userId: string, next: Workflow): Promise<SaveResult> {
+export async function saveWorkflow(userId: string, next: Workflow, options: SaveOptions): Promise<{ revision: string }> {
   const db = await getDb();
   const [existing] = await db
-    .select({ data: workflow.data })
+    .select({ data: workflow.data, updatedAt: workflow.updatedAt })
     .from(workflow)
     .where(and(eq(workflow.userId, userId), eq(workflow.id, next.id)));
 
   if (existing === undefined) {
+    // Absent here but known to the client means it was deleted elsewhere;
+    // an edit made since wins over that delete, so it is saved again.
     const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(workflow).where(eq(workflow.userId, userId));
     if (count >= MAX_WORKFLOWS) throw new ApiError(409, 'TOO_MANY_WORKFLOWS', `An account can hold ${MAX_WORKFLOWS} workflows. Delete one to make room.`);
   } else {
-    const previous = existing.data as Workflow;
-    if (Date.parse(previous.updatedAt) > Date.parse(next.updatedAt)) return { stale: true };
+    const revision = existing.updatedAt.toISOString();
+    if (options.force !== true && options.baseRevision !== revision) {
+      throw new ApiError(409, 'CONFLICT', 'This workflow was changed somewhere else.', { workflow: existing.data, revision });
+    }
     // Before the first save of an editing session, keep what it looked like,
     // so "restore" can undo a whole session rather than a keystroke.
+    const previous = existing.data as Workflow;
     if (graphChanged(previous, next)) await maybeAutoVersion(userId, previous);
   }
 
+  const now = new Date();
   await db
     .insert(workflow)
-    .values({ userId, id: next.id, name: next.name.slice(0, 200), data: next, createdAt: safeDate(next.createdAt), updatedAt: new Date() })
-    .onConflictDoUpdate({ target: [workflow.userId, workflow.id], set: { name: next.name.slice(0, 200), data: next, updatedAt: new Date() } });
-  return { stale: false };
+    .values({ userId, id: next.id, name: next.name.slice(0, 200), data: next, createdAt: safeDate(next.createdAt), updatedAt: now })
+    .onConflictDoUpdate({ target: [workflow.userId, workflow.id], set: { name: next.name.slice(0, 200), data: next, updatedAt: now } });
+  return { revision: now.toISOString() };
+}
+
+/** The account's copy of a workflow, or a 404: shares and versions only exist for workflows that do. */
+async function requireWorkflow(userId: string, workflowId: string): Promise<void> {
+  const db = await getDb();
+  const [row] = await db.select({ id: workflow.id }).from(workflow).where(and(eq(workflow.userId, userId), eq(workflow.id, workflowId)));
+  if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'Save the workflow to your account first, then try again.');
 }
 
 export async function deleteWorkflow(userId: string, workflowId: string): Promise<void> {
@@ -188,6 +213,13 @@ export async function listVersions(userId: string, workflowId: string): Promise<
 }
 
 export async function saveNamedVersion(userId: string, snapshot: Workflow, label: string): Promise<VersionSummary> {
+  await requireWorkflow(userId, snapshot.id);
+  const db = await getDb();
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(workflowVersion)
+    .where(and(eq(workflowVersion.userId, userId), eq(workflowVersion.workflowId, snapshot.id), eq(workflowVersion.auto, false)));
+  if (count >= MAX_NAMED_VERSIONS) throw new ApiError(409, 'TOO_MANY_VERSIONS', `A workflow can keep ${MAX_NAMED_VERSIONS} named versions. Delete one to save another.`);
   return insertVersion(userId, snapshot, label.trim().slice(0, 120) || 'Saved version', false);
 }
 
@@ -252,6 +284,7 @@ export async function getShareFor(userId: string, workflowId: string): Promise<S
 
 /** Publishes (or refreshes) the public copy. Secrets in node settings never leave the account. */
 export async function publishShare(userId: string, authorName: string, source: Workflow): Promise<ShareSummary> {
+  await requireWorkflow(userId, source.id);
   const db = await getDb();
   const snapshot = redactForSharing(source);
   const existing = await getShareFor(userId, source.id);
@@ -287,35 +320,6 @@ export async function countShare(slug: string, what: 'views' | 'remixes'): Promi
 
 function summarise(row: typeof share.$inferSelect): ShareSummary {
   return { slug: row.slug, views: row.views, remixes: row.remixes, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
-}
-
-const SECRET_KEY = /secret|token|password|passwd|api[-_]?key|apikey|authorization|auth[-_]?header|headers|webhook[-_]?url|private|credential/i;
-
-/**
- * A copy fit for the public: settings whose name suggests a credential are
- * blanked, and people's logins in allowlists and approver lists become
- * placeholders. Whoever remixes it fills in their own.
- */
-export function redactForSharing(source: Workflow): Workflow {
-  return {
-    ...source,
-    repository: 'your-org/your-repo',
-    exportedAt: undefined,
-    nodes: source.nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        config: Object.fromEntries(
-          Object.entries(node.data.config).map(([key, value]) => {
-            if (SECRET_KEY.test(key)) return [key, ''];
-            if ((key === 'authors' || key === 'approvers') && typeof value === 'string' && value.trim().length > 0) return [key, 'your-login'];
-            if (key === 'teams' && typeof value === 'string' && value.trim().length > 0) return [key, 'your-org/your-team'];
-            return [key, value];
-          }),
-        ),
-      },
-    })),
-  };
 }
 
 function safeDate(value: string): Date {

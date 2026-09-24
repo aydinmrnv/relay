@@ -11,6 +11,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** Extra fields for the client, e.g. the server's copy on a conflict. */
+    readonly data?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -32,6 +34,11 @@ export async function withUser(request: Request, handler: (user: SessionUser) =>
     if (request.method !== 'GET' && request.method !== 'HEAD') assertSameOrigin(request);
     const user = await getSessionUser(request.headers);
     if (user === null) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in to do that.');
+    // The sync engine says whose workspace it is sending. If another tab has
+    // since signed in as someone else, the cookie belongs to them: refuse,
+    // rather than save one person's work into another's account.
+    const expected = request.headers.get('x-relay-user');
+    if (expected !== null && expected !== user.id) throw new ApiError(409, 'USER_MISMATCH', 'This browser is now signed in as someone else.');
     return await handler(user);
   } catch (error) {
     return errorResponse(error);
@@ -39,7 +46,7 @@ export async function withUser(request: Request, handler: (user: SessionUser) =>
 }
 
 export function errorResponse(error: unknown): Response {
-  if (error instanceof ApiError) return json({ code: error.code, message: error.message }, { status: error.status });
+  if (error instanceof ApiError) return json({ ...error.data, code: error.code, message: error.message }, { status: error.status });
   console.error('[api]', error);
   return json({ code: 'INTERNAL', message: 'Something went wrong on our side. Your change is kept in this browser and will be retried.' }, { status: 500 });
 }
@@ -66,6 +73,8 @@ function assertSameOrigin(request: Request): void {
 export async function readJson(request: Request, maxBytes: number): Promise<unknown> {
   const type = request.headers.get('content-type') ?? '';
   if (!type.includes('application/json')) throw new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Send JSON.');
+  const declared = Number(request.headers.get('content-length') ?? '0');
+  if (declared > maxBytes) throw new ApiError(413, 'TOO_LARGE', `That is too large to save (${Math.round(declared / 1024)} KB; the limit is ${Math.round(maxBytes / 1024)} KB).`);
   const text = await request.text();
   if (text.length > maxBytes) throw new ApiError(413, 'TOO_LARGE', `That is too large to save (${Math.round(text.length / 1024)} KB; the limit is ${Math.round(maxBytes / 1024)} KB).`);
   try {

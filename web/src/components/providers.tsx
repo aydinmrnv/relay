@@ -1,7 +1,7 @@
 'use client';
 
 import { ThemeProvider } from 'next-themes';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { MotionConfig, MotionGlobalConfig } from 'motion/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -13,13 +13,15 @@ import { CapabilitiesContext, useAccount } from '@/lib/cloud/account';
 import { startAccount } from '@/lib/cloud/sync';
 import type { AuthCapabilities } from '@/lib/cloud/types';
 
-export function Providers({ capabilities, children }: { capabilities: AuthCapabilities; children: React.ReactNode }) {
+export function Providers({ capabilities: built, children }: { capabilities: AuthCapabilities; children: React.ReactNode }) {
+  // What the page was rendered with; replaced if the running server says otherwise.
+  const [capabilities, setCapabilities] = useState(built);
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <CapabilitiesContext value={capabilities}>
       <MotionPreference>
         <TooltipProvider delay={200}>
-          <AccountBoot capabilities={capabilities} />
+          <AccountBoot capabilities={built} onRuntime={setCapabilities} />
           <SeedOnce />
           <BrandTitle />
           <AgentsPoller />
@@ -65,11 +67,26 @@ function BrandTitle() {
  * Once the saved studio is back from localStorage, decide whether this is a
  * guest or an account, and load the account's workspace if it is one.
  */
-function AccountBoot({ capabilities }: { capabilities: AuthCapabilities }) {
+function AccountBoot({ capabilities, onRuntime }: { capabilities: AuthCapabilities; onRuntime: (capabilities: AuthCapabilities) => void }) {
   const hydrated = useStudio((state) => state.hydrated);
   useEffect(() => {
-    if (hydrated) void startAccount(capabilities);
-    // Capabilities are fixed for the life of the page.
+    if (!hydrated) return;
+    let cancelled = false;
+    // Start at once with what the page was rendered with — right in every
+    // normal deployment — and start again only if the server disagrees.
+    void startAccount(capabilities);
+    fetch('/api/capabilities')
+      .then((response) => (response.ok ? (response.json() as Promise<AuthCapabilities>) : null))
+      .then((runtime) => {
+        if (cancelled || runtime === null || JSON.stringify(runtime) === JSON.stringify(capabilities)) return;
+        onRuntime(runtime);
+        void startAccount(runtime);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // Once per page: capabilities do not change while it is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
   return null;

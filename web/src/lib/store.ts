@@ -32,6 +32,11 @@ export interface StudioState {
    * shows the account's last-known state while the server is asked again.
    */
   owner: string | null;
+  /**
+   * Bumped by "Clear run history" (and a full reset), so an account's sync
+   * can tell clearing every run apart from deleting the last one.
+   */
+  runsClearedAt: number;
   brand: Brand;
   workflows: Record<string, Workflow>;
   runs: Run[];
@@ -78,6 +83,7 @@ export const useStudio = create<StudioState>()(
       hydrated: false,
       seeded: false,
       owner: null,
+      runsClearedAt: 0,
       brand: DEFAULT_BRAND,
       workflows: {},
       runs: [],
@@ -146,7 +152,7 @@ export const useStudio = create<StudioState>()(
 
       addRun: (run) => set((state) => ({ runs: [run, ...state.runs].slice(0, 200) })),
       updateRun: (run) => set((state) => ({ runs: state.runs.map((existing) => (existing.id === run.id ? run : existing)) })),
-      clearRuns: () => set({ runs: [] }),
+      clearRuns: () => set({ runs: [], runsClearedAt: Date.now() }),
       deleteRun: (id) => set((state) => ({ runs: state.runs.filter((run) => run.id !== id) })),
 
       markTourSeen: (id, seen = true) => set((state) => ({ toursSeen: { ...state.toursSeen, [id]: seen } })),
@@ -197,7 +203,7 @@ export const useStudio = create<StudioState>()(
 
       // Signed in, an empty workspace stays empty: seeding is for guests.
       resetAll: () =>
-        set((state) => ({ workflows: {}, runs: [], connections: {}, seeded: state.owner !== null, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND, toursSeen: {}, checklistDismissed: false })),
+        set((state) => ({ workflows: {}, runs: [], runsClearedAt: Date.now(), connections: {}, seeded: state.owner !== null, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND, toursSeen: {}, checklistDismissed: false })),
 
       replaceWorkspace: (snapshot) =>
         set({

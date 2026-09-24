@@ -33,6 +33,12 @@ export interface AccountState {
   shares: Record<string, string>;
   /** Set when loading the workspace failed, so the studio can offer to retry. */
   loadError: string | null;
+  /**
+   * Bumped whenever a workflow is replaced from the server underneath an open
+   * screen (a conflict), so the builder remounts on the new copy instead of
+   * writing its old working copy back.
+   */
+  epoch: number;
 }
 
 export const useAccount = create<AccountState>()(() => ({
@@ -43,9 +49,10 @@ export const useAccount = create<AccountState>()(() => ({
   onboarding: null,
   shares: {},
   loadError: null,
+  epoch: 0,
 }));
 
-const HINT_KEY = 'relay-account-hint';
+export const HINT_KEY = 'relay-account-hint';
 
 /** Whether this browser may be signed in. A hint, not proof: the server decides. */
 export function hasSessionHint(): boolean {

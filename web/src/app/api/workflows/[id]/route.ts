@@ -10,7 +10,9 @@ export async function PUT(request: Request, context: RouteContext<'/api/workflow
     const parsed = workflowSchema.safeParse(await readJson(request, WORKFLOW_MAX_BYTES));
     if (!parsed.success) throw new ApiError(400, 'INVALID', describeZodError(parsed.error as z.ZodError));
     if (parsed.data.id !== id) throw new ApiError(400, 'ID_MISMATCH', 'The workflow id does not match the address.');
-    const result = await saveWorkflow(user.id, parsed.data as unknown as Workflow);
+    // The revision this save is based on: an ISO timestamp from the server, or "none" for a new workflow.
+    const base = request.headers.get('x-relay-revision');
+    const result = await saveWorkflow(user.id, parsed.data as unknown as Workflow, { baseRevision: base === null || base === 'none' ? null : base });
     return json({ ok: true, ...result });
   });
 }

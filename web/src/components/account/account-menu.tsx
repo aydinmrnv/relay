@@ -45,7 +45,7 @@ export function AccountMenu() {
   }
 
   const leave = async () => {
-    await signOut();
+    if (!(await signOut())) return;
     toast.success('Signed out', { description: 'Your workflows are safe in your account.' });
     router.push('/');
   };

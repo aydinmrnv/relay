@@ -5,8 +5,14 @@ import { safeNext } from '@/lib/safe-next';
 
 /** Someone already signed in has no business on a sign-in form: send them on. */
 export async function redirectIfSignedIn(next: string | null, fallback: string): Promise<void> {
-  const user = await getSessionUser(await headers());
-  if (user !== null) redirect(safeNext(next, fallback));
+  let signedIn = false;
+  try {
+    signedIn = (await getSessionUser(await headers())) !== null;
+  } catch (error) {
+    // Show the form; signing in will report the problem properly.
+    console.error('[auth] could not check the session', error);
+  }
+  if (signedIn) redirect(safeNext(next, fallback));
 }
 
 export function firstParam(value: string | string[] | undefined): string | null {

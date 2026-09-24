@@ -16,6 +16,7 @@ export default function WorkflowBuilderPage({ params }: PageProps<'/workflows/[i
   // Remount when the workspace is swapped (signing in or out), so the canvas never edits a copy that is gone.
   const owner = useStudio((state) => state.owner);
   const signedIn = useAccount((state) => state.status === 'signed-in');
+  const epoch = useAccount((state) => state.epoch);
 
   if (!hydrated) return null;
   if (!exists) {
@@ -40,5 +41,5 @@ export default function WorkflowBuilderPage({ params }: PageProps<'/workflows/[i
       </Empty>
     );
   }
-  return <Builder key={`${id}:${owner ?? 'guest'}`} workflowId={id} />;
+  return <Builder key={`${id}:${owner ?? 'guest'}:${epoch}`} workflowId={id} />;
 }

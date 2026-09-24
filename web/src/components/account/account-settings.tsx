@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { BadgeCheck, CloudUpload, KeyRound, Laptop, Loader2, LogIn, MailWarning, ShieldAlert, Trash2, UserPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -27,9 +27,9 @@ import { PasswordInput } from '@/components/auth/password-input';
 import { SettingBlock } from '@/components/settings/settings-section';
 import { authClient, authErrorMessage } from '@/lib/auth-client';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
-import { forgetAccount, importableGuestWorkflows, importGuestWorkflows, readGuestBackup } from '@/lib/cloud/sync';
+import { forgetAccount, importableGuestWorkflows, importGuestWorkflows, readGuestBackup, type GuestBackup } from '@/lib/cloud/sync';
+import { useStudio } from '@/lib/store';
 import { timeAgo } from '@/lib/format';
-import type { Workflow } from '@/lib/workflow/schema';
 import { UserAvatar } from './user-avatar';
 
 interface LinkedAccount {
@@ -360,19 +360,23 @@ function SessionsBlock() {
 
 /** A guest's workflows from before signing in, still in this browser, that are not in the account yet. */
 function ImportFromBrowser() {
-  const workflowIds = useAccount((state) => state.user?.id);
-  const [candidates, setCandidates] = useState<Workflow[]>([]);
-  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const inAccount = useStudio((state) => state.workflows);
+  const [backup, setBackup] = useState<GuestBackup | null>(null);
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    const list = importableGuestWorkflows(readGuestBackup());
-    const timer = setTimeout(() => {
-      setCandidates(list);
-      setChosen(new Set(list.map((workflow) => workflow.id)));
-    }, 0);
+    // localStorage is only there after mounting; read it once, then.
+    const timer = setTimeout(() => setBackup(readGuestBackup()), 0);
     return () => clearTimeout(timer);
-  }, [workflowIds]);
+  }, []);
+
+  const candidates = useMemo(() => importableGuestWorkflows(backup, inAccount), [backup, inAccount]);
+  const chosen = new Set(candidates.map((workflow) => workflow.id).filter((id) => !excluded.has(id)));
+  const setChosen = (update: (current: Set<string>) => Set<string>) => {
+    const next = update(chosen);
+    setExcluded(new Set(candidates.map((workflow) => workflow.id).filter((id) => !next.has(id))));
+  };
 
   if (candidates.length === 0) return null;
 
@@ -381,7 +385,6 @@ function ImportFromBrowser() {
     try {
       const result = await importGuestWorkflows([...chosen]);
       toast.success(`Brought ${result.workflows} ${result.workflows === 1 ? 'workflow' : 'workflows'} into your account`, { description: result.skipped.length > 0 ? `Skipped: ${result.skipped.join('; ')}` : undefined });
-      setCandidates((list) => list.filter((workflow) => !chosen.has(workflow.id)));
     } catch (error) {
       toast.error('Could not import', { description: error instanceof Error ? error.message : undefined });
     } finally {

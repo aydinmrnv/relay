@@ -17,7 +17,7 @@ import { schema } from './schema';
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
-/** The raw connection migrations run on: one session, so the advisory lock holds. */
+/** The raw connection migrations run on: one connection, so their transaction and its lock hold. */
 interface RawSession {
   exec: (sql: string) => Promise<void>;
   rows: <T>(sql: string, params?: unknown[]) => Promise<T[]>;
@@ -100,28 +100,31 @@ async function openPglite(dir: string): Promise<Handle> {
   };
 }
 
+/**
+ * Everything in one transaction, under a transaction-scoped advisory lock:
+ * behind a transaction-mode pooler (Neon's pooled URL, PgBouncer) a
+ * session lock and its unlock can land on different connections and leave
+ * the lock held forever. A transaction always stays on one connection, and
+ * its lock is released when it ends, however it ends.
+ */
 async function migrate(handle: Handle): Promise<void> {
   const session = await handle.session();
   try {
-    await session.rows('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK]);
+    await session.exec('BEGIN');
     try {
+      await session.rows('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK]);
       await session.exec('CREATE TABLE IF NOT EXISTS _relay_migrations (id text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
       const applied = new Set((await session.rows<{ id: string }>('SELECT id FROM _relay_migrations')).map((row) => row.id));
       for (const migration of MIGRATIONS) {
         if (applied.has(migration.id)) continue;
-        await session.exec('BEGIN');
-        try {
-          await session.exec(migration.sql);
-          await session.rows('INSERT INTO _relay_migrations (id) VALUES ($1)', [migration.id]);
-          await session.exec('COMMIT');
-          console.info(`[db] applied ${migration.id}`);
-        } catch (error) {
-          await session.exec('ROLLBACK');
-          throw error;
-        }
+        await session.exec(migration.sql);
+        await session.rows('INSERT INTO _relay_migrations (id) VALUES ($1)', [migration.id]);
+        console.info(`[db] applied ${migration.id}`);
       }
-    } finally {
-      await session.rows('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK]);
+      await session.exec('COMMIT');
+    } catch (error) {
+      await session.exec('ROLLBACK');
+      throw error;
     }
   } finally {
     session.release();

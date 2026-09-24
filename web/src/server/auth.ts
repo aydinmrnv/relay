@@ -155,17 +155,16 @@ export interface SessionUser {
   createdAt: Date;
 }
 
-/** Who is asking, from the request's cookies, or `null`. Never throws for a missing or broken session. */
+/**
+ * Who is asking, from the request's cookies, or `null` when nobody is signed
+ * in. A database that cannot be reached throws instead: answering "signed
+ * out" would make the studio discard the account's unsent work.
+ */
 export async function getSessionUser(headers: Headers): Promise<SessionUser | null> {
   const auth = await getAuth();
   if (auth === null) return null;
-  try {
-    const session = await auth.api.getSession({ headers });
-    if (session === null) return null;
-    const { id, name, email, emailVerified, image, createdAt } = session.user;
-    return { id, name, email, emailVerified, image: image ?? null, createdAt };
-  } catch (error) {
-    console.error('[auth] could not read the session', error);
-    return null;
-  }
+  const session = await auth.api.getSession({ headers });
+  if (session === null) return null;
+  const { id, name, email, emailVerified, image, createdAt } = session.user;
+  return { id, name, email, emailVerified, image: image ?? null, createdAt };
 }

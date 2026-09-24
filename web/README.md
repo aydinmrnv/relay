@@ -39,13 +39,14 @@ The browser keeps using the same zustand store. Signing in swaps its contents fo
 | `/api/auth/*` | Better Auth: sign-up, sign-in, GitHub, sessions, password reset, email confirmation, account deletion. Rate limited in the database in production |
 | `GET/PATCH /api/workspace` | Everything a signed-in studio needs; settings, name, connections and tours |
 | `POST /api/workspace/onboarding`, `/import` | Onboarding answers; bringing guest work or an export into the account |
-| `PUT/DELETE /api/workflows/:id`, `/api/runs/:id`, `DELETE /api/runs` | Sync. A write older than the stored copy is ignored, so a stale tab cannot overwrite newer work |
+| `PUT/DELETE /api/workflows/:id`, `/api/runs/:id`, `DELETE /api/runs` | Sync. A save names the revision it is based on; a stale one gets a 409 with the server's copy, and the studio keeps both (the other as a "conflicted copy") |
 | `/api/workflows/:id/versions[/:versionId]` | Version history |
 | `/api/workflows/:id/share`, `POST /api/share/:slug/remix` | Publishing, refreshing and withdrawing a share link; counting remixes |
 | `/api/badge/:slug` | The README badge (SVG) |
+| `GET /api/capabilities` | Which sign-in methods this deployment has, read at run time |
 | `GET /api/health` | Up, database reachable, which sign-in methods are on |
 
-Every mutating route checks the session, rejects cross-site origins, bounds its body size and validates it with zod.
+Every mutating route checks the session, rejects cross-site origins, bounds its body size and validates it with zod. Sync requests also name the account they belong to (`x-relay-user`), so a tab left open after someone else signs in elsewhere cannot write into their account. Share links publish an allowlisted copy (`src/lib/workflow/redact.ts`): choices, numbers and plain text pass; secrets, links, email addresses and people's logins do not.
 
 ## The hosted demo
 
