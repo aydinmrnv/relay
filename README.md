@@ -15,7 +15,7 @@ you draw on a canvas.
 look around; sign up free to keep your workflows, share them and get version
 history.
 
-![The Relay studio: a Linear-to-pull-request workflow on the canvas, with the spend forecast open](docs/images/studio.png)
+![The Relay studio: a Linear-to-pull-request workflow on the canvas](docs/images/studio.png)
 
 Relay is a workflow builder for coding agents, in the spirit of n8n: you draw a
 flow on a canvas once — what starts a run, the guardrails in front of it, the
@@ -88,6 +88,10 @@ the studio uses.
   on demand, and a restore you can undo.
 - **Your subscriptions, your runners.** No API keys; agents run on your machine
   or your own Actions minutes, and Relay never sees your code.
+
+| Describe it | Spend forecast |
+|---|---|
+| ![A sentence becoming a Sentry-to-pull-request workflow as it is typed](docs/images/describe.png) | ![The spend forecast: typical and 90th-percentile cost per run, a monthly projection and where the money goes](docs/images/forecast.png) |
 
 ## How a workflow is built
 
