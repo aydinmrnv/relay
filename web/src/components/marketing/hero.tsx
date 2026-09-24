@@ -1,111 +1,88 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, ArrowUpRight, KeyRound, Laptop, PlayCircle, Sparkles } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, KeyRound, Laptop, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Spotlight } from '@/components/21st/spotlight';
 import { useBrand } from '@/hooks/use-brand';
-import { PipelinePreview } from './pipeline-preview';
-import { AppMark, REPO_URL, Reveal, WordReveal } from './primitives';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
+import { PipelinePreview } from './pipeline-preview';
+import { AppMark, REPO_URL } from './primitives';
 
 const TRUST = [
-  { icon: Sparkles, text: 'Free while in beta' },
-  { icon: KeyRound, text: 'Bring your own Claude / ChatGPT subscription' },
-  { icon: Laptop, text: 'Your code stays on your machine or runner' },
+  { icon: Laptop, text: 'Runs on your machine' },
+  { icon: KeyRound, text: 'Your existing AI subscriptions' },
+  { icon: Wallet, text: 'Free to get started' },
 ];
 
 export function Hero() {
   const brand = useBrand();
-  const status = useAccount((state) => state.status);
-  const signedIn = status === 'signed-in';
+  const signedIn = useAccount((state) => state.status === 'signed-in');
   const accounts = useCapabilities().enabled;
-
+  // Signed out, the first button makes an account and the second is the no-sign-up way in.
+  const invite = accounts && !signedIn;
   return (
-    <section className="relative overflow-hidden">
-      {/* A faint grid that fades out towards the edges, and a wash of the brand colour behind the headline. */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_70%_60%_at_50%_0%,#000_40%,transparent_100%)]" />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute top-[-18rem] left-1/2 size-[44rem] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,color-mix(in_oklch,var(--primary)_22%,transparent),transparent_65%)] blur-2xl"
-      />
-
-      <div className="relative container flex flex-col items-center pt-14 pb-12 text-center sm:pt-20 lg:pt-24">
-        <Reveal y={8}>
+    <section className="overflow-hidden">
+      <div className="relative mx-auto max-w-6xl border-x">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-[540px] bg-grid opacity-35 [mask-image:linear-gradient(to_bottom,#000,transparent)]"
+        />
+        <div className="relative flex flex-col items-center px-5 pt-14 pb-10 text-center sm:px-8 sm:pt-20 sm:pb-12 lg:pt-20">
           <a
             href={REPO_URL}
             target="_blank"
             rel="noreferrer"
-            className="group inline-flex items-center gap-2 rounded-full border bg-background/70 py-1 pr-3 pl-1 text-xs text-muted-foreground shadow-xs backdrop-blur transition-colors hover:border-primary/40 hover:text-foreground"
+            className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
-            <Badge variant="secondary" className="gap-1 rounded-full">
-              <AppMark connector="github" size={11} />
-              CLI
-            </Badge>
-            <span>The engine is open source, on GitHub</span>
-            <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            <AppMark connector="github" size={13} />
+            <span>The workflow layer for coding agents</span>
+            <ArrowUpRight className="size-3 shrink-0" />
           </a>
-        </Reveal>
-
-        <h1 className="mt-6 max-w-5xl text-4xl leading-[1.05] font-semibold tracking-tight text-balance sm:text-6xl lg:text-7xl">
-          <WordReveal text="Tickets in." />
-          <WordReveal text="Reviewed pull requests out." delay={0.2} className="text-primary" />
-        </h1>
-
-        <Reveal y={8} delay={0.3} className="mt-6 max-w-2xl">
-          <p className="text-base text-pretty text-muted-foreground sm:text-lg">
-            {brand.name} hands an issue to the coding agents you already use, Claude Code and Codex, and makes them check each other. One plans and the other attacks the
-            plan; one implements and the other reviews the diff; your test suite has the last word. The result arrives as a draft pull request.
+          <h1 className="mt-8 max-w-5xl text-[clamp(2.25rem,11vw,2.75rem)] sm:text-[clamp(2.75rem,6.5vw,5rem)] leading-[1.05] font-semibold tracking-[-0.055em] text-balance">
+            Ticket in.
+            <br />
+            <span className="text-primary">Reviewed PR out.</span>
+          </h1>
+          <p className="mt-6 max-w-xl text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg">
+            Claude Code and Codex, working together on your repository. {brand.name} connects the plan, the code, and
+            the review. You decide what ships.
           </p>
-        </Reveal>
-
-        <Reveal y={8} delay={0.4} className="mt-8 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center sm:justify-center">
-          <Button size="lg" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href={signedIn || !accounts ? '/dashboard' : '/sign-up'} />}>
-            {signedIn ? 'Open your studio' : accounts ? 'Get started free' : 'Open the studio'}
-            <ArrowRight data-icon="inline-end" />
-          </Button>
-          {signedIn ? null : (
-            <Button size="lg" variant="outline" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href="/dashboard" />}>
-              <PlayCircle data-icon="inline-start" />
-              Try the demo, no sign-up
+          <div className="mt-8 flex w-full max-w-sm flex-col gap-3 sm:w-auto sm:max-w-none sm:flex-row">
+            <Button
+              size="lg"
+              className="h-11 rounded-md px-6 shadow-none"
+              nativeButton={false}
+              render={<Link href={invite ? '/sign-up' : '/dashboard'} />}
+            >
+              {invite ? 'Get started free' : signedIn ? 'Open your studio' : 'Open the studio'}
+              <ArrowRight data-icon="inline-end" />
             </Button>
-          )}
-        </Reveal>
-
-        <Reveal y={8} delay={0.5} className="mt-6">
-          <ul className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-muted-foreground sm:text-sm">
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-11 rounded-md px-6 shadow-none"
+              nativeButton={false}
+              render={<Link href={invite ? '/dashboard' : '/guide'} />}
+            >
+              {invite ? 'Try it without an account' : 'Read the docs'}
+              <ArrowUpRight data-icon="inline-end" />
+            </Button>
+          </div>
+          <ul className="mt-7 flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
             {TRUST.map(({ icon: Icon, text }) => (
               <li key={text} className="inline-flex items-center gap-1.5">
-                <Icon className="size-3.5 text-primary" />
+                <Icon className="size-3.5" />
                 {text}
               </li>
             ))}
           </ul>
-        </Reveal>
-      </div>
-
-      <div className="relative container pb-16 sm:pb-24">
-        <Reveal y={20} delay={0.55}>
-          <div className="relative overflow-hidden rounded-2xl border bg-background/60 shadow-xl shadow-primary/5 backdrop-blur-sm">
-            <Spotlight size={420} className="from-primary/25 via-primary/10 to-transparent dark:from-primary/25 dark:via-primary/10 dark:to-transparent" />
-            <div className="relative flex items-center gap-3 border-b bg-muted/40 px-4 py-2.5">
-              <div aria-hidden className="flex gap-1.5">
-                <span className="size-2.5 rounded-full bg-foreground/15" />
-                <span className="size-2.5 rounded-full bg-foreground/15" />
-                <span className="size-2.5 rounded-full bg-foreground/15" />
-              </div>
-              <p className="min-w-0 truncate text-xs font-medium">Ticket to pull request</p>
-              <Badge variant="outline" className="hidden sm:inline-flex">
-                template
-              </Badge>
-              <p className="ml-auto hidden text-xs text-muted-foreground md:block">Every box is a node you can move, swap or delete in the builder</p>
-            </div>
-            <div className="relative bg-grid px-4 py-8 sm:px-8 sm:py-12">
-              <PipelinePreview />
-            </div>
-          </div>
-        </Reveal>
+        </div>
+        <div className="relative px-4 pb-8 sm:px-8 sm:pb-10">
+          <PipelinePreview />
+          <p className="mt-4 text-center text-xs leading-relaxed text-muted-foreground">
+            Explore each step of a sample workflow. Connect your machine to run your own.
+          </p>
+        </div>
       </div>
     </section>
   );

@@ -20,8 +20,11 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/75 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
-      <div className="container flex h-14 items-center gap-3">
-        <Link href="/" className="mr-auto flex items-center gap-2 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50 lg:mr-0">
+      <div className="container max-w-6xl flex h-16 items-center gap-4">
+        <Link
+          href="/"
+          className="mr-auto flex items-center gap-2 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50 lg:mr-0"
+        >
           <BrandMark className="size-7" />
           <span className="font-semibold tracking-tight">{brand.name}</span>
           <Badge variant="secondary" className="hidden sm:inline-flex">
@@ -29,7 +32,7 @@ export function SiteHeader() {
           </Badge>
         </Link>
 
-        <nav aria-label="Sections" className="mx-auto hidden items-center gap-1 lg:flex">
+        <nav aria-label="Sections" className="mx-auto hidden items-center gap-0.5 lg:flex">
           {SECTIONS.map((section) => (
             <a
               key={section.id}
@@ -45,6 +48,7 @@ export function SiteHeader() {
           <Button
             variant="ghost"
             size="icon"
+            className="hidden sm:inline-flex"
             aria-label={`The ${brand.name} CLI on GitHub`}
             title={`The ${brand.name} CLI on GitHub`}
             nativeButton={false}

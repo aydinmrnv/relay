@@ -51,8 +51,8 @@ export function Different() {
   ];
 
   return (
-    <section id="different" className="scroll-mt-16 border-t py-20 sm:py-28">
-      <div className="container">
+    <section id="different" className="scroll-mt-20 border-t py-16 sm:py-24">
+      <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="What’s different"
           title={`What ${brand.name} does that others don’t`}

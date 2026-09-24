@@ -13,7 +13,7 @@ export { REPO_URL } from '@/lib/links';
 /** In-page anchors, shared by the header, the mobile menu and the footer so none can point at nothing. */
 export const SECTIONS = [
   { id: 'how', label: 'How it works' },
-  { id: 'features', label: 'Features' },
+  { id: 'builder', label: 'The studio' },
   { id: 'different', label: 'What’s different' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'pricing', label: 'Pricing' },
@@ -28,19 +28,30 @@ export { useCalmMotion };
  * Rises into place the first time it scrolls into view. `whileInView` rather
  * than `animate`, for two reasons: content below the fold does not play its
  * entrance unseen, and even content above the fold starts only after
- * hydration, once the Animations setting is in force, so "reduced" is instant
+ * hydration. Content stays visible before hydration and below the fold, so
+ * a delayed observer never leaves empty sections. "Reduced" is instant
  * on a server-rendered visit too. On a client-side visit with reduced motion,
  * `initial={false}` means it is simply there.
  */
-export function Reveal({ children, className, delay = 0, y = 14 }: { children: ReactNode; className?: string; delay?: number; y?: number }) {
+export function Reveal({
+  children,
+  className,
+  delay = 0,
+  y = 14,
+}: {
+  children: ReactNode;
+  className?: string;
+  delay?: number;
+  y?: number;
+}) {
   const reduce = useCalmMotion();
   return (
     <motion.div
       className={className}
-      initial={reduce ? false : { opacity: 0, y }}
+      initial={reduce ? false : { opacity: 1, y }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.15 }}
-      transition={{ duration: 0.5, ease: EASE, delay }}
+      transition={{ duration: reduce ? 0 : 0.5, ease: EASE, delay: reduce ? 0 : delay }}
     >
       {children}
     </motion.div>
@@ -78,12 +89,24 @@ export function WordReveal({ text, className, delay = 0 }: { text: string; class
   );
 }
 
-export function SectionHeading({ eyebrow, title, description, className }: { eyebrow: string; title: ReactNode; description?: ReactNode; className?: string }) {
+export function SectionHeading({
+  eyebrow,
+  title,
+  description,
+  className,
+}: {
+  eyebrow: string;
+  title: ReactNode;
+  description?: ReactNode;
+  className?: string;
+}) {
   return (
-    <Reveal className={cn('mx-auto flex max-w-2xl flex-col items-center gap-3 text-center', className)}>
-      <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">{eyebrow}</p>
+    <Reveal className={cn('mx-auto flex max-w-2xl flex-col items-center gap-4 text-center', className)}>
+      <p className="text-xs font-semibold tracking-[0.12em] text-primary uppercase">{eyebrow}</p>
       <h2 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">{title}</h2>
-      {description === undefined ? null : <p className="text-base text-pretty text-muted-foreground sm:text-lg">{description}</p>}
+      {description === undefined ? null : (
+        <p className="max-w-xl text-base leading-relaxed text-pretty text-muted-foreground">{description}</p>
+      )}
     </Reveal>
   );
 }
@@ -112,7 +135,9 @@ export function AppMark({ connector, size = 16, className }: { connector: Connec
   const resolved = resolve(connector);
   if (resolved === undefined) return null;
   const dark = isNearBlack(resolved.icon.color);
-  return <ConnectorIcon connector={resolved} variant="mark" size={size} colored={!dark} className={cn(dark && 'text-foreground', className)} />;
+  return (
+    <ConnectorIcon connector={resolved} variant="mark" size={size} colored={!dark} className={cn(dark && 'text-foreground', className)} />
+  );
 }
 
 /** The mark on a soft tile tinted with the brand colour, the way nodes show it in the builder. */
@@ -123,7 +148,11 @@ export function AppTile({ connector, size = 16, className }: { connector: Connec
   const tile = Math.round(size * 1.9);
   return (
     <span
-      className={cn('inline-flex shrink-0 items-center justify-center rounded-lg border border-black/5 dark:border-white/10', dark && 'bg-muted', className)}
+      className={cn(
+        'inline-flex shrink-0 items-center justify-center rounded-lg border border-black/5 dark:border-white/10',
+        dark && 'bg-muted',
+        className,
+      )}
       style={{ width: tile, height: tile, ...(dark ? {} : { background: `${resolved.icon.color}1f` }) }}
     >
       <AppMark connector={resolved} size={size} />

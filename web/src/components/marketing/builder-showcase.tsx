@@ -41,10 +41,22 @@ const PORT_FILL: Record<PortType, string> = {
 };
 
 const CAPABILITIES = [
-  { icon: Plug, title: 'Typed ports', body: 'Blue carries a ticket, violet a finished run, indigo a pull request. The canvas refuses a wire whose colours do not fit.' },
-  { icon: ShieldAlert, title: 'Validation as you edit', body: 'The same rules the CLI enforces: one trigger, read-only reviewers, and no unattended path to a merge.' },
-  { icon: FlaskConical, title: 'Free test runs', body: 'Play the flow back with a sample ticket: phases, review rounds, budgets and refusals, simulated in your browser.' },
-  { icon: FileCode2, title: 'Export that is real', body: 'The files on the right are what export produces for this template, generated live by the same compiler.' },
+  {
+    icon: Plug,
+    title: 'Typed ports',
+    body: 'Blue carries a ticket, violet a finished run, indigo a pull request. The canvas refuses a wire whose colours do not fit.',
+  },
+  {
+    icon: ShieldAlert,
+    title: 'Validation as you edit',
+    body: 'The same rules the CLI enforces: one trigger, read-only reviewers, and no unattended path to a merge.',
+  },
+  {
+    icon: FlaskConical,
+    title: 'Free test runs',
+    body: 'Play the flow back with a sample ticket: phases, review rounds, budgets and refusals, simulated in your browser.',
+  },
+  { icon: FileCode2, title: 'Export that is real', body: 'Inspect the actual config and Actions workflow generated for this template.' },
 ];
 
 /**
@@ -60,18 +72,21 @@ export function BuilderShowcase() {
   const compiled = useMemo(() => (workflow === undefined ? undefined : compileWorkflow(workflow, brand)), [workflow, brand]);
   const validation = useMemo(() => (workflow === undefined ? undefined : validateWorkflow(workflow)), [workflow]);
   // The graph JSON carries generated ids and a timestamp, which would differ between server and client render.
-  const files = useMemo(() => (compiled === undefined || workflow === undefined ? [] : compiled.files.filter((file) => !file.content.includes(workflow.id))), [compiled, workflow]);
+  const files = useMemo(
+    () => (compiled === undefined || workflow === undefined ? [] : compiled.files.filter((file) => !file.content.includes(workflow.id))),
+    [compiled, workflow],
+  );
 
   return (
-    <section id="builder" className="scroll-mt-16 border-t bg-muted/20 py-20 sm:py-28">
-      <div className="container">
+    <section id="builder" className="scroll-mt-16 border-t bg-muted/20 py-16 sm:py-24">
+      <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="The studio"
           title="Drag the flow. Ship the config."
-          description={`The canvas is a front end for a state machine the ${brand.name} CLI already runs. Export compiles it into the files a repository needs, and anything those files cannot express is listed as a warning, never dropped.`}
+          description={`Design visually, try a simulated run, then export the config and GitHub Actions workflow. The preview below uses the same compiler as the studio.`}
         />
 
-        <Reveal className="mt-14">
+        <Reveal className="mt-10 sm:mt-12">
           <div className="relative overflow-hidden rounded-2xl border bg-card shadow-xl shadow-primary/5">
             <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-4 py-2.5">
               <div aria-hidden className="mr-1 flex gap-1.5">
@@ -81,7 +96,7 @@ export function BuilderShowcase() {
               </div>
               <p className="text-xs font-medium">{workflow?.name ?? 'Workflow'}</p>
               {validation === undefined ? null : validation.errors === 0 ? (
-                <Badge variant="secondary" className="bg-success/10 text-success">
+                <Badge variant="secondary" className="bg-success/10 text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">
                   <CheckCircle2 data-icon="inline-start" />
                   Valid
                 </Badge>
@@ -93,7 +108,9 @@ export function BuilderShowcase() {
                 <span className="sm:hidden">Scroll sideways</span>
               </p>
             </div>
-            <div className="overflow-x-auto bg-grid">{workflow === undefined ? null : <MiniCanvas workflow={workflow} />}</div>
+            <div className="overflow-x-auto bg-grid" tabIndex={0} role="region" aria-label="Workflow canvas preview">
+              {workflow === undefined ? null : <MiniCanvas workflow={workflow} />}
+            </div>
             {reduce ? null : <BorderBeam size={120} duration={10} colorFrom="#8b5cf6" colorTo="#38bdf8" />}
           </div>
         </Reveal>
@@ -108,7 +125,7 @@ export function BuilderShowcase() {
                   </span>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold">{title}</p>
-                    <p className="mt-0.5 text-sm text-pretty text-muted-foreground">{body}</p>
+                    <p className="mt-0.5 text-sm leading-relaxed text-pretty text-muted-foreground">{body}</p>
                   </div>
                 </li>
               ))}
@@ -136,7 +153,11 @@ export function BuilderShowcase() {
                     <p className="border-b px-4 py-2 text-xs text-muted-foreground">
                       <span className="font-mono text-foreground">{file.path}</span> · {file.description}
                     </p>
-                    <pre className="max-h-96 overflow-auto p-4 font-mono text-[12px] leading-relaxed text-foreground/85" tabIndex={0} aria-label={file.path}>
+                    <pre
+                      className="max-h-96 overflow-auto p-4 font-mono text-[12px] leading-relaxed text-foreground/85"
+                      tabIndex={0}
+                      aria-label={file.path}
+                    >
                       {file.content}
                     </pre>
                   </TabsContent>
@@ -153,7 +174,8 @@ export function BuilderShowcase() {
 /** A one-line reading of a node's settings, so the preview says something specific. */
 function summarize(def: NodeTypeDef, config: Record<string, unknown>): string {
   if (def.id === 'gates.action.budget') return `$${String(config['maxRunCostUsd'])} a run · $${String(config['maxDailyCostUsd'])} a day`;
-  if (def.id === 'pipeline.action.run') return `${String(config['planner'])} + ${String(config['implementer'])}, ${String(config['review'])} review`;
+  if (def.id === 'pipeline.action.run')
+    return `${String(config['planner'])} + ${String(config['implementer'])}, ${String(config['review'])} review`;
   if (def.id === 'delivery.action.deliver') return config['draft'] === true ? 'Draft pull request' : 'Pull request';
   if (typeof config['channel'] === 'string') return String(config['channel']);
   if (typeof config['assignee'] === 'string') return `Assigned to ${String(config['assignee'])}`;
@@ -180,7 +202,10 @@ function MiniCanvas({ workflow }: { workflow: Workflow }) {
     const source = byId.get(edge.source);
     const target = byId.get(edge.target);
     if (source === undefined || target === undefined) return [];
-    const outIndex = Math.max(0, source.def.outputs.findIndex((port) => port.id === edge.sourceHandle));
+    const outIndex = Math.max(
+      0,
+      source.def.outputs.findIndex((port) => port.id === edge.sourceHandle),
+    );
     const outPort = source.def.outputs[outIndex];
     const inPort = target.def.inputs.find((port) => port.id === edge.targetHandle) ?? target.def.inputs[0];
     const type: PortType = outPort !== undefined && outPort.type !== 'any' ? outPort.type : (inPort?.type ?? 'any');
@@ -200,7 +225,14 @@ function MiniCanvas({ workflow }: { workflow: Workflow }) {
       aria-label={`The ${workflow.name} workflow: ${nodes.map((entry) => entry.node.data.label ?? entry.def.name).join(', ')}`}
     >
       {edges.map((edge) => (
-        <path key={edge.id} d={edge.d} fill="none" strokeWidth={1.75} strokeLinecap="round" className={cn(PORT_STROKE[edge.type], 'opacity-80')} />
+        <path
+          key={edge.id}
+          d={edge.d}
+          fill="none"
+          strokeWidth={1.75}
+          strokeLinecap="round"
+          className={cn(PORT_STROKE[edge.type], 'opacity-80')}
+        />
       ))}
       {nodes.map(({ node, def, x, y }) => (
         <g key={node.id}>
@@ -218,9 +250,18 @@ function MiniCanvas({ workflow }: { workflow: Workflow }) {
               </div>
             </div>
           </foreignObject>
-          {def.inputs.length > 0 ? <circle cx={x} cy={y + NODE_H / 2} r={5} className={cn(PORT_FILL[def.inputs[0].type], 'stroke-card')} strokeWidth={2.5} /> : null}
+          {def.inputs.length > 0 ? (
+            <circle cx={x} cy={y + NODE_H / 2} r={5} className={cn(PORT_FILL[def.inputs[0].type], 'stroke-card')} strokeWidth={2.5} />
+          ) : null}
           {def.outputs.map((port, index) => (
-            <circle key={port.id} cx={x + NODE_W} cy={y + portY(def.outputs.length, index)} r={5} className={cn(PORT_FILL[port.type], 'stroke-card')} strokeWidth={2.5} />
+            <circle
+              key={port.id}
+              cx={x + NODE_W}
+              cy={y + portY(def.outputs.length, index)}
+              r={5}
+              className={cn(PORT_FILL[port.type], 'stroke-card')}
+              strokeWidth={2.5}
+            />
           ))}
         </g>
       ))}

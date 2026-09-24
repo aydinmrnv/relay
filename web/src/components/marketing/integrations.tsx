@@ -1,102 +1,51 @@
 'use client';
 
 import Link from 'next/link';
-import { motion } from 'motion/react';
 import { ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { NumberTicker } from '@/components/21st/number-ticker';
-import { CATALOG_STATS, CONNECTORS, type Connector } from '@/lib/connectors';
-import { AppMark, Reveal, SectionHeading, useCalmMotion } from './primitives';
+import { CATALOG_STATS, getConnector } from '@/lib/connectors';
+import { AppMark, Reveal, SectionHeading } from './primitives';
 
-// Vendor apps only (the pipeline, gates and delivery are not integrations), popular ones first.
-const APPS = CONNECTORS.filter((connector) => connector.category !== 'core').sort((a, b) => Number(b.popular === true) - Number(a.popular === true));
-const ROW_ONE = APPS.slice(0, 22);
-const ROW_TWO = APPS.slice(22, 44);
-
-const STATS = [
-  { value: CATALOG_STATS.connectors, label: 'apps' },
-  { value: CATALOG_STATS.triggers, label: 'triggers' },
-  { value: CATALOG_STATS.actions, label: 'actions' },
-  { value: CATALOG_STATS.categories, label: 'categories' },
-];
+const FEATURED_APPS = ['github', 'linear', 'slack', 'sentry', 'discord', 'notion', 'jira', 'gitlab', 'bitbucket', 'zendesk', 'vercel', 'figma'];
 
 export function Integrations() {
-  const reduce = useCalmMotion();
+  const apps = FEATURED_APPS.flatMap((id) => {
+    const app = getConnector(id);
+    return app === undefined ? [] : [app];
+  });
+
   return (
-    <section id="integrations" className="scroll-mt-16 border-t py-20 sm:py-28">
-      <div className="container">
+    <section id="integrations" className="scroll-mt-20 border-t py-16 sm:py-24">
+      <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="Integrations"
-          title="Wired to the tools your team already uses"
-          description="Every app's triggers and actions are nodes in the palette, with typed ports and generated forms. A connection is a switch for now, so you can design against all of them today."
+          title="Keep the tools your team already uses"
+          description="Connect triggers and actions on the canvas. Bring tickets into a workflow and send results back to your team."
         />
-
-        <Reveal className="mx-auto mt-12 grid max-w-3xl grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-4">
-          {STATS.map((stat) => (
-            <div key={stat.label} className="flex flex-col items-center gap-1 bg-card px-4 py-6">
-              {/* The ticker counts up with a spring; reduced motion shows the number at rest. */}
-              {reduce ? (
-                <span className="text-3xl font-semibold tracking-wider tabular-nums sm:text-4xl">{stat.value}</span>
-              ) : (
-                <NumberTicker value={stat.value} className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl dark:text-foreground" />
-              )}
-              <span className="text-sm text-muted-foreground">{stat.label}</span>
-            </div>
+        <Reveal className="mx-auto mt-10 grid max-w-4xl grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {apps.map((app) => (
+            <Link
+              key={app.id}
+              href="/integrations"
+              className="flex min-h-16 items-center gap-3 rounded-xl border bg-card px-4 py-3 transition-colors hover:border-primary/30 hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+            >
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/60">
+                <AppMark connector={app} size={18} />
+              </span>
+              <span className="text-sm font-medium">{app.name}</span>
+            </Link>
           ))}
         </Reveal>
-      </div>
-
-      <div
-        className="mt-12 flex flex-col gap-3 [mask-image:linear-gradient(to_right,transparent,#000_8%,#000_92%,transparent)]"
-        role="list"
-        aria-label="Some of the apps in the catalog"
-      >
-        <Marquee apps={ROW_ONE} />
-        <Marquee apps={ROW_TWO} reverse />
-      </div>
-
-      <div className="container mt-10 flex justify-center">
-        <Button variant="outline" nativeButton={false} render={<Link href="/integrations" />}>
-          Browse all {CATALOG_STATS.connectors} integrations
-          <ArrowRight data-icon="inline-end" />
-        </Button>
+        <div className="mx-auto mt-7 flex max-w-2xl flex-col items-center gap-5 text-center">
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {CATALOG_STATS.connectors} apps in the catalog. GitHub and Slack work through exported Actions; other connectors may need a
+            bridge.
+          </p>
+          <Button variant="outline" nativeButton={false} render={<Link href="/integrations" />}>
+            Explore the integrations <ArrowRight data-icon="inline-end" />
+          </Button>
+        </div>
       </div>
     </section>
-  );
-}
-
-/**
- * One endless row. The list is rendered twice and slid by exactly half its
- * width, so the loop has no seam. With reduced motion it simply sits still.
- */
-function Marquee({ apps, reverse = false }: { apps: Connector[]; reverse?: boolean }) {
-  const reduce = useCalmMotion();
-  const from = reverse ? '-50%' : '0%';
-  const to = reverse ? '0%' : '-50%';
-  return (
-    <div className="overflow-hidden">
-      <motion.div
-        className="flex w-max gap-3"
-        initial={{ x: from }}
-        animate={reduce ? { x: from } : { x: [from, to] }}
-        transition={reduce ? { duration: 0 } : { duration: 60, ease: 'linear', repeat: Infinity }}
-      >
-        {[0, 1].map((copy) =>
-          apps.map((app) => (
-            <div
-              key={`${copy}-${app.id}`}
-              role={copy === 0 ? 'listitem' : undefined}
-              aria-hidden={copy === 1 ? true : undefined}
-              className="flex shrink-0 items-center gap-2 rounded-full border bg-card py-1.5 pr-3.5 pl-2 text-sm shadow-xs"
-            >
-              <span className="inline-flex size-6 items-center justify-center rounded-full bg-muted/60">
-                <AppMark connector={app} size={14} />
-              </span>
-              <span className="font-medium whitespace-nowrap">{app.name}</span>
-            </div>
-          )),
-        )}
-      </motion.div>
-    </div>
   );
 }
