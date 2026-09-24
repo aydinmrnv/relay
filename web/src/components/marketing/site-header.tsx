@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { BrandMark } from '@/components/app/brand-mark';
 import { useBrand } from '@/hooks/use-brand';
+import { HOSTED_DEMO } from '@/lib/hosted';
 import { AppMark, REPO_URL, SECTIONS } from './primitives';
 
 export function SiteHeader() {
@@ -19,7 +20,7 @@ export function SiteHeader() {
           <BrandMark className="size-7" />
           <span className="font-semibold tracking-tight">{brand.name}</span>
           <Badge variant="secondary" className="hidden sm:inline-flex">
-            prototype
+            {HOSTED_DEMO ? 'live demo' : 'prototype'}
           </Badge>
         </Link>
 

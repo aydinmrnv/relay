@@ -1,5 +1,6 @@
 import { AppSidebar } from '@/components/app/app-sidebar';
 import { AppHeader } from '@/components/app/app-header';
+import { DemoBanner } from '@/components/app/demo-banner';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 
 export default function AppLayout({ children }: LayoutProps<'/'>) {
@@ -7,6 +8,7 @@ export default function AppLayout({ children }: LayoutProps<'/'>) {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset className="min-w-0">
+        <DemoBanner />
         <AppHeader />
         <div className="flex min-h-0 flex-1 flex-col">{children}</div>
       </SidebarInset>

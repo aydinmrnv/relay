@@ -16,6 +16,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { HOSTED_DEMO } from '@/lib/hosted';
 import { AGENT_META, type AgentAccount, type AgentId, type AgentsStatus, type AuthMethod, type LoginMode, type LoginSessionView, type LoginStatus } from './types';
 
 const STATUS_TIMEOUT_MS = 20_000;
@@ -295,6 +296,7 @@ export function cancelLogin(id: string): boolean {
  * pop a sign-in window on somebody's laptop.
  */
 export function isLocalRequest(request: Request): boolean {
+  if (HOSTED_DEMO) return false;
   const raw = request.headers.get('host') ?? '';
   const host = raw.replace(/^\[/, '').replace(/\]?:\d+$/, '').replace(/\]$/, '');
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local')) return true;

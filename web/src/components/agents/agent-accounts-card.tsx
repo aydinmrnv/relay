@@ -18,6 +18,7 @@ import { useAgentsStore, type BridgeState } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
 import { AGENT_IDS, AGENT_META, type AgentAccount, type AgentId, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
+import { HOSTED_DEMO } from '@/lib/hosted';
 
 const CONNECTOR_FOR: Record<AgentId, string> = { claude: 'claude-code', codex: 'codex-cli' };
 
@@ -40,7 +41,9 @@ export function AgentAccountsCard() {
         <CardTitle>Agent accounts</CardTitle>
         <CardDescription>
           {bridge === 'unavailable'
-            ? 'Could not reach the CLIs on this machine.'
+            ? HOSTED_DEMO
+              ? 'The hosted demo cannot see the CLIs on your computer.'
+              : 'Could not reach the CLIs on this machine.'
             : status === null
               ? 'Asking the CLIs on this machine…'
               : `Read live from the CLIs on this machine, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
@@ -57,7 +60,8 @@ export function AgentAccountsCard() {
       <CardContent className="grid gap-3">
         {bridge === 'unavailable' ? (
           <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-pretty text-amber-800 dark:text-warning">
-            The local bridge is not reachable, so sign-in from the browser is off. Run the studio on the machine where the CLIs live (<span className="font-mono">npm run dev</span>), or sign in from a terminal with{' '}
+            {HOSTED_DEMO ? 'This is the hosted demo, so sign-in from the browser is off.' : 'The local bridge is not reachable, so sign-in from the browser is off.'} Run the studio on the machine where the CLIs live (
+            <span className="font-mono">npm run dev</span>), or sign in from a terminal with{' '}
             <span className="font-mono">claude auth login</span> and <span className="font-mono">codex login</span>.
           </div>
         ) : null}
