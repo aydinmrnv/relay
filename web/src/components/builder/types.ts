@@ -11,7 +11,17 @@ export interface CanvasNodeData extends WorkflowNodeData {
 }
 
 export type CanvasNode = Node<CanvasNodeData, 'wf'>;
-export type CanvasEdge = Edge;
+
+/** How a test run treated an edge: the run is crossing it, crossed it, never took it, or was refused on it. */
+export type EdgeRunState = 'active' | 'travelled' | 'skipped' | 'refused';
+
+export interface CanvasEdgeData extends Record<string, unknown> {
+  state?: EdgeRunState;
+  /** The source output's name when the source branches ("Refused", "True"). */
+  branch?: string;
+}
+
+export type CanvasEdge = Edge<CanvasEdgeData, 'wf'>;
 
 export function toCanvasNodes(nodes: WorkflowNode[]): CanvasNode[] {
   return nodes.map((node) => ({
@@ -27,6 +37,7 @@ export function toCanvasNodes(nodes: WorkflowNode[]): CanvasNode[] {
 export function toCanvasEdges(edges: WorkflowEdge[]): CanvasEdge[] {
   return edges.map((edge) => ({
     id: edge.id,
+    type: 'wf' as const,
     source: edge.source,
     target: edge.target,
     sourceHandle: edge.sourceHandle ?? undefined,

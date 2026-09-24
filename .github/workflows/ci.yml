@@ -1,4 +1,4 @@
-# Two jobs, and they check different kinds of thing.
+# Three jobs, and they check different kinds of thing.
 #
 # `check` is the typecheck and the test suite on every platform Relay claims to
 # support; the windows-latest leg is what keeps Windows support honest (#41),
@@ -8,6 +8,10 @@
 # `unattended` is an integration test of the product as a whole (#38): Relay's
 # own GitHub Action, driving a real pipeline on a fixture repository, checked
 # against what it left behind rather than what it printed.
+#
+# `studio` is the workflow studio under web/, a separate Next.js app with its
+# own lockfile: lint (including the React Compiler rules), a typecheck against
+# the route types Next generates, and a production build.
 name: CI
 
 on:
@@ -140,3 +144,25 @@ jobs:
           cat "$RUNNER_TEMP/fixture/gh-state.json" || true
           cat "$RUNNER_TEMP/fixture/agent-turns.jsonl" || true
           find "$RUNNER_TEMP/fixture/work/.relay/runs" -name events.jsonl -exec cat {} + || true
+
+  studio:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm run build

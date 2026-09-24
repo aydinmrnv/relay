@@ -1,181 +1,175 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useMemo } from 'react';
-import { useNow } from '@/hooks/use-now';
-import { ArrowRight, Cable, CircleDollarSign, Play, Workflow } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import { LayoutTemplate, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
-import { OnboardingChecklist } from '@/components/watermelon/onboarding-checklist';
-import { CreditUsageCard } from '@/components/watermelon/credit-usage-card';
-import { StatusBadge } from '@/components/app/status-badge';
-import { ConnectorIcon } from '@/components/connectors/connector-icon';
+import { PageHeader } from '@/components/app/page-header';
+import { FadeIn } from '@/components/motion/fade-in';
+import { ActivityChart } from '@/components/dashboard/activity-chart';
+import { attentionItems, dailyCeiling, dailyOutcomes, spendByWorkflow, spendToday, weekStats } from '@/components/dashboard/derive';
+import { GettingStarted, type ChecklistStep } from '@/components/dashboard/getting-started';
+import { KpiTiles } from '@/components/dashboard/kpi-tiles';
+import { NeedsAttention } from '@/components/dashboard/needs-attention';
+import { RecentRuns } from '@/components/dashboard/recent-runs';
+import { SpendCard } from '@/components/dashboard/spend-card';
+import { useRunAgain } from '@/components/runs/use-run-again';
+import { useAgentsStore, useSignedIn } from '@/hooks/use-agent-accounts';
 import { useBrand } from '@/hooks/use-brand';
-import { useSignedIn } from '@/hooks/use-agent-accounts';
+import { useCreateWorkflow } from '@/hooks/use-create-workflow';
+import { useNow } from '@/hooks/use-now';
+import { DEFAULT_BRAND } from '@/lib/brand';
+import { CONNECTORS } from '@/lib/connectors';
 import { useStudio, useWorkflows } from '@/lib/store';
-import { getConnector } from '@/lib/connectors';
-import { formatDuration, formatUsd, timeAgo } from '@/lib/format';
+import { validateWorkflow } from '@/lib/workflow/validate';
 
 export default function DashboardPage() {
   const brand = useBrand();
-  const router = useRouter();
   const now = useNow();
+  const create = useCreateWorkflow();
+  const runAgain = useRunAgain();
   const workflows = useWorkflows();
+  const workflowMap = useStudio((state) => state.workflows);
   const runs = useStudio((state) => state.runs);
   const connections = useStudio((state) => state.connections);
   const hydrated = useStudio((state) => state.hydrated);
+  const checklistDismissed = useStudio((state) => state.checklistDismissed);
+  const bridge = useAgentsStore((state) => state.bridge);
   const signedIn = useSignedIn();
 
-  const stats = useMemo(() => {
-    const week = now - 7 * 86_400_000;
-    const recent = runs.filter((run) => new Date(run.startedAt).getTime() > week);
-    const finished = recent.filter((run) => run.status !== 'running');
-    const succeeded = finished.filter((run) => run.status === 'succeeded').length;
-    const spend = recent.reduce((sum, run) => sum + run.costUsd, 0);
-    return {
-      workflows: workflows.length,
-      enabled: workflows.filter((workflow) => workflow.enabled).length,
-      runs: recent.length,
-      successRate: finished.length === 0 ? null : Math.round((succeeded / finished.length) * 100),
-      spend,
-      connections: Object.keys(connections).length,
-    };
-  }, [runs, workflows, connections, now]);
+  const validity = useMemo(() => workflows.map((workflow) => ({ workflow, ok: validateWorkflow(workflow).ok })), [workflows]);
+  const firstValid = validity.find((entry) => entry.ok)?.workflow;
+  const days = useMemo(() => dailyOutcomes(runs, now), [runs, now]);
+  const week = useMemo(() => weekStats(runs, now), [runs, now]);
+  const spend = useMemo(() => spendByWorkflow(runs, workflowMap, now), [runs, workflowMap, now]);
+  const ceiling = useMemo(() => dailyCeiling(workflows), [workflows]);
+  const today = useMemo(() => spendToday(runs, now), [runs, now]);
+  const attention = useMemo(() => attentionItems(runs, workflows, now), [runs, workflows, now]);
+  const connected = Object.keys(connections).length;
 
-  const budget = 40;
-  const usedPercent = Math.min(100, Math.round((stats.spend / budget) * 100));
-  const history = runs.slice(0, 6).map((run) => ({
-    date: new Date(run.startedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-    model: run.workflowName,
-    credits: run.phases.length === 0 ? '—' : `${run.phases.length} phases`,
-    cost: formatUsd(run.costUsd),
-  }));
+  // Before the store hydrates the server has no clock of ours to agree with, so the greeting waits too.
+  const hour = new Date(now).getHours();
+  const greeting = !hydrated ? 'Welcome back' : hour < 5 ? 'Working late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
-  const steps = [
-    { id: 1, title: 'Sign in to Claude Code or Codex with your subscription', isCompleted: signedIn.claude === true || signedIn.codex === true },
-    { id: 2, title: 'Connect an app', isCompleted: stats.connections > 0 },
-    { id: 3, title: 'Create or pick a workflow', isCompleted: stats.workflows > 0 },
-    { id: 4, title: 'Run a simulated test', isCompleted: runs.length > 0 },
-    { id: 5, title: 'Export config + Actions workflow', isCompleted: false },
-    { id: 6, title: `Rename ${brand.name} if you want`, isCompleted: brand.name !== 'Relay' },
+  const agentNames = [signedIn.claude === true ? 'Claude Code' : null, signedIn.codex === true ? 'Codex' : null].filter((name): name is string => name !== null);
+  const exported = workflows.find((workflow) => workflow.exportedAt !== undefined);
+  const exportTarget = firstValid ?? workflows[0];
+
+  const steps: ChecklistStep[] = [
+    {
+      id: 'agent',
+      title: 'Sign in a coding agent',
+      why: 'The pipeline runs on Claude Code or Codex with your own subscription. Nothing to paste; the studio never sees a token.',
+      done: agentNames.length > 0,
+      doneNote: `${agentNames.join(' and ')} ${agentNames.length === 1 ? 'is' : 'are'} signed in on this machine.`,
+      ...(bridge === 'unavailable' ? { warning: 'The local bridge is not answering, so the studio cannot ask the CLIs. Sign-in works when the studio runs on your machine.' } : {}),
+      action: { label: 'Open Settings', href: '/settings#agents' },
+    },
+    {
+      id: 'connect',
+      title: 'Connect an app',
+      why: 'Triggers and actions talk to apps like Linear, GitHub and Slack. In this prototype a connection is a local flag, not a real login.',
+      done: connected > 0,
+      doneNote: `${connected} ${connected === 1 ? 'app' : 'apps'} connected.`,
+      action: { label: 'Browse integrations', href: '/integrations' },
+    },
+    {
+      id: 'workflow',
+      title: 'Create a workflow',
+      why: 'A workflow says what starts a run, which guardrails check it, what the agents do and where the result goes.',
+      done: workflows.length > 0,
+      doneNote: `${workflows.length} ${workflows.length === 1 ? 'workflow' : 'workflows'} in this browser.`,
+      action: { label: 'New workflow', onClick: () => create.blank(), icon: 'plus' },
+    },
+    {
+      id: 'test',
+      title: 'Play a test run',
+      why: 'See every node do its job with a sample ticket before anything real is wired up. Free, and nothing leaves this browser.',
+      done: runs.length > 0,
+      doneNote: `${runs.length} ${runs.length === 1 ? 'run' : 'runs'} recorded.`,
+      action: firstValid !== undefined ? { label: `Test ${firstValid.name}`, onClick: () => runAgain(firstValid.id, { navigate: true }), icon: 'play' } : { label: 'Open workflows', href: '/workflows' },
+    },
+    {
+      id: 'export',
+      title: 'Export to a repository',
+      why: `Export compiles a workflow into a config and a GitHub Actions file, so it runs on your repository with your own subscriptions.${exportTarget === undefined ? '' : ` Open “${exportTarget.name}” and press Export.`}`,
+      done: exported !== undefined,
+      doneNote: exported === undefined ? '' : `${exported.name} was exported.`,
+      action: exportTarget === undefined ? null : { label: 'Open in the builder', href: `/workflows/${exportTarget.id}` },
+    },
+    {
+      id: 'rename',
+      title: 'Name the product',
+      why: `“${DEFAULT_BRAND.name}” is a working title. Rename it once in Settings and every screen, branch prefix and exported file follows.`,
+      done: brand.name !== DEFAULT_BRAND.name,
+      doneNote: `It is called ${brand.name} now.`,
+      optional: true,
+      action: { label: 'Rename', href: '/settings#general' },
+    },
   ];
+  const setupComplete = steps.every((step) => step.done || step.optional === true);
+  const showChecklist = hydrated && !checklistDismissed && !setupComplete;
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Good to see you</h1>
-          <p className="text-sm text-muted-foreground">{brand.tagline}</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" nativeButton={false} render={<Link href="/templates" />}>
-            Templates
-          </Button>
-          <Button nativeButton={false} render={<Link href="/workflows" />}>
-            Workflows <ArrowRight data-icon="inline-end" />
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={greeting}
+        description={`${brand.name} turns tickets into reviewed pull requests. Design a workflow here, play it as a free test run, then export it to run on your own GitHub Actions.`}
+        actions={
+          <>
+            <Button variant="outline" nativeButton={false} render={<Link href="/templates" />}>
+              <LayoutTemplate data-icon="inline-start" /> Templates
+            </Button>
+            <Button onClick={() => create.blank()}>
+              <Plus data-icon="inline-start" /> New workflow
+            </Button>
+          </>
+        }
+      />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat icon={<Workflow className="size-4" />} label="Workflows" value={String(stats.workflows)} hint={`${stats.enabled} enabled`} />
-        <Stat icon={<Play className="size-4" />} label="Runs this week" value={String(stats.runs)} hint={stats.successRate === null ? 'no finished runs yet' : `${stats.successRate}% succeeded`} />
-        <Stat icon={<CircleDollarSign className="size-4" />} label="Simulated usage" value={formatUsd(stats.spend)} hint="what the CLIs would report; on a subscription it counts against your plan" />
-        <Stat icon={<Cable className="size-4" />} label="Connected apps" value={String(stats.connections)} hint="mocked locally" />
-      </div>
+      {!hydrated ? null : (
+        <>
+          <AnimatePresence initial={false}>
+            {showChecklist ? (
+              <motion.div key="checklist" exit={{ opacity: 0, height: 0, marginBottom: -24 }} transition={{ duration: 0.25 }} className="overflow-hidden">
+                <FadeIn>
+                  <GettingStarted steps={steps} />
+                </FadeIn>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Recent runs</CardTitle>
-            <CardDescription>Simulated end to end. The phases, costs and refusals are what the real pipeline would report.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {!hydrated ? null : runs.length === 0 ? (
-              <Empty className="py-10">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <Play />
-                  </EmptyMedia>
-                  <EmptyTitle>No runs yet</EmptyTitle>
-                  <EmptyDescription>Open a workflow and press Test run.</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Run</TableHead>
-                    <TableHead>Workflow</TableHead>
-                    <TableHead>Trigger</TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
-                    <TableHead className="text-right">Duration</TableHead>
-                    <TableHead className="text-right">When</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {runs.slice(0, 8).map((run) => {
-                    const connector = getConnector(run.trigger.connectorId);
-                    return (
-                      <TableRow key={run.id} className="cursor-pointer" onClick={() => router.push(`/runs/${run.id}`)}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <StatusBadge status={run.status} />
-                            <span className="font-mono text-xs text-muted-foreground">{run.shortId}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="max-w-56 truncate font-medium">{run.workflowName}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 text-sm">
-                            {connector === undefined ? null : <ConnectorIcon connector={connector} size={14} variant="mark" />}
-                            <span className="truncate text-muted-foreground">{String(run.trigger.payload['title'] ?? run.trigger.label)}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">{formatUsd(run.costUsd)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">{formatDuration(run.startedAt, run.finishedAt)}</TableCell>
-                        <TableCell className="text-right text-muted-foreground">{timeAgo(run.startedAt)}</TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+          <KpiTiles
+            workflows={workflows.length}
+            enabled={workflows.filter((workflow) => workflow.enabled).length}
+            broken={validity.filter((entry) => !entry.ok).length}
+            runs={week.runs}
+            previousRuns={week.previousRuns}
+            successRate={week.successRate}
+            finished={week.finished}
+            spend={week.spend}
+            connected={connected}
+            catalog={CONNECTORS.length}
+          />
 
-        <div className="flex flex-col gap-6">
-          <div className="-mx-4 -my-10 sm:-mx-6 sm:-my-10">
-            <OnboardingChecklist title="Getting started" steps={steps} />
-          </div>
-          <div className="flex justify-center">
-            <CreditUsageCard
-              usedCreditsPercent={usedPercent}
-              totalCreditsLabel={`${formatUsd(budget)} daily ceiling`}
-              creditsUsedLabel={formatUsd(stats.spend)}
-              creditsLeftLabel={formatUsd(Math.max(0, budget - stats.spend))}
-              usageHistory={history}
+          <FadeIn delay={0.08} className="grid items-stretch gap-6 lg:grid-cols-3">
+            <ActivityChart days={days} className="lg:col-span-2" />
+            <SpendCard today={today} ceiling={ceiling} rows={spend.rows} other={spend.other} weekTotal={spend.total} />
+          </FadeIn>
+
+          <FadeIn delay={0.12} className="grid items-stretch gap-6 lg:grid-cols-3">
+            <RecentRuns
+              runs={runs.slice(0, 6)}
+              total={runs.length}
+              now={now}
+              className="lg:col-span-2"
+              {...(firstValid === undefined ? {} : { onTest: () => runAgain(firstValid.id, { navigate: true }), testLabel: `Test ${firstValid.name}` })}
             />
-          </div>
-        </div>
-      </div>
+            <NeedsAttention items={attention} now={now} />
+          </FadeIn>
+        </>
+      )}
     </div>
-  );
-}
-
-function Stat({ icon, label, value, hint }: { icon: React.ReactNode; label: string; value: string; hint: string }) {
-  return (
-    <Card size="sm">
-      <CardHeader>
-        <CardDescription className="flex items-center gap-2">
-          {icon}
-          {label}
-        </CardDescription>
-        <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
-      </CardHeader>
-      <CardContent className="text-xs text-muted-foreground">{hint}</CardContent>
-    </Card>
   );
 }

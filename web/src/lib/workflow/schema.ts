@@ -43,6 +43,8 @@ export interface Workflow {
   templateId?: string;
   /** Repository this workflow is attached to, e.g. `acme/api`. Free text in the prototype. */
   repository?: string;
+  /** When the export dialog last produced files for this workflow. */
+  exportedAt?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -127,6 +129,8 @@ export interface Settings {
   auth: { claude: AuthPreference; codex: AuthPreference };
   defaultRepository: string;
   simulationSpeed: 'instant' | 'fast' | 'realistic';
+  /** `system` follows the OS reduced-motion setting; `reduced` makes every animation instant. */
+  motion: 'system' | 'full' | 'reduced';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -134,4 +138,5 @@ export const DEFAULT_SETTINGS: Settings = {
   auth: { claude: 'subscription', codex: 'subscription' },
   defaultRepository: 'acme/api',
   simulationSpeed: 'fast',
+  motion: 'system',
 };

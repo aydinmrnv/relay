@@ -7,14 +7,20 @@ import { FaInbox, FaLandmark } from 'react-icons/fa';
 
 export interface TabItem {
   id: string;
-  label: string;
-  icon: ReactNode;
+  label: ReactNode;
+  icon?: ReactNode;
 }
 
 interface FluidTabsProps {
   tabs?: TabItem[];
   defaultActive?: string;
   onChange?: (id: string) => void;
+  /** Adapted for the studio: controlled selection, a compact size and a unique pill per instance. */
+  value?: string;
+  size?: 'default' | 'sm';
+  layoutId?: string;
+  className?: string;
+  'aria-label'?: string;
 }
 
 const DEFAULT_TABS: TabItem[] = [
@@ -27,8 +33,15 @@ export const FluidTabs: FC<FluidTabsProps> = ({
   tabs = DEFAULT_TABS,
   defaultActive = tabs[0]?.id,
   onChange,
+  value,
+  size = 'default',
+  layoutId = 'active-pill',
+  className = '',
+  'aria-label': ariaLabel,
 }) => {
-  const [active, setActive] = useState<string>(defaultActive);
+  const [uncontrolled, setActive] = useState<string>(defaultActive ?? '');
+  const active = value ?? uncontrolled;
+  const small = size === 'sm';
 
   const handleChange = (id: string) => {
     setActive(id);
@@ -36,26 +49,29 @@ export const FluidTabs: FC<FluidTabsProps> = ({
   };
 
   return (
-    <div className="relative flex items-center gap-1 rounded-full border-[1.6px] border-[#f5f1ebf4] bg-[#F5F1EB] px-1 py-1 transition-colors sm:gap-2 dark:border-neutral-800 dark:bg-neutral-900">
+    <div role="tablist" aria-label={ariaLabel} className={`relative flex items-center gap-1 rounded-full border-[1.6px] border-border/60 bg-muted px-1 py-1 transition-colors ${small ? '' : 'sm:gap-2'} ${className}`}>
       {tabs.map((tab) => {
         const isActive = active === tab.id;
 
         return (
           <button
             key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
             onClick={() => handleChange(tab.id)}
-            className="group relative rounded-full px-3 py-2.5 outline-none sm:px-4 sm:py-3.5"
+            className={`group relative rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${small ? 'px-3 py-1.5' : 'px-3 py-2.5 sm:px-4 sm:py-3.5'}`}
           >
             {isActive && (
               <motion.div
-                layoutId="active-pill"
+                layoutId={layoutId}
                 transition={{
                   type: 'spring',
                   stiffness: 280,
                   damping: 25,
                   mass: 0.8,
                 }}
-                className="absolute inset-0 rounded-full border border-[#fefefe]/90 bg-gradient-to-b from-[#fefefe] to-gray-50/80 shadow-xs dark:border-neutral-600/50 dark:from-neutral-700 dark:to-neutral-800/90"
+                className="absolute inset-0 rounded-full border border-border/80 bg-gradient-to-b from-card to-card/90 shadow-xs"
               />
             )}
 
@@ -71,8 +87,8 @@ export const FluidTabs: FC<FluidTabsProps> = ({
               }}
               className={`relative z-10 flex items-center gap-1.5 transition-colors duration-200 sm:gap-3 ${
                 isActive
-                  ? 'font-bold text-[#292926] dark:text-white'
-                  : 'font-semibold text-[#585652] dark:text-neutral-500 group-hover:dark:text-neutral-300'
+                  ? 'font-semibold text-foreground'
+                  : 'font-medium text-muted-foreground group-hover:text-foreground'
               }`}
             >
               <motion.div
@@ -85,7 +101,7 @@ export const FluidTabs: FC<FluidTabsProps> = ({
                 {tab.icon}
               </motion.div>
 
-              <span className="text-sm tracking-tight whitespace-nowrap sm:text-base">
+              <span className={`tracking-tight whitespace-nowrap ${small ? 'text-xs' : 'text-sm sm:text-base'}`}>
                 {tab.label}
               </span>
             </motion.div>

@@ -17,6 +17,27 @@ interface Props {
   colored?: boolean;
 }
 
+/**
+ * Brand colours that are nearly black (GitHub, Slack's aubergine, Zendesk…)
+ * vanish on a dark background. For those, dark mode mixes the colour towards
+ * white, which keeps the hue but makes the mark readable.
+ */
+function isVeryDark(hex: string): boolean {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (match === null) return false;
+  const value = Number.parseInt(match[1]!, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.25;
+}
+
+function brandVars(color: string): CSSProperties {
+  return { '--brand': color, '--brand-on-dark': isVeryDark(color) ? `color-mix(in oklch, ${color} 30%, white)` : color } as CSSProperties;
+}
+
+const MARK_COLOR = 'text-(--brand) dark:text-(--brand-on-dark)';
+
 export function ConnectorIcon({ connector, icon, name, size = 20, className, variant = 'tile', colored = true }: Props) {
   const spec = icon ?? connector?.icon;
   const label = name ?? connector?.name ?? '?';
@@ -27,7 +48,7 @@ export function ConnectorIcon({ connector, icon, name, size = 20, className, var
 
   if (variant === 'mark') {
     if (Mark !== undefined) {
-      return <Mark size={size} className={className} style={colored ? ({ color } as CSSProperties) : undefined} aria-label={label} />;
+      return <Mark size={size} className={cn(colored ? MARK_COLOR : '', className)} style={colored ? brandVars(color) : undefined} aria-label={label} />;
     }
     return <Monogram label={label} color={color} size={size} className={className} />;
   }
@@ -35,15 +56,14 @@ export function ConnectorIcon({ connector, icon, name, size = 20, className, var
   const tile = Math.round(size * 1.8);
   return (
     <span
-      className={cn('inline-flex shrink-0 items-center justify-center rounded-lg border border-black/5 dark:border-white/10', className)}
-      style={{ width: tile, height: tile, background: `${color}1a` }}
+      className={cn(
+        'inline-flex shrink-0 items-center justify-center rounded-lg border border-black/5 bg-[color-mix(in_srgb,var(--brand)_10%,transparent)] dark:border-white/10 dark:bg-[color-mix(in_srgb,var(--brand-on-dark)_14%,transparent)]',
+        className,
+      )}
+      style={{ width: tile, height: tile, ...brandVars(color) }}
       aria-label={label}
     >
-      {Mark !== undefined ? (
-        <Mark size={size} style={{ color } as CSSProperties} />
-      ) : (
-        <Monogram label={label} color={color} size={size} />
-      )}
+      {Mark !== undefined ? <Mark size={size} className={MARK_COLOR} /> : <Monogram label={label} color={color} size={size} />}
     </span>
   );
 }

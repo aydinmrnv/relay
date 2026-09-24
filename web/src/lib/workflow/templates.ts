@@ -5,7 +5,8 @@
  */
 import { nanoid } from 'nanoid';
 import type { Brand } from '../brand';
-import { defaultConfig, getConnector, getNodeType, nodeTypeId, pickAction, pickTrigger, type NodeKind } from '../connectors';
+import { defaultConfig, getConnector, getNodeType, nodeTypeId, pickAction, pickTrigger, type NodeKind, type PortType } from '../connectors';
+import { portsCompatible } from './validate';
 import type { Workflow, WorkflowEdge, WorkflowNode } from './schema';
 
 export interface TemplateMeta {
@@ -95,7 +96,16 @@ export function instantiateTemplate(templateId: string, brand: Brand, repository
     },
     edge: (from, to, sourceHandle, targetHandle) => {
       if (from === null || to === null) return;
-      edges.push({ id: `e_${nanoid(8)}`, source: from, target: to, sourceHandle: sourceHandle ?? null, targetHandle: targetHandle ?? null });
+      // The builders name handles for readability, but the action a keyword
+      // picked may call its ports something else. Resolve against the real
+      // ports, falling back to the first one whose type fits, so a template
+      // can never ship a connection the validator rejects.
+      const source = getNodeType(nodes.find((node) => node.id === from)?.data.typeId ?? '');
+      const target = getNodeType(nodes.find((node) => node.id === to)?.data.typeId ?? '');
+      const out = source?.outputs.find((port) => port.id === sourceHandle) ?? source?.outputs[0];
+      const fits = (port: { type: PortType }) => out === undefined || portsCompatible(out.type, port.type);
+      const inp = target?.inputs.find((port) => port.id === targetHandle && fits(port)) ?? target?.inputs.find(fits) ?? target?.inputs[0];
+      edges.push({ id: `e_${nanoid(8)}`, source: from, target: to, sourceHandle: out?.id ?? null, targetHandle: inp?.id ?? null });
     },
   };
 
@@ -137,18 +147,18 @@ const BUILDERS: Record<string, (b: Builder, brand: Brand) => void> = {
   },
   'label-run': (b, brand) => {
     const trigger = b.node('github-issues', 'trigger', ['label'], 0, 1, { label: `${brand.slug}:go` });
-    const allow = b.node('gates', 'action', ['allowlist'], 1, 1, { authors: 'you\nalice\nbob', teams: 'acme/platform' });
-    const budget = b.node('gates', 'action', ['budget'], 2, 1, BUDGET);
-    const pipeline = b.node('pipeline', 'action', ['run the pipeline'], 3, 1, { ...PIPELINE, branchPrefix: brand.slug });
-    const deliver = b.node('delivery', 'action', ['deliver'], 4, 1, { policy: 'pr', draft: true });
-    const comment = b.node('delivery', 'action', ['comment'], 5, 1);
-    const kill = b.node('gates', 'action', ['kill'], 1, 2.3, { enabled: true });
-    b.edge(trigger, allow, 'issue', 'in');
+    const allow = b.node('gates', 'action', ['allowlist'], 2, 1, { authors: 'you\nalice\nbob', teams: 'acme/platform' });
+    const budget = b.node('gates', 'action', ['budget'], 3, 1, BUDGET);
+    const pipeline = b.node('pipeline', 'action', ['run the pipeline'], 4, 1, { ...PIPELINE, branchPrefix: brand.slug });
+    const deliver = b.node('delivery', 'action', ['deliver'], 5, 0.4, { policy: 'pr', draft: true });
+    const comment = b.node('delivery', 'action', ['comment'], 5, 1.6);
+    const kill = b.node('gates', 'action', ['kill'], 1, 1, { enabled: true });
+    b.edge(trigger, kill, 'issue', 'in');
+    b.edge(kill, allow, 'out', 'in');
     b.edge(allow, budget, 'pass', 'in');
     b.edge(budget, pipeline, 'pass', 'issue');
     b.edge(pipeline, deliver, 'run', 'run');
     b.edge(pipeline, comment, 'run', 'run');
-    void kill;
   },
   'sentry-fix': (b, brand) => {
     const trigger = b.node('sentry', 'trigger', ['new issue', 'issue created', 'issue', 'alert'], 0, 1);
@@ -186,7 +196,7 @@ const BUILDERS: Record<string, (b: Builder, brand: Brand) => void> = {
     const cond = b.node('logic', 'action', ['condition'], 2, 1, { left: '{{issue.triage}}', op: 'contains', right: 'bug' });
     const issue = b.node('github-issues', 'action', ['create'], 3, 0.4);
     const discord = b.node('discord', 'action', ['post', 'message', 'send'], 4, 0.4, { channel: '#community-bugs' });
-    const thanks = b.node('youtube', 'action', ['comment', 'reply'], 3, 1.8, undefined, 'Say thanks');
+    const thanks = b.node('youtube', 'action', ['comment', 'reply'], 3, 1.8, { videoId: '{{issue.videoId}}' }, 'Say thanks');
     b.edge(trigger, ai, 'issue', 'in');
     b.edge(ai, cond, 'out', 'in');
     b.edge(cond, issue, 'true', 'in');
@@ -204,7 +214,8 @@ const BUILDERS: Record<string, (b: Builder, brand: Brand) => void> = {
     b.edge(approval, budget, 'approved', 'in');
     b.edge(budget, pipeline, 'pass', 'issue');
     b.edge(pipeline, deliver, 'run', 'run');
-    b.edge(deliver, reply, 'change', 'in');
+    // The customer hears back once the pipeline has a pull request to point at.
+    b.edge(pipeline, reply, 'run', 'run');
   },
 };
 
@@ -229,4 +240,21 @@ export function blankWorkflow(brand: Brand, repository = 'acme/api'): Workflow {
 export { brandSlugFor };
 function brandSlugFor(brand: Brand): string {
   return brand.slug;
+}
+
+/**
+ * A new workflow that starts from one specific trigger instead of the manual
+ * one, for "Start a workflow with this" on the Integrations page. Disabled,
+ * like a blank workflow, until somebody wires up what should happen next.
+ */
+export function workflowFromTrigger(triggerTypeId: string, brand: Brand, repository = 'acme/api'): Workflow | undefined {
+  const def = getNodeType(triggerTypeId);
+  if (def === undefined || def.kind !== 'trigger') return undefined;
+  const base = blankWorkflow(brand, repository);
+  return {
+    ...base,
+    name: `${def.connector.name}: ${def.name}`,
+    description: `Starts from the ${def.connector.name} trigger “${def.name}”. ${def.description}`.trim(),
+    nodes: [{ id: `n_${nanoid(8)}`, type: 'wf', position: { x: 120, y: 200 }, data: { typeId: def.id, config: defaultConfig(def) } }],
+  };
 }

@@ -88,7 +88,7 @@ const DEFAULT_STEPS = [
 type StepItem = {
   id: number;
   label: string;
-  icon: React.ComponentType<any>;
+  icon: React.ComponentType<{ className?: string; size?: number }>;
 };
 
 type RunActionButtonProps = {

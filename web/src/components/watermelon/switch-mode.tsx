@@ -15,6 +15,8 @@ interface SwitchModeProps {
     knobLightColor?: string;
     borderDarkColor?: string;
     borderLightColor?: string;
+    /** Adapted for the studio: an accessible name, since the switch is icon-only. */
+    label?: string;
 }
 
 export const SwitchMode: FC<SwitchModeProps> = ({
@@ -26,6 +28,7 @@ export const SwitchMode: FC<SwitchModeProps> = ({
     knobLightColor = "#F3F2F7",
     borderDarkColor = "#4C4C50",
     borderLightColor = "#D8D6E0",
+    label = "Toggle light or dark theme",
 }) => {
     const [mounted, setMounted] = useState(false);
     const { resolvedTheme, setTheme } = useTheme();
@@ -43,6 +46,11 @@ export const SwitchMode: FC<SwitchModeProps> = ({
 
     return (
         <motion.button
+            type="button"
+            role="switch"
+            aria-checked={isDark}
+            aria-label={label}
+            title={label}
             onClick={() => setTheme(isDark ? "light" : "dark")}
             className="relative flex items-center rounded-full border-2 transition-colors"
             style={{
@@ -61,7 +69,7 @@ export const SwitchMode: FC<SwitchModeProps> = ({
             {/* SLIDING KNOB */}
             <motion.div
                 layout
-                layoutId="switch-knob"
+                layoutId={`switch-knob-${width}`}
                 transition={{ type: "spring", stiffness: 260, damping: 20 }}
                 className="absolute rounded-full border-2 z-30"
                 style={{
