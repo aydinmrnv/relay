@@ -59,26 +59,32 @@ export async function runProcess(
   const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
   const startedAt = Date.now();
 
-  if (options.signal?.aborted) {
-    return {
-      command,
-      args,
-      cwd,
-      exitCode: null,
-      signal: null,
-      stdout: '',
-      stderr: '',
-      durationMs: 0,
-      timedOut: false,
-      aborted: true,
-      ok: false,
-    };
-  }
+  const abortedBeforeStart = (): ProcessResult => ({
+    command,
+    args,
+    cwd,
+    exitCode: null,
+    signal: null,
+    stdout: '',
+    stderr: '',
+    durationMs: Date.now() - startedAt,
+    timedOut: false,
+    aborted: true,
+    ok: false,
+  });
+
+  if (options.signal?.aborted) return abortedBeforeStart();
 
   // On Windows the logical command may be a `.cmd` shim that cannot be spawned
   // without a shell; the invocation resolves it to a direct, shell-free argv.
   // On POSIX this is the identity. Results still report the logical command.
   const invocation = await resolveInvocation(command, args);
+
+  // Checked again: resolving reads the disk on Windows, and an abort that lands
+  // meanwhile has no listener yet to hear it. Missed here, the process would
+  // start after its caller had cancelled it, with nothing left to stop it.
+  // From here to the listener below there is no await, so no second gap.
+  if (options.signal?.aborted) return abortedBeforeStart();
 
   const child = spawn(invocation.command, [...invocation.args], {
     cwd,
@@ -442,12 +448,26 @@ async function resolveBatchShim(shimPath: string, platform: ExecutionPlatform): 
   const segment = invocationLine.split('&').filter((part) => part.includes('%*')).at(-1) ?? '';
   const tokens = (segment.match(/"[^"]*"|\S+/g) ?? []).map((token) => token.replace(/^"|"$/g, ''));
 
+  const assignments = shimAssignments(content);
   const program = tokens[0] ?? '';
-  if (!shimRunsNode(program, content)) {
+  if (!shimRunsNode(program, assignments)) {
     throw refuseWithoutShell(shimPath, `it launches \`${program || 'nothing'}\`, which Relay cannot verify is node`);
   }
 
-  const scriptToken = tokens.slice(1).find((token) => /%~?dp0%?/i.test(token));
+  // The script is the argument that lives beside the shim: written inline
+  // (`"%dp0%\...\cli.js"`), or held in a variable, as npm's own `npm.cmd` does
+  // (`"%NODE_EXE%" "%NPM_CLI_JS%" %*`). A variable's beside-the-shim value is
+  // the one taken. npm's launcher may afterwards swap in a globally updated
+  // npm that it finds by running node inside a FOR loop; following that would
+  // mean evaluating the batch file, and the npm that shipped beside node runs
+  // the same commands.
+  const scriptToken = tokens
+    .slice(1)
+    .map((token) => {
+      const variable = variableIn(token);
+      return variable === undefined ? token : assignments.get(variable)?.find((value) => DP0.test(value));
+    })
+    .find((token) => token !== undefined && DP0.test(token));
   if (scriptToken === undefined) {
     throw refuseWithoutShell(shimPath, 'the script it wraps could not be identified');
   }
@@ -464,14 +484,42 @@ async function resolveBatchShim(shimPath: string, platform: ExecutionPlatform): 
   return { command: platform.execPath, args: [scriptPath] };
 }
 
-/** True when the shim's program is node — directly, or via cmd-shim's `_prog`. */
-function shimRunsNode(program: string, content: string): boolean {
-  if (/%_prog%/i.test(program)) {
-    // cmd-shim sets `_prog` twice: `%dp0%\node.exe` when a node is bundled
-    // beside the shim, plus a bare fallback. Every assignment must be node —
-    // a python shim says `SET "_prog=python"` here.
-    const assignments = [...content.matchAll(/SET\s+"_prog=([^"]*)"/gi)].map((match) => match[1] ?? '');
-    return assignments.length > 0 && assignments.every((value) => nameIsNode(value));
+/** A reference to the directory the shim lives in: `%~dp0` or cmd-shim's `%dp0%`. */
+const DP0 = /%~?dp0%?/i;
+
+/**
+ * Every `SET "NAME=value"` in a shim, and every unquoted `SET NAME=value`,
+ * keyed by lowercased name — cmd variables are case-insensitive. A name is
+ * often assigned more than once, on the two branches of an IF, so every value
+ * is kept, in order: the node check below has to see all of them, or a later
+ * reassignment could slip a different program past it.
+ */
+function shimAssignments(content: string): Map<string, string[]> {
+  const assignments = new Map<string, string[]>();
+  for (const match of content.matchAll(/\bSET\s+(?:"([^"=]+)=([^"]*)"|([^\s"=/]+)=([^\r\n]*))/gi)) {
+    const name = (match[1] ?? match[3] ?? '').toLowerCase();
+    const value = (match[2] ?? match[4] ?? '').trim();
+    assignments.set(name, [...(assignments.get(name) ?? []), value]);
+  }
+  return assignments;
+}
+
+/** The variable a token consists of, lowercased, when it is exactly `%NAME%`. */
+function variableIn(token: string): string | undefined {
+  return /^%([^%~*]+)%$/.exec(token)?.[1]?.toLowerCase();
+}
+
+/**
+ * True when the shim's program is node — named directly, or through a
+ * variable: cmd-shim's `%_prog%`, npm's own `%NODE_EXE%`. Both set theirs
+ * twice, to the node beside the shim and to a bare `node` fallback, and every
+ * assignment must be node — a python shim says `SET "_prog=python"` here.
+ */
+function shimRunsNode(program: string, assignments: Map<string, string[]>): boolean {
+  const variable = variableIn(program);
+  if (variable !== undefined) {
+    const values = assignments.get(variable) ?? [];
+    return values.length > 0 && values.every((value) => nameIsNode(value));
   }
   return nameIsNode(program);
 }

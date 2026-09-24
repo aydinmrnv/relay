@@ -207,7 +207,20 @@ function verify() {
   const allowed = state.issues.find((issue) => issue.number === 142);
   const refused = state.issues.find((issue) => issue.number === 143);
 
-  check(!allowed.labels.includes('relay:go'), 'the trigger label was not removed from #142 before the run started');
+  // Whether the label came off #142 is read from the calls Relay made, not from
+  // the labels #142 carries now: CI puts the label back after the run, to prove
+  // a second pass starts nothing, so by now the labels only say who touched
+  // them last. The call log says what Relay did and in what order — and the
+  // removal has to come before the run delivered anything.
+  const flagOf = (call, name) => (call.includes(name) ? call[call.indexOf(name) + 1] : undefined);
+  const unlabelledAt = state.calls.findIndex(
+    (call) => call[0] === 'issue' && call[1] === 'edit' && call[2] === '142' && flagOf(call, '--remove-label') === 'relay:go',
+  );
+  const pullRequestAt = state.calls.findIndex((call) => call[0] === 'pr' && call[1] === 'create');
+  check(
+    unlabelledAt !== -1 && (pullRequestAt === -1 || unlabelledAt < pullRequestAt),
+    'the trigger label was not removed from #142 before the run started',
+  );
   check(refused.labels.includes('relay:go'), 'the trigger label was taken off #143, which nobody was allowed to trigger');
 
   const pulls = state.pullRequests ?? [];
