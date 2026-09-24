@@ -25,6 +25,7 @@ import { useStudio } from '@/lib/store';
 import { AGENT_IDS, AGENT_META } from '@/lib/agents/types';
 import { cn } from '@/lib/utils';
 import { BrandMark } from './brand-mark';
+import { AccountMenu } from '@/components/account/account-menu';
 
 interface NavItem {
   href: string;
@@ -130,6 +131,7 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter>
         <AgentsFooter />
+        <AccountMenu />
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton

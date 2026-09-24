@@ -257,7 +257,7 @@ export const CORE_CONNECTORS: Connector[] = [
         id: 'webhook',
         name: 'Incoming webhook',
         description: 'A unique URL. POST anything to it to start the workflow.',
-        fields: [FIELDS.text('secret', 'Signing secret', 'optional'), FIELDS.text('path', 'Path suffix', 'ticket-in')],
+        fields: [{ key: 'secret', label: 'Signing secret', type: 'secret', placeholder: 'optional' }, FIELDS.text('path', 'Path suffix', 'ticket-in')],
         sample: { method: 'POST', body: { title: 'Anything you send' } },
       },
     ],

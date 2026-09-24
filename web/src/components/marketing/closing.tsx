@@ -6,10 +6,13 @@ import { Button } from '@/components/ui/button';
 import { BorderBeam } from '@/components/21st/border-beam';
 import { BrandMark } from '@/components/app/brand-mark';
 import { useBrand } from '@/hooks/use-brand';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { REPO_URL, Reveal, useCalmMotion } from './primitives';
 
 export function FinalCta() {
   const reduce = useCalmMotion();
+  const signedIn = useAccount((state) => state.status === 'signed-in');
+  const invite = useCapabilities().enabled && !signedIn;
   return (
     <section className="border-t py-16 sm:py-24">
       <div className="container max-w-6xl">
@@ -29,8 +32,8 @@ export function FinalCta() {
                 Start with a template. Try a simulated run. Connect your machine when you’re ready.
               </p>
               <div className="mt-4 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
-                <Button size="lg" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href="/dashboard" />}>
-                  Open the studio
+                <Button size="lg" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href={invite ? '/sign-up' : '/dashboard'} />}>
+                  {invite ? 'Create a free account' : signedIn ? 'Open your studio' : 'Open the studio'}
                   <ArrowRight data-icon="inline-end" />
                 </Button>
                 <Button
@@ -63,7 +66,7 @@ export function SiteFooter() {
         { label: 'Open the studio', href: '/dashboard' },
         { label: 'Templates', href: '/templates' },
         { label: 'Integrations', href: '/integrations' },
-        { label: 'Pricing', href: '#pricing' },
+        { label: 'Pricing', href: '/#pricing' },
       ],
     },
     {
@@ -72,14 +75,23 @@ export function SiteFooter() {
         { label: 'Documentation', href: '/guide' },
         { label: 'Connect your machine', href: '/connect' },
         { label: 'Source on GitHub', href: REPO_URL },
-        { label: 'FAQ', href: '#faq' },
+        { label: 'FAQ', href: '/#faq' },
+      ],
+    },
+    {
+      title: 'Account',
+      links: [
+        { label: 'Create an account', href: '/sign-up' },
+        { label: 'Sign in', href: '/sign-in' },
+        { label: 'Privacy', href: '/privacy' },
+        { label: 'Terms', href: '/terms' },
       ],
     },
   ];
 
   return (
     <footer className="border-t bg-muted/20">
-      <div className="container max-w-6xl grid grid-cols-1 gap-10 py-14 md:grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))]">
+      <div className="container max-w-6xl grid grid-cols-1 gap-10 py-14 md:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
         <div className="flex flex-col gap-3">
           <Link href="/" className="flex w-fit items-center gap-2">
             <BrandMark className="size-7" />
@@ -87,7 +99,7 @@ export function SiteFooter() {
           </Link>
           <p className="max-w-xs text-sm leading-relaxed text-pretty text-muted-foreground">{brand.tagline}</p>
         </div>
-        <div className="grid grid-cols-2 gap-8 md:contents">
+        <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:contents">
           {columns.map((column) => (
             <nav key={column.title} aria-label={column.title} className="flex flex-col gap-3">
               <p className="text-sm font-semibold">{column.title}</p>

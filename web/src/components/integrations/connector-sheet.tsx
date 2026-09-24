@@ -126,7 +126,7 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
             <p className="mt-2.5 flex gap-2 border-t border-dashed pt-2.5 text-[13px] leading-relaxed text-muted-foreground">
               <FlaskConical className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
               <span>
-                In this prototype that step is mocked: connecting only stores a label in this browser. Every trigger and action below works in the builder and in test runs either way.
+                For now that step is a marker: connecting only records a label with your workflows. Every trigger and action below works in the builder and in test runs either way.
               </span>
             </p>
           )}

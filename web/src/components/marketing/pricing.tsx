@@ -35,7 +35,9 @@ export function Pricing() {
                 {[
                   'Unlimited workflows and templates',
                   'Visual builder and connector catalog',
-                  'Free simulated test runs',
+                  'Describe a workflow in a sentence',
+                  'Spend forecasts and free simulated test runs',
+                  'Free account: sync, share links, version history',
                   'Export config and GitHub Actions',
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-2.5 text-sm">

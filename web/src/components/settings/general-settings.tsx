@@ -95,7 +95,7 @@ export function GeneralSettings() {
         </SettingBlock>
         <CardFooter className="flex-wrap justify-between gap-2 border-t bg-muted/30 px-4 py-3 md:px-5">
           <p className="text-xs text-muted-foreground">
-            Build-time default: <span className="font-mono">NEXT_PUBLIC_PRODUCT_NAME</span>. This overrides it in this browser only.
+            Build-time default: <span className="font-mono">NEXT_PUBLIC_PRODUCT_NAME</span>. This overrides it for you.
           </p>
           <div className="flex gap-2">
             <Button type="button" variant="ghost" onClick={restore} disabled={isDefault && !dirty}>

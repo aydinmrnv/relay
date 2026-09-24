@@ -14,7 +14,13 @@ export function Faq() {
       id: 'cost',
       question: 'Does this cost anything?',
       answer:
-        'The studio and engine are free. Model usage counts against your own Claude and ChatGPT plans or API keys. If you export to GitHub Actions, runner usage follows your GitHub plan.',
+        'The studio, accounts and the engine are free. Model usage counts against your own Claude and ChatGPT plans or API keys, and the spend forecast in the builder estimates it before you run anything. If you export to GitHub Actions, runner usage follows your GitHub plan.',
+    },
+    {
+      id: 'account',
+      question: 'Do I need an account, and what do you store?',
+      answer:
+        'No: everything works as a guest, with your work kept in this browser. A free account adds sync across browsers, share links and version history. Sign-in is handled by Clerk; the studio stores only the workflows and run records you make, under your Clerk user id — never your code, your repository or your agents’ tokens. Download everything or delete your account from Settings at any time.',
     },
     {
       id: 'real',

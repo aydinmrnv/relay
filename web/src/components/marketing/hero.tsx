@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ArrowRight, ArrowUpRight, KeyRound, Laptop, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBrand } from '@/hooks/use-brand';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { PipelinePreview } from './pipeline-preview';
 import { AppMark, REPO_URL } from './primitives';
 
@@ -15,6 +16,10 @@ const TRUST = [
 
 export function Hero() {
   const brand = useBrand();
+  const signedIn = useAccount((state) => state.status === 'signed-in');
+  const accounts = useCapabilities().enabled;
+  // Signed out, the first button makes an account and the second is the no-sign-up way in.
+  const invite = accounts && !signedIn;
   return (
     <section className="overflow-hidden">
       <div className="relative mx-auto max-w-6xl border-x">
@@ -47,9 +52,9 @@ export function Hero() {
               size="lg"
               className="h-11 rounded-md px-6 shadow-none"
               nativeButton={false}
-              render={<Link href="/dashboard" />}
+              render={<Link href={invite ? '/sign-up' : '/dashboard'} />}
             >
-              Open the studio
+              {invite ? 'Get started free' : signedIn ? 'Open your studio' : 'Open the studio'}
               <ArrowRight data-icon="inline-end" />
             </Button>
             <Button
@@ -57,9 +62,9 @@ export function Hero() {
               variant="outline"
               className="h-11 rounded-md px-6 shadow-none"
               nativeButton={false}
-              render={<Link href="/guide" />}
+              render={<Link href={invite ? '/dashboard' : '/guide'} />}
             >
-              Read the docs
+              {invite ? 'Try it without an account' : 'Read the docs'}
               <ArrowUpRight data-icon="inline-end" />
             </Button>
           </div>

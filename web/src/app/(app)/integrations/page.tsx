@@ -110,7 +110,7 @@ function IntegrationsInner() {
         description={
           <>
             {CATALOG_STATS.connectors} apps your workflows can listen to and act on, built-in nodes included. A <strong className="font-medium text-foreground">trigger</strong> starts a workflow when something happens in an app; an{' '}
-            <strong className="font-medium text-foreground">action</strong> does something there. Connections in this prototype are local flags, not real sign-ins, so you can design against every app without connecting any.
+            <strong className="font-medium text-foreground">action</strong> does something there. For now a connection marks an app as ready rather than signing in to it, so you can design against every app without connecting any; an export uses your repository’s secrets.
           </>
         }
         actions={

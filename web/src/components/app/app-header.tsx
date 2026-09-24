@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { useTheme } from 'next-themes';
-import { BookOpen, ChevronDown, CircleHelp, FilePlus2, Keyboard, LayoutTemplate, Moon, Play, Plus, Search, Sparkles, Workflow as WorkflowIcon } from 'lucide-react';
+import { BookOpen, ChevronDown, CircleHelp, FilePlus2, Keyboard, LayoutTemplate, Moon, PencilLine, Play, Plus, Search, Sparkles, Workflow as WorkflowIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Kbd } from '@/components/ui/kbd';
@@ -22,6 +22,8 @@ import { isTypingTarget } from '@/lib/shortcuts';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { SwitchMode } from '@/components/watermelon/switch-mode';
 import { ShortcutsDialog } from './shortcuts-dialog';
+import { SyncIndicator } from '@/components/account/sync-indicator';
+import { DescribeWorkflowDialog } from '@/components/workflows/describe-workflow';
 
 const TITLES: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -42,6 +44,7 @@ export function AppHeader() {
   const { resolvedTheme, setTheme } = useTheme();
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [describeOpen, setDescribeOpen] = useState(false);
   const workflows = useWorkflows();
   const runs = useStudio((state) => state.runs);
   const markTourSeen = useStudio((state) => state.markTourSeen);
@@ -111,6 +114,7 @@ export function AppHeader() {
       </Breadcrumb>
 
       <div className="ml-auto flex items-center gap-1.5">
+        <SyncIndicator />
         <Button variant="outline" size="sm" className="hidden w-52 justify-start gap-2 text-muted-foreground md:inline-flex" onClick={() => setSearchOpen(true)}>
           <Search className="size-3.5" />
           <span className="flex-1 text-left">Search…</span>
@@ -159,6 +163,9 @@ export function AppHeader() {
             <DropdownMenuContent align="end" className="w-64">
               <DropdownMenuGroup>
                 <DropdownMenuLabel>Create a workflow</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => setDescribeOpen(true)}>
+                  <PencilLine /> Describe it in a sentence…
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => create.blank()}>
                   <FilePlus2 /> Blank canvas
                 </DropdownMenuItem>
@@ -193,6 +200,15 @@ export function AppHeader() {
               }}
             >
               <Plus /> New blank workflow
+            </CommandItem>
+            <CommandItem
+              value="describe workflow sentence write natural language"
+              onSelect={() => {
+                setSearchOpen(false);
+                setDescribeOpen(true);
+              }}
+            >
+              <PencilLine /> Describe a workflow in a sentence
             </CommandItem>
             <CommandItem value="shortcuts keyboard help" onSelect={() => { setSearchOpen(false); setShortcutsOpen(true); }}>
               <Keyboard /> Keyboard shortcuts
@@ -247,6 +263,7 @@ export function AppHeader() {
         </CommandList>
       </CommandDialog>
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <DescribeWorkflowDialog open={describeOpen} onOpenChange={setDescribeOpen} />
     </header>
   );
 }

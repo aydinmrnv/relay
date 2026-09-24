@@ -5,6 +5,7 @@ import { SiteHeader } from './site-header';
 import { Hero } from './hero';
 import { HowItWorks } from './how-it-works';
 import { Features } from './features';
+import { Different } from './different';
 import { Integrations } from './integrations';
 import { BuilderShowcase } from './builder-showcase';
 import { Pricing } from './pricing';
@@ -25,13 +26,14 @@ export function Landing() {
       >
         Skip to content
       </a>
-      <DemoBanner />
+      <DemoBanner site />
       <SiteHeader />
       <main id="main-content" className="flex-1">
         <Hero />
         <HowItWorks />
         <BuilderShowcase />
         <Features />
+        <Different />
         <Integrations />
         <Pricing />
         <Faq />

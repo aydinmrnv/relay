@@ -386,9 +386,9 @@ function RunNotFound() {
             <EmptyMedia variant="icon">
               <SearchX />
             </EmptyMedia>
-            <EmptyTitle>This run is not in this browser</EmptyTitle>
+            <EmptyTitle>This run is not here</EmptyTitle>
             <EmptyDescription>
-              Runs live only in the browser that played them. This one may have been deleted, cleared with the history, or removed along with its workflow.
+              It may have been deleted, cleared with the history, or removed along with its workflow. As a guest, runs live only in the browser that played them; test runs still playing when a tab closed are not kept.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent className="flex-row justify-center">

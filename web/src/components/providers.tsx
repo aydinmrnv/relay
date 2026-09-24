@@ -1,7 +1,8 @@
 'use client';
 
 import { ThemeProvider } from 'next-themes';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { MotionConfig, MotionGlobalConfig } from 'motion/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -9,12 +10,26 @@ import { useStudio } from '@/lib/store';
 import { useAgentsPoller } from '@/hooks/use-agent-accounts';
 import { useCompanion } from '@/lib/companion/client';
 import { attachMachineRun } from '@/lib/run-launcher';
+import { CapabilitiesContext, useAccount } from '@/lib/cloud/account';
+import { accountChanged, setTokenGetter, startAccount } from '@/lib/cloud/sync';
+import type { AccountUser, AuthCapabilities } from '@/lib/cloud/types';
 
-export function Providers({ children }: { children: React.ReactNode }) {
+/**
+ * `clerk` says whether the layout rendered a ClerkProvider around this.
+ * Accounts need it, whatever the server says at run time: Clerk's hooks
+ * cannot run without their provider.
+ */
+export function Providers({ capabilities: rendered, clerk, children }: { capabilities: AuthCapabilities; clerk: boolean; children: React.ReactNode }) {
+  const built = clerk ? rendered : { ...rendered, enabled: false };
+  // What the page was rendered with; replaced if the running server says otherwise.
+  const [capabilities, setCapabilities] = useState(built);
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <CapabilitiesContext value={capabilities}>
       <MotionPreference>
         <TooltipProvider delay={200}>
+          <AccountBoot capabilities={built} onRuntime={(runtime) => setCapabilities(clerk ? runtime : { ...runtime, enabled: false })} />
+          {clerk && capabilities.enabled ? <ClerkBridge /> : null}
           <SeedOnce />
           <BrandTitle />
           <AgentsPoller />
@@ -23,6 +38,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <Toaster richColors position="bottom-right" />
         </TooltipProvider>
       </MotionPreference>
+      </CapabilitiesContext>
     </ThemeProvider>
   );
 }
@@ -55,14 +71,86 @@ function BrandTitle() {
   return null;
 }
 
-/** Fills an empty browser with the starter workflows and a few demo runs, once. */
+/**
+ * Once the saved studio is back from localStorage, decide whether this is a
+ * guest or an account, and load the account's workspace if it is one.
+ */
+function AccountBoot({ capabilities, onRuntime }: { capabilities: AuthCapabilities; onRuntime: (capabilities: AuthCapabilities) => void }) {
+  const hydrated = useStudio((state) => state.hydrated);
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    // Start at once with what the page was rendered with — right in every
+    // normal deployment — and start again only if the server disagrees.
+    void startAccount(capabilities);
+    fetch('/api/capabilities')
+      .then((response) => (response.ok ? (response.json() as Promise<AuthCapabilities>) : null))
+      .then((runtime) => {
+        if (cancelled || runtime === null || runtime.enabled === capabilities.enabled) return;
+        onRuntime(runtime);
+        void startAccount(runtime);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // Once per page: capabilities do not change while it is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated]);
+  return null;
+}
+
+/**
+ * Clerk decides who is signed in. This passes its answer to the studio on
+ * load and on every change — signing in or out here or in another tab — and
+ * lends the sync layer Clerk's token getter for its requests.
+ */
+function ClerkBridge() {
+  const { isLoaded, userId, getToken } = useAuth();
+  const { user } = useUser();
+  const hydrated = useStudio((state) => state.hydrated);
+
+  useEffect(() => {
+    setTokenGetter(() => getToken());
+    return () => setTokenGetter(null);
+  }, [getToken]);
+
+  useEffect(() => {
+    if (!hydrated || !isLoaded) return;
+    if (typeof userId !== 'string') {
+      void accountChanged(null);
+      return;
+    }
+    // The user object follows the session a moment later.
+    if (user === null || user === undefined || user.id !== userId) return;
+    const email = user.primaryEmailAddress;
+    const person: AccountUser = {
+      id: user.id,
+      name: user.fullName?.trim() || user.username || email?.emailAddress.split('@')[0] || 'You',
+      email: email?.emailAddress ?? '',
+      emailVerified: email?.verification?.status === 'verified',
+      image: user.hasImage ? user.imageUrl : null,
+      createdAt: (user.createdAt ?? new Date()).toISOString(),
+    };
+    void accountChanged(person);
+  }, [hydrated, isLoaded, userId, user]);
+  return null;
+}
+
+/**
+ * Fills a guest's empty browser with the starter workflows and a few demo
+ * runs, once. An account starts empty on purpose: onboarding makes its first
+ * workflow, and nobody's account should fill up with examples.
+ */
 function SeedOnce() {
   const hydrated = useStudio((state) => state.hydrated);
   const seeded = useStudio((state) => state.seeded);
+  const owner = useStudio((state) => state.owner);
+  const guest = useAccount((state) => state.status === 'guest' || state.status === 'disabled');
   const seedDemo = useStudio((state) => state.seedDemo);
   useEffect(() => {
-    if (hydrated && !seeded) void seedDemo();
-  }, [hydrated, seeded, seedDemo]);
+    if (hydrated && guest && owner === null && !seeded) void seedDemo();
+  }, [hydrated, guest, owner, seeded, seedDemo]);
   return null;
 }
 
