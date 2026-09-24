@@ -9,12 +9,17 @@ import { useStudio } from '@/lib/store';
 import { useAgentsPoller } from '@/hooks/use-agent-accounts';
 import { useCompanion } from '@/lib/companion/client';
 import { attachMachineRun } from '@/lib/run-launcher';
+import { CapabilitiesContext, useAccount } from '@/lib/cloud/account';
+import { startAccount } from '@/lib/cloud/sync';
+import type { AuthCapabilities } from '@/lib/cloud/types';
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({ capabilities, children }: { capabilities: AuthCapabilities; children: React.ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <CapabilitiesContext value={capabilities}>
       <MotionPreference>
         <TooltipProvider delay={200}>
+          <AccountBoot capabilities={capabilities} />
           <SeedOnce />
           <BrandTitle />
           <AgentsPoller />
@@ -23,6 +28,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <Toaster richColors position="bottom-right" />
         </TooltipProvider>
       </MotionPreference>
+      </CapabilitiesContext>
     </ThemeProvider>
   );
 }
@@ -55,14 +61,34 @@ function BrandTitle() {
   return null;
 }
 
-/** Fills an empty browser with the starter workflows and a few demo runs, once. */
+/**
+ * Once the saved studio is back from localStorage, decide whether this is a
+ * guest or an account, and load the account's workspace if it is one.
+ */
+function AccountBoot({ capabilities }: { capabilities: AuthCapabilities }) {
+  const hydrated = useStudio((state) => state.hydrated);
+  useEffect(() => {
+    if (hydrated) void startAccount(capabilities);
+    // Capabilities are fixed for the life of the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated]);
+  return null;
+}
+
+/**
+ * Fills a guest's empty browser with the starter workflows and a few demo
+ * runs, once. An account starts empty on purpose: onboarding makes its first
+ * workflow, and nobody's account should fill up with examples.
+ */
 function SeedOnce() {
   const hydrated = useStudio((state) => state.hydrated);
   const seeded = useStudio((state) => state.seeded);
+  const owner = useStudio((state) => state.owner);
+  const guest = useAccount((state) => state.status === 'guest' || state.status === 'disabled');
   const seedDemo = useStudio((state) => state.seedDemo);
   useEffect(() => {
-    if (hydrated && !seeded) void seedDemo();
-  }, [hydrated, seeded, seedDemo]);
+    if (hydrated && guest && owner === null && !seeded) void seedDemo();
+  }, [hydrated, guest, owner, seeded, seedDemo]);
   return null;
 }
 

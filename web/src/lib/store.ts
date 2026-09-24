@@ -11,9 +11,27 @@ import { instantiateTemplate, TEMPLATES } from './workflow/templates';
 import { simulateRun } from './workflow/simulate';
 import { repairEdges, repairKnownTemplateIssues } from './workflow/repair';
 
+/** A whole workspace, as the server hands it over after signing in. */
+export interface WorkspaceSnapshot {
+  owner: string;
+  workflows: Record<string, Workflow>;
+  runs: Run[];
+  connections: Record<string, Connection>;
+  settings: Settings;
+  brand: Brand;
+  toursSeen: Record<string, boolean>;
+  checklistDismissed: boolean;
+}
+
 export interface StudioState {
   hydrated: boolean;
   seeded: boolean;
+  /**
+   * Whose workspace this is: a user id when it mirrors an account, `null` for
+   * a guest whose work lives only in this browser. Persisted, so a reload
+   * shows the account's last-known state while the server is asked again.
+   */
+  owner: string | null;
   brand: Brand;
   workflows: Record<string, Workflow>;
   runs: Run[];
@@ -43,6 +61,10 @@ export interface StudioState {
   updateSettings: (patch: Partial<Settings>) => void;
   seedDemo: () => Promise<void>;
   resetAll: () => void;
+  /** Swap in an account's workspace, replacing whatever this browser held. */
+  replaceWorkspace: (snapshot: WorkspaceSnapshot) => void;
+  /** Back to an empty guest workspace, e.g. after signing out on a shared computer. */
+  resetToGuest: () => void;
   importAll: (payload: unknown) => { ok: boolean; message: string };
   exportAll: () => string;
   markHydrated: () => void;
@@ -55,6 +77,7 @@ export const useStudio = create<StudioState>()(
     (set, get) => ({
       hydrated: false,
       seeded: false,
+      owner: null,
       brand: DEFAULT_BRAND,
       workflows: {},
       runs: [],
@@ -149,7 +172,7 @@ export const useStudio = create<StudioState>()(
         const workflows: Record<string, Workflow> = {};
         for (const template of TEMPLATES) {
           const workflow = instantiateTemplate(template.id, brand, state.settings.defaultRepository);
-          if (workflow !== undefined) workflows[workflow.id] = workflow;
+          if (workflow !== undefined) workflows[workflow.id] = { ...workflow, demo: true };
         }
         const runs: Run[] = [];
         const list = Object.values(workflows);
@@ -172,7 +195,24 @@ export const useStudio = create<StudioState>()(
         set({ workflows, runs, connections, seeded: true });
       },
 
-      resetAll: () => set({ workflows: {}, runs: [], connections: {}, seeded: false, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND, toursSeen: {}, checklistDismissed: false }),
+      // Signed in, an empty workspace stays empty: seeding is for guests.
+      resetAll: () =>
+        set((state) => ({ workflows: {}, runs: [], connections: {}, seeded: state.owner !== null, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND, toursSeen: {}, checklistDismissed: false })),
+
+      replaceWorkspace: (snapshot) =>
+        set({
+          owner: snapshot.owner,
+          seeded: true,
+          workflows: snapshot.workflows,
+          runs: snapshot.runs,
+          connections: snapshot.connections,
+          settings: snapshot.settings,
+          brand: snapshot.brand,
+          toursSeen: snapshot.toursSeen,
+          checklistDismissed: snapshot.checklistDismissed,
+        }),
+
+      resetToGuest: () => set({ owner: null, seeded: false, workflows: {}, runs: [], connections: {}, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND, toursSeen: {}, checklistDismissed: false }),
 
       exportAll: () => {
         const { brand, workflows, runs, connections, settings } = get();
@@ -209,6 +249,7 @@ export const useStudio = create<StudioState>()(
       storage: createJSONStorage(() => (typeof window === 'undefined' ? (undefined as unknown as Storage) : window.localStorage)),
       partialize: (state) => ({
         seeded: state.seeded,
+        owner: state.owner,
         brand: state.brand,
         workflows: state.workflows,
         runs: state.runs,

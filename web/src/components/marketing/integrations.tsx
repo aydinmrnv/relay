@@ -28,7 +28,7 @@ export function Integrations() {
         <SectionHeading
           eyebrow="Integrations"
           title="Wired to the tools your team already uses"
-          description="Every app's triggers and actions are nodes in the palette, with typed ports and generated forms. In the prototype a connection is a local switch, so you can design against all of them today."
+          description="Every app's triggers and actions are nodes in the palette, with typed ports and generated forms. A connection is a switch for now, so you can design against all of them today."
         />
 
         <Reveal className="mx-auto mt-12 grid max-w-3xl grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-4">

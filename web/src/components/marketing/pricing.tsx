@@ -16,12 +16,19 @@ export function Pricing() {
     {
       name: 'The studio',
       price: '$0',
-      cadence: 'free, no account',
-      summary: 'This prototype. Design, validate, test-run and export workflows in your browser.',
-      features: ['Unlimited workflows', `All ${CATALOG_STATS.connectors} connectors`, 'Simulated test runs', 'Export to config + GitHub Actions', 'Your data stays in this browser'],
+      cadence: 'free while in beta',
+      summary: 'Design, validate, test-run and export workflows. Try it as a guest, or make an account to keep everything.',
+      features: [
+        'Unlimited workflows, synced to your account',
+        `All ${CATALOG_STATS.connectors} connectors`,
+        'Describe a workflow in a sentence',
+        'Spend forecasts and simulated test runs',
+        'Share links, remixes and version history',
+        'Export to config + GitHub Actions',
+      ],
       cta: (
-        <Button className="w-full" nativeButton={false} render={<Link href="/dashboard" />}>
-          Open the studio
+        <Button className="w-full" nativeButton={false} render={<Link href="/sign-up" />}>
+          Create a free account
           <ArrowRight data-icon="inline-end" />
         </Button>
       ),
@@ -61,8 +68,8 @@ export function Pricing() {
       <div className="container">
         <SectionHeading
           eyebrow="Pricing"
-          title="Honest pricing: there isn't any yet"
-          description={`Nothing is hosted, so there is nothing to bill. The model usage is your own subscriptions; the compute is your own Actions minutes.`}
+          title="Honest pricing: free while in beta"
+          description={`Accounts are free. The model usage is your own subscriptions and the compute is your own machine or Actions minutes, so ${brand.name} has nothing to mark up.`}
         />
         <div className="mx-auto mt-14 grid max-w-5xl grid-cols-1 gap-4 lg:grid-cols-3">
           {plans.map((plan, index) => (
@@ -77,7 +84,7 @@ export function Pricing() {
                 {plan.highlighted ? <div aria-hidden className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-violet-500 via-primary to-sky-400" /> : null}
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold">{plan.name}</h3>
-                  {plan.highlighted ? <Badge>You are here</Badge> : null}
+                  {plan.highlighted ? <Badge>Beta</Badge> : null}
                   {plan.price === 'Later' ? (
                     <Badge variant="outline">
                       <Clock data-icon="inline-start" />

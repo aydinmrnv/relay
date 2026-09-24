@@ -1,0 +1,132 @@
+'use client';
+
+import { Check, CircleDollarSign, GitFork, History, Minus, PencilLine, X } from 'lucide-react';
+import { useBrand } from '@/hooks/use-brand';
+import { cn } from '@/lib/utils';
+import { Reveal, SectionHeading } from './primitives';
+
+type Mark = 'yes' | 'no' | 'partial';
+
+/**
+ * What sets the product apart, against the two kinds of tool people reach
+ * for today rather than named products, whose details change monthly. Every
+ * "yes" in our column is something the studio does now, not a plan.
+ */
+export function Different() {
+  const brand = useBrand();
+
+  const highlights = [
+    {
+      icon: PencilLine,
+      title: 'Describe it, get a workflow',
+      body: 'Type one sentence — “when a Sentry error is new, fix it under $3 and ping Discord” — and watch the graph build itself. It runs in your browser: no model call, no credits, nothing leaves the page.',
+    },
+    {
+      icon: CircleDollarSign,
+      title: 'A spend forecast before the first run',
+      body: 'Hundreds of simulated runs of your exact graph give a typical cost, a bad-day cost, a monthly bill at your ticket volume, and how often your budget gate will say no.',
+    },
+    {
+      icon: GitFork,
+      title: 'Share it, remix it, badge it',
+      body: 'Publish a workflow at a public link with secrets stripped. Anyone can remix it into their own studio, and a README badge points people to it.',
+    },
+    {
+      icon: History,
+      title: 'Version history with one-click restore',
+      body: 'A snapshot before every editing session, named versions when you want them, and a restore you can undo.',
+    },
+  ];
+
+  const rows: Array<{ label: string; ours: Mark; agents: Mark; canvases: Mark; note?: string }> = [
+    { label: 'Two vendors’ agents review each other’s plan and diff', ours: 'yes', agents: 'no', canvases: 'no' },
+    { label: 'Runs on the Claude and ChatGPT plans you already pay for', ours: 'yes', agents: 'partial', canvases: 'no', note: 'Hosted agents usually bill seats or credits of their own; canvases call APIs per key.' },
+    { label: 'Your code stays on your machine or your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
+    { label: 'Forecast what a workflow will cost before it runs', ours: 'yes', agents: 'no', canvases: 'no' },
+    { label: 'Build a workflow from a sentence without spending AI credits', ours: 'yes', agents: 'no', canvases: 'partial' },
+    { label: 'Guardrails that refuse by default: budgets, allowlists, approval', ours: 'yes', agents: 'partial', canvases: 'partial' },
+    { label: 'Unattended runs can never merge on their own', ours: 'yes', agents: 'partial', canvases: 'no' },
+    { label: 'Exports to plain files you own: a config and a GitHub Actions workflow', ours: 'yes', agents: 'no', canvases: 'partial' },
+    { label: 'Public share links that anyone can remix', ours: 'yes', agents: 'no', canvases: 'partial' },
+  ];
+
+  return (
+    <section id="different" className="scroll-mt-16 border-t py-20 sm:py-28">
+      <div className="container">
+        <SectionHeading
+          eyebrow="What’s different"
+          title={`What ${brand.name} does that others don’t`}
+          description="Hosted coding agents do the work in someone else’s cloud with one model checking itself. Automation canvases can call a model, but do not know what a pull request is. This is the space between them."
+        />
+
+        <div className="mt-14 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {highlights.map((item, index) => (
+            <Reveal key={item.title} delay={index * 0.05} className="h-full">
+              <article className="flex h-full flex-col gap-3 rounded-2xl border bg-card p-5">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <item.icon className="size-4.5" aria-hidden />
+                </span>
+                <h3 className="font-semibold tracking-tight">{item.title}</h3>
+                <p className="text-sm text-pretty text-muted-foreground">{item.body}</p>
+              </article>
+            </Reveal>
+          ))}
+        </div>
+
+        <Reveal className="mx-auto mt-14 max-w-5xl">
+          <div className="overflow-x-auto rounded-2xl border bg-card">
+            <table className="w-full min-w-[40rem] text-sm">
+              <caption className="sr-only">How {brand.name} compares with hosted coding agents and general automation canvases</caption>
+              <thead>
+                <tr className="border-b bg-muted/40 text-left">
+                  <th scope="col" className="p-4 font-medium text-muted-foreground">
+                    What you get
+                  </th>
+                  <th scope="col" className="w-32 p-4 text-center font-semibold text-primary">
+                    {brand.name}
+                  </th>
+                  <th scope="col" className="w-36 p-4 text-center font-medium text-muted-foreground">
+                    Hosted coding agents
+                  </th>
+                  <th scope="col" className="w-36 p-4 text-center font-medium text-muted-foreground">
+                    Automation canvases
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.label} className="border-b last:border-0">
+                    <th scope="row" className="p-4 text-left font-normal">
+                      {row.label}
+                      {row.note === undefined ? null : <span className="mt-0.5 block text-xs text-muted-foreground">{row.note}</span>}
+                    </th>
+                    <td className="bg-primary/[0.03] p-4 text-center">
+                      <MarkIcon mark={row.ours} />
+                    </td>
+                    <td className="p-4 text-center">
+                      <MarkIcon mark={row.agents} />
+                    </td>
+                    <td className="p-4 text-center">
+                      <MarkIcon mark={row.canvases} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-center text-xs text-muted-foreground">“Partial” means some tools in the category do it, or it takes setup. Categories, not products: individual tools change often.</p>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+function MarkIcon({ mark }: { mark: Mark }) {
+  const label = mark === 'yes' ? 'Yes' : mark === 'no' ? 'No' : 'Partly';
+  return (
+    <span className={cn('inline-flex size-6 items-center justify-center rounded-full', mark === 'yes' ? 'bg-success/15 text-success' : mark === 'no' ? 'bg-muted text-muted-foreground' : 'bg-warning/15 text-warning')} title={label}>
+      {mark === 'yes' ? <Check className="size-3.5" /> : mark === 'no' ? <X className="size-3.5" /> : <Minus className="size-3.5" />}
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}

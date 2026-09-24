@@ -112,7 +112,7 @@ function PreviewBody({ entry, onUse }: { entry: TemplateEntry; onUse: (templateI
  * refused path of a gate listed after the happy path), the parent's number,
  * so "If refused" can say which step refused.
  */
-function branchParent(workflow: Workflow, steps: DescribedStep[], index: number): number | undefined {
+export function branchParent(workflow: Workflow, steps: DescribedStep[], index: number): number | undefined {
   const step = steps[index];
   if (step === undefined || step.branch === undefined) return undefined;
   const source = workflow.edges.find((edge) => edge.target === step.nodeId)?.source;
@@ -120,7 +120,7 @@ function branchParent(workflow: Workflow, steps: DescribedStep[], index: number)
   return parent < 0 || parent === index - 1 ? undefined : parent + 1;
 }
 
-function StepItem({ step, index, from, last }: { step: DescribedStep; index: number; from: number | undefined; last: boolean }) {
+export function StepItem({ step, index, from, last }: { step: DescribedStep; index: number; from: number | undefined; last: boolean }) {
   const trigger = step.def.kind === 'trigger';
   return (
     <li className="flex gap-3" style={{ paddingLeft: `${step.depth * 1.5}rem` }}>

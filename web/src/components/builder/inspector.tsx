@@ -27,6 +27,7 @@ import type { Run, Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
 import { PORT_LEGEND, PORT_STYLE } from './ports';
 import type { CanvasNode } from './types';
+import { ForecastSummary } from './forecast-dialog';
 
 interface Props {
   node: CanvasNode | null;
@@ -92,6 +93,8 @@ function WorkflowPanel({ workflow, issues, onSelect }: { workflow: Workflow; iss
             <Input id="wf-repo" value={workflow.repository ?? ''} placeholder="owner/repo" onChange={(event) => updateWorkflowMeta(workflow.id, { repository: event.target.value })} className="h-8 font-mono text-sm" />
           </div>
         </section>
+
+        <ForecastSummary workflow={workflow} />
 
         <section className="grid gap-2">
           <PanelTitle title="What it does" hint="Read top to bottom. Click a step to edit it." />
@@ -553,7 +556,7 @@ function FieldControl({ field, value, onChange }: { field: FieldSpec; value: unk
         <div className="grid gap-1.5">
           {label}
           <Input id={id} type="password" autoComplete="off" value={typeof value === 'string' ? value : ''} placeholder={field.placeholder ?? '••••••••'} onChange={(event) => onChange(event.target.value)} className="h-8 text-sm" />
-          <p className="text-[11px] text-muted-foreground">Stays in this browser. The export refers to it by secret name, never by value.</p>
+          <p className="text-[11px] text-muted-foreground">Stays in this browser: never saved to your account, shared, or written into an export, which refers to it by secret name.</p>
         </div>
       );
     default:

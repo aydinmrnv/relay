@@ -126,7 +126,10 @@ export function instantiateTemplate(templateId: string, brand: Brand, repository
   };
 }
 
-const BUDGET = { maxRunCostUsd: 6, maxDailyCostUsd: 40, confirmAboveUsd: 10 };
+// A typical full run costs about $5 and one in ten goes past $6 (see the
+// spend forecast), so the per-run cap leaves room for the long tail rather
+// than stopping good runs halfway.
+const BUDGET = { maxRunCostUsd: 8, maxDailyCostUsd: 40, confirmAboveUsd: 10 };
 const PIPELINE = { review: 'standard', planner: 'claude', planReviewer: 'codex', implementer: 'codex', codeReviewer: 'claude' };
 
 const BUILDERS: Record<string, (b: Builder, brand: Brand) => void> = {

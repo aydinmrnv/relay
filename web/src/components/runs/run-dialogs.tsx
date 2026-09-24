@@ -88,7 +88,7 @@ export function ClearRunsDialog({ open, onOpenChange }: { open: boolean; onOpenC
             Clear all {runs.length} {runs.length === 1 ? 'run' : 'runs'}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Every run recorded in this browser is removed, including the dashboard&rsquo;s history and spend. Workflows, connections and settings are not touched.
+            Every run recorded here is removed, including the dashboard&rsquo;s history and spend. Workflows, connections and settings are not touched.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

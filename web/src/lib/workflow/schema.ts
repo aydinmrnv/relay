@@ -45,6 +45,8 @@ export interface Workflow {
   repository?: string;
   /** When the export dialog last produced files for this workflow. */
   exportedAt?: string;
+  /** One of the starter workflows a first visit is seeded with, rather than something a person made. */
+  demo?: boolean;
 }
 
 /* ------------------------------------------------------------------ */

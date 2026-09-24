@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useRef, useState } from 'react';
-import { CircleAlert, Copy, Download, FileCode2, Loader2, MoreHorizontal, Play, Plus, Search, Trash2, Upload, Workflow as WorkflowIcon, Zap } from 'lucide-react';
+import { CircleAlert, Copy, Download, FileCode2, Loader2, MoreHorizontal, PencilLine, Play, Plus, Search, Trash2, Upload, Workflow as WorkflowIcon, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,6 +20,7 @@ import { StatusBadge } from '@/components/app/status-badge';
 import { Stagger, StaggerItem } from '@/components/motion/fade-in';
 import { GraphThumbnail } from '@/components/templates/graph-thumbnail';
 import { ExportDialog } from '@/components/builder/export-dialog';
+import { DescribeWorkflowDialog } from '@/components/workflows/describe-workflow';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { useBrand } from '@/hooks/use-brand';
 import { useNow } from '@/hooks/use-now';
@@ -38,6 +39,7 @@ type Filter = 'all' | 'active' | 'paused' | 'attention';
 type Sort = 'edited' | 'name' | 'run';
 
 export default function WorkflowsPage() {
+  const [describeOpen, setDescribeOpen] = useState(false);
   const router = useRouter();
   const brand = useBrand();
   const now = useNow();
@@ -148,12 +150,16 @@ export default function WorkflowsPage() {
             <Button variant="outline" nativeButton={false} render={<Link href="/templates" />}>
               From a template
             </Button>
+            <Button variant="outline" onClick={() => setDescribeOpen(true)}>
+              <PencilLine data-icon="inline-start" /> Describe it
+            </Button>
             <Button onClick={() => create.blank()}>
               <Plus data-icon="inline-start" /> New workflow
             </Button>
           </>
         }
       />
+      <DescribeWorkflowDialog open={describeOpen} onOpenChange={setDescribeOpen} />
 
       {!hydrated ? null : workflows.length === 0 ? (
         <Empty className="flex-1 border">
@@ -166,7 +172,10 @@ export default function WorkflowsPage() {
           </EmptyHeader>
           <EmptyContent>
             <div className="flex flex-wrap justify-center gap-2">
-              <Button nativeButton={false} render={<Link href="/templates" />}>
+              <Button onClick={() => setDescribeOpen(true)}>
+                <PencilLine data-icon="inline-start" /> Describe it in a sentence
+              </Button>
+              <Button variant="outline" nativeButton={false} render={<Link href="/templates" />}>
                 Browse templates
               </Button>
               <Button variant="outline" onClick={() => create.blank()}>

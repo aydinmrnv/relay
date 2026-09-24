@@ -1,22 +1,26 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, ArrowUpRight, KeyRound, Laptop, LayoutTemplate, Wallet } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, KeyRound, Laptop, PlayCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Spotlight } from '@/components/21st/spotlight';
 import { useBrand } from '@/hooks/use-brand';
 import { PipelinePreview } from './pipeline-preview';
 import { AppMark, REPO_URL, Reveal, WordReveal } from './primitives';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 
 const TRUST = [
-  { icon: Laptop, text: 'Runs on your machine' },
+  { icon: Sparkles, text: 'Free while in beta' },
   { icon: KeyRound, text: 'Bring your own Claude / ChatGPT subscription' },
-  { icon: Wallet, text: '$0' },
+  { icon: Laptop, text: 'Your code stays on your machine or runner' },
 ];
 
 export function Hero() {
   const brand = useBrand();
+  const status = useAccount((state) => state.status);
+  const signedIn = status === 'signed-in';
+  const accounts = useCapabilities().enabled;
 
   return (
     <section className="relative overflow-hidden">
@@ -57,14 +61,16 @@ export function Hero() {
         </Reveal>
 
         <Reveal y={8} delay={0.4} className="mt-8 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center sm:justify-center">
-          <Button size="lg" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href="/dashboard" />}>
-            Open the studio
+          <Button size="lg" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href={signedIn || !accounts ? '/dashboard' : '/sign-up'} />}>
+            {signedIn ? 'Open your studio' : accounts ? 'Get started free' : 'Open the studio'}
             <ArrowRight data-icon="inline-end" />
           </Button>
-          <Button size="lg" variant="outline" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href="/templates" />}>
-            <LayoutTemplate data-icon="inline-start" />
-            Start from a template
-          </Button>
+          {signedIn ? null : (
+            <Button size="lg" variant="outline" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href="/dashboard" />}>
+              <PlayCircle data-icon="inline-start" />
+              Try the demo, no sign-up
+            </Button>
+          )}
         </Reveal>
 
         <Reveal y={8} delay={0.5} className="mt-6">

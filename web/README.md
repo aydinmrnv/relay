@@ -2,12 +2,12 @@
 
 The Relay product: an n8n-style, node-based workflow builder for coding agents. A workflow is a trigger, the guardrails in front of the agents, the agent pipeline, and delivery and notifications after it; the studio is where you draw one, test-run it, and export it to run for real. The [root README](../README.md) describes the product; this file is how the studio is built.
 
-Relay is headed for a hosted, online product. Today the studio is public as a [live demo](https://relay-olive-omega.vercel.app) (see [The hosted demo](#the-hosted-demo)) and runs locally with the commands below. Either way it keeps everything in your browser's storage and costs nothing. What needs the user's machine — agent sign-in, real runs, installing an export — goes through `relay connect`, the CLI in `src/` acting as the studio's companion (see [Your machine](#your-machine-relay-connect)); exported workflows run on your own GitHub Actions minutes through the same CLI ([reference](../docs/cli.md)).
+The studio is live at <https://relay-olive-omega.vercel.app> and runs locally with the commands below. Guests keep everything in their browser's storage; an account keeps workflows, runs and settings in Postgres and adds share links and version history (see [Accounts](#accounts)). What needs the user's machine — agent sign-in, real runs, installing an export — goes through `relay connect`, the CLI in `src/` acting as the studio's companion (see [Your machine](#your-machine-relay-connect)); exported workflows run on your own GitHub Actions minutes through the same CLI ([reference](../docs/cli.md)).
 
 ```bash
 cd web
 npm install
-npm run dev        # http://localhost:3000
+npm run dev        # http://localhost:3000 — accounts included, on an embedded Postgres in .data/pglite
 ```
 
 ## What it does
@@ -20,11 +20,36 @@ Every screen says what it is for, and every concept has a "?" that explains it; 
 - **Validation** mirrors the CLI's rules (unattended never merges, reviewers must be read-only, missing guardrails) and blocks test runs and export only for real errors.
 - **Export** compiles the graph to `.relay/config.json` (what the CLI reads today), a GitHub Actions workflow that runs it on your own minutes, a SETUP.md and the graph JSON, installed straight into the repository through `relay connect` (an existing config is merged) or as one `.zip` that unzips into it at the right paths, with the secrets to add and where each comes from. What the canvas cannot express in those files is listed as a warning, never dropped. A paused workflow exports with its trigger switched off.
 - **Workflows**, **Runs** (filters, live progress, run again, cancel, delete, per-run timeline and phase breakdown), **Integrations** (every app with what each trigger and action does, and "start a workflow from this trigger"), **Templates** (graph previews and a step-by-step walkthrough), **Dashboard** (getting-started checklist, activity, spend, what needs attention), **Settings** and the **Guide**.
-- **Landing page** at `/`: what the product does and how, with an animated diagram of the pipeline (21st.dev animated beams), the real compiler output for a template, honest pricing and a FAQ.
+- **Landing page** at `/`: what the product does and how, with an animated diagram of the pipeline (21st.dev animated beams), what sets it apart, the real compiler output for a template, honest pricing and a FAQ. `/privacy` and `/terms` say what an account stores.
+- **Accounts** (`/sign-up`, `/sign-in`, `/forgot-password`, `/reset-password`): email and password, and GitHub when configured. Settings → Account edits the profile, changes the password, links GitHub, lists and ends sessions, imports work made as a guest and deletes the account.
+- **Onboarding** (`/onboarding`, straight after sign-up): who you are, where tickets come from and where results go, which agents and how hard they review, and a repository; then a first workflow drafted from those answers (or a template, a sentence, or a blank canvas), and the `relay connect` command.
+- **Describe it**: a sentence becomes a graph as you type (`src/lib/workflow/from-description.ts`), deterministically, from the live catalog — no model call. In onboarding, on the Workflows page and in the New workflow menu.
+- **Spend forecast**: the builder's $ button and the side panel run a few hundred seeded simulations of the graph and show cost per run (typical and 90th percentile), a monthly projection at a chosen ticket volume, outcomes, where the money goes and how the budget gate will behave (`src/lib/workflow/forecast.ts`).
+- **Share and remix**: Share in the builder publishes a redacted snapshot at `/s/<slug>` (secrets, logins and the repository blanked) with a README badge from `/api/badge/<slug>`; anyone can remix it into their own studio.
+- **Version history**: the builder's clock button lists automatic snapshots (one before each editing session) and named versions; restoring is an undoable canvas edit.
+
+## Accounts
+
+Accounts are [Better Auth](https://better-auth.com) on Postgres through Drizzle: `src/server/auth.ts` configures it, `src/server/db/` holds the schema and the migrations (applied once per server process, under an advisory lock), and `src/app/api/` has the routes. Without `DATABASE_URL`, development uses PGlite in `.data/pglite`, so accounts work with nothing to install. In production both `DATABASE_URL` and `BETTER_AUTH_SECRET` are required; a deployment without them keeps working as the browser-only studio with sign-up switched off. Every variable is in [`.env.example`](.env.example).
+
+The browser keeps using the same zustand store. Signing in swaps its contents for the account's (`src/lib/cloud/sync.ts`); after that every change to a workflow, a finished run or a setting is diffed out of the store, queued in localStorage and sent a moment later, coalesced and retried, so an edit made offline or just before the tab closed is sent on the next load. A guest's work is set aside on sign-in, offered for import during onboarding, and put back on sign-out. A guest never touches the server: only a browser that signed in before asks it who it is.
+
+| Route | What |
+|---|---|
+| `/api/auth/*` | Better Auth: sign-up, sign-in, GitHub, sessions, password reset, email confirmation, account deletion. Rate limited in the database in production |
+| `GET/PATCH /api/workspace` | Everything a signed-in studio needs; settings, name, connections and tours |
+| `POST /api/workspace/onboarding`, `/import` | Onboarding answers; bringing guest work or an export into the account |
+| `PUT/DELETE /api/workflows/:id`, `/api/runs/:id`, `DELETE /api/runs` | Sync. A write older than the stored copy is ignored, so a stale tab cannot overwrite newer work |
+| `/api/workflows/:id/versions[/:versionId]` | Version history |
+| `/api/workflows/:id/share`, `POST /api/share/:slug/remix` | Publishing, refreshing and withdrawing a share link; counting remixes |
+| `/api/badge/:slug` | The README badge (SVG) |
+| `GET /api/health` | Up, database reachable, which sign-in methods are on |
+
+Every mutating route checks the session, rejects cross-site origins, bounds its body size and validates it with zod.
 
 ## The hosted demo
 
-A build deployed anywhere public is a demo. `NEXT_PUBLIC_HOSTED_DEMO=1` (on by default for any build Vercel runs) puts a one-line banner on every screen saying test runs are simulated, pointing at `/connect`. Nothing else changes — the builder, validation, export and test runs run entirely in the browser, a first visit is seeded with the starter workflows and a few runs, and a visitor who runs `relay connect` pairs the hosted studio with their own machine exactly as they would a local one. The server is never involved: the browser talks to the companion on 127.0.0.1 directly.
+A build deployed anywhere public is also a demo for visitors who do not sign in. `NEXT_PUBLIC_HOSTED_DEMO=1` (on by default for any build Vercel runs) puts a one-line banner on every screen saying test runs are simulated, pointing at `/connect`. Nothing else changes — the builder, validation, export and test runs run entirely in the browser, a first visit is seeded with the starter workflows and a few runs, and a visitor who runs `relay connect` pairs the hosted studio with their own machine exactly as they would a local one. The server is never involved: the browser talks to the companion on 127.0.0.1 directly.
 
 ```bash
 cd web
@@ -65,6 +90,10 @@ NEXT_PUBLIC_PRODUCT_NAME="Conductor" npm run dev
 
 | Path | What |
 |---|---|
+| `src/server/` | Everything that runs only on the server: environment (`env.ts`), database and migrations (`db/`), Better Auth (`auth.ts`), mail (`email.ts`), request helpers (`api.ts`), validation (`validate.ts`) and the queries behind the routes (`studio.ts`) |
+| `src/lib/cloud/` | The browser's side of accounts: who is signed in (`account.ts`), the sync engine and guest hand-over (`sync.ts`) |
+| `src/components/{auth,account,onboarding,share}/` | Sign-in pages, account menu and settings, the onboarding wizard, the public share page |
+| `src/lib/workflow/from-description.ts`, `forecast.ts` | Describe-to-workflow and the spend forecast |
 | `src/lib/brand.ts` | The product name and everything derived from it |
 | `scripts/gen-brand.mjs` | Draws the logo from the CLI's pixel font (`../src/ui/logo.ts`): `src/app/icon.svg`, `src/lib/pixel-font.generated.ts` and `public/brand/`. Run `npm run gen:brand` by hand after changing the font or the mark; `-- --png` also renders the PNGs, favicon.ico and the social card (`scripts/brand-banner.html`) with a local Chrome, Brave or Edge |
 | `src/lib/hosted.ts` | Whether this build is the public demo |
@@ -100,7 +129,8 @@ Add a `defineConnector({...})` entry to one of the catalog files. Triggers and a
 
 | Real | Simulated |
 |---|---|
-| The catalog, the graph, validation, the compiler and its output files | Test runs (phases, costs, refusals, PR numbers) |
+| Accounts, sync, share links, remixes, version history | |
+| The catalog, the graph, validation, the compiler and its output files, describe-to-workflow | Test runs (phases, costs, refusals, PR numbers), and the spend forecast built from them |
 | Through `relay connect`: signing in to Claude Code and Codex, runs on your machine, installing an export | |
 | Export to a repository, which then runs on GitHub Actions | Connections ("Connect" stores a local flag) |
 | Brand rename, import/export of your data | Approvals (auto-approved after a delay) |

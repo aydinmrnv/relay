@@ -86,7 +86,7 @@ export function KpiTiles(props: Props) {
       icon: <Cable />,
       term: 'connection',
       value: props.connected,
-      hint: props.connected === 0 ? `None of ${props.catalog} yet — connect one` : `of ${props.catalog} in the catalog · local flags, not real logins`,
+      hint: props.connected === 0 ? `None of ${props.catalog} yet — connect one` : `of ${props.catalog} in the catalog · markers, not real logins`,
     },
   ];
 

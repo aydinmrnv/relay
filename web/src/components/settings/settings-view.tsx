@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Database, Laptop, Palette, Rocket, Tag } from 'lucide-react';
+import { Bot, Database, Laptop, Palette, Rocket, Tag, UserRound } from 'lucide-react';
 import { PageHeader } from '@/components/app/page-header';
 import { AgentAccountsCard } from '@/components/agents/agent-accounts-card';
+import { AccountSettings } from '@/components/account/account-settings';
+import { useAccount } from '@/lib/cloud/account';
 import { MachineCard } from '@/components/companion/machine-card';
 import { SectionChips, SectionNav, type SectionLink } from '@/components/guide/section-nav';
 import { FadeIn } from '@/components/motion/fade-in';
@@ -16,6 +18,7 @@ import { AppearanceSettings } from './appearance-settings';
 import { DataSettings } from './data-settings';
 
 const SECTIONS: SectionLink[] = [
+  { id: 'account', label: 'Account', icon: UserRound },
   { id: 'general', label: 'General', icon: Tag },
   { id: 'machine', label: 'This machine', icon: Laptop },
   { id: 'agents', label: 'Coding agents', icon: Bot },
@@ -29,6 +32,7 @@ export function SettingsView() {
   // The forms seed their drafts from the store, so they must not mount before
   // the store has read localStorage.
   const hydrated = useStudio((state) => state.hydrated);
+  const signedIn = useAccount((state) => state.status === 'signed-in');
   // Bumped after an import or a reset, so drafts re-seed from the new data.
   const [generation, setGeneration] = useState(0);
 
@@ -45,7 +49,11 @@ export function SettingsView() {
       <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-6">
         <PageHeader
           title="Settings"
-          description="Everything here is stored in this browser’s local storage: nothing is sent to a server, and another browser starts fresh. Changes apply as you make them unless a Save button says otherwise."
+          description={
+            signedIn
+              ? 'Your account, and how the studio behaves. Changes apply as you make them and are saved to your account, so every browser you sign in to gets them.'
+              : 'Everything here is stored in this browser’s local storage until you create an account. Changes apply as you make them unless a Save button says otherwise.'
+          }
         />
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-[11rem_minmax(0,1fr)]">
@@ -64,6 +72,10 @@ export function SettingsView() {
               </div>
             ) : (
               <FadeIn className="grid grid-cols-1 gap-12" key={generation}>
+                <SettingsSection id="account" icon={UserRound} title="Account" description={signedIn ? 'Your profile, how you sign in, and where.' : 'Keep your work in any browser, share it, and keep its history.'}>
+                  <AccountSettings />
+                </SettingsSection>
+
                 <SettingsSection
                   id="general"
                   icon={Tag}
@@ -111,7 +123,7 @@ export function SettingsView() {
                   id="data"
                   icon={Database}
                   title="Your data"
-                  description="Everything the studio knows lives in this browser. Take it with you, bring it back, or start again from the demo."
+                  description={signedIn ? 'Everything in your account, as one file. Take it with you, bring a file back in, or clear it out.' : 'Everything the studio knows lives in this browser. Take it with you, bring it back, or start again from the demo.'}
                 >
                   <DataSettings onReplaced={() => setGeneration((value) => value + 1)} />
                 </SettingsSection>

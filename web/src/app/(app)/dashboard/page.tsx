@@ -25,6 +25,7 @@ import { useStudio, useWorkflows } from '@/lib/store';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import { useCompanion } from '@/lib/companion/client';
 import { repositoryLabel } from '@/lib/companion/types';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 
 export default function DashboardPage() {
   const brand = useBrand();
@@ -40,6 +41,9 @@ export default function DashboardPage() {
   const bridge = useAgentsStore((state) => state.bridge);
   const machine = useCompanion((state) => (state.status === 'connected' ? state.hello : null));
   const signedIn = useSignedIn();
+  const accounts = useCapabilities().enabled;
+  const account = useAccount((state) => (state.status === 'signed-in' ? state.user : null));
+  const onboarded = useAccount((state) => state.onboardedAt !== null);
 
   const validity = useMemo(() => workflows.map((workflow) => ({ workflow, ok: validateWorkflow(workflow).ok })), [workflows]);
   const firstValid = validity.find((entry) => entry.ok)?.workflow;
@@ -60,6 +64,27 @@ export default function DashboardPage() {
   const exportTarget = firstValid ?? workflows[0];
 
   const steps: ChecklistStep[] = [
+    ...(accounts
+      ? [
+          account === null
+            ? {
+                id: 'account',
+                title: 'Create your account',
+                why: 'Keep your workflows in any browser, share them with a public link, and get version history. Free, and your guest work comes with you.',
+                done: false,
+                doneNote: '',
+                action: { label: 'Create an account', href: '/sign-up?next=/dashboard' },
+              }
+            : {
+                id: 'account',
+                title: 'Set up your account',
+                why: 'Tell the studio how you work and it builds your first workflow from the answers.',
+                done: onboarded,
+                doneNote: `Signed in as ${account.email}.`,
+                action: { label: 'Finish setting up', href: '/onboarding' },
+              },
+        ]
+      : []),
     {
       id: 'machine',
       title: 'Connect your machine',
@@ -80,7 +105,7 @@ export default function DashboardPage() {
     {
       id: 'connect',
       title: 'Connect an app',
-      why: 'Triggers and actions talk to apps like Linear, GitHub and Slack. In this prototype a connection is a local flag, not a real login.',
+      why: 'Triggers and actions talk to apps like Linear, GitHub and Slack. For now a connection marks the app as ready for your workflows; the export wires the real credentials.',
       done: connected > 0,
       doneNote: `${connected} ${connected === 1 ? 'app' : 'apps'} connected.`,
       action: { label: 'Browse integrations', href: '/integrations' },
@@ -90,7 +115,7 @@ export default function DashboardPage() {
       title: 'Create a workflow',
       why: 'A workflow says what starts a run, which guardrails check it, what the agents do and where the result goes.',
       done: workflows.length > 0,
-      doneNote: `${workflows.length} ${workflows.length === 1 ? 'workflow' : 'workflows'} in this browser.`,
+      doneNote: `${workflows.length} ${workflows.length === 1 ? 'workflow' : 'workflows'} ${account === null ? 'in this browser' : 'in your account'}.`,
       action: { label: 'New workflow', onClick: () => create.blank(), icon: 'plus' },
     },
     {

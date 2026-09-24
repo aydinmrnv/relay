@@ -5,6 +5,7 @@ import { SiteHeader } from './site-header';
 import { Hero } from './hero';
 import { HowItWorks } from './how-it-works';
 import { Features } from './features';
+import { Different } from './different';
 import { Integrations } from './integrations';
 import { BuilderShowcase } from './builder-showcase';
 import { Pricing } from './pricing';
@@ -19,12 +20,13 @@ import { FinalCta, SiteFooter } from './closing';
 export function Landing() {
   return (
     <div className="flex min-h-full flex-col">
-      <DemoBanner />
+      <DemoBanner site />
       <SiteHeader />
       <main className="flex-1">
         <Hero />
         <HowItWorks />
         <Features />
+        <Different />
         <Integrations />
         <BuilderShowcase />
         <Pricing />

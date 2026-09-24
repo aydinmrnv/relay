@@ -7,11 +7,16 @@ import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { BrandMark } from '@/components/app/brand-mark';
 import { useBrand } from '@/hooks/use-brand';
-import { HOSTED_DEMO } from '@/lib/hosted';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
+import { UserAvatar } from '@/components/account/user-avatar';
 import { AppMark, REPO_URL, SECTIONS } from './primitives';
 
 export function SiteHeader() {
   const brand = useBrand();
+  const status = useAccount((state) => state.status);
+  const user = useAccount((state) => state.user);
+  const accounts = useCapabilities().enabled;
+  const signedIn = status === 'signed-in' && user !== null;
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/75 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
@@ -20,7 +25,7 @@ export function SiteHeader() {
           <BrandMark className="size-7" />
           <span className="font-semibold tracking-tight">{brand.name}</span>
           <Badge variant="secondary" className="hidden sm:inline-flex">
-            {HOSTED_DEMO ? 'live demo' : 'prototype'}
+            beta
           </Badge>
         </Link>
 
@@ -47,10 +52,27 @@ export function SiteHeader() {
           >
             <AppMark connector="github" size={16} />
           </Button>
-          <Button size="sm" className="h-8 px-3" nativeButton={false} render={<Link href="/dashboard" />}>
-            Open the studio
-            <ArrowRight data-icon="inline-end" />
-          </Button>
+          {signedIn ? (
+            <Button size="sm" className="h-8 gap-2 px-2.5" nativeButton={false} render={<Link href="/dashboard" />}>
+              <UserAvatar user={user} size="sm" className="size-5" />
+              Open your studio
+            </Button>
+          ) : accounts ? (
+            <>
+              <Button size="sm" variant="ghost" className="hidden h-8 px-3 sm:inline-flex" nativeButton={false} render={<Link href="/sign-in" />}>
+                Sign in
+              </Button>
+              <Button size="sm" className="h-8 px-3" nativeButton={false} render={<Link href="/sign-up" />}>
+                Get started
+                <ArrowRight data-icon="inline-end" />
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" className="h-8 px-3" nativeButton={false} render={<Link href="/dashboard" />}>
+              Open the studio
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+          )}
           <Sheet>
             <SheetTrigger render={<Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open the section menu" />}>
               <Menu />
@@ -73,8 +95,19 @@ export function SiteHeader() {
                 ))}
               </nav>
               <div className="mt-auto flex flex-col gap-2 border-t p-4">
-                <Button nativeButton={false} render={<Link href="/dashboard" />}>
-                  Open the studio
+                {accounts && !signedIn ? (
+                  <>
+                    <Button nativeButton={false} render={<Link href="/sign-up" />}>
+                      Create a free account
+                      <ArrowRight data-icon="inline-end" />
+                    </Button>
+                    <Button variant="outline" nativeButton={false} render={<Link href="/sign-in" />}>
+                      Sign in
+                    </Button>
+                  </>
+                ) : null}
+                <Button variant={accounts && !signedIn ? 'ghost' : 'default'} nativeButton={false} render={<Link href="/dashboard" />}>
+                  {signedIn ? 'Open your studio' : accounts ? 'Try it without an account' : 'Open the studio'}
                   <ArrowRight data-icon="inline-end" />
                 </Button>
                 <Button variant="outline" nativeButton={false} render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>

@@ -21,6 +21,7 @@ import {
 import { useBrand } from '@/hooks/use-brand';
 import { DEFAULT_BRAND } from '@/lib/brand';
 import { useStudio } from '@/lib/store';
+import { useAccount } from '@/lib/cloud/account';
 import { SettingBlock } from './settings-section';
 
 function plural(count: number, one: string, many = `${one}s`): string {
@@ -40,6 +41,7 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
   const exportAll = useStudio((state) => state.exportAll);
   const importAll = useStudio((state) => state.importAll);
   const resetAll = useStudio((state) => state.resetAll);
+  const signedIn = useAccount((state) => state.status === 'signed-in');
   const fileInput = useRef<HTMLInputElement>(null);
   const [confirming, setConfirming] = useState(false);
   const fileName = `${brand.slug}-studio-export.json`;
@@ -80,7 +82,7 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
     setConfirming(false);
     resetAll();
     onReplaced();
-    toast.success('Reset. The starter workflows and demo runs are being recreated.');
+    toast.success(signedIn ? 'Cleared. Your account is empty and ready for a fresh start.' : 'Reset. The starter workflows and demo runs are being recreated.');
   };
 
   return (
@@ -118,20 +120,24 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
       <Separator />
       <SettingBlock
         className="bg-destructive/[0.03] dark:bg-destructive/[0.06]"
-        title="Reset demo data"
-        description="Deletes everything the studio keeps in this browser, then recreates the starter workflows and demo runs, as on a first visit."
+        title={signedIn ? 'Clear your workspace' : 'Reset demo data'}
+        description={
+          signedIn
+            ? 'Deletes every workflow, run and connection in your account and resets your settings. Your account itself stays; to delete it, see Account above.'
+            : 'Deletes everything the studio keeps in this browser, then recreates the starter workflows and demo runs, as on a first visit.'
+        }
       >
         <div>
           <AlertDialog open={confirming} onOpenChange={setConfirming}>
             <AlertDialogTrigger render={<Button variant="destructive" />}>
-              <RotateCcw data-icon="inline-start" /> Reset demo data…
+              <RotateCcw data-icon="inline-start" /> {signedIn ? 'Clear workspace…' : 'Reset demo data…'}
             </AlertDialogTrigger>
             <AlertDialogContent className="data-[size=default]:sm:max-w-md">
               <AlertDialogHeader>
                 <AlertDialogMedia className="bg-destructive/10 text-destructive">
                   <TriangleAlert />
                 </AlertDialogMedia>
-                <AlertDialogTitle>Reset everything in this browser?</AlertDialogTitle>
+                <AlertDialogTitle>{signedIn ? 'Clear everything in your account?' : 'Reset everything in this browser?'}</AlertDialogTitle>
                 <AlertDialogDescription render={<div />} className="grid gap-2 text-left">
                   <p>This permanently deletes:</p>
                   <ul className="grid gap-1 pl-4 [&>li]:list-disc">
@@ -153,7 +159,7 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
                   <Download data-icon="inline-start" /> Export first
                 </Button>
                 <AlertDialogAction variant="destructive" onClick={reset}>
-                  Reset everything
+                  {signedIn ? 'Clear everything' : 'Reset everything'}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

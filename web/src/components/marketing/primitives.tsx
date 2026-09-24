@@ -8,12 +8,13 @@ import { getConnector, type Connector } from '@/lib/connectors';
 import { cn } from '@/lib/utils';
 
 /** The engine's public repository. The only external product link on the page. */
-export const REPO_URL = 'https://github.com/aydinmrnv/relay';
+export { REPO_URL } from '@/lib/links';
 
 /** In-page anchors, shared by the header, the mobile menu and the footer so none can point at nothing. */
 export const SECTIONS = [
   { id: 'how', label: 'How it works' },
   { id: 'features', label: 'Features' },
+  { id: 'different', label: 'What’s different' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'pricing', label: 'Pricing' },
   { id: 'faq', label: 'FAQ' },

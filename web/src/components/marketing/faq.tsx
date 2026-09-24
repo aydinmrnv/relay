@@ -15,13 +15,19 @@ export function Faq() {
       id: 'cost',
       question: 'Does this cost anything?',
       answer:
-        'No. The studio runs in your browser and keeps everything in its local storage. Exported workflows run on your own GitHub Actions minutes, which are free on public repositories and come out of your plan’s included minutes on private ones. Model usage counts against the Claude and ChatGPT subscriptions you already have, or your own API keys if you prefer.',
+        'No. Accounts are free while in beta, and you can try everything as a guest without one. Exported workflows run on your own GitHub Actions minutes, which are free on public repositories and come out of your plan’s included minutes on private ones. Model usage counts against the Claude and ChatGPT subscriptions you already have, or your own API keys if you prefer. The spend forecast in the builder tells you roughly what that usage will be before you run anything.',
+    },
+    {
+      id: 'account',
+      question: 'What does an account add, and what do you store?',
+      answer:
+        'Your workflows, test runs and settings follow you to any browser, and you get public share links and version history. We store your name, email, a hashed password (or your GitHub sign-in), and the workflow definitions and run records you make in the studio. We never store your code, your repository contents or your agents’ tokens. You can download everything or delete your account from Settings at any time.',
     },
     {
       id: 'real',
       question: 'Are the runs in the studio real?',
       answer:
-        'No, they are simulated: the same phases, review rounds, budgets and refusals, played back deterministically so you can see what a workflow would do before it costs anything. To run one for real, export it and commit the files it produces.',
+        'Test runs are simulated: the same phases, review rounds, budgets and refusals, played back deterministically so you can see what a workflow would do before it costs anything. To run one for real, run relay connect in your repository and pick “Run on this machine”, or export it and commit the files it produces.',
     },
     {
       id: 'agents',
@@ -44,12 +50,12 @@ export function Faq() {
       id: 'code',
       question: 'Where does my code go?',
       answer:
-        'Nowhere new. The agents work in a separate git worktree on your machine or on your Actions runner, so your own checkout is only read. Nothing is pushed until the delivery step, after a secret scan, and only as far as your delivery setting allows.',
+        'Nowhere new. The agents work in a separate git worktree on your machine or on your Actions runner, so your own checkout is only read. Your account holds workflow definitions and run summaries, never source code. Nothing is pushed until the delivery step, after a secret scan, and only as far as your delivery setting allows.',
     },
     {
       id: 'apps',
       question: 'How do connectors work without a backend?',
-      answer: `In the prototype a connection is a local flag, so you can design against all ${CATALOG_STATS.connectors} apps today. GitHub, Slack, Discord and any HTTP endpoint are wired directly in the exported Actions workflow; other apps need a bridge the hosted product would provide.`,
+      answer: `In the studio a connection is a flag on your workspace, so you can design against all ${CATALOG_STATS.connectors} apps today. GitHub, Slack, Discord and any HTTP endpoint are wired directly in the exported Actions workflow; other apps post JSON to a bridge URL you choose, such as an n8n or Zapier webhook.`,
     },
     {
       id: 'name',

@@ -58,7 +58,7 @@ export function GuideView() {
       <div className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-8">
         <PageHeader
           title={`How ${brand.name} works`}
-          description={`What every part of the studio does, how to get from nothing to a workflow running in your repository, and what is real in this prototype. The “?” buttons around the studio link to the entries here.`}
+          description={`What every part of the studio does, how to get from nothing to a workflow running in your repository, and what is real today. The “?” buttons around the studio link to the entries here.`}
           actions={
             <>
               <Button variant="outline" nativeButton={false} render={<Link href="/settings" />}>
@@ -73,7 +73,7 @@ export function GuideView() {
 
         <Stagger className="grid gap-3 sm:grid-cols-3">
           {[
-            { icon: MousePointerClick, title: 'Design it here', body: 'A workflow is a diagram you drag together in this browser. It is saved here, not on a server.' },
+            { icon: MousePointerClick, title: 'Design it here', body: 'A workflow is a diagram you drag together here. It is saved to your account, or in this browser if you are a guest.' },
             { icon: FlaskConical, title: 'Test it for free', body: 'A test run plays it back with simulated agents, costs and refusals. Nothing is called and nothing is billed.' },
             { icon: GitPullRequest, title: 'Run it in your repository', body: 'Export writes the config and a GitHub Actions workflow. It runs on your own minutes, with your own subscriptions.' },
           ].map((fact) => (
@@ -91,7 +91,7 @@ export function GuideView() {
         <div className="grid min-w-0 grid-cols-1 gap-16">
           <SectionChips items={SECTIONS} ids={SECTION_IDS} className="-mb-10 xl:hidden" />
 
-          <GuideSection id="start" eyebrow="Start here" title="From nothing to a workflow in your repository" description="Five steps. Each one links to the page where you do it, and ticks itself off once it is done in this browser.">
+          <GuideSection id="start" eyebrow="Start here" title="From nothing to a workflow in your repository" description="Five steps. Each one links to the page where you do it, and ticks itself off once it is done.">
             <StartSteps />
           </GuideSection>
 
@@ -120,8 +120,8 @@ export function GuideView() {
           <GuideSection
             id="real-vs-simulated"
             eyebrow="Real or simulated"
-            title="What is real in this prototype"
-            description="The studio is a working prototype of a hosted product. Some of it is the real thing; some of it is played back so you can design before anything exists."
+            title="What is real today"
+            description="Most of the studio is the real thing. Test runs are played back, so you can design and try a workflow before anything runs or costs money."
           >
             <RealVsSimulated />
           </GuideSection>
@@ -237,7 +237,7 @@ function StartSteps() {
                 {step.title}
                 {complete ? (
                   <Badge variant="outline" className="h-5 border-success/30 bg-success/10 text-[10px] text-success">
-                    Done in this browser
+                    Done
                   </Badge>
                 ) : null}
               </p>
@@ -323,9 +323,11 @@ const REALITY: Array<{ what: string; status: Reality; detail: string }> = [
   { what: 'Running a workflow on your machine', status: 'real', detail: 'Through relay connect: the pipeline runs in your repository with your sign-ins and streams back to the canvas.' },
   { what: 'Installing an export into your repository', status: 'real', detail: 'Through relay connect, or by unzipping the download yourself.' },
   { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions.' },
-  { what: 'Renaming the product, importing and exporting your data', status: 'real', detail: 'Stored in this browser; the export is a plain JSON file.' },
+  { what: 'Accounts, sync, share links and version history', status: 'real', detail: 'Kept in the studio’s database. As a guest, everything stays in this browser instead.' },
+  { what: 'Describe-to-workflow and the spend forecast', status: 'real', detail: 'The sentence parser runs in your browser with no model call. The forecast is built from simulated runs, so it is an estimate.' },
+  { what: 'Renaming the product, importing and exporting your data', status: 'real', detail: 'Stored in your account or this browser; the export is a plain JSON file.' },
   { what: 'Test runs', status: 'simulated', detail: 'Phases, review rounds, costs, refusals and pull request numbers are played back, seeded per workflow.' },
-  { what: 'Connections to apps', status: 'simulated', detail: '“Connect” stores a local flag so you can design against the whole catalog. No app is signed in to.' },
+  { what: 'Connections to apps', status: 'simulated', detail: '“Connect” marks an app as ready so you can design against the whole catalog. No app is signed in to; an export uses your repository’s secrets.' },
   { what: 'Human approvals', status: 'simulated', detail: 'In a test run, an approval gate approves itself after a short pause.' },
   { what: 'Hosted and self-hosted runners', status: 'later', detail: 'Your own machine and your own GitHub Actions are what exist today. The others are shown in Settings as “later”.' },
 ];
@@ -413,11 +415,15 @@ function Faq({ productName, slug }: { productName: string; slug: string }) {
       question: 'Where is my data kept?',
       answer: (
         <p>
-          In this browser’s local storage. Workflows, runs, connections, the product name and your settings never leave this browser, apart from what you send your own machine through relay connect. Download all of it, import it elsewhere or start over under{' '}
+          With an account, in the studio’s database: workflows, runs, connections, the product name and your settings, so they follow you to any browser. Values typed into secret fields stay in the browser they were typed in, and your code is never stored. As a guest, all of it stays in this browser’s local storage. Download everything, import it elsewhere or start over under{' '}
           <Link href="/settings#data" className={link}>
             Settings → Your data
           </Link>
-          . Clearing this site’s data in the browser removes it.
+          ; delete your account under{' '}
+          <Link href="/settings#account" className={link}>
+            Settings → Account
+          </Link>
+          .
         </p>
       ),
     },

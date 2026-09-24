@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ReactFlowProvider, addEdge, applyEdgeChanges, applyNodeChanges, useReactFlow, type EdgeChange, type NodeChange, type OnConnect } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import { AlertTriangle, Check, ChevronDown, CircleAlert, FileCode2, FileJson, Laptop, LayoutTemplate, Loader2, PanelLeft, PanelRight, Play, Plug, Plus, Redo2, Sparkles, Undo2, Wand2, Zap } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, CircleAlert, CircleDollarSign, FileCode2, FileJson, Globe, History, Laptop, LayoutTemplate, Loader2, PanelLeft, PanelRight, Play, Plug, Plus, Redo2, Sparkles, Undo2, Wand2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -22,6 +22,8 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { HelpTip } from '@/components/app/help-tip';
 import { defaultConfig, getNodeType, type NodeTypeDef, type PortSpec } from '@/lib/connectors';
 import { useStudio } from '@/lib/store';
+import { useAccount } from '@/lib/cloud/account';
+import { useSyncStatus } from '@/lib/cloud/sync';
 import { useSignedIn } from '@/hooks/use-agent-accounts';
 import { validateWorkflow, type ValidationIssue } from '@/lib/workflow/validate';
 import { launchRun, launchMachineRun, cancelRun } from '@/lib/run-launcher';
@@ -37,6 +39,9 @@ import { RunPanel } from './run-panel';
 import { ExportDialog } from './export-dialog';
 import { PayloadDialog } from './payload-dialog';
 import { MachineRunDialog } from './machine-run-dialog';
+import { ShareDialog } from './share-dialog';
+import { HistorySheet } from './history-sheet';
+import { ForecastDialog } from './forecast-dialog';
 import { BuilderTour } from './builder-tour';
 import { NodePicker, compatibleInput, type PickerSource } from './node-picker';
 import { BuilderActionsContext, type BuilderActions } from './builder-context';
@@ -94,6 +99,9 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   const [exportOpen, setExportOpen] = useState(false);
   const [payloadOpen, setPayloadOpen] = useState(false);
   const [machineOpen, setMachineOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [forecastOpen, setForecastOpen] = useState(false);
   const canRunOnMachine = useCompanionCan('runs');
   const machineHost = useCompanion((state) => state.hello?.machine);
   const [picker, setPicker] = useState<{ open: boolean; source: PickerSource | null; position: { x: number; y: number } | null }>({ open: false, source: null, position: null });
@@ -434,6 +442,21 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
     setTimeout(() => void fitView({ duration: 500, padding: 0.18, maxZoom: 1 }), 30);
   }, [commit, fitView]);
 
+  /** Swap in a saved version of the graph, as one undoable edit. */
+  const replaceGraph = useCallback(
+    (version: Workflow, label: string) => {
+      commit();
+      setNodes(toCanvasNodes(version.nodes));
+      setEdges(toCanvasEdges(version.edges));
+      setSelectedId(null);
+      setDirty(true);
+      setHistoryOpen(false);
+      toast.success(`Restored ${label}`, { description: 'Press ⌘Z to undo.' });
+      setTimeout(() => void fitView({ duration: 400, padding: 0.18, maxZoom: 1 }), 30);
+    },
+    [commit, fitView],
+  );
+
   /* ---------------------------------------------------------------- */
   /* Node picker                                                        */
   /* ---------------------------------------------------------------- */
@@ -676,6 +699,15 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
             </IconButton>
             <div className="mx-1 h-5 w-px bg-border" />
             {validation === null ? null : <ValidationButton issues={validation.issues} errors={validation.errors} warnings={validation.warnings} onSelect={(nodeId) => selectNode(nodeId, true)} />}
+            <IconButton label="Spend forecast: what this workflow will cost" onClick={() => setForecastOpen(true)}>
+              <CircleDollarSign />
+            </IconButton>
+            <IconButton label="Version history" onClick={() => setHistoryOpen(true)}>
+              <History />
+            </IconButton>
+            <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+              <Globe data-icon="inline-start" /> <span className="hidden lg:inline">Share</span>
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setExportOpen(true)}>
               <FileCode2 data-icon="inline-start" /> <span className="hidden sm:inline">Export</span>
             </Button>
@@ -770,6 +802,9 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
         )}
 
         <ExportDialog workflow={workflow} open={exportOpen} onOpenChange={setExportOpen} />
+        <ShareDialog workflow={workflow} open={shareOpen} onOpenChange={setShareOpen} />
+        <ForecastDialog workflow={workflow} open={forecastOpen} onOpenChange={setForecastOpen} />
+        <HistorySheet workflow={workflow} open={historyOpen} onOpenChange={setHistoryOpen} onRestore={replaceGraph} />
         <PayloadDialog
           workflow={workflow}
           open={payloadOpen}
@@ -807,13 +842,22 @@ function IconButton({ label, shortcut, onClick, disabled, active, children }: { 
   );
 }
 
+/** The canvas's own save, and — signed in — whether the account has it yet. */
 function SaveState({ saving }: { saving: boolean }) {
+  const signedIn = useAccount((state) => state.status === 'signed-in');
+  const cloud = useSyncStatus((status) => status.state);
+  const pending = useSyncStatus((status) => status.pendingCount);
+  const offline = signedIn && (cloud === 'offline' || cloud === 'error');
+  const busy = saving || (signedIn && !offline && (cloud === 'saving' || pending > 0));
+  const key = busy ? 'saving' : offline ? 'offline' : 'saved';
   return (
-    <span className="hidden w-16 text-xs text-muted-foreground sm:inline-flex" aria-live="polite">
+    <span className="hidden w-24 text-xs text-muted-foreground sm:inline-flex" aria-live="polite" title={signedIn ? 'Saved to your account' : 'Saved in this browser'}>
       <AnimatePresence mode="wait" initial={false}>
-        <motion.span key={saving ? 'saving' : 'saved'} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.15 }} className="inline-flex items-center gap-1">
-          {saving ? (
+        <motion.span key={key} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.15 }} className="inline-flex items-center gap-1">
+          {busy ? (
             'Saving…'
+          ) : offline ? (
+            <span className="text-warning">Not synced yet</span>
           ) : (
             <>
               <Check className="size-3 text-success" /> Saved

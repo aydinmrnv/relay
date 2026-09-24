@@ -99,7 +99,7 @@ export const ConnectorCard = memo(function ConnectorCard({ match, connection, in
               >
                 <Unplug data-icon="inline-start" /> Disconnect
               </TooltipTrigger>
-              <TooltipContent>Removes the local flag. Nothing breaks: test runs still play, and {connector.name} nodes show their reminder again.</TooltipContent>
+              <TooltipContent>Removes the marker. Nothing breaks: test runs still play, and {connector.name} nodes show their reminder again.</TooltipContent>
             </Tooltip>
           ) : (
             <Button size="xs" variant="outline" className="relative z-10 shrink-0" onClick={() => onConnect(connector.id)}>

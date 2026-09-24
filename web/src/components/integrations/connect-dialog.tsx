@@ -20,7 +20,7 @@ interface Props {
 }
 
 /**
- * The one step a connection has in the prototype: name the account. The copy
+ * The one step a connection has for now: name the account. The copy
  * says what the hosted product would do instead, so nobody mistakes the mock
  * for a real sign-in.
  */
@@ -45,7 +45,7 @@ function ConnectForm({ connector, onDone }: { connector: Connector; onDone: () =
   const submit = () => {
     const label = account.trim() || fallback;
     connect(connector.id, label);
-    toast.success(`${connector.name} marked as connected`, { description: `Account “${label}”. This is a local flag in this browser; no sign-in happened.` });
+    toast.success(`${connector.name} marked as connected`, { description: `Account “${label}”. It is marked as ready for your workflows; no sign-in happened.` });
     onDone();
   };
 
@@ -78,7 +78,7 @@ function ConnectForm({ connector, onDone }: { connector: Connector; onDone: () =
       <div className="flex gap-2.5 rounded-lg border border-dashed border-warning/40 bg-warning/5 p-3 text-[13px] leading-relaxed text-muted-foreground">
         <FlaskConical className="mt-0.5 size-4 shrink-0 text-warning" />
         <p>
-          <span className="font-medium text-foreground">This prototype only pretends.</span> Connecting records the label below in this browser and nothing else: no sign-in, no key, no request to {connector.name}.
+          <span className="font-medium text-foreground">Nothing is signed in to yet.</span> Connecting records the label below with your workflows and nothing else: no sign-in, no key, no request to {connector.name}. Exports use your repository’s secrets instead.
         </p>
       </div>
 

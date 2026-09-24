@@ -7,11 +7,15 @@ import { Button } from '@/components/ui/button';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Builder } from '@/components/builder/builder';
 import { useStudio } from '@/lib/store';
+import { useAccount } from '@/lib/cloud/account';
 
 export default function WorkflowBuilderPage({ params }: PageProps<'/workflows/[id]'>) {
   const { id } = use(params);
   const hydrated = useStudio((state) => state.hydrated);
   const exists = useStudio((state) => state.workflows[id] !== undefined);
+  // Remount when the workspace is swapped (signing in or out), so the canvas never edits a copy that is gone.
+  const owner = useStudio((state) => state.owner);
+  const signedIn = useAccount((state) => state.status === 'signed-in');
 
   if (!hydrated) return null;
   if (!exists) {
@@ -21,8 +25,12 @@ export default function WorkflowBuilderPage({ params }: PageProps<'/workflows/[i
           <EmptyMedia variant="icon">
             <SearchX />
           </EmptyMedia>
-          <EmptyTitle>That workflow isn’t in this browser</EmptyTitle>
-          <EmptyDescription>Workflows live in the browser that created them. It may have been deleted, or made somewhere else — import its JSON from the Workflows page to bring it here.</EmptyDescription>
+          <EmptyTitle>{signedIn ? 'That workflow isn’t in your account' : 'That workflow isn’t in this browser'}</EmptyTitle>
+          <EmptyDescription>
+            {signedIn
+              ? 'It may have been deleted, or it belongs to someone else. If it was shared with you, open its share link and remix it.'
+              : 'As a guest, workflows live in the browser that created them. Sign in if it is in your account, or import its JSON from the Workflows page.'}
+          </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button variant="outline" nativeButton={false} render={<Link href="/workflows" />}>
@@ -32,5 +40,5 @@ export default function WorkflowBuilderPage({ params }: PageProps<'/workflows/[i
       </Empty>
     );
   }
-  return <Builder key={id} workflowId={id} />;
+  return <Builder key={`${id}:${owner ?? 'guest'}`} workflowId={id} />;
 }

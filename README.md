@@ -7,7 +7,15 @@
 
 # Relay
 
-**Tickets in. Reviewed pull requests out.**
+**Tickets in. Reviewed pull requests out.** A workflow studio where Claude Code
+and Codex plan, cross-review, implement and test your tickets, behind guardrails
+you draw on a canvas.
+
+**[Try it live →](https://relay-olive-omega.vercel.app)** — no account needed to
+look around; sign up free to keep your workflows, share them and get version
+history.
+
+![The Relay studio: a Linear-to-pull-request workflow on the canvas, with the spend forecast open](docs/images/studio.png)
 
 Relay is a workflow builder for coding agents, in the spirit of n8n: you draw a
 flow on a canvas once — what starts a run, the guardrails in front of it, the
@@ -30,8 +38,10 @@ as a commit, a branch or a draft pull request, as far as you allow.
 
 ## Quick start
 
-**Open the studio:** <https://relay-olive-omega.vercel.app>. Workflows live in
-your browser and test runs are simulated, so it costs nothing to try.
+**Open the studio:** <https://relay-olive-omega.vercel.app>. Try it as a guest —
+your work stays in your browser — or create a free account, answer four
+onboarding questions and get a first workflow built from your answers. Test
+runs are simulated, so it costs nothing to try.
 
 **Connect your machine** to make it real. The `relay` CLI is the studio's
 companion: run it in the repository your workflows work on, and the studio can
@@ -59,6 +69,25 @@ relay connect          # opens the studio with a one-time pairing link
 
 The **Guide** (`/guide`) walks through the same path and explains every concept
 the studio uses.
+
+## What only Relay does
+
+- **Two vendors check each other.** The model that reviews a plan or a diff is
+  never the one that wrote it (below).
+- **Describe it, get a workflow.** Type one sentence — *"when a Sentry error is
+  new, fix it under $3 and ping Discord"* — and the graph builds itself as you
+  type. It is a parser over the live connector catalog, in your browser: no model
+  call, no credits, nothing sent anywhere.
+- **A spend forecast before the first run.** Hundreds of simulated runs of your
+  exact graph give a typical and a bad-day cost per run, a monthly bill at your
+  ticket volume, and how often your budget gate will refuse.
+- **Share, remix and badge.** Publish a workflow at a public link with secrets,
+  logins and your repository name stripped; anyone can remix it into their own
+  studio, and a README badge points to it.
+- **Version history.** A snapshot before every editing session, named versions
+  on demand, and a restore you can undo.
+- **Your subscriptions, your runners.** No API keys; agents run on your machine
+  or your own Actions minutes, and Relay never sees your code.
 
 ## How a workflow is built
 
@@ -165,16 +194,16 @@ The full list, and how each rule is enforced, is under
 
 ## Status
 
-Relay is being built as an online product. Today the studio is public as a
-[live demo](https://relay-olive-omega.vercel.app), and you can run it yourself.
-Either way nothing is billed and your workflows stay in your browser's storage.
-Everything that needs your machine — agent sign-in, real runs, installing an
-export — goes through `relay connect`, which pairs with the hosted studio as
-readily as with a local one. Hosted runs are the next step.
+Relay is in beta at <https://relay-olive-omega.vercel.app>, and free. Accounts
+keep your workflows, runs and settings in any browser; as a guest they stay in
+your browser's storage. Everything that needs your machine — agent sign-in, real
+runs, installing an export — goes through `relay connect`, which pairs with the
+hosted studio as readily as with a local one. Hosted runs are the next step.
 
 | Works today | Simulated in the studio | Planned for the hosted product |
 |---|---|---|
-| The builder, validation, the plain-English description and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A fresh runner per run |
+| Accounts (email and password, GitHub), onboarding, cloud sync, share links and remixes, version history | | |
+| The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A fresh runner per run |
 | Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your machine, installing an export | App connections: "Connect" stores a local flag | Real webhooks for every connector |
 | Exported workflows running on GitHub Actions, through the engine | Approvals: auto-approved after a delay | Approvals from Slack and email |
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
@@ -249,10 +278,10 @@ support the design, the defaults change.
 ## Development
 
 ```bash
-# the studio
+# the studio: accounts work out of the box on an embedded Postgres (PGlite)
 cd web
 npm install
-npm run dev
+npm run dev            # http://localhost:3000
 npm run lint && npm run typecheck && npm run build
 
 # the engine, from the repository root
@@ -263,6 +292,22 @@ npm test               # no network, no real agents
 
 CI runs the engine's suite on macOS, Linux and Windows, runs the Action against
 a fixture repository, and lints, typechecks and builds the studio.
+
+### Deploying the studio
+
+On Vercel, import the repository with `web` as the root directory, then:
+
+1. **Storage → Create → Neon** (free tier). It sets `DATABASE_URL`; tables are
+   created on the first request.
+2. Add `BETTER_AUTH_SECRET` (`openssl rand -base64 32`).
+3. Optional: `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` for *Continue with
+   GitHub* (callback `https://<your domain>/api/auth/callback/github`), and
+   `RESEND_API_KEY` / `EMAIL_FROM` for password resets.
+
+Every variable is described in [`web/.env.example`](web/.env.example). Without a
+database the deployment still works as the browser-only studio, with sign-up
+switched off. `GET /api/health` reports the database and which sign-in methods
+are on.
 
 ## The name is not decided
 
