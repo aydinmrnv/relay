@@ -7,1216 +7,235 @@
 
 # Relay
 
-Relay takes a GitHub issue — or a spec file, or a one-line prompt — and coordinates the coding agents you already have installed — Claude Code and Codex — to plan, critique, implement, review and verify the work inside an isolated git worktree, then delivers the result as far as you let it: a commit, a pushed branch, a pull request, or a merge.
+**Tickets in. Reviewed pull requests out.**
 
-It is not "run several agents in parallel". The point is that **specialized agents review and challenge each other's actual engineering work**, and that every claim they make is checked against git rather than taken at face value.
+Relay is a workflow builder for coding agents, in the spirit of n8n: you draw a
+flow on a canvas once — what starts a run, the guardrails in front of it, the
+agents, where the result goes and who hears about it — and Relay runs the same
+steps every time a ticket arrives, stopping wherever a guardrail says no.
 
-```bash
-relay start       # one command: dependencies, sign-in, config, and a first run
-relay             # the home screen, and a prompt for the next issue
-relay run 142
-relay run --prompt "Fix the flaky timeout in the retry test"   # no ticket needed
+What makes it more than an automation canvas is the node in the middle. The
+**Agent pipeline** is not one model call. Claude Code and Codex plan the work,
+attack each other's plan against the real code, implement it in an isolated git
+worktree, review each other's diff and run your test suite, and every claim they
+make is checked against git rather than taken at face value. The result arrives
+as a commit, a branch or a draft pull request, as far as you allow.
+
+```
+ Linear issue ──▶ Budget gate ──▶ Author allowlist ──▶ Agent pipeline ──▶ Deliver ──▶ Slack message
+ assigned                                                                 draft PR    "PR #412 is ready"
+ ────────────     ────────────────────────────────     ──────────────     ──────────────────────────────
+ trigger          guardrails                           the engine         delivery and notification
 ```
 
-`relay start` is the whole path from a fresh clone to a run you understand. It
-checks that `git`, `gh`, Claude Code and Codex are installed *and* signed in,
-runs each vendor's own login command for you when one is not, hands off to
-`relay init` for configuration, explains what a run does before you spend
-anything on one, and then offers to start one. Every step is skipped when it is
-already satisfied, so re-running it is also the repair path when a CLI breaks
-later.
+## Quick start
 
-**It never handles a credential.** Relay has no API keys and never sees a token:
-`start` only ever spawns `claude auth login`, `codex login` or `gh auth login`
-with the terminal handed over, and then asks that CLI again whether it worked.
+**Try it in the browser:** <https://relay-olive-omega.vercel.app> is a live demo
+of the studio. Everything runs in your browser and test runs are simulated.
 
-| | |
+To run the studio yourself, which also lets it sign in to your own Claude Code
+and Codex:
+
+```bash
+git clone https://github.com/aydinmrnv/relay
+cd relay/web
+npm install
+npm run dev            # http://localhost:3000
+```
+
+1. **Open the studio** and start from a template, or from a blank canvas.
+2. **Test-run it** with a sample ticket or your own JSON payload. Nodes and edges
+   light up as the run travels, with the same phases, review rounds, budgets and
+   refusals as a real run — and it costs nothing, because it is simulated.
+3. **Export it.** You get one `.zip` that unzips into your repository: the
+   engine's config, a GitHub Actions workflow, and a `SETUP.md` listing each
+   secret to add and where it comes from. Commit it, and the workflow runs for
+   real on your own Actions minutes.
+
+The **Guide** (`/guide`) walks through the same path and explains every concept
+the studio uses.
+
+## How a workflow is built
+
+A workflow is a graph of nodes. Every node's ports are typed — an issue, a run,
+a change, a message, an event — so the canvas refuses a connection that makes no
+sense, like wiring a ticket into something that expects a pull request.
+
+| Building block | Nodes |
 |---|---|
-| `relay start --dry-run` | walk the whole pipeline with no agent calls, so a run costs nothing to preview |
-| `relay start --tour` | replay the explanation of the phases, artifacts, cost and guarantees |
-| `relay start --check` | report what is missing and exit non-zero, prompting nothing — what a pipe and CI get automatically |
+| **Triggers** | 740 triggers across 240 apps: an issue labelled on GitHub or assigned in Linear, a new Sentry error, a Zendesk ticket, a schedule, an incoming webhook, a manual start |
+| **Guardrails** | Budget gate, author allowlist, human approval, concurrency limit, kill switch. Each refuses by default and says why |
+| **Agent pipeline** | Run the pipeline (choose the planner, plan reviewer, implementer and code reviewer, the review depth and the round limits), a fast run with no reviews, or a cost estimate |
+| **Delivery** | Deliver the change — commit, branch, draft pull request, or merge when a person started the run — and comment the summary on the issue |
+| **Logic** | Condition, filter, transform, an AI step for triage or classification, merge paths, wait, wait for business hours, notes |
+| **Actions** | 1,119 actions: message Slack, Discord or Teams, open a Linear ticket, call any HTTP endpoint, post the run as JSON |
 
-`relay init` walks through configuration on a terminal and asks the one question
-that actually shapes a run — which model reviews the work another model
-produced. `relay init --yes` skips every prompt and writes the detected
-defaults, which is what CI and scripts should use.
+Select a node and the side panel shows its settings, what it will do with them,
+and what it did in the last test run. Select nothing and the panel reads the
+whole workflow back in plain English, with the apps and sign-ins it needs and
+every check it has not passed.
 
-## What actually happens
+### Templates
+
+| Template | What it does |
+|---|---|
+| Ticket to pull request | A Linear issue assigned to the bot is planned, reviewed, implemented, reviewed again and tested, and opens a draft PR. Slack hears about it |
+| Label-triggered GitHub run | A label on a GitHub issue starts an unattended run behind an allowlist and a budget; the summary lands back on the issue |
+| Sentry error to fix | A model triages each new Sentry issue. Regressions get a fast fix and a draft PR; the rest become a Linear ticket |
+| Xcode nightly build | Every weeknight, build and test the iOS app. A failing build becomes a ticket, the pipeline fixes it, and the team wakes up to a PR |
+| YouTube comment to issue | Comments on your videos are classified by a model; bug reports become GitHub issues and a Discord ping |
+| Support ticket to fix, with approval | A Zendesk ticket tagged `bug` waits for a person to approve, then runs the pipeline and replies to the customer with the PR |
+
+## Running a workflow for real
+
+Export compiles the graph into files your repository already knows how to run:
+
+| File | What it is |
+|---|---|
+| `.relay/config.json` | The engine's configuration: which agent plays which role, review depth, round limits, guardrails, how far delivery may go |
+| `.github/workflows/<name>.yml` | A GitHub Actions workflow that runs the engine on your own runner minutes |
+| `SETUP.md` | The secrets to add, and where each one comes from |
+| `<name>-workflow.json` | The graph itself, to import back into the studio |
+
+GitHub issue triggers and schedules become Actions events directly. Every
+exported workflow can also be started by hand with an issue number
+(`workflow_dispatch`) or by anything that can send an HTTP request
+(`repository_dispatch`). Slack, Discord and HTTP actions are wired straight into
+the YAML; any other app is posted as JSON to a bridge URL you choose — an n8n or
+Zapier webhook, or your own server — which is the job the hosted product will
+take over.
+
+Whatever the canvas cannot express in those files is listed as a warning in the
+export and in `SETUP.md`, never silently dropped. A paused workflow exports with
+its trigger switched off.
+
+## Bring your own subscription
+
+There are no API keys to paste. Claude Code signs in with your Claude plan and
+Codex with your ChatGPT plan: a studio running on your machine starts each CLI's
+own login and then asks that CLI whether it worked. Relay never sees a token.
+
+In GitHub Actions the export uses each vendor's supported way of carrying a
+personal plan into CI — `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and
+`CODEX_AUTH_JSON` holding `~/.codex/auth.json` — or API keys, if you prefer them.
+
+## Why a run nobody watched is worth reading
+
+Running agents is the easy part. These are the rules that make the result
+trustworthy. The engine enforces them on every run, and the studio checks the
+ones a graph can break before it lets you test-run or export:
+
+- **Nothing grades its own homework.** By default the model that reviews a plan
+  or a diff is the other CLI, not the one that wrote it, and the studio warns if
+  you give both roles to one. Reviewers run read-only, and an agent with no
+  read-only mode cannot be made a reviewer at all.
+- **Every claim is checked against git.** Relay computes the diff itself, judges
+  tests by exit code and takes cost from what the CLIs report. An agent saying
+  "done" proves nothing.
+- **Unattended runs never merge.** A ticket assignment, a label, a schedule or a
+  webhook is an unattended start; those runs stop at a draft pull request, and
+  the studio refuses to export anything else.
+- **Guardrails refuse by default.** An empty allowlist means nobody may start a
+  run, and an unattended workflow will not start without a per-run and a daily
+  budget.
+- **Nothing leaves unscanned.** Delivery runs a secret scan between commit and
+  push, and a hit stops the change at a local branch.
+- **Your checkout is only read.** Agents work in a separate git worktree.
+
+The full list, and how each rule is enforced, is under
+[Safety](docs/cli.md#safety) in the engine reference.
+
+## Status
+
+Relay is being built as an online product. Today the studio is public as a
+[live demo](https://relay-olive-omega.vercel.app), and you can run it yourself.
+Either way nothing is billed and your workflows stay in your browser's storage.
+The demo cannot reach a CLI on your machine, so it has no agent sign-in; the
+studio does that only when you run it locally. Hosted runs are the next step.
+
+| Works today | Simulated in the studio | Planned for the hosted product |
+|---|---|---|
+| The builder, validation, the plain-English description and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A fresh runner per run |
+| Signing in to Claude Code and Codex, and reading their status, from a studio running locally | App connections: "Connect" stores a local flag | Real webhooks for every connector |
+| Exported workflows running on GitHub Actions, through the engine | Approvals: auto-approved after a delay | Approvals from Slack and email |
+| The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
+
+The engine reads issues from GitHub and Linear today. The studio lets you design
+against all 240 apps, and the export says which parts need the bridge.
+
+## The engine
+
+Behind the Agent pipeline node is the `relay` CLI in `src/`. It is what the
+exported GitHub Action runs, and it works on its own from a terminal:
+
+```bash
+npm install -g github:aydinmrnv/relay
+relay start                                   # dependencies, sign-in, config, and a first run
+relay run 142                                 # a GitHub issue, a Linear ID, or a spec file
+relay run --prompt "Fix the flaky timeout in the retry test"
+```
+
+A run looks like this, and every step leaves a real artifact on disk rather than
+a chat transcript:
 
 ```
 issue
   → plan                    (planner reads the codebase, writes plan.md)
   → plan review             (a different model attacks the plan against the real code)
-  → revised plan            (planner responds ACCEPT / REJECT / NEEDS_CLARIFICATION to every finding)
+  → revised plan            (planner answers ACCEPT / REJECT / NEEDS_CLARIFICATION to every finding)
   → implementation diff     (implementer works in an isolated worktree)
   → code review findings    (reviewer reads the diff Relay computed from git)
   → revised implementation  (only BLOCKING findings are routed back)
   → test evidence           (the project's own test command, judged by exit code)
-  → final summary
   → delivery                (commit → push → pull request → merge, as far as the policy allows)
 ```
 
-Every one of those is a real artifact on disk. Nothing is a chat transcript.
-
-## Wall-clock
-
-Only one thing in that pipeline has to be serial: an agent cannot review work
-that has not been written yet. Everything else Relay overlaps.
-
-```
-                        plan ████████████
-   plan reviewer reads ahead ████████████        ← same wall-clock, no waiting
-                 plan review             ███
-              implementation                ████████████████
-   code reviewer reads ahead                ████████████               ← free
-                 code review                                ████
-                  test suite                                ██████     ← free
-```
-
-**Reviewers read ahead.** Most of a review turn is not judgement, it is opening
-the files the issue touches. That reading does not depend on the artifact under
-review, so it does not wait for it: the plan reviewer reads while the planner
-plans, the code reviewer reads while the code is written, and the review then
-resumes that same session already knowing the codebase. Each reviewer is primed
-on the *issue*, never on the artifact, so it forms its own view first —
-independence and latency point the same way here. A priming turn that fails is
-recorded and forgotten; the review runs cold, exactly as it did before.
-
-**The suite runs during the code review.** Both look at the same tree and
-neither needs the other's verdict, so the only thing that ever serialized them
-was the phase order. A code revision cancels the run in flight and starts a new
-one against the new tree, so nothing is ever reported against code that no
-longer exists.
-
-**Nobody runs the suite twice.** When Relay is running it, the implementer is
-told so, and asked for the targeted checks only it can run instead of a full
-suite whose result is already on its way.
-
-**`-f` / `--fast` drops both reviews.** The implementer plans and implements in
-one session and nothing reviews either artifact: no planner turn, no plan
-review, no code review. That is the whole critique removed, so what is left
-checking the work is the project's own test suite — which is why the run says so
-out loud, the summary records `Code review: skipped`, and the pull request says
-no second model read the diff. It is the right trade for a small ticket and the
-wrong one for anything whose approach is the risky part. `plan.md` is still
-written either way.
-
-`relay run` prints where the time actually went, per phase, when it finishes.
-Tune against that, not against this list.
-
-## Design
-
-**Relay never calls a model API.** It has no API keys, reads no credentials, and never sees a token. It launches the official CLIs you have already authenticated (`claude`, `codex`, `gh`) as child processes and lets each one own its own auth.
-
-**Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/`, one row in `AGENT_REGISTRY` (`src/agents/index.ts`), and one fixture set for the conformance suite — config validation, `relay doctor`, `relay init`, `relay start` and the `--planner` / `--implementer` flags all read that array, so none of them need touching. Each row also declares how that vendor is installed and how it is signed in, which is all onboarding needs to know to delegate. What a harness owes — event order, resume semantics, stdin-only prompts, failure shape, read-only enforcement, retry classification — is written as prose above the interface and enforced by a conformance suite (`test/helpers/conformance.ts`) that replays recorded stream fixtures against every registered harness, so a new harness is done when the suite passes.
-
-**A CLI Relay has not packaged can be added in config.** `.relay/config.json` takes a `harnesses` block — an argv, `promptOn: "stdin"`, a `jsonl` stream, a `$.field` mapping, and optional `resume` / `readOnly` flag templates with `{sessionId}` as the only substitution. No shell, no interpolation into command strings, no eval. A config harness appears in `relay doctor` and `relay init` and is assignable to roles like a shipped CLI, with one rule: a harness without `readOnly` flags is usable for implementation and refused for `planReviewer` and `codeReviewer`, because a reviewer that can edit the code it reviews breaks the guarantee reviews rest on.
-
-```json
-{ "harnesses": { "mytool": {
-  "command": "mytool", "args": ["run", "--json"], "promptOn": "stdin",
-  "stream": "jsonl", "map": { "text": "$.message", "usage": "$.usage", "sessionId": "$.session" },
-  "resume": ["--session", "{sessionId}"],
-  "readOnly": ["--sandbox", "read-only"]
-} } }
-```
-
-**Issue trackers use the same seam.** `IssueProvider` (`src/github/types.ts`) is implemented today only by `gh`, and `ISSUE_PROVIDER_REGISTRY` (`src/issues/registry.ts`) is where a second tracker plugs in: one implementation plus one row, carrying its own install command and its own login command. `relay start` asks where issues live by reading that array rather than by naming GitHub.
-
-**Cost is reported, not guessed.** Both CLIs report what a turn consumed, and Relay accumulates it per phase and per run. `relay status` shows the run total, `relay logs` breaks it down by phase, so `maxPlanReviewRounds` can be tuned against a real number. Relay never prices tokens itself: a missing cost means the CLI did not publish one, never that the work was free.
-
-**Verification is mechanical, not conversational.** Relay computes the diff itself (`git add -A` + `git diff --cached <baseSha>`), so an implementer that reports success while changing nothing fails the run. Test results come from process exit codes. A phase is never marked successful because an agent said so. Test discovery recognizes what the project already declares — Node, Rust, Go, Python, Gradle, Maven, Ruby, .NET and a `Makefile` `test` target — and, when the root declares nothing, falls back to the one package the run's changes were confined to.
-
-**Transient failures are retried; real ones are not.** A turn that dies on a rate limit, a dropped connection or a 5xx is retried up to `workflow.maxTransientRetries` times with exponential backoff and jitter, resuming the agent's session when the CLI reported one so the retry keeps its context. Auth failures, a missing binary and cancellation are never retried — retrying them only spends tokens to reach the same error. Every retry is announced and logged; none are silent.
-
-**Agent output is untrusted input.** Artifacts are exchanged in delimited sections (`===RELAY:BEGIN REVIEW=== … ===RELAY:END REVIEW===`) carrying small JSON payloads. Parsing is tolerant but validating: unknown enum values are coerced with a recorded warning, malformed findings are dropped, and a review that requests changes without naming anything is rejected. If output does not parse, Relay resumes the same session once with a format reminder rather than re-running the turn.
-
-**Sessions persist.** Revisions resume the agent's existing session, so the planner still has the codebase reading that produced the plan, and the implementer still has the reasoning behind its own code.
+**[The engine and CLI reference](docs/cli.md)** covers the rest: the design, the
+safety rules, every command, review depth, cost and budgets, delivery,
+unattended runs and the GitHub Action, configuration, exit codes, and Windows.
 
 ## Measuring the claim
 
-Everything above rests on one empirical claim — that specialized agents
-reviewing each other's work produce better changes than one agent working
-alone — and every design decision downstream of it is a hypothesis about that
-claim: two review rounds and not three, the plan reviewed by a different model,
-`--fast` dropping the plan stage, reviewers primed on the issue rather than the
-artifact. `relay eval` is where those stop being intuitions.
+Relay rests on one empirical claim: that agents reviewing each other's work
+produce better changes than one agent working alone. `relay eval` runs a fixed
+set of tasks through real pipeline runs under different configurations and
+reports solve rate, regression rate, cost and review yield, with confidence
+intervals. See [`eval/README.md`](eval/README.md); published numbers go in
+[`eval/results/RESULTS.md`](eval/results/RESULTS.md). If the numbers do not
+support the design, the defaults change.
 
-```bash
-relay eval --check-fixtures                 # verify the fixture set — costs nothing
-relay eval --compare second-agent --dry-run # the plan and the cost — costs nothing
-relay eval --compare second-agent           # one agent against the shipped pair
-```
+## Repository layout
 
-It runs a set of small, self-contained tasks — a bug with a failing test, a
-feature with an acceptance test, a refactor with a behaviour-preserving suite —
-through real `WorkflowEngine` runs under different configurations, and reports
-solve rate, regression rate, cost, wall-clock and review yield.
-
-**The hidden suites are structural, not advisory.** Each fixture keeps the tests
-it is graded on in a directory the harness never materializes, so there is no
-instruction anywhere telling an agent not to read them — there is nothing to
-read. It is then checked rather than assumed: materializing a fixture fails
-closed if a hidden path is present in the tree a run is about to start from.
-Grading happens afterwards, in a separate checkout, with the fixture's own tests
-restored — otherwise the cheapest way to pass a regression suite is to delete
-the assertion that fails.
-
-**Variance is reported, not hidden.** Model calls are not deterministic, so each
-task runs N times and every rate carries a 95% Wilson interval. A comparison
-whose intervals overlap is reported as *inconclusive*, not as "no difference".
-The fixtures are pinned by commit and every session records the CLI version and
-model of each agent, because a result attached to no model version expires
-silently.
-
-**Review yield is measured objectively.** The hidden suite is run against the
-diff as it stood *when code review began* as well as against the delivered diff,
-so a review that turned a failing change into a passing one shows up as a fact
-rather than as a count of findings somebody called important.
-
-The seven configurations, and the five comparisons that use them, are in
-[`eval/README.md`](eval/README.md), along with the fixture format and how to add
-one. Results are written to `.relay/eval/` by default; the published table is
-[`eval/results/RESULTS.md`](eval/results/RESULTS.md).
-
-`relay eval` and [`relay stats`](#cost) ask the same question from opposite
-ends. `stats` measures the claim on *your* runs, where the tasks are real and
-uncontrolled and there is no counterfactual — you cannot see what the same
-ticket would have cost one agent. `eval` measures it on a fixed set where every
-arm gets the identical task, which is the only way to attribute a difference to
-the configuration rather than to the work.
-
-If the numbers do not support the design, that is the most valuable thing this
-harness can produce. The honest outcome is a changed default and a corrected
-README — not a defended one.
-
-## Safety
-
-1. Agents only ever run with the worktree as their working directory, and read-only turns are enforced per harness — differently, and the difference is stated rather than implied. **Codex**: the CLI's own OS sandbox (`--sandbox read-only` / `workspace-write`); Relay does not wrap it again, because nesting a second sandbox inside it fails. **Claude**: the CLI only offers a tool deny list, so Relay wraps every read-only Claude turn in an OS sandbox of its own — `sandbox-exec` on macOS, bubblewrap (`bwrap`) on Linux — that denies all writes outside the CLI's own state and temp directories, with the deny list kept as a second layer. Where the platform offers no sandbox — Windows, today — the deny list is the only enforcement, the turn says so in its event stream, and `relay doctor` reports the enforcement mechanism per harness so you know which promise you are getting.
-2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role — asserted by a test against the argv each harness actually builds, parameterized over the harness registry so a newly added CLI cannot ship without proving how it denies them. Publishing is the delivery phase's job, under a policy you set — never something a model can decide to do mid-turn.
-3. Publishing is off by default. Push, pull request creation, and merge require their own explicit flag/config opt-in or a TTY confirmation that defaults to no. These commands remain forbidden to every agent; only Relay's delivery code can execute them. Merge additionally requires passing tests, resolved blocking findings, an approved reviewed plan, an unprotected base branch, and a pull request created by this run. Every skipped step is recorded with its reason.
-4. Nothing leaves the machine unscanned. Between commit and push, delivery runs the change through a secret scan: the high-signal credential patterns Relay already redacts logs with, an entropy heuristic for keys with no recognizable prefix, and filenames that should never be committed (`.env`, `id_rsa`, `*.pem`, credential JSON). A hit stops delivery at `branch` — committed locally, published nowhere — and reports the rule, the file and the line, never the secret itself. `--allow-secret <path>` is the deliberate one-off override; `.relay/secretsignore` is the repeatable one. A scan that cannot run blocks the same way.
-5. The user's working tree is only read. Runs happen in a separate worktree, so your branch, index and uncommitted files are untouched.
-6. Worktree removal is guarded: the path must be inside `~/.relay/workspaces`, at least three levels deep, and registered with git. Everything else is refused.
-7. No shell, anywhere — including Windows, where it costs the most. Every subprocess is spawned with an explicit argv, so issue text and agent output cannot become shell syntax. `cmd.exe` is never an option there: Relay resolves `PATH`/`PATHEXT` itself and reads an npm `.cmd` shim to spawn the node script inside it directly, and refuses a batch file it cannot see through rather than handing it to a shell. One thing on the whole platform needs an interpreter and gets one — the opt-in Windows desktop notification, whose script is a constant and whose only variable, the message, travels in an environment variable rather than in the script.
-8. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
-9. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
-10. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
-11. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`. The same holds in CI: [the Action](#unattended) puts each vendor's own environment variable into that vendor's own process, and Relay reads none of them.
-12. Nothing starts without a person unless somebody deliberately configured that, and even then it cannot merge. [`relay serve`](#unattended) refuses to run until the repository has named an allowlist and two budgets; an issue labelled by anybody else is ignored with a log line; unattended runs cap at a draft pull request whatever `workflow.deliver` says; and three separate kill switches stop new runs without touching the ones in flight.
-
-## Commands
-
-| Command | |
+| Path | What |
 |---|---|
-| `relay` | the home screen and a prompt: describe the work in plain words, name an issue, or type a `/command` |
-| `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
-| `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
-| `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth, Linear, and the configured notification channels |
-| `relay notify [run]` | send a test notification on every configured channel, or re-send a finished run's |
-| `relay run <issue\|file>` | run the full workflow on a tracker issue or on work that has no ticket, deliver the result, then wait for the next issue |
-| `relay status [run]` | list runs, or print one run's summary |
-| `relay watch [run]` | follow a run's events live |
-| `relay diff [run]` | show the diff a run produced (`--stat` for a file list) |
-| `relay plan [run]` | print the approved plan |
-| `relay logs [run]` | print the event log |
-| `relay stats` | what this repository's runs have cost, taken, and caught |
-| `relay serve` | watch the tracker and start a run per labelled issue, inside a budget and an allowlist |
-| `relay resume <run>` | continue an interrupted or failed run |
-| `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
-| `relay stop [run]` | cancel a run at its next phase boundary |
-| `relay eval` | measure whether cross-model review actually produces better changes |
-| `relay --update` | update Relay itself to the latest version |
-
-Every command above except `--update` takes `--json`, and exits with a code from
-a documented table. Both are below, under [Machine-readable
-output](#machine-readable-output) and [Exit codes](#exit-codes).
-
-`relay run` accepts `142`, `#142`, `owner/repo#142`, a full issue URL, a [Linear](#linear) identifier such as `ENG-142` or a linear.app URL, or [a path to a markdown file](#work-that-has-no-ticket), plus `--prompt`, `--editor`, `--verbose`, `--base <branch>`, `--review <level>`, `--planner`, `--implementer`, `--max-plan-rounds`, `--max-code-rounds`, `--max-cost <usd>`, `--no-tests`, `--commit`, `--push`, `--pr`, `-m` / `--merge`, `--merge-method`, the deprecated `--deliver <policy>`, `--no-offer-merge`, `--allow-secret <path>`, and `--tuff`.
-
-The four worth typing by hand:
-
-| | |
-|---|---|
-| `-r <level>` | how hard the agents look: `none`, `light`, `standard`, `thorough`, `exhaustive` |
-| `-f` | fast: the shorthand for `--review none` |
-| `-m` | merge: take the work all the way — commit, push, pull request, merge — without being asked |
-| `--tuff` | write this run's pull request, commit messages and code comments the way a person types them |
-
-The other wall-clock flags: `--no-prime` (each reviewer reads only once its own
-turn starts) and `--no-parallel-tests` (run the suite after the code review
-instead of during it).
-
-`-f -m` is the whole spectrum in four characters: nothing reviews it and it
-lands anyway. The merge still has to pass its own gates — the tests must have
-verifiably passed, and a protected base branch is still refused — so what `-f`
-removes is the critique, never the evidence.
-
-### How hard the agents look
-
-Review depth is the one dial on this workflow that trades wall-clock and tokens
-for confidence, and it is one word:
-
-```bash
-relay run 142 --review thorough      # or -r thorough
-relay run 142 -f                     # the shorthand for --review none
-```
-
-| level | plan review | code review | a finding comes back when | findings |
-|---|---|---|---|---|
-| `none` | — | — | nothing reviews this run | — |
-| `light` | — | 1 round | it is critical, or the reviewer marked a high-severity finding BLOCKING | 5 |
-| `standard` | 2 rounds | 2 rounds | it is high or above, or the reviewer marked a medium-severity finding BLOCKING | 10 |
-| `thorough` | 3 rounds | 3 rounds | it is medium or above, or the reviewer marked it BLOCKING | 15 |
-| `exhaustive` | 4 rounds | 4 rounds | always — every finding is answered | 25 |
-
-A level sets four things at once, and all four are visible on the home screen
-and in the run's header: whether there is a separate planning turn at all
-(`workflow.plan`), whether the diff is reviewed (`workflow.reviewCode`), and how
-many rounds each review may take. `standard` is the default and is exactly what
-Relay did before levels existed.
-
-The last two columns are the part a round count cannot express. Only a finding
-that clears the level's bar is sent back to the implementer; the rest are
-reported to you in the summary, where they cost nothing. Raising the level lowers
-that bar, so a `thorough` run returns medium-severity findings a `standard` run
-would only mention — and the reviewer is told which bar it is classifying
-against, so it can be honest about the difference between a bug and a nitpick.
-
-Set the repository's default in `.relay/config.json`:
-
-```json
-{ "workflow": { "review": "thorough" } }
-```
-
-A key written next to it still wins — `{ "review": "thorough", "maxCodeReviewRounds": 1 }`
-is three plan rounds, one code round, and thorough's severity bar — because a
-level is a starting point a repository is allowed to tune, not a lock.
-
-### Work that has no ticket
-
-A great deal of real work has no issue behind it: a bug someone just found, a
-refactor described in a Slack message, a spec in a markdown file, a task you want
-to try this on before asking your team to adopt it. Relay does not need a
-tracker — it needs a title and a description.
-
-```bash
-relay run ./spec.md                                     # the file is the issue
-relay run --prompt "Fix the flaky timeout in the retry test"
-relay run --editor                                      # write it in $EDITOR
-```
-
-A markdown file's first heading is the title and the rest is the description.
-Front matter is honoured when it is there (`title`, `number` or `issue`,
-`labels`), and a `#123` in the filename is used as the number — so
-`spec-#123.md` still closes issue 123. `--editor` opens `$VISUAL` or `$EDITOR`
-on a template, the way `git commit` does; saving an empty file aborts and starts
-nothing.
-
-Everything downstream is unchanged, because everything downstream never cared:
-the plan, the reviews, the diff, the tests, `issue.md`, the commit, the push and
-the pull request all happen exactly as they do for a GitHub issue.
-
-**Identity without a number.** A run's branch and worktree are named after the
-issue number when there is one and after the title when there is not, with the
-run's short id keeping them collision-safe either way:
-
-| | |
-|---|---|
-| `relay run 142` | `relay/142-x7f2q3` |
-| `relay run ./spec.md` | `relay/fix-the-flaky-timeout-x7f2q3` |
-
-**Delivery still works.** A local task produces a branch, a push and a pull
-request exactly as an issue does. The one thing it cannot produce is a
-`Closes #142` line, and that is recorded as a skipped step with its reason
-rather than quietly dropped:
-
-```
-Delivery
-  policy pr
-  ✓ Commit         4f2ab8c1 on relay/fix-the-flaky-timeout-x7f2q3
-  ✓ Push           origin/relay/fix-the-flaky-timeout-x7f2q3
-  ✓ Pull request   https://github.com/acme/widgets/pull/318
-  ·  Merge         not requested (deliver: pr)
-  ·  Issue link    ./spec.md has no tracker issue to close
-```
-
-**Onboarding needs none of it.** `gh` is a warning rather than a blocker in
-`relay start` and `relay doctor`: someone with no GitHub CLI at all can still
-complete the flow and finish a real run.
-
-### A repository with no commits
-
-`git init` and nothing else is a place a run can start. There is no commit to
-branch from, so the run branches from the empty tree instead: every file the
-agents write is an addition against nothing, and the commit at the end is the
-repository's first.
-
-```bash
-mkdir markdown-tables && cd markdown-tables && git init
-relay start                                              # asks what to build, not which issue
-relay run --prompt "A CLI that renders markdown tables"
-```
-
-Everything downstream is unchanged, because everything downstream measures the
-work with git either way. The worktree is still isolated and still outside your
-checkout, your own branch stays unborn until you merge something into it, and the
-plan, the reviews, the tests and the diff all happen exactly as they do in a
-repository with ten years of history behind it.
-
-Two things differ, and both are said out loud rather than assumed:
-
-- **`relay start` asks what to build**, not which issue to read. Nothing has been
-  filed against code that does not exist yet, so the first run here is described
-  in a sentence — an issue number or a spec file still works if you have one.
-- **A pull request needs a base branch to open against**, and an empty repository
-  has none. The step is skipped with its reason — `main does not exist yet —
-  relay/…-x7f2q3 is this repository's first commit` — rather than failing on the
-  way out, so `deliver: pr` reaches `push` and reports the shortfall.
-
-Checking out a branch with no commit is `git worktree add --orphan`, which needs
-**git 2.42 or newer**. On an older git, Relay says so and names the one command
-that removes the problem: `git commit --allow-empty -m "Initial commit"`.
-
-### `--tuff`
-
-Relay's writing reads like a machine wrote it, because one did. `--tuff` makes
-a run's output read like a person instead: the pull request, the commit messages
-and the comments the implementer leaves in the code all carry the ordinary
-typos of someone typing at speed.
-
-The line it does not cross is anything read by something other than a person.
-`Closes #142`, trailers, URLs, file paths, fenced blocks, inline code spans and
-identifiers are left byte-for-byte alone (`src/util/typos.ts`), because a
-mistyped issue reference does not look human — it looks broken. The transform is
-seeded on the run id, so `relay deliver <run>` re-opens the same pull request
-rather than a differently-mistyped one.
-
-## Cost
-
-A run spends money on your account, so Relay says what it will probably cost
-before it starts, stops itself if you give it a ceiling, and reports what runs
-here have actually cost afterwards. Every number comes from runs that happened
-in this repository — there is no pricing table and no token model anywhere in
-Relay, and a repository with no completed runs is told exactly that.
-
-```
-Estimate
-  Fetching issue → Creating workspace → Planning → Plan review → Implementation → Code review → Tests → Delivery
-  Duration  ~11m 20s  ·  worst 24m 3s  ·  from 7 completed runs
-  Cost      ~$1.12    ·  worst $2.80   ·  from 5 of 7 runs that reported one
-```
-
-The estimate is built per phase and summed, so a flag's effect on it is the
-flag's cost: `-f` drops the planning and review phases from the total and
-`--no-tests` drops the suite. Phases no previous run ever entered are named
-rather than guessed at, and the sample size is part of the estimate — "about
-four minutes, from two runs" and "from thirty" are different claims.
-
-**A budget stops the run.** `--max-cost 2.50`, or `workflow.maxCostUsd`, unset
-by default. The accumulator is checked at every phase boundary: past the
-ceiling, the run ends the way a cancellation does — the phase that spent it
-finishes, the work is committed to its branch, nothing is published, and
-`state.json`, `summary.md` and `relay status --json` all record why. Turns that
-report no price count as unknown and never as zero, so a ceiling can only ever
-stop a run over money that was actually reported — and where some of the bill
-was never published, every number that comes from it says so.
-
-**A confirmation above a threshold.** `workflow.confirmAboveUsd` asks once,
-before the first agent turn, when the estimate exceeds it. On a terminal that is
-a `[y/N]` where Enter is no. Anywhere else it is a refusal with a non-zero exit,
-because a question nobody can answer is a hang, not a safeguard.
-
-**`relay stats`** is the same evidence over every run in the repository: success
-rate, median and p90 duration, cost by phase, rounds consumed by each review,
-and how often plan review changed the plan and code review blocked a diff. That
-last pair is the product's own claim, measured on your work — a repository where
-plan review never changes anything is a repository that should turn it off, and
-this is where you would find that out. `--json` for the machine-readable form.
-
-## Delivery
-
-The pipeline does not stop at a diff. Delivery is the last phase of a run — it
-commits the work, pushes the branch, opens the pull request, and merges it if
-that is what the repository asked for. Whatever the policy authorizes needs no
-question, because a question at the end of a twenty-minute run is answered by an
-empty terminal as often as by a person. What it did *not* authorize is offered
-to whoever is still watching — see [delivery consent](#delivery-consent).
-
-```
-Delivery
-  policy pr
-  ✓ Commit        ad183e8a on relay/13-ce2ubs
-  ✓ Push          origin/relay/13-ce2ubs
-  ✓ Pull request  https://github.com/acme/widgets/pull/21
-  · Merge         not requested (deliver: pr)
-```
-
-The default ceiling is `branch`: Relay commits locally and publishes nothing.
-`--push`, `--pr`, and `-m` / `--merge` independently opt in (each higher step
-implies its prerequisites). The legacy `--deliver <policy>` remains available for
-scripts.
-
-| policy | |
-|---|---|
-| `none` | leave the diff staged in the worktree |
-| `branch` | commit to the run branch, and stop (`--commit` is shorthand for this) |
-| `push` | commit and push the branch |
-| `pr` | commit, push and open a pull request |
-| `merge` | all of the above, then merge the pull request (`github.mergeMethod`, default `squash`) |
-
-The `github` config section contains `autoPush`, `autoPr`, `autoMerge` (all
-default `false`), `mergeMethod`, `deleteBranchOnMerge`, and
-`protectedBranches`. When cleanup is enabled, Relay deletes the remote run
-branch and removes its guarded worktree after a successful run-created PR merge.
-
-**Every step is gated before anything runs.** The policy says how far; the gate
-says whether it is possible. No `origin` remote stops it at `branch`; no `gh`
-stops it at `push`; a `merge` with no pull request to merge happens locally, and
-only into a clean checkout already sitting on the base branch. A step that does
-not run is *recorded with the reason*, and the run says so out loud rather than
-reporting a clean success — a silent shortfall is the failure mode of anything
-autonomous.
-
-**It opens as a draft when the run's own evidence says so:** failing tests, a
-plan that was never approved, or blocking review findings the implementer never
-accepted. The reasons go at the top of the pull request body. Delivery is
-automatic; looking ready to merge is not.
-
-**A failed step stops the ones that depended on it and never fails the run** —
-the work is committed on the branch either way. Nothing is retried behind your
-back, and nothing is repeated: delivery is idempotent, so `relay deliver <run>`
-picks up exactly where a run left off once `gh` is installed, the remote is
-reachable, or the policy is raised.
-
-A run that fails or is cancelled never reaches this phase. Its work is still
-committed to the run branch so a `git worktree prune` cannot take it, and
-nothing is published.
-
-### Delivery consent
-
-On an interactive terminal a run ends with the questions its policy left
-unanswered — at most two, in dependency order:
-
-```
-  relay/13-ce2ubs is pushed to origin first.
-  Open a pull request into main now? [y/N]
-  Merge https://github.com/acme/widgets/pull/21 into main now? (squash) [y/N]
-```
-
-The push is not a question of its own. It is the first half of opening a pull
-request, and splitting one intention into two prompts is friction rather than
-safety — so a repository Relay can open a pull request against is asked exactly
-that, and the push happens as part of it. Only a repository with no GitHub side
-to it is asked about the push by itself, because there the push *is* the step.
-
-**Enter is no.** A yes raises the ceiling and re-runs the idempotent delivery
-phase. Declining a prerequisite ends the sequence. A command-line flag or
-`github.auto*` setting is already consent and skips that step's prompt.
-Non-interactive runs never prompt and publish only what flags or config
-explicitly authorized.
-
-It is never asked when the answer could only be no: work the run could not
-vouch for (failing tests, an unapproved plan, unanswered blocking findings — the
-same reasons the pull request opened as a draft), a checkout that cannot take a
-local merge, `deliver: merge` (which already merged it), or a terminal nobody is
-watching, which gets `relay deliver <run> --to merge` instead. `--no-offer-merge`
-or `workflow.offerMerge: false` turns it off.
-
-## Unattended
-
-Every run so far began with a person typing a command. That is the right default
-and it stays the default. But a pipeline that verifies its own work
-mechanically, refuses to publish what it cannot vouch for, and opens a draft
-pull request when its evidence is weak is precisely the shape that can be
-trusted to start without one — so it can, by label.
-
-```bash
-relay serve                    # watch the tracker, start a run per labelled issue
-relay serve --once             # one pass, then exit
-relay serve --dry-run          # decide everything, start nothing, move no labels
-relay serve --issue 142        # consider one issue — what the GitHub Action passes
-```
-
-Label an issue `relay:go` and `relay serve` starts a run for it. It removes the
-label first, so a restart does not do the same work twice, and records the claim
-in `.relay/unattended.json` so the same is true across a crash.
-
-**The guardrails are the feature, not the caveat.** `relay serve` refuses to
-start at all until the repository has answered three questions, each of them
-about somebody else's ability to spend your money:
-
-```json
-"workflow": { "triggerLabel": "relay:go" },
-"unattended": {
-  "enabled": true,
-  "authors": ["you"],
-  "teams": ["acme/maintainers"],
-  "maxRunCostUsd": 2.50,
-  "maxDailyCostUsd": 20,
-  "deliver": "pr",
-  "pollSeconds": 60
-}
-```
-
-Nothing here has a permissive default. The switch ships off, the allowlist ships
-empty, and both budgets ship unset — and an empty allowlist is **refused**
-rather than read as "anyone", because on a public repository that reading is a
-funded denial-of-wallet attack with a UI.
-
-| | |
-|---|---|
-| **An allowlist** | Only issues carrying the trigger label, and only when the person who *applied* the label is on `unattended.authors` or in one of `unattended.teams`. The labeller, not the author: whoever put the label on is whoever spent the money. A tracker that will not say who that was is a refusal, never a default-allow. |
-| **A budget** | `maxRunCostUsd` stops one run at its next phase boundary; `maxDailyCostUsd` stops the server from starting more. Reached means **stop and say so**, not queue for tomorrow — the label stays on the issue, visibly outstanding. Each run in flight reserves its full per-run cap, so the server never commits past the day's ceiling on the strength of costs that have not been reported yet. |
-| **A ceiling on delivery** | Unattended runs cap at `pr` regardless of `workflow.deliver`, and their pull requests open as **drafts** — not because the work is worse, but because nobody has looked at it. `unattended.deliver` cannot even spell `merge`: the type has no such value, and writing one is a config error naming the rule. An autonomous merge is the one thing this project exists not to do. |
-| **A kill switch** | Three of them, all meaning *start nothing more, let what is running finish*: `touch .relay/STOP`, `unattended.enabled: false` (re-read every poll, so it reaches a live server), or a signal. A second Ctrl-C escalates to cancelling the runs too. None of them kills a run on its own — that work is already paid for, and `relay stop <run>` is how you end one by name. |
-
-An unattended run also always comments its summary back on the issue, because
-nobody is watching the terminal it ran in.
-
-**Everything unattended is auditable.** Which issue, who labelled it, what it
-cost, what it delivered, why it stopped — `relay stats` grows a section:
-
-```
-Unattended
-  Started by a label  6 run(s)  ·  $7.10 in total
-  Today (2026-08-25)  2 run(s)  ·  $2.40
-  Who asked           alice 4  ·  bob 2
-
-  #142  ·  relay:go by alice  ·  $1.20  ·  https://github.com/acme/widgets/pull/900
-  #139  ·  relay:go by bob    ·  $2.05  ·  branch  ·  cancelled: budget exceeded: $2.05 spent of $2.00
-```
-
-`relay stats --json` carries the same rows under `unattended`.
-
-### The GitHub Action
-
-For teams who would rather not run a daemon. It is the same code path —
-`relay serve --once --issue <n>` — so the allowlist, the budgets, the ceiling
-and the audit trail all come from `.relay/config.json` rather than from the
-workflow file. There is deliberately no input that can loosen a guardrail,
-because a workflow file is editable by anyone who can open a pull request.
-
-```yaml
-name: Relay
-on:
-  issues:
-    types: [labeled]
-
-jobs:
-  relay:
-    if: github.event.label.name == 'relay:go'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write        # push the run branch
-      issues: write          # remove the label, post the summary
-      pull-requests: write   # open the draft pull request
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-
-      # Each vendor's CLI, installed and authenticated the vendor's own way.
-      - run: npm install -g @anthropic-ai/claude-code @openai/codex
-
-      - uses: aydinmrnv/relay@v1
-        with:
-          issue: ${{ github.event.issue.number }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-```
-
-**Relay is handed none of those secrets, and this is the place to say it
-precisely** — CI is where somebody will otherwise assume it is fine to give
-Relay a token. What the block above does is put each vendor's own environment
-variable into that vendor's own process: `GH_TOKEN` is read by `gh`,
-`ANTHROPIC_API_KEY` by Claude Code, `OPENAI_API_KEY` by Codex. Relay spawns
-those CLIs and they inherit the environment; Relay itself never reads, logs,
-forwards or persists any of those values, and it has no input, flag or config
-key that accepts one. If you go looking for where to give Relay a credential,
-the answer is that there is nowhere — on a laptop or in a runner.
-
-The Action's outputs are `run-id`, `exit-code`, `stopped-by` and `started`, and
-it writes what happened to the job summary. Relay's own comment on the issue is
-the other half of that report.
-
-This is tested rather than described: Relay's CI runs this Action against a
-fixture repository with a real git remote, a real test suite, a `gh` that
-answers from a file and a scripted coding CLI plugged in through the
-[config-harness seam](#configuration) — a whole pipeline, plan through draft
-pull request, with no credential and no network anywhere in it. The job then
-checks what it left behind rather than what it printed: the label came off
-before the run, the issue nobody was allowed to trigger kept its label, the
-pull request is a draft, and `main` did not move.
-
-## The session
-
-Answering those questions is not the end of the work — the next task is. So on
-a terminal Relay does not exit when a run finishes: it draws the home screen
-again, with the run that just finished on it, and waits.
-
-What it waits with is a composer, not a question. Type the work in plain words
-and Relay starts a run from it — no issue, no file, no flag:
-
-```
-╭─ acme/widgets ───────────────────────────────────────────── configured ─╮
-│ State          configured                                               │
-│ Planner        claude                                                   │
-│ Plan reviewer  codex                                                    │
-│ Implementer    codex                                                    │
-│ Code reviewer  claude                                                   │
-│ Review         thorough  plan 3 · code 3 · returns medium+              │
-│ Delivery       branch                                                   │
-│ Tests          npm test                                                 │
-│                                                                         │
-│ Recent runs                                                             │
-│ 20260812-100000-a1  Complete  8m 2s  +40 −7                             │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Next  relay run <issue>                                                 │
-╰─────────────────────────────────────────────────────────────────────────╯
-
-╭─────────────────────────────────────────────────────────────────────────╮
-│ › add a dark mode toggle to the settings page                           │
-╰─────────────────────────────────────────────────────────────────────────╯
-  new task · 8 words · no ticket needed  Enter start · Tab complete · ^C exit
-```
-
-The line under the box is the composer reading back what it is about to do,
-redrawn on every keystroke — `issue #142`, `spec file ./spec.md`, `new task`,
-or the summary of the `/command` you are typing. It is there to catch the two
-mistakes a prompt this loose makes possible, a mistyped issue number quietly
-becoming a task description and a slash command that does not exist, before
-either costs a run.
-
-| you type | Relay runs |
-|---|---|
-| `add a dark mode toggle` | `relay run --prompt "add a dark mode toggle"` |
-| `142`, `#142`, `owner/repo#142`, an issue URL | `relay run 142` |
-| `./spec.md` | `relay run ./spec.md` |
-| `/command` | the command below — no run |
-| empty, `q`, `quit`, `exit` | leaves |
-
-A tracker reference wins over a file that happens to share its name, and both
-win over prose — the same precedence `relay run`'s own argument has always had.
-Anything with a newline in it is a task by construction, so a pasted paragraph
-is never mistaken for something else.
-
-### Commands at the prompt
-
-| | |
-|---|---|
-| `/help` | everything you can type here |
-| `/review [level]` | how hard the agents look; no argument opens the list |
-| `/agents [planner] [implementer]` | which CLI plans, and which one implements |
-| `/deliver [policy]` | how far a finished run carries its own work |
-| `/issues` | pick from the open issues instead of typing one |
-| `/editor` | write the task in `$EDITOR`, the way `git commit` does |
-| `/verbose` | stream raw agent events during a run |
-| `/status` | what the runs in this repository did |
-| `/clear` | clear the screen and draw it again |
-| `/exit` | leave |
-
-A command changes what the *next* run does and nothing that has already
-happened. The home screen shows the result immediately, with `· this session`
-against whatever the command moved — so the panel always describes the run that
-would actually start, not the config file as written.
-
-Editing works the way a shell's does: arrows and Ctrl-A/E to move, Ctrl-W and
-Ctrl-U to delete, Up and Down for what you typed before, Tab to complete a
-`/command`, Ctrl-C to leave. Long input wraps inside the box rather than
-scrolling, because a line you cannot see is a line you cannot check.
-
-`relay` on its own opens there, `relay run <issue>` and the first run of `relay
-start` come back to it. The flags the session was opened with carry into every
-run in it, a run that fails is reported without ending the session, and the exit
-code is the last run's.
-
-Nothing changes behind a pipe or in CI: there is nobody there to ask, so a run
-ends the process exactly as it always did. A terminal too narrow or too dumb for
-the composer gets the same question as a plain prompt, and everything above
-still works.
-
-## Terminal output
-
-A run takes minutes, so `relay run` shows a live dashboard: one framed row per
-phase, in fixed columns, redrawn in place.
-
-```
-◆ RELAY ───────────────────────────────────────────────────────── Issue #142
-Add authentication rate limiting
-
-╭─ Pipeline ─────────────────────────────────────────── review thorough ───╮
-│ ● Fetching issue              complete                                   │
-│ ● Creating workspace          complete                                   │
-│ ● Planning             1m 4s  claude · reading the codebase              │
-│ ● Plan review          21.0s  codex · round 1/3 · reviewing              │
-│ ⠋ Implementation      2m 12s  codex · editing src/auth/limiter.ts        │
-│ ○ Code review                 claude · waiting                           │
-│ ○ Tests                       waiting                                    │
-├──────────────────────────────────────────────────────────────────────────┤
-│ → implementer: $ npm test -- auth                                        │
-│ ███████░░░░░  4/7 phases                                          3m 37s │
-╰──────────────────────────────────────────────────────────────────────────╯
-```
-
-Every column starts in the same place from the first row to the last: mark,
-phase, clock, then who is doing what. A duration sits directly beside the phase
-it times rather than a column away from it, review phases show the round being
-consumed (`round 2/2`) rather than a bare "revising", and the footer carries how
-far in the run is and how long it has taken. The frame's badge carries the review
-level, because it is the one fact that explains the shape of the checklist under
-it — why there is no plan review, or why a third round is allowed. A `--fast`
-run shows the five steps it will actually take rather than greying out two it
-never enters. The run ends
-with one block covering phases, rounds, diff, tests, cost and the next command —
-with a per-phase duration, which is the number to tune against. When a phase
-fails, that block names the agent that failed, the phase, and the two commands
-worth running next.
-
-`relay doctor` and `relay status` are framed the same way, and the commands a
-session opens with — `relay start`, `relay doctor` — print the wordmark first.
-The wordmark is drawn from a 5×5 pixel font (`src/ui/logo.ts`) rather than
-pasted as art, so one drawing serves both alphabets: the ink is a block on a
-unicode terminal and `#` everywhere else, and the two can never drift apart.
-The logo is the same drawing a third time: `web/scripts/gen-brand.mjs` reads
-the glyphs from `src/ui/logo.ts` and draws the favicon, the app mark and the
-files in `web/public/brand/` from them — the R drawn twice, the second pass a
-quarter-cell behind the first, because nothing Relay ships was made in one
-pass.
-
-The display resolves colour, unicode and interactivity once, from the
-environment, and everything routes through those primitives:
-
-| | effect |
-|---|---|
-| not a TTY (a pipe, a redirect) | append-only lines, no colour, no cursor control, no wordmark |
-| `CI=1` | same as a pipe, even on an allocated TTY |
-| `NO_COLOR=1` | colour off; the display is otherwise unchanged |
-| `TERM=dumb` | append-only, no colour, ASCII only |
-| `RELAY_ASCII=1` | ASCII glyphs, punctuation, frames and logo; colour kept |
-
-Frames are structure and are drawn wherever the output goes — they survive
-`cat`, and they carry what belongs with what. The wordmark is decoration and is
-drawn only for a person: a log collector does not need five rows of block
-letters at the top of every file.
-
-Two rules hold across all of it. Every border character is chosen from the
-theme rather than written literally, so a terminal with no box drawing gets a
-frame of `+-|` instead of a row of question marks. And every width is measured
-with `visibleWidth`, never `.length`, because a coloured cell carries bytes that
-occupy no columns — padding by `.length` puts the right-hand border in a
-different place on every row exactly when colour is on.
-
-Content Relay only passes through — a patch, a `--json` payload, an agent's
-plan — is never rewritten by any of that.
-
-## Machine-readable output
-
-Every command that reports something takes `--json`, and under it **stdout
-carries the JSON document and nothing else**. The banner, the frames, the
-progress, the advice and the errors all move to stderr, so `relay run --json |
-jq` works while the run is still printing.
-
-| | |
-|---|---|
-| `relay --json` | the home screen: repository, config, recent runs, next command |
-| `relay doctor --json` | every readiness check with its status, detail and remedy |
-| `relay start --json` | the same checks (implies `--check`: a guided walkthrough has no JSON form) |
-| `relay init --json` | the config it wrote, the test command it detected, the agents it found (implies `--yes`) |
-| `relay run <issue\|file> --json` | one object per line as phases complete, then a summary |
-| `relay resume --json` | the same stream |
-| `relay status [run] --json` | `runs` for the listing, `run` for one — unabridged, unlike the table |
-| `relay watch [run] --json` | one object per line, as each event arrives |
-| `relay diff [run] --json` | the file list, the counts, and the patch (`--stat` drops the patch, keeps the files) |
-| `relay plan [run] --json` | the approved plan as markdown |
-| `relay logs [run] --json` | the event log, with `data` as recorded, plus usage by phase |
-| `relay stats --json` | what this repository's runs have cost, taken, and caught, including the [unattended audit trail](#unattended) |
-| `relay serve --json` | one object per line as it decides — considered, skipped, claimed, finished — then a summary |
-| `relay deliver [run] --json` | the run after delivery, ledger included |
-| `relay stop [run] --json` | what was signalled, and whether the process was still alive |
-
-**Every document carries `schema`.** The moment something parses this output the
-shape is a contract, and a contract needs a version to change under:
-
-```json
-{ "schema": 1, "command": "status", "run": { "runId": "…", "phase": "COMPLETE" } }
-```
-
-`schema` is bumped when a field is removed, renamed, or changes meaning. Adding
-a field is *not* a bump — a consumer that ignores unknown keys survives it, and
-one that does not was never going to survive any change at all.
-
-`relay run --json` is a stream, not a blob, because a single document at the end
-is the one shape that is useless while it matters. It emits `run_started`, then
-`phase_started` / `phase_completed` per phase — the engine's own phases, so a
-plan revision appears even though the dashboard folds it into the review row —
-then `note` and `warning` lines, and finally one `summary` object carrying the
-whole run and the code the command is about to exit with. Agent events are in
-the stream only under `--verbose`, and `--json` never opens the session that
-otherwise asks for the next issue — a question nobody is reading is a hang.
-
-```console
-$ relay run 142 --json | jq -r 'select(.type == "phase_completed") | "\(.phaseLabel) \(.durationMs)ms"'
-Fetching issue 412ms
-Creating workspace 1203ms
-Planning 64119ms
-```
-
-Serializers live next to `src/cli/runJson.ts` and are built from state, git and
-the event log — never from the strings the terminal view paints. Nothing there
-imports `output.ts`, which is why no payload can carry a colour code, an
-ellipsis, or a column sized to fit a frame.
-
-## Exit codes
-
-| code | |
-|---|---|
-| 0 | success |
-| 1 | a Relay error — the message on stderr says which |
-| 2 | usage error: an unknown command, a missing argument, a bad flag |
-| 3 | preconditions unmet: a missing CLI, a signed-out tool, not a repository |
-| 4 | the run finished, and its work is committed nowhere |
-| 5 | the run failed on its own terms: blocking findings unresolved, tests failed |
-| 130 | cancelled — Ctrl-C, `relay stop`, or an abandoned prompt |
-
-3 and 5 are the ones automation actually needs. *You are not set up* and *the
-work is not good enough* are different answers requiring different responses,
-and collapsing both into 1 makes a CI job page a person for a missing `gh`.
-
-The distinctions worth stating outright. A run that **broke** mid-phase exits 1
-— unless it broke on a precondition it had already named, which exits 3. A run
-that **reached a verdict** and the verdict is bad exits 5: tests that were
-discovered and failed, or blocking review findings the implementer never
-accepted. A repository with no test suite has not failed its tests, so it does
-not exit 5. Exit 4 is reserved for work that came out fine and is sitting
-uncommitted in a throwaway worktree, which one `git worktree prune` would take
-with it. When a run is both condemned and stranded, 5 wins: it is the answer
-that decides whether anything downstream should happen at all.
-
-The table lives in `src/cli/exit.ts`, and the tests assert one invocation per
-code.
-
-[`relay serve`](#unattended) reports on the server rather than on one run: 0
-when a kill switch stopped it or `--once` finished with every run it started
-succeeding, and 1 when a run it started failed or when the daily budget stopped
-it. A budget-stopped server exits non-zero deliberately — a supervisor that
-restarts it will watch it stop again immediately, which is the visible,
-correct behaviour for "this repository has spent what it said it would today".
-
-## Run state
-
-```
-.relay/
-  config.json
-  unattended.json            what `relay serve` has already picked up (local, gitignored)
-  STOP                       present means: start nothing more (one of three kill switches)
-  runs/<run-id>/
-    state.json                 phase, sessions, rounds, diff summary, test results, token usage, commit,
-                               and — on an unattended run — who labelled the issue, and with what
-    issue.md                   the issue as the agents received it
-    plan.md                    current plan (rewritten on each revision)
-    implementation-notes.md
-    summary.md                 what was decided and why
-    events.jsonl               full audit trail
-    reviews/plan-round-N.json  every finding, with the raw agent message
-    discussion/…               ACCEPT / REJECT / NEEDS_CLARIFICATION per finding
-    patches/…                  the diff at each stage
-    tests/test-run.log
-```
-
-Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/issue-<n>-<id>`, on a branch named `relay/<n>-<id>`. Run state is written atomically (temp file + fsync + rename), so an interrupted Relay never leaves a corrupt `state.json` — `relay resume` picks up from the last completed phase.
-
-## Configuration
-
-`.relay/config.json`:
-
-```json
-{
-  "agents": {
-    "planner": "claude",
-    "planReviewer": "codex",
-    "implementer": "codex",
-    "codeReviewer": "claude"
-  },
-  "models": { "codeReviewer": "haiku" },
-  "workflow": {
-    "review": "standard",
-    "plan": "review",
-    "reviewCode": true,
-    "maxPlanReviewRounds": 2,
-    "maxCodeReviewRounds": 2,
-    "primeReviewers": true,
-    "concurrentTests": true,
-    "runTests": true,
-    "deliver": "pr",
-    "mergeMethod": "squash",
-    "offerMerge": true,
-    "maxTransientRetries": 2,
-    "maxCostUsd": null,
-    "confirmAboveUsd": null,
-    "triggerLabel": "relay:go"
-  },
-  "unattended": {
-    "enabled": false,
-    "authors": [],
-    "teams": [],
-    "maxRunCostUsd": null,
-    "maxDailyCostUsd": null,
-    "pollSeconds": 60,
-    "deliver": "pr"
-  },
-  "tests": { "command": null },
-  "delivery": { "comment": false },
-  "issues": { "provider": "github", "team": null },
-  "notify": { "webhook": null, "webhookFormat": "auto", "bell": false, "system": false, "command": null },
-  "tracking": {
-    "enabled": false,
-    "plugin": "relay/<version> relay-wakatime/<version>",
-    "project": null,
-    "includeAgentPhases": true
-  }
-}
-```
-
-Roles are deliberately crossed: whoever plans does not review the plan, and whoever implements does not review the code. Invalid values are rejected at load time rather than silently ignored.
-
-`models` is keyed by role or by provider, and a role wins. That is what puts a
-review on a faster model than the turn it is reviewing even when both seats are
-the same CLI — the cheapest latency lever in the file, and the one worth
-reaching for before turning a review off.
-
-| key | |
-|---|---|
-| `workflow.review` | how hard the agents look: `none`, `light`, `standard` (default), `thorough`, `exhaustive`. Sets the four keys below it and the severity at which a finding comes back; an explicit key still wins ([how hard the agents look](#how-hard-the-agents-look)) |
-| `workflow.plan` | `review` (planner + adversarial plan review) or `inline` (the implementer plans in its own session — what `--fast` sets) |
-| `workflow.reviewCode` | whether the other model reviews the diff (default `true`; `--fast` sets it `false`) |
-| `workflow.maxPlanReviewRounds` / `maxCodeReviewRounds` | rounds each review may take before the run proceeds with what it has (`--max-plan-rounds`, `--max-code-rounds`) |
-| `workflow.typos` | write the pull request, commits and code comments with human typos (default `false`; what `--tuff` sets) |
-| `github.autoPush` / `autoPr` / `autoMerge` | authorize each publishing step without a prompt (all default `false`) |
-| `github.mergeMethod` | how a pull request lands: `squash` (default), `merge`, `rebase` |
-| `github.deleteBranchOnMerge` | delete the remote run branch and guarded worktree after merge (default `false`) |
-| `github.protectedBranches` | base branches Relay refuses to merge into (default `[]`) |
-| `workflow.offerMerge` | ask once, at the end of a run that delivered short of a merge (default `true`) |
-| `workflow.maxCostUsd` | dollars a run may report before it stops itself at the next phase boundary (default `null`, no ceiling; `--max-cost`) |
-| `workflow.confirmAboveUsd` | ask before starting a run whose estimate exceeds this (default `null`; non-interactively an exceeded threshold is a refusal) |
-| `workflow.primeReviewers` | let each reviewer read the repository during the phase it will review |
-| `workflow.triggerLabel` | the label that starts a run with nobody present (default `relay:go`). Read only by [`relay serve` and the Action](#unattended); an attended `relay run` never consults it |
-| `unattended.enabled` | the master switch, and one of the three kill switches (default `false`). Re-read every poll, so flipping it stops a running server |
-| `unattended.authors` / `teams` | logins, and `org/team` slugs, whose members may start a run by labelling (both default `[]`). Empty is **refused**, never read as "anyone" |
-| `unattended.maxRunCostUsd` | dollars one unattended run may report before it stops itself. Required; the tighter of it and `workflow.maxCostUsd` applies |
-| `unattended.maxDailyCostUsd` | dollars unattended runs may report in one UTC day before the server stops starting them. Required |
-| `unattended.deliver` | how far an unattended run delivers: `none`, `branch`, `push`, `pr` (default). `merge` is not a value — nothing unattended ever merges |
-| `unattended.pollSeconds` | seconds between polls of the tracker (default `60`; `relay serve -i`) |
-| `workflow.concurrentTests` | run the suite during the code review rather than after it |
-| `timeouts.primingMs` | cap on a read-ahead turn, which is speculative and must not stall a run |
-| `timeouts.primeGraceMs` | how long a review waits for a read-ahead that has not landed; past it the reader is abandoned and the review starts cold |
-| `tracking.enabled` | opt in to WakaTime-compatible reporting of Relay orchestration (default `false`) |
-| `tracking.includeAgentPhases` | report during agent-driven phases too (default `true`); disable to reduce overlap with agent CLIs |
-| `delivery.comment` | post one short, idempotent result comment after a run creates a pull request (default `false`) |
-| `issues.provider` | the tracker a bare `142` means: `github` (default) or `linear`. `ENG-142` reaches Linear and `owner/repo#142` reaches GitHub whatever this says |
-| `issues.team` | Linear's default team key, so `relay run 142` means `ENG-142` (default `null`) |
-| `notify.webhook` | HTTP(S) endpoint receiving one best-effort POST when any run finishes (default `null`). A Slack, Discord or Teams webhook URL works as pasted |
-| `notify.webhookFormat` | `auto` (default: Slack, Discord and Teams URLs get their own message shape, anything else the JSON document below), or force `json`, `slack`, `discord`, `teams` |
-| `notify.bell` | Ring the terminal bell when an attached run or watch finishes (default `false`) |
-| `notify.system` | Use the platform desktop notifier when available (default `false`) |
-| `notify.command` | Explicit argv template with `{{runId}}`, `{{outcome}}`, `{{url}}`, `{{title}}` and `{{headline}}` tokens (default `null`; no shell), e.g. `["say", "{{headline}}"]` |
-
-A Slack, Discord or Teams webhook receives a message rather than a document: a
-headline that says how the run went (`✅ Relay run succeeded: ENG-142 Retry the
-flaky upload`), a link to the pull request, and the diff, test, delivery, time
-and cost facts — no paths and no file names, because a channel is a wider
-audience than a terminal. Discord messages never ping anyone. `relay notify`
-sends a labelled test on every configured channel and reports what each
-endpoint answered; `relay notify latest` re-sends the last run's.
-
-Webhook documents use the same additive `schema` version as Relay's CLI JSON.
-They contain `runId`, `shortId`, the issue, terminal outcome and stopping reason,
-phase durations, review rounds, diff counts, test result, cost, delivery steps and
-skip reasons, and `pullRequestUrl`. They deliberately exclude workspace paths,
-file lists, patch paths, agent bindings, and commit metadata. Notifications fire
-for successful, failed, and cancelled runs; timeouts and HTTP failures are
-retried where transient, recorded in run state, and never change the run outcome.
-The document shape is:
-
-```json
-{
-  "schema": 1, "command": "notify", "runId": "...", "shortId": "...",
-  "issue": { "id": "...", "number": 35, "title": "...", "url": "...", "state": "open" },
-  "outcome": { "phase": "COMPLETE", "terminal": true, "stopped": "optional", "error": "optional", "stoppedIn": "optional phase" },
-  "phases": [{ "phase": "PLANNING", "ms": 1200, "visits": 1 }],
-  "rounds": { "planReview": 1, "codeReview": 1 },
-  "diff": { "fileCount": 2, "additions": 40, "deletions": 7 },
-  "tests": { "discovered": true, "command": ["npm", "test"], "passed": true, "exitCode": 0, "durationMs": 900, "timedOut": false, "skippedReason": null },
-  "cost": { "usage": "the RunUsage JSON projection or null", "formatted": "...", "unpricedTurns": 0 },
-  "delivery": { "policy": "pr", "reached": "pr", "steps": [{ "step": "pullRequest", "status": "done", "detail": "..." }], "comment": { "status": "done", "detail": "..." } },
-  "pullRequestUrl": "https://github.com/acme/repo/pull/1"
-}
-```
-
-Tracking invokes `~/.wakatime/wakatime-cli`, which owns its endpoint and
-authentication. Relay never reads or writes `~/.wakatime.cfg`, accepts no
-tracker API key, and passes no key in process arguments. Each heartbeat sends
-the project name (the repository name unless overridden), absolute worktree
-path as the entity, run branch, plugin string, `coding` category, and heartbeat
-timestamp. A missing or failing CLI produces one notice and cannot fail a run.
-
-Agent CLIs and editor extensions may report overlapping activity; Relay neither
-relabels nor suppresses it. Users with shell-level tracking may add
-`~/.relay/workspaces/` to the `exclude` patterns in `~/.wakatime.cfg`.
-
-### Linear
-
-Linear has no CLI to delegate to, so Relay reads a personal API key from
-`LINEAR_API_KEY` at the moment it makes a request — it is never written to
-`.relay/`, logged, or asked for, and `lin_api_…` is in the redaction patterns.
-Create one at <https://linear.app/settings/account/security>, then:
-
-```bash
-export LINEAR_API_KEY=lin_api_…
-relay run ENG-142                                   # or a linear.app issue URL
-relay run 142                                       # with "issues": { "provider": "linear", "team": "ENG" }
-```
-
-The issue arrives with its description, labels, state, parent and every
-comment, oldest first. The branch is `relay/eng-142-<run>` and the pull request
-ends in `Fixes ENG-142`, which is what Linear's GitHub integration reads to link
-the pull request to the issue and close it on merge. `delivery.comment` posts
-the result back onto the Linear issue, once per run. `relay start` asks where
-issues live when a Linear key is present, and `relay doctor` checks the key.
-
-Unattended mode stays GitHub-only for now: Relay only acts on a label when the
-tracker can say who applied it, and it does not read that from Linear yet, so
-`relay serve` against Linear refuses every issue rather than guessing.
-
-## Requirements
-
-Node ≥ 22.6, git, and whichever agent CLIs you assign to roles — installed and already authenticated. Run `relay doctor` to check. Starting from a repository with no commits additionally needs git ≥ 2.42, for `git worktree add --orphan`.
-
-macOS, Linux and Windows 10/11 are all supported, and CI runs the whole suite on
-all three. Windows needs a little more saying, which is the next section.
-
-## Windows
-
-```powershell
-winget install OpenJS.NodeJS.LTS Git.Git GitHub.cli
-npm install -g github:aydinmrnv/relay
-
-npm install -g @anthropic-ai/claude-code    # whichever agent CLIs you want
-npm install -g @openai/codex
-
-relay start
-```
-
-`relay start` takes it from there — it checks each of those, runs the vendor's
-own login command for anything not signed in, writes a config, and offers a
-first run. `relay doctor` re-checks the same things later.
-
-**No command runs through `cmd.exe`.** The no-shell rule is not relaxed on
-Windows, it is enforced harder: Relay resolves a command through `PATH` and
-`PATHEXT` itself, and where the npm-installed `claude` turns out to be a `.cmd`
-shim, it reads the shim to find the script inside and spawns *that* with node
-and an explicit argv. `cmd.exe` re-interprets `&`, `|` and `%VAR%` inside
-arguments, which is exactly how issue text or agent output would become a
-command. A batch file Relay cannot see through is refused rather than run.
-
-The single exception is the desktop notification, which is off by default and
-is the only thing on the platform that can raise one: it runs a fixed
-PowerShell script under `-NoProfile`. The notification text is conspicuously
-not part of that script — it arrives in an environment variable, which
-PowerShell reads as a string and never parses, so a run whose title contains
-`$(...)` produces a notification that looks odd and does nothing else.
-
-**Read-only turns are not OS-sandboxed here.** macOS has `sandbox-exec` and
-Linux has bubblewrap; Windows has no equivalent Relay can wrap around a child
-process, so a read-only Claude turn falls back to the CLI's own tool deny list
-as its only enforcement. That is a weaker promise than the same run makes
-elsewhere, so it is stated rather than hidden: the turn emits a notice, and
-`relay doctor` reports it per harness. Codex is unaffected — it brings its own
-sandbox on every platform.
-
-**`relay stop` stops at the next phase boundary.** On POSIX it also sends
-SIGINT, which drops the agents in flight immediately. Windows has no signal
-that means anything gentler than "die", and killing a run mid-phase would
-strand its worktree and leave state claiming a phase is still running — so
-Relay does not send one. The cancellation is recorded and honoured at the next
-boundary, which is usually seconds and at worst one agent turn.
-
-**Long paths.** A run's worktree lives at
-`%USERPROFILE%\.relay\workspaces\<owner>\<repo>\<issue>-<id>`, and your
-repository's own deepest path is then nested under that. Windows' legacy 260
-character limit will refuse files well inside a normal project, so turn it off:
-
-```powershell
-git config --global core.longpaths true
-# and, once, as Administrator:
-New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
-  -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
-```
-
-Set `RELAY_HOME` to somewhere shorter — `C:\r` — if you would rather not.
-
-**Use Windows Terminal.** The live run dashboard needs ANSI escape sequences,
-and a stock legacy console window handles neither those nor the glyphs Relay
-draws with. Relay detects this rather than corrupting the output: in a console
-that does not announce ANSI support, it prints plain, unstyled, ASCII-only
-lines. Windows Terminal, VS Code's terminal, ConEmu and the MSYS/Cygwin family
-all get the full display.
-
-**Shell completion** comes from `relay completion powershell` — see the section
-below. `man relay` has no Windows equivalent; `relay <command> --help` carries
-the same text.
-
-## Updating
-
-```bash
-relay --update
-```
-
-It updates Relay itself, from anywhere: the repository you happen to be
-standing in is never the thing it touches. How depends on how this copy was
-installed — a git checkout is fetched and **fast-forwarded**, an npm-managed
-copy is reinstalled from the repository, and an arrangement Relay does not
-recognize is reported with the command to run instead of being guessed at.
-
-A checkout with local commits of its own is left alone: Relay only
-fast-forwards, so it never merges your work to update itself. Afterwards it
-reinstalls dependencies only if the manifest moved, and rebuilds `dist/` only
-if there is one to go stale — `bin/relay.mjs` runs the sources directly when
-there is not.
-
-## Web studio (prototype)
-
-`web/` is a browser-only prototype of a cloud product built on this pipeline: a node-based, drag-and-drop workflow builder with a catalog of a few hundred app connectors, simulated runs, and an export that produces the `.relay/config.json` and GitHub Actions workflow a repository needs to run the flow for real. It hosts nothing and costs nothing, and it signs in to Claude Code and Codex with your own subscriptions through each CLI's login rather than with API keys. The product name is a setting, not a constant. See `web/README.md`.
-
-```bash
-cd web && npm install && npm run dev
-```
+| [`web/`](web/README.md) | The workflow studio: a Next.js app with the builder, templates, runs, integrations and the export |
+| `src/` | The engine and the `relay` CLI (TypeScript, Node ≥ 22.6) |
+| `action.yml` | The GitHub Action that exported workflows run |
+| [`docs/cli.md`](docs/cli.md) | The engine and CLI reference |
+| [`eval/`](eval/README.md) | The eval harness and its fixtures |
+| `test/`, `scripts/`, `bin/` | The engine's tests, CI fixtures and entry point |
 
 ## Development
 
 ```bash
+# the studio
+cd web
+npm install
+npm run dev
+npm run lint && npm run typecheck && npm run build
+
+# the engine, from the repository root
 npm install
 npm run typecheck
-npm test          # 448 tests, no network, no real agents
-npm run build
+npm test               # no network, no real agents
 ```
 
-The test suite uses `FakeAgentHarness` (deterministic scripted responses) and real temporary git repositories, so workflows, review loops, round limits, cancellation and resume are all tested without a model in the loop. The overlapping work is tested for overlap rather than for its effects: the suite writes a marker as it starts, and the code review asserts the marker is already there.
-## Shell completion and manual
+CI runs the engine's suite on macOS, Linux and Windows, runs the Action against
+a fixture repository, and lints, typechecks and builds the studio.
 
-Generate completion definitions with `relay completion bash`, `relay completion zsh`,
-`relay completion fish`, or `relay completion powershell`; `relay completion --help` shows
-installation paths. Every one of them routes back through the same `relay __complete`
-dispatch, so branch names, run ids and option values stay live rather than being frozen
-into the generated script. The npm package also installs `relay(1)`, available with
-`man relay` — on Windows, `relay <command> --help` says the same thing.
+## The name is not decided
 
-```powershell
-relay completion powershell >> $PROFILE
-```
-
-Relay observes `RELAY_HOME` for its data directory, `RELAY_ASCII` for an ASCII-only interface,
-and the standard `NO_COLOR` variable.
+Nothing hard-codes "Relay". The studio reads its name from
+`NEXT_PUBLIC_PRODUCT_NAME` at build time, and Settings can override it at
+runtime; slugs, trigger labels, branch prefixes, exports and page titles all
+follow.

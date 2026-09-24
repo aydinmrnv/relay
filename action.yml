@@ -68,7 +68,7 @@ inputs:
 
 outputs:
   exit-code:
-    description: Relay's exit code, from the documented table in the README.
+    description: Relay's exit code, from the documented table in docs/cli.md.
     value: ${{ steps.relay.outputs.exit-code }}
   run-id:
     description: The run this Action started, or empty when it started nothing.

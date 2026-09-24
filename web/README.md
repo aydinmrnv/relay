@@ -1,6 +1,8 @@
-# Workflow studio (prototype)
+# Workflow studio
 
-A node-based, drag-and-drop workflow builder for the Relay pipeline, as the front end of a future cloud product. It runs entirely in your browser, costs nothing, and hosts nothing.
+The Relay product: an n8n-style, node-based workflow builder for coding agents. A workflow is a trigger, the guardrails in front of the agents, the agent pipeline, and delivery and notifications after it; the studio is where you draw one, test-run it, and export it to run for real. The [root README](../README.md) describes the product; this file is how the studio is built.
+
+Relay is headed for a hosted, online product. Today the studio is public as a [live demo](https://relay-olive-omega.vercel.app) (see [The hosted demo](#the-hosted-demo)) and runs locally with the commands below. Either way it keeps everything in your browser's storage and costs nothing, and exported workflows run on your own GitHub Actions minutes through the engine in `src/` ([reference](../docs/cli.md)).
 
 ```bash
 cd web
@@ -89,3 +91,5 @@ Add a `defineConnector({...})` entry to one of the catalog files. Triggers and a
 | Export to a repository, which then runs on GitHub Actions | Connections ("Connect" stores a local flag) |
 | Brand rename, import/export of your data | Approvals (auto-approved after a delay) |
 | Validation, the plain-English description, the zip export | |
+
+The simulated column is what the hosted product replaces: runs on a fresh runner, real webhooks for every connector, and approvals from Slack and email. Until then, the export is how a workflow runs for real.

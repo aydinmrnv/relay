@@ -9,7 +9,9 @@ Every design decision downstream of it — two review rounds and not three, the
 plan reviewed by a different model, `--fast` dropping the plan stage, priming
 reviewers on the issue rather than the artifact — is a hypothesis about that
 claim. This directory is where those hypotheses get measured instead of
-asserted.
+asserted. In a workflow, the claim lives in the **Agent pipeline** node, so
+that node is what gets measured here: the engine on its own, with no trigger,
+guardrail or delivery around it.
 
 ```bash
 relay eval --check-fixtures        # verify the fixture set. Costs nothing.

@@ -14,7 +14,7 @@ import type { RunState } from '../workflow/state.ts';
  * answers needing different responses, and collapsing both into 1 makes a CI
  * job page a person for a missing `gh`.
  *
- * This table is the contract. It is documented in the README, and the tests
+ * This table is the contract. It is documented in docs/cli.md, and the tests
  * assert one invocation per code.
  */
 export const EXIT = {
