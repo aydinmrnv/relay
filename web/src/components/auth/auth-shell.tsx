@@ -23,7 +23,7 @@ const RECEIPT = [
 ] as const;
 
 /**
- * The frame around sign-in, sign-up and password reset: the form on the
+ * The frame around sign-in and sign-up — Clerk's form on the
  * right, and on the left what an account is for, with a run receipt that
  * shows the product rather than describing it.
  */

@@ -21,7 +21,7 @@ export function Faq() {
       id: 'account',
       question: 'What does an account add, and what do you store?',
       answer:
-        'Your workflows, test runs and settings follow you to any browser, and you get public share links and version history. We store your name, email, a hashed password (or your GitHub sign-in), and the workflow definitions and run records you make in the studio. We never store your code, your repository contents or your agents’ tokens. You can download everything or delete your account from Settings at any time.',
+        'Your workflows, test runs and settings follow you to any browser, and you get public share links and version history. Sign-in is handled by Clerk, which holds your name, email and password or Google/GitHub sign-in; the studio stores only the workflow definitions and run records you make, under your Clerk user id. We never store your code, your repository contents or your agents’ tokens. You can download everything or delete your account from Settings at any time.',
     },
     {
       id: 'real',

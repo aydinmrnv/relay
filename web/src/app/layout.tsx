@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import { ClerkProvider } from '@clerk/nextjs';
+import { shadcn } from '@clerk/ui/themes';
 import { DEFAULT_BRAND } from '@/lib/brand';
 import { Providers } from '@/components/providers';
-import { authCapabilities, PUBLIC_URL } from '@/server/env';
+import { authCapabilities, CLERK_CONFIGURED, PUBLIC_URL } from '@/server/env';
 import './globals.css';
 
 // globals.css maps `--font-sans` / `--font-mono` into the Tailwind theme.
@@ -20,10 +22,28 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
+  const studio = (
+    <Providers capabilities={authCapabilities()} clerk={CLERK_CONFIGURED}>
+      {children}
+    </Providers>
+  );
   return (
     <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col bg-background font-sans text-foreground">
-        <Providers capabilities={authCapabilities()}>{children}</Providers>
+        {CLERK_CONFIGURED ? (
+          <ClerkProvider
+            appearance={{ theme: shadcn }}
+            signInUrl="/sign-in"
+            signUpUrl="/sign-up"
+            signInFallbackRedirectUrl="/dashboard"
+            signUpFallbackRedirectUrl="/onboarding"
+            afterSignOutUrl="/"
+          >
+            {studio}
+          </ClerkProvider>
+        ) : (
+          studio
+        )}
       </body>
     </html>
   );

@@ -34,7 +34,7 @@ import { GraphThumbnail } from '@/components/templates/graph-thumbnail';
 import { DescribeWorkflowComposer } from '@/components/workflows/describe-workflow';
 import { CopyButton } from '@/components/runs/copy-button';
 import { useBrand } from '@/hooks/use-brand';
-import { authClient } from '@/lib/auth-client';
+import { useUser as useClerkUser } from '@clerk/nextjs';
 import { useAccount } from '@/lib/cloud/account';
 import { api, importableGuestWorkflows, importGuestWorkflows, readGuestBackup } from '@/lib/cloud/sync';
 import type { OnboardingAnswers } from '@/lib/cloud/types';
@@ -95,6 +95,7 @@ export function OnboardingWizard() {
   const reduce = useCalmMotion();
   const status = useAccount((state) => state.status);
   const user = useAccount((state) => state.user);
+  const { user: clerkUser } = useClerkUser();
   const savedRepository = useStudio((state) => state.settings.defaultRepository);
 
   const [step, setStep] = useState(0);
@@ -159,9 +160,11 @@ export function OnboardingWizard() {
     try {
       const studio = useStudio.getState();
       if (repo.trim().length > 0 && repo.trim() !== studio.settings.defaultRepository) studio.updateSettings({ defaultRepository: repo.trim() });
-      if (displayName.trim() !== user.name) {
-        const { error } = await authClient.updateUser({ name: displayName.trim() });
-        if (!error) useAccount.setState({ user: { ...user, name: displayName.trim() } });
+      if (displayName.trim() !== user.name && clerkUser !== null && clerkUser !== undefined) {
+        const [firstName, ...rest] = displayName.trim().split(/\s+/);
+        // Names can be switched off for an instance in Clerk; then the studio just keeps its own.
+        await clerkUser.update({ firstName, lastName: rest.join(' ') }).catch(() => undefined);
+        useAccount.setState({ user: { ...user, name: displayName.trim() } });
       }
       const now = new Date().toISOString();
       const workflow: Workflow = { ...pick.workflow, repository: effectiveRepo, createdAt: now, updatedAt: now, demo: undefined };

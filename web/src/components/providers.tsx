@@ -2,6 +2,7 @@
 
 import { ThemeProvider } from 'next-themes';
 import { useEffect, useState } from 'react';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { MotionConfig, MotionGlobalConfig } from 'motion/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -10,10 +11,16 @@ import { useAgentsPoller } from '@/hooks/use-agent-accounts';
 import { useCompanion } from '@/lib/companion/client';
 import { attachMachineRun } from '@/lib/run-launcher';
 import { CapabilitiesContext, useAccount } from '@/lib/cloud/account';
-import { startAccount } from '@/lib/cloud/sync';
-import type { AuthCapabilities } from '@/lib/cloud/types';
+import { accountChanged, setTokenGetter, startAccount } from '@/lib/cloud/sync';
+import type { AccountUser, AuthCapabilities } from '@/lib/cloud/types';
 
-export function Providers({ capabilities: built, children }: { capabilities: AuthCapabilities; children: React.ReactNode }) {
+/**
+ * `clerk` says whether the layout rendered a ClerkProvider around this.
+ * Accounts need it, whatever the server says at run time: Clerk's hooks
+ * cannot run without their provider.
+ */
+export function Providers({ capabilities: rendered, clerk, children }: { capabilities: AuthCapabilities; clerk: boolean; children: React.ReactNode }) {
+  const built = clerk ? rendered : { ...rendered, enabled: false };
   // What the page was rendered with; replaced if the running server says otherwise.
   const [capabilities, setCapabilities] = useState(built);
   return (
@@ -21,7 +28,8 @@ export function Providers({ capabilities: built, children }: { capabilities: Aut
       <CapabilitiesContext value={capabilities}>
       <MotionPreference>
         <TooltipProvider delay={200}>
-          <AccountBoot capabilities={built} onRuntime={setCapabilities} />
+          <AccountBoot capabilities={built} onRuntime={(runtime) => setCapabilities(clerk ? runtime : { ...runtime, enabled: false })} />
+          {clerk && capabilities.enabled ? <ClerkBridge /> : null}
           <SeedOnce />
           <BrandTitle />
           <AgentsPoller />
@@ -78,7 +86,7 @@ function AccountBoot({ capabilities, onRuntime }: { capabilities: AuthCapabiliti
     fetch('/api/capabilities')
       .then((response) => (response.ok ? (response.json() as Promise<AuthCapabilities>) : null))
       .then((runtime) => {
-        if (cancelled || runtime === null || JSON.stringify(runtime) === JSON.stringify(capabilities)) return;
+        if (cancelled || runtime === null || runtime.enabled === capabilities.enabled) return;
         onRuntime(runtime);
         void startAccount(runtime);
       })
@@ -89,6 +97,43 @@ function AccountBoot({ capabilities, onRuntime }: { capabilities: AuthCapabiliti
     // Once per page: capabilities do not change while it is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
+  return null;
+}
+
+/**
+ * Clerk decides who is signed in. This passes its answer to the studio on
+ * load and on every change — signing in or out here or in another tab — and
+ * lends the sync layer Clerk's token getter for its requests.
+ */
+function ClerkBridge() {
+  const { isLoaded, userId, getToken } = useAuth();
+  const { user } = useUser();
+  const hydrated = useStudio((state) => state.hydrated);
+
+  useEffect(() => {
+    setTokenGetter(() => getToken());
+    return () => setTokenGetter(null);
+  }, [getToken]);
+
+  useEffect(() => {
+    if (!hydrated || !isLoaded) return;
+    if (typeof userId !== 'string') {
+      void accountChanged(null);
+      return;
+    }
+    // The user object follows the session a moment later.
+    if (user === null || user === undefined || user.id !== userId) return;
+    const email = user.primaryEmailAddress;
+    const person: AccountUser = {
+      id: user.id,
+      name: user.fullName?.trim() || user.username || email?.emailAddress.split('@')[0] || 'You',
+      email: email?.emailAddress ?? '',
+      emailVerified: email?.verification?.status === 'verified',
+      image: user.hasImage ? user.imageUrl : null,
+      createdAt: (user.createdAt ?? new Date()).toISOString(),
+    };
+    void accountChanged(person);
+  }, [hydrated, isLoaded, userId, user]);
   return null;
 }
 

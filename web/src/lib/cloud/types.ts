@@ -6,16 +6,11 @@
 /** What this deployment supports, decided on the server from its environment. */
 export interface AuthCapabilities {
   enabled: boolean;
-  github: boolean;
-  email: boolean;
   /** Why accounts are off, shown only in development. */
   reason: string | null;
 }
 
-/** Not a credential: a readable flag the server sets beside the session cookie, meaning "ask who is signed in". */
-export const SESSION_MARKER_COOKIE = 'relay-signed-in';
-
-export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, github: false, email: false, reason: null };
+export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, reason: null };
 
 export interface AccountUser {
   id: string;

@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { ApiError, json, readJson, withUser } from '@/server/api';
 import { getShareFor, publishShare, unpublishShare } from '@/server/studio';
+import { displayName } from '@/server/auth';
 import { describeZodError, WORKFLOW_MAX_BYTES, workflowSchema } from '@/server/validate';
 import type { Workflow } from '@/lib/workflow/schema';
 
@@ -20,7 +21,7 @@ export async function POST(request: Request, context: RouteContext<'/api/workflo
     const parsed = body.safeParse(await readJson(request, WORKFLOW_MAX_BYTES + 1_000));
     if (!parsed.success) throw new ApiError(400, 'INVALID', describeZodError(parsed.error as z.ZodError));
     if (parsed.data.workflow.id !== id) throw new ApiError(400, 'ID_MISMATCH', 'The workflow id does not match the address.');
-    return json({ share: await publishShare(user.id, user.name, parsed.data.workflow as unknown as Workflow) });
+    return json({ share: await publishShare(user.id, await displayName(), parsed.data.workflow as unknown as Workflow) });
   });
 }
 

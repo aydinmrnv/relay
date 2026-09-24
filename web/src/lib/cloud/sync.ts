@@ -25,11 +25,10 @@
 import { nanoid } from 'nanoid';
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { authClient } from '@/lib/auth-client';
 import { DEFAULT_BRAND, type Brand } from '@/lib/brand';
 import { useStudio, type StudioState } from '@/lib/store';
 import { DEFAULT_SETTINGS, type Connection, type Run, type Settings, type Workflow } from '@/lib/workflow/schema';
-import { HINT_KEY, hasSessionHint, hintedUser, setSessionHint, useAccount } from './account';
+import { useAccount } from './account';
 import type { AccountUser, AuthCapabilities, OnboardingAnswers } from './types';
 import { withLocalSecrets, withoutSecrets } from './secrets';
 
@@ -48,12 +47,35 @@ export class CloudError extends Error {
   }
 }
 
+/**
+ * Clerk's session cookie lives a minute and is refreshed in the background;
+ * a tab that slept can wake with a stale one. So requests carry a token
+ * straight from Clerk, which refreshes it when needed.
+ */
+let tokenGetter: (() => Promise<string | null>) | null = null;
+
+export function setTokenGetter(getter: (() => Promise<string | null>) | null): void {
+  tokenGetter = getter;
+}
+
+async function authorization(): Promise<Record<string, string>> {
+  if (tokenGetter === null) return {};
+  try {
+    const token = await tokenGetter();
+    return token === null ? {} : { authorization: `Bearer ${token}` };
+  } catch {
+    return {};
+  }
+}
+
 export async function api<T>(path: string, init: { method?: string; body?: unknown; keepalive?: boolean; headers?: Record<string, string> } = {}): Promise<T> {
   let response: Response;
+  // Unload requests cannot wait for a token; they go with the cookie.
+  const auth = init.keepalive === true ? {} : await authorization();
   try {
     response = await fetch(path, {
       method: init.method ?? 'GET',
-      headers: { ...(init.body === undefined ? {} : { 'content-type': 'application/json' }), ...init.headers },
+      headers: { ...(init.body === undefined ? {} : { 'content-type': 'application/json' }), ...auth, ...init.headers },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       keepalive: init.keepalive,
       cache: 'no-store',
@@ -522,7 +544,8 @@ export async function flushNow(timeoutMs = 4000): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 interface WorkspaceResponse {
-  user: Omit<AccountUser, 'createdAt'> & { createdAt: string };
+  /** Whose workspace the server loaded: it must be the person Clerk says is signed in. */
+  user: { id: string };
   workspace: {
     settings: Partial<Settings> | null;
     brand: Brand | null;
@@ -538,20 +561,47 @@ interface WorkspaceResponse {
   shares: Record<string, string>;
 }
 
-let listening = false;
+/** The person Clerk says is signed in, as the studio shows them. */
+let clerkUser: AccountUser | null = null;
+let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Decides, once per page load, whether this is a guest or an account, and loads the account if so. */
+/**
+ * Once per page load: accounts on or off. When on, Clerk decides who is
+ * signed in and tells `accountChanged`; until it answers, the studio waits —
+ * but never for long, so a blocked or slow Clerk script leaves a working
+ * guest studio rather than a spinner.
+ */
 export async function startAccount(capabilities: AuthCapabilities): Promise<void> {
   useAccount.setState({ capabilities });
   if (!capabilities.enabled) {
     useAccount.setState({ status: 'disabled' });
     return;
   }
-  listenAcrossTabs();
-  if (!hasSessionHint()) {
-    // An account's workspace left behind with no session (it expired, or it
-    // ended in another tab) is not shown to whoever uses this browser next.
+  if (settleTimer !== null) clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => {
+    if (useAccount.getState().status === 'unknown') {
+      const owner = useStudio.getState().owner;
+      if (owner !== null) {
+        parkUnsent(owner);
+        restoreGuest();
+      }
+      becomeGuest();
+    }
+  }, 6000);
+}
+
+/**
+ * Clerk's answer, on load and whenever it changes — signing in or out here,
+ * in another tab, or a session ending on another device.
+ */
+export async function accountChanged(user: AccountUser | null): Promise<void> {
+  clerkUser = user;
+  const current = useAccount.getState();
+  if (current.status === 'disabled') return;
+  if (user === null) {
     const owner = useStudio.getState().owner;
+    engine?.stop();
+    engine = null;
     if (owner !== null) {
       parkUnsent(owner);
       restoreGuest();
@@ -559,40 +609,17 @@ export async function startAccount(capabilities: AuthCapabilities): Promise<void
     becomeGuest();
     return;
   }
-  await loadAccount();
-}
-
-/** Signing in or out in another tab changes the cookie this tab sends; follow it. */
-function listenAcrossTabs(): void {
-  if (listening) return;
-  listening = true;
-  window.addEventListener('storage', (event) => {
-    if (event.key !== HINT_KEY) return;
-    const current = useAccount.getState();
-    if (event.newValue === null) {
-      if (current.status === 'signed-in' && current.user !== null) {
-        engine?.stop();
-        engine = null;
-        parkUnsent(current.user.id);
-        restoreGuest();
-        becomeGuest();
-      }
-      return;
-    }
-    const hinted = hintedUser();
-    if (hinted !== null && hinted.id === current.user?.id) return;
-    void loadAccount();
-  });
-}
-
-/** After a successful sign-in or sign-up: remember it, and swap in the account's workspace. */
-export async function signedIn(): Promise<void> {
-  setSessionHint(true);
+  if (current.status === 'signed-in' && current.user?.id === user.id) {
+    // Same person; their name or picture may have changed.
+    useAccount.setState({ user });
+    return;
+  }
   await loadAccount();
 }
 
 let loading: Promise<void> | null = null;
 
+/** Loads the signed-in person's workspace; one load at a time. */
 export function loadAccount(): Promise<void> {
   if (loading === null) loading = doLoadAccount().finally(() => (loading = null));
   return loading;
@@ -636,6 +663,8 @@ function readUnsent(owner: string): Unsent | null {
 }
 
 async function doLoadAccount(): Promise<void> {
+  const user = clerkUser;
+  if (user === null) return;
   const cachedOwner = useStudio.getState().owner;
   useAccount.setState({ status: 'loading', loadError: null });
   let payload: WorkspaceResponse;
@@ -643,41 +672,33 @@ async function doLoadAccount(): Promise<void> {
     payload = await api<WorkspaceResponse>('/api/workspace');
   } catch (error) {
     const failure = error instanceof CloudError ? error : new CloudError(0, 'UNKNOWN', String(error));
-    if (failure.status === 401) {
-      setSessionHint(false);
-      if (cachedOwner !== null) {
-        parkUnsent(cachedOwner);
-        restoreGuest();
-      }
-      becomeGuest();
-      return;
-    }
     if (failure.status === 503 && failure.code === 'ACCOUNTS_DISABLED') {
       useAccount.setState({ status: 'disabled' });
       return;
     }
-    // The server is unreachable or failing. If this browser has the
-    // account's last known state, work from it and send the changes later.
+    // Signed in with Clerk, but the studio's server cannot be reached or is
+    // failing. If this browser has the account's last known state, work from
+    // it and send the changes later; otherwise carry on as a guest.
     useAccount.setState({ loadError: failure.message });
-    const cachedUser = hintedUser();
-    if (cachedOwner !== null && cachedUser !== null && cachedUser.id === cachedOwner) {
-      useAccount.setState({ status: 'signed-in', user: cachedUser });
-      startEngine(cachedOwner, readPending(cachedOwner));
-      toast.warning('Working offline', { description: 'Your account could not be reached. Changes are kept in this browser and saved when it is back.' });
+    if (cachedOwner === user.id) {
+      useAccount.setState({ status: 'signed-in', user });
+      startEngine(user.id, readPending(user.id));
+      toast.warning('Working offline', { description: 'Your workspace could not be reached. Changes are kept in this browser and saved when it is back.' });
     } else {
       if (cachedOwner !== null) {
         parkUnsent(cachedOwner);
         restoreGuest();
       }
       becomeGuest();
-      toast.error('Could not load your account', { description: failure.message });
+      toast.error('Could not load your workspace', { description: failure.message });
     }
     return;
   }
+  // Clerk moved on (signed out, or someone else) while this was loading.
+  if (clerkUser?.id !== user.id || payload.user.id !== user.id) return;
 
   engine?.stop();
   engine = null;
-  const user: AccountUser = { ...payload.user, image: payload.user.image ?? null };
   const state = useStudio.getState();
   if (state.owner === null) stashGuestWork(state);
   else if (state.owner !== user.id) parkUnsent(state.owner);
@@ -744,7 +765,6 @@ async function doLoadAccount(): Promise<void> {
     }
   }
   useAccount.setState({ status: 'signed-in', user, onboardedAt: saved.onboardedAt, onboarding: saved.onboarding, shares: payload.shares, loadError: null });
-  setSessionHint(true, user);
   engine = new SyncEngine(user.id, { ...pending, owner: user.id, revisions });
   for (const id of interrupted) engine.markRun(id);
 }
@@ -761,22 +781,17 @@ function becomeGuest(): void {
 }
 
 /**
- * Signs out here: sends what is queued, ends the session on the server, and
- * only then puts back what this browser had as a guest. If the server cannot
- * be reached the session would still be valid in this browser, so nothing is
- * cleared and the person is told.
+ * Signs out here: sends what is queued, ends the Clerk session, and only
+ * then puts back what this browser had as a guest. If Clerk cannot be
+ * reached the session is still valid in this browser, so nothing is cleared
+ * and the person is told.
  */
-export async function signOut(): Promise<boolean> {
+export async function signOut(endSession: () => Promise<unknown>): Promise<boolean> {
   await flushNow();
-  let failed = false;
   try {
-    const { error } = await authClient.signOut();
-    failed = error !== null && error !== undefined;
+    await endSession();
   } catch {
-    failed = true;
-  }
-  if (failed) {
-    toast.error('Could not sign out', { description: 'The server could not be reached, so this browser is still signed in. Try again when you are online.' });
+    toast.error('Could not sign out', { description: 'Clerk could not be reached, so this browser is still signed in. Try again when you are online.' });
     return false;
   }
   forgetAccount();
@@ -787,7 +802,7 @@ export async function signOut(): Promise<boolean> {
 export function forgetAccount(): void {
   engine?.stop();
   engine = null;
-  setSessionHint(false);
+  clerkUser = null;
   try {
     window.localStorage.removeItem(PENDING_KEY);
     window.localStorage.removeItem(UNSENT_KEY);
@@ -800,27 +815,18 @@ export function forgetAccount(): void {
 }
 
 function sessionExpired(): void {
-  // The queue keeps growing in localStorage; signing back in sends it.
+  // Clerk will say so too; until then the queue keeps growing in localStorage.
   engine?.pause();
-  setSessionHint(false);
-  useAccount.setState({ status: 'guest', user: null });
   useSyncStatus.setState({ state: 'error', message: 'Signed out. Sign in again to save your changes.' });
-  toast.error('You were signed out', {
-    description: 'Sign in again and your unsaved changes will be sent to your account.',
-    // A toast outlives any one component, so it has no router; a full load also re-reads the session.
-    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-    action: { label: 'Sign in', onClick: () => window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname)}`) },
-    duration: 20_000,
-  });
 }
 
-/** The cookie now belongs to someone else (another tab signed in as them): set this account's work aside and load theirs. */
+/** The session now belongs to someone else (another tab signed in as them): set this account's work aside. Clerk's own update loads theirs. */
 async function accountSwitched(owner: string): Promise<void> {
   engine?.stop();
   engine = null;
   parkUnsent(owner);
   toast.info('This browser is now signed in as someone else', { description: 'Your unsaved changes are kept and sent the next time you sign in here.' });
-  await loadAccount();
+  if (clerkUser !== null && clerkUser.id !== owner) await loadAccount();
 }
 
 /* ------------------------------------------------------------------ */

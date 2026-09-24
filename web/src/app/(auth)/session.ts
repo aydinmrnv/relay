@@ -1,15 +1,14 @@
-import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { getSessionUser } from '@/server/auth';
+import { getUserId } from '@/server/auth';
 import { safeNext } from '@/lib/safe-next';
 
 /** Someone already signed in has no business on a sign-in form: send them on. */
 export async function redirectIfSignedIn(next: string | null, fallback: string): Promise<void> {
   let signedIn = false;
   try {
-    signedIn = (await getSessionUser(await headers())) !== null;
+    signedIn = (await getUserId()) !== null;
   } catch (error) {
-    // Show the form; signing in will report the problem properly.
+    // Show the form; Clerk will report the problem properly.
     console.error('[auth] could not check the session', error);
   }
   if (signedIn) redirect(safeNext(next, fallback));

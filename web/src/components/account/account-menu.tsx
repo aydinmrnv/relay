@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useClerk } from '@clerk/nextjs';
 import { ChevronsUpDown, CloudUpload, LogIn, LogOut, Rocket, Settings, UserPlus, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -10,17 +11,15 @@ import { Button } from '@/components/ui/button';
 import { useAccount } from '@/lib/cloud/account';
 import { signOut } from '@/lib/cloud/sync';
 import { UserAvatar } from './user-avatar';
+import { PROFILE_APPEARANCE } from './account-settings';
 
 /**
  * The bottom of the sidebar: who is signed in, with their account menu — or,
  * for a guest, what an account would give them and the way to make one.
  */
 export function AccountMenu() {
-  const router = useRouter();
-  const { isMobile } = useSidebar();
   const status = useAccount((state) => state.status);
   const user = useAccount((state) => state.user);
-  const onboarded = useAccount((state) => state.onboardedAt !== null);
 
   if (status === 'disabled' || status === 'unknown') return null;
 
@@ -44,8 +43,19 @@ export function AccountMenu() {
     );
   }
 
+  return <SignedInMenu />;
+}
+
+/** Only ever rendered signed in, which means inside Clerk's provider. */
+function SignedInMenu() {
+  const router = useRouter();
+  const clerk = useClerk();
+  const { isMobile } = useSidebar();
+  const user = useAccount((state) => state.user)!;
+  const onboarded = useAccount((state) => state.onboardedAt !== null);
+
   const leave = async () => {
-    if (!(await signOut())) return;
+    if (!(await signOut(() => clerk.signOut()))) return;
     toast.success('Signed out', { description: 'Your workflows are safe in your account.' });
     router.push('/');
   };
@@ -79,8 +89,8 @@ export function AccountMenu() {
                   <Rocket /> Finish setting up
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem render={<Link href="/settings#account" />}>
-                <UserRound /> Account
+              <DropdownMenuItem onClick={() => clerk.openUserProfile({ appearance: PROFILE_APPEARANCE })}>
+                <UserRound /> Manage account
               </DropdownMenuItem>
               <DropdownMenuItem render={<Link href="/settings" />}>
                 <Settings /> Settings

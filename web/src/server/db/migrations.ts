@@ -133,4 +133,21 @@ export const MIGRATIONS: Migration[] = [
       CREATE UNIQUE INDEX IF NOT EXISTS share_owner_idx ON share (user_id, workflow_id);
     `,
   },
+  {
+    // Accounts moved to Clerk: people are Clerk user ids now, with no row
+    // here to point at, and the old sign-in tables are no longer used.
+    id: '0002_accounts_on_clerk',
+    sql: `
+      ALTER TABLE workspace DROP CONSTRAINT IF EXISTS workspace_user_id_fkey;
+      ALTER TABLE workflow DROP CONSTRAINT IF EXISTS workflow_user_id_fkey;
+      ALTER TABLE run DROP CONSTRAINT IF EXISTS run_user_id_fkey;
+      ALTER TABLE workflow_version DROP CONSTRAINT IF EXISTS workflow_version_user_id_fkey;
+      ALTER TABLE share DROP CONSTRAINT IF EXISTS share_user_id_fkey;
+      DROP TABLE IF EXISTS session;
+      DROP TABLE IF EXISTS account;
+      DROP TABLE IF EXISTS verification;
+      DROP TABLE IF EXISTS rate_limit;
+      DROP TABLE IF EXISTS "user";
+    `,
+  },
 ];

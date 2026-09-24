@@ -19,9 +19,9 @@ export default function PrivacyPage() {
 
       <h2>With an account</h2>
       <ul>
-        <li>Your name and email address, and a scrypt hash of your password — never the password itself. If you sign in with GitHub, your GitHub account id and public profile name and picture.</li>
+        <li>Your account itself — name, email address, password or the Google or GitHub sign-in you chose — is held by Clerk, our sign-in provider. The studio only keeps your Clerk user id.</li>
         <li>What you build in the studio: workflow definitions, the records of test runs and runs on your machine (phases, costs, summaries), settings, saved versions, and share links you create.</li>
-        <li>Session records, with the IP address and browser that signed in, so you can see and end sessions from Settings, and so sign-in attempts can be rate limited.</li>
+        <li>Clerk keeps session records, with the IP address and browser that signed in, so you can see and end sessions from Settings and so sign-in attempts can be protected against abuse.</li>
       </ul>
 
       <h2>What we never have</h2>
@@ -34,7 +34,7 @@ export default function PrivacyPage() {
       <p>When you share a workflow, a copy of it becomes public at its link, with your name as the author. Settings that look like secrets, allowlisted logins and your repository name are removed from that copy first. Stop sharing at any time and the link stops working.</p>
 
       <h2>Who else is involved</h2>
-      <p>The service is hosted on Vercel, its database is a managed Postgres provider, and account emails (password resets, confirmations) are sent through Resend. They process data only to run the service. We do not sell data, show ads, or use analytics trackers.</p>
+      <p>The service is hosted on Vercel, its database is a managed Postgres provider, and accounts, sign-in and account emails are handled by Clerk. They process data only to run the service. We do not sell data, show ads, or use analytics trackers.</p>
 
       <h2>Keeping and deleting</h2>
       <p>

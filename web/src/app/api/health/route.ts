@@ -3,9 +3,8 @@ import { getDb } from '@/server/db';
 import { authCapabilities, DATABASE } from '@/server/env';
 import { sql } from 'drizzle-orm';
 
-/** For uptime checks: is the app up, and can it reach its database. Says nothing secret. */
+/** For uptime checks: is the app up, can it reach its database, and are accounts on. Says nothing secret. */
 export async function GET() {
-  const capabilities = authCapabilities();
   let database: 'ok' | 'unreachable' | 'not configured' = 'not configured';
   if (DATABASE.kind !== 'none') {
     try {
@@ -18,5 +17,5 @@ export async function GET() {
     }
   }
   const ok = database !== 'unreachable';
-  return json({ ok, database, accounts: capabilities.enabled, github: capabilities.github, email: capabilities.email }, { status: ok ? 200 : 503 });
+  return json({ ok, database, accounts: authCapabilities().enabled }, { status: ok ? 200 : 503 });
 }

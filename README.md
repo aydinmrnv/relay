@@ -206,7 +206,7 @@ hosted studio as readily as with a local one. Hosted runs are the next step.
 
 | Works today | Simulated in the studio | Planned for the hosted product |
 |---|---|---|
-| Accounts (email and password, GitHub), onboarding, cloud sync, share links and remixes, version history | | |
+| Accounts (Clerk: email, Google, GitHub), onboarding, cloud sync, share links and remixes, version history | | |
 | The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A fresh runner per run |
 | Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your machine, installing an export | App connections: "Connect" stores a local flag | Real webhooks for every connector |
 | Exported workflows running on GitHub Actions, through the engine | Approvals: auto-approved after a delay | Approvals from Slack and email |
@@ -282,7 +282,7 @@ support the design, the defaults change.
 ## Development
 
 ```bash
-# the studio: accounts work out of the box on an embedded Postgres (PGlite)
+# the studio: accounts work out of the box (Clerk keyless mode, embedded Postgres)
 cd web
 npm install
 npm run dev            # http://localhost:3000
@@ -303,10 +303,12 @@ On Vercel, import the repository with `web` as the root directory, then:
 
 1. **Storage → Create → Neon** (free tier). It sets `DATABASE_URL`; tables are
    created on the first request.
-2. Add `BETTER_AUTH_SECRET` (`openssl rand -base64 32`).
-3. Optional: `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` for *Continue with
-   GitHub* (callback `https://<your domain>/api/auth/callback/github`), and
-   `RESEND_API_KEY` / `EMAIL_FROM` for password resets.
+2. Add the Clerk keys, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+   `CLERK_SECRET_KEY` (for launch, a production instance: `npx clerk deploy`).
+   Sign-in methods — email, Google, GitHub — are switched on in the Clerk
+   dashboard; Clerk sends the verification and password-reset emails.
+3. Recommended: a Clerk webhook for `user.deleted` pointing at
+   `/api/webhooks/clerk`, with `CLERK_WEBHOOK_SIGNING_SECRET`.
 
 Every variable is described in [`web/.env.example`](web/.env.example). Without a
 database the deployment still works as the browser-only studio, with sign-up

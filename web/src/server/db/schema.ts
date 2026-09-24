@@ -1,8 +1,7 @@
 /**
- * The database, in two halves. The first four tables are Better Auth's own
- * (users, sessions, linked sign-ins, one-time tokens) plus its rate-limit
- * counters; the rest are the studio's: one workspace row per person, and
- * their workflows, runs, saved versions and public share links.
+ * The studio's tables: one workspace row per person, and their workflows,
+ * runs, saved versions and public share links. People themselves live in
+ * Clerk; here a person is only their Clerk user id (`user_…`).
  *
  * Workflows and runs keep their full JSON in a `data` column. Their shape is
  * the studio's (`src/lib/workflow/schema.ts`), it already round-trips through
@@ -11,83 +10,10 @@
  *
  * The SQL that creates all of this is in `migrations.ts`; keep them in step.
  */
-import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
-
-/* ------------------------------------------------------------------ */
-/* Better Auth                                                          */
-/* ------------------------------------------------------------------ */
-
-export const user = pgTable('user', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  email: text('email').notNull().unique(),
-  emailVerified: boolean('email_verified').notNull().default(false),
-  image: text('image'),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
-
-export const session = pgTable(
-  'session',
-  {
-    id: text('id').primaryKey(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    token: text('token').notNull().unique(),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-    ipAddress: text('ip_address'),
-    userAgent: text('user_agent'),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-  },
-  (table) => [index('session_user_idx').on(table.userId)],
-);
-
-export const account = pgTable(
-  'account',
-  {
-    id: text('id').primaryKey(),
-    accountId: text('account_id').notNull(),
-    providerId: text('provider_id').notNull(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    accessToken: text('access_token'),
-    refreshToken: text('refresh_token'),
-    idToken: text('id_token'),
-    accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
-    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
-    scope: text('scope'),
-    password: text('password'),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => [index('account_user_idx').on(table.userId)],
-);
-
-export const verification = pgTable(
-  'verification',
-  {
-    id: text('id').primaryKey(),
-    identifier: text('identifier').notNull(),
-    value: text('value').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => [index('verification_identifier_idx').on(table.identifier)],
-);
-
-export const rateLimit = pgTable('rate_limit', {
-  id: text('id').primaryKey(),
-  key: text('key').notNull().unique(),
-  count: integer('count').notNull(),
-  lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
-});
 
 /* ------------------------------------------------------------------ */
 /* The studio                                                           */
@@ -95,9 +21,7 @@ export const rateLimit = pgTable('rate_limit', {
 
 /** Everything about a person's studio that is not a workflow or a run. */
 export const workspace = pgTable('workspace', {
-  userId: text('user_id')
-    .primaryKey()
-    .references(() => user.id, { onDelete: 'cascade' }),
+  userId: text('user_id').primaryKey(),
   settings: jsonb('settings'),
   brand: jsonb('brand'),
   connections: jsonb('connections'),
@@ -114,9 +38,7 @@ export const workflow = pgTable(
   'workflow',
   {
     // Ids are made in the browser (`wf_…`), so they are only unique per person.
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
     id: text('id').notNull(),
     name: text('name').notNull(),
     data: jsonb('data').notNull(),
@@ -129,9 +51,7 @@ export const workflow = pgTable(
 export const run = pgTable(
   'run',
   {
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
     id: text('id').notNull(),
     workflowId: text('workflow_id').notNull(),
     status: text('status').notNull(),
@@ -147,9 +67,7 @@ export const workflowVersion = pgTable(
   'workflow_version',
   {
     id: text('id').primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
     workflowId: text('workflow_id').notNull(),
     label: text('label'),
     auto: boolean('auto').notNull().default(true),
@@ -166,9 +84,7 @@ export const share = pgTable(
   'share',
   {
     slug: text('slug').primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
     workflowId: text('workflow_id').notNull(),
     authorName: text('author_name').notNull(),
     data: jsonb('data').notNull(),
@@ -180,4 +96,4 @@ export const share = pgTable(
   (table) => [uniqueIndex('share_owner_idx').on(table.userId, table.workflowId)],
 );
 
-export const schema = { user, session, account, verification, rateLimit, workspace, workflow, run, workflowVersion, share };
+export const schema = { workspace, workflow, run, workflowVersion, share };

@@ -3,7 +3,7 @@
  * request came from this site, a bounded JSON body, and errors that say
  * what went wrong in a sentence the studio can show.
  */
-import { getSessionUser, type SessionUser } from './auth';
+import { getUserId } from './auth';
 import { ACCOUNTS_ENABLED } from './env';
 
 export class ApiError extends Error {
@@ -22,18 +22,24 @@ export function json(data: unknown, init: ResponseInit = {}): Response {
   return Response.json(data, { ...init, headers: { 'cache-control': 'no-store', ...init.headers } });
 }
 
+/** The person a request is for. Only the id: anything else about them is Clerk's to tell. */
+export interface RequestUser {
+  id: string;
+}
+
 /**
  * Runs `handler` for a signed-in person. Mutations must come from a page on
  * this site: session cookies are SameSite=Lax already, and checking Origin
  * as well means a form on another site cannot write here even if a browser
  * gets that wrong.
  */
-export async function withUser(request: Request, handler: (user: SessionUser) => Promise<Response>): Promise<Response> {
+export async function withUser(request: Request, handler: (user: RequestUser) => Promise<Response>): Promise<Response> {
   try {
     if (!ACCOUNTS_ENABLED) throw new ApiError(503, 'ACCOUNTS_DISABLED', 'Accounts are not enabled on this server.');
     if (request.method !== 'GET' && request.method !== 'HEAD') assertSameOrigin(request);
-    const user = await getSessionUser(request.headers);
-    if (user === null) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in to do that.');
+    const id = await getUserId();
+    if (id === null) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in to do that.');
+    const user: RequestUser = { id };
     // The sync engine says whose workspace it is sending. If another tab has
     // since signed in as someone else, the cookie belongs to them: refuse,
     // rather than save one person's work into another's account.

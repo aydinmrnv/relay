@@ -73,6 +73,16 @@ export async function loadWorkspace(userId: string): Promise<WorkspacePayload> {
   };
 }
 
+/** Everything the studio holds for one person, gone: on account deletion. */
+export async function deleteUserData(userId: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(share).where(eq(share.userId, userId));
+  await db.delete(workflowVersion).where(eq(workflowVersion.userId, userId));
+  await db.delete(run).where(eq(run.userId, userId));
+  await db.delete(workflow).where(eq(workflow.userId, userId));
+  await db.delete(workspace).where(eq(workspace.userId, userId));
+}
+
 export async function patchWorkspace(userId: string, patch: Partial<Omit<WorkspaceRecord, 'onboarding' | 'onboardedAt'>>): Promise<void> {
   const db = await getDb();
   await ensureWorkspace(userId);
