@@ -9,6 +9,7 @@ import { collect, evalCommand } from './commands/eval.ts';
 import { EVAL_COMPARISON_NAMES, EVAL_CONFIG_NAMES } from '../eval/configs.ts';
 import { DEFAULT_COMPANION_PORT } from '../studio/protocol.ts';
 import { connectCommand } from './commands/connect.ts';
+import { hubServeCommand, hubTokenCommand } from './commands/hub.ts';
 import { initCommand } from './commands/init.ts';
 import { serveCommand } from './commands/serve.ts';
 import { startCommand } from './commands/start.ts';
@@ -83,6 +84,7 @@ export function defaultHelp(command: Command, width?: number): string {
 
 const HELP_GROUPS = [
   ['Studio', ['connect']],
+  ['Cloud', ['hub']],
   ['Setup', ['start', 'init', 'doctor', 'notify']],
   ['Run', ['run', 'resume', 'stop']],
   ['Unattended', ['serve']],
@@ -184,8 +186,25 @@ export function buildProgram(version: string): Command {
     .option('--open', 'open the pairing page even when this machine is already paired')
     .option('--no-open', 'never open a browser; print the pairing link instead')
     .option('--new-token', 'rotate the pairing token, unpairing every studio that had the old one')
+    .option('--hub <url>', 'run as a Relay Cloud runner: dial out to this hub instead of listening (or RELAY_HUB_URL)')
+    .option('--token-from <source>', 'with --hub, where the runner token is: env (RELAY_RUNNER_TOKEN), azure, or file:<path>')
     .option('--json', `${JSON_FLAG} — one object per line: listening, then each event`)
     .action(wrap(connectCommand));
+
+  // The server side of Relay Cloud. People never run this; whoever hosts the
+  // hub does, and each runner machine it makes runs `connect --hub`.
+  const hub = program.command('hub').description('run the Relay Cloud hub: one machine per person, reached through here');
+  hub
+    .command('serve')
+    .description('serve the hub, configured by RELAY_HUB_* and RELAY_CLOUD_* variables (docs/design/relay-cloud-runners.md)')
+    .option('--json', `${JSON_FLAG} — one log object per line`)
+    .action(wrap(hubServeCommand));
+  hub
+    .command('token')
+    .description('mint a runner token for a machine you start yourself (needs RELAY_HUB_SECRET)')
+    .requiredOption('--user <id>', 'the Clerk user id the runner serves')
+    .requiredOption('--runner <name>', 'a name for the machine, e.g. my-server')
+    .action(wrap(hubTokenCommand));
 
   program
     .command('start')

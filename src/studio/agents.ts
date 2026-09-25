@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 
 import { resolveExecutable, resolveInvocation, runProcess } from '../process/runner.ts';
-import type { AgentAccount, AgentId, AgentsStatus, AuthMethod, LoginMode, LoginSessionView, LoginStatus } from './protocol.ts';
+import { ACCOUNT_NAMES, configureGitForGithub, GITHUB_LOGIN_ARGS } from './accounts.ts';
+import type { AccountId, AgentAccount, AgentId, AgentsStatus, AuthMethod, LoginMode, LoginSessionView, LoginStatus } from './protocol.ts';
 
 /**
  * The coding CLIs on this machine, as the studio sees them.
@@ -121,10 +122,17 @@ export async function agentsStatus(): Promise<AgentsStatus> {
   };
 }
 
-export async function logout(agent: AgentId): Promise<{ ok: boolean; detail: string }> {
-  const name = AGENT_META[agent].name;
-  if ((await resolveExecutable(agent)) === null) return { ok: false, detail: `${name} is not installed.` };
-  const result = await ask(agent, agent === 'claude' ? ['auth', 'logout'] : ['logout'], STATUS_TIMEOUT_MS);
+const LOGOUT_ARGS: Record<AccountId, string[]> = {
+  claude: ['auth', 'logout'],
+  codex: ['logout'],
+  github: ['auth', 'logout', '--hostname', 'github.com'],
+};
+
+export async function logout(account: AccountId): Promise<{ ok: boolean; detail: string }> {
+  const name = ACCOUNT_NAMES[account];
+  const binary = LOGIN_PROGRAMS[account].binary;
+  if ((await resolveExecutable(binary)) === null) return { ok: false, detail: `${name} is not installed.` };
+  const result = await ask(binary, LOGOUT_ARGS[account], STATUS_TIMEOUT_MS);
   return result?.ok === true ? { ok: true, detail: 'Signed out.' } : { ok: false, detail: `${name} did not sign out.` };
 }
 
@@ -134,7 +142,7 @@ export async function logout(agent: AgentId): Promise<{ ok: boolean; detail: str
 
 interface LoginSession {
   id: string;
-  agent: AgentId;
+  agent: AccountId;
   mode: LoginMode;
   child: ChildProcess;
   status: LoginStatus;
@@ -148,19 +156,38 @@ interface LoginSession {
   timer: ReturnType<typeof setTimeout>;
 }
 
-const LOGIN_ARGS: Record<AgentId, Partial<Record<LoginMode, string[]>>> = {
-  claude: { browser: ['auth', 'login', '--claudeai'], console: ['auth', 'login', '--console'] },
-  codex: { browser: ['login'], device: ['login', '--device-auth'] },
+interface LoginProgram {
+  binary: string;
+  installCommand: string;
+  args: Partial<Record<LoginMode, string[]>>;
+  /** Extra environment for the login child. */
+  env?: Record<string, string>;
+  /** Runs after a sign-in succeeds. */
+  after?: () => Promise<unknown>;
+}
+
+const LOGIN_PROGRAMS: Record<AccountId, LoginProgram> = {
+  claude: { binary: 'claude', installCommand: AGENT_META.claude.installCommand, args: { browser: ['auth', 'login', '--claudeai'], console: ['auth', 'login', '--console'] } },
+  codex: { binary: 'codex', installCommand: AGENT_META.codex.installCommand, args: { browser: ['login'], device: ['login', '--device-auth'] } },
+  // gh prints a device code and polls; without a terminal it never asks a question.
+  github: {
+    binary: 'gh',
+    installCommand: 'https://cli.github.com',
+    args: { device: GITHUB_LOGIN_ARGS },
+    env: { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' },
+    after: configureGitForGithub,
+  },
 };
 
 export class LoginSessions {
   private readonly sessions = new Map<string, LoginSession>();
 
-  async start(agent: AgentId, mode: LoginMode): Promise<{ ok: true; session: LoginSessionView } | { ok: false; error: string }> {
-    const args = LOGIN_ARGS[agent][mode];
-    const meta = AGENT_META[agent];
+  async start(agent: AccountId, mode: LoginMode): Promise<{ ok: true; session: LoginSessionView } | { ok: false; error: string }> {
+    const program = LOGIN_PROGRAMS[agent];
+    const args = program.args[mode];
+    const meta = { name: ACCOUNT_NAMES[agent], installCommand: program.installCommand };
     if (args === undefined) return { ok: false, error: `${meta.name} has no "${mode}" sign-in.` };
-    if ((await resolveExecutable(agent)) === null) return { ok: false, error: `${meta.name} is not installed. Run: ${meta.installCommand}` };
+    if ((await resolveExecutable(program.binary)) === null) return { ok: false, error: `${meta.name} is not installed. Run: ${meta.installCommand}` };
 
     // One login per agent at a time: a second flow would race the first for the credential file.
     for (const existing of this.sessions.values()) {
@@ -169,9 +196,9 @@ export class LoginSessions {
 
     let child: ChildProcess;
     try {
-      const invocation = await resolveInvocation(agent, args);
+      const invocation = await resolveInvocation(program.binary, args);
       child = spawn(invocation.command, [...invocation.args], {
-        env: { ...process.env, ...CHILD_ENV },
+        env: { ...process.env, ...CHILD_ENV, ...program.env },
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: false,
         windowsHide: true,
@@ -219,6 +246,7 @@ export class LoginSessions {
       if (session.status === 'pending') {
         session.status = code === 0 ? 'succeeded' : 'failed';
         if (code !== 0) session.error = `${meta.name} exited with code ${code ?? 'unknown'} before sign-in finished.`;
+        if (code === 0) void program.after?.().catch(() => undefined);
       }
       // The transcript may hold a URL with a PKCE state; drop it now that it is not needed.
       session.output = '';
@@ -275,6 +303,13 @@ export class LoginSessions {
     return true;
   }
 
+  /** How many sign-ins are still waiting for the person. */
+  pending(): number {
+    let count = 0;
+    for (const session of this.sessions.values()) if (session.status === 'pending') count += 1;
+    return count;
+  }
+
   /** Stops every login still waiting, for when the companion shuts down. */
   cancelAll(): void {
     for (const id of this.sessions.keys()) this.cancel(id);
@@ -302,7 +337,7 @@ export function parseLoginOutput(session: Pick<LoginSession, 'output' | 'url' | 
     const match = text.match(/https?:\/\/[^\s'"<>]+/);
     if (match !== null) session.url = match[0].replace(/[.,)]+$/, '');
   }
-  if (session.agent === 'codex' && session.mode === 'device' && session.code === null) {
+  if (session.mode === 'device' && session.code === null) {
     const match = text.match(/\b[A-Z0-9]{4,5}-[A-Z0-9]{4,6}\b/);
     if (match !== null) session.code = match[0];
   }

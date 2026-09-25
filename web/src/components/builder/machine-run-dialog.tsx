@@ -2,16 +2,19 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CircleAlert, Laptop, Play } from 'lucide-react';
+import { AlertTriangle, CircleAlert, Cloud, Laptop, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { Spinner } from '@/components/ui/spinner';
 import { HelpTip } from '@/components/app/help-tip';
+import { regionName } from '@/components/companion/cloud-card';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useCompanion } from '@/lib/companion/client';
+import { useStudio } from '@/lib/store';
 import { machineRunNodes } from '@/lib/companion/machine-run';
 import { repositoryLabel, type RunTask } from '@/lib/companion/types';
 import { compiledConfig } from '@/lib/run-launcher';
@@ -21,8 +24,11 @@ interface Props {
   workflow: Workflow;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onRun: (task: RunTask) => void;
+  /** `repository` is set for a Relay Cloud run, which names the repository it works in. */
+  onRun: (task: RunTask, repository?: string) => void;
 }
+
+const REPOSITORY = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', aider: 'Aider' };
 
@@ -39,15 +45,23 @@ export function MachineRunDialog({ workflow, open, onOpenChange, onRun }: Props)
   );
 }
 
-function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onCancel: () => void; onRun: (task: RunTask) => void }) {
+function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onCancel: () => void; onRun: (task: RunTask, repository?: string) => void }) {
   const hello = useCompanion((state) => state.hello);
+  const cloudMode = useCompanion((state) => state.target === 'cloud');
+  const cloud = useCompanion((state) => state.cloud);
+  const cloudReady = useCompanion((state) => state.target === 'cloud' && state.status === 'connected');
+  const cloudAction = useCompanion((state) => state.cloudAction);
   const agents = useAgentsStore((state) => state.status);
+  const github = useAgentsStore((state) => state.github);
+  const defaultRepository = useStudio((state) => state.settings.defaultRepository);
   const [kind, setKind] = useState<RunTask['kind']>('issue');
   const [ref, setRef] = useState('');
   const [text, setText] = useState('');
+  const [repository, setRepository] = useState(() => (workflow.repository !== undefined && workflow.repository !== '' ? workflow.repository : defaultRepository));
+  const [waking, setWaking] = useState(false);
 
-  const host = hello?.machine ?? 'your machine';
-  const repo = repositoryLabel(hello?.repository);
+  const host = cloudMode ? 'Relay Cloud' : (hello?.machine ?? 'your machine');
+  const repo = cloudMode ? (REPOSITORY.test(repository.trim()) ? repository.trim() : null) : repositoryLabel(hello?.repository);
   const nodes = machineRunNodes(workflow);
   const config = useMemo(() => {
     try {
@@ -64,32 +78,93 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
   const deliver = String(shape['deliver'] ?? 'pr');
   const cap = typeof shape['maxCostUsd'] === 'number' ? shape['maxCostUsd'] : null;
   const fast = shape['plan'] === 'inline' && shape['reviewCode'] === false;
-  const mismatch = workflow.repository !== undefined && workflow.repository !== '' && repo !== null && workflow.repository !== repo;
+  const mismatch = !cloudMode && workflow.repository !== undefined && workflow.repository !== '' && repo !== null && workflow.repository !== repo;
 
   const task: RunTask | null = kind === 'issue' ? (ref.trim().length > 0 ? { kind: 'issue', ref: ref.trim() } : null) : text.trim().length > 0 ? { kind: 'prompt', text: text.trim() } : null;
-  const blocked = nodes.pipeline === undefined || hello?.repository === null || hello?.repository === undefined || config === null;
+  const blocked = cloudMode ? nodes.pipeline === undefined || config === null || repo === null || !cloudReady : nodes.pipeline === undefined || hello?.repository === null || hello?.repository === undefined || config === null;
 
   return (
     <form
       className="grid gap-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (task !== null && !blocked) onRun(task);
+        if (task !== null && !blocked) onRun(task, cloudMode && repo !== null ? repo : undefined);
       }}
     >
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
-          <Laptop className="size-4" /> Run “{workflow.name}” on {host}
+          {cloudMode ? <Cloud className="size-4" /> : <Laptop className="size-4" />} Run “{workflow.name}” {cloudMode ? 'in Relay Cloud' : `on ${host}`}
           <HelpTip term="companion" />
         </DialogTitle>
         <DialogDescription className="text-pretty">
-          The agent pipeline runs for real in {repo === null ? 'the repository relay connect was started in' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.
+          {cloudMode ? (
+            <>The agent pipeline runs for real on your own cloud machine, in {repo === null ? 'the repository you name below' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.</>
+          ) : (
+            <>The agent pipeline runs for real in {repo === null ? 'the repository relay connect was started in' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.</>
+          )}
         </DialogDescription>
       </DialogHeader>
 
+      {cloudMode ? (
+        <div className="grid gap-1.5">
+          <Label htmlFor="cloud-run-repository">GitHub repository</Label>
+          <Input
+            id="cloud-run-repository"
+            value={repository}
+            onChange={(event) => setRepository(event.target.value)}
+            placeholder="owner/repo"
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono"
+            aria-invalid={repository.trim().length > 0 && repo === null ? true : undefined}
+          />
+          <p className="text-xs text-muted-foreground">Checked out on your machine the first time, fetched every time after. The pull request opens here.</p>
+        </div>
+      ) : null}
+      {cloudMode && !cloudReady ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 p-2.5 text-xs">
+          <span className="flex items-center gap-1.5 text-pretty text-muted-foreground">
+            {cloud !== null && ['queued', 'creating', 'starting'].includes(cloud.state) ? <Spinner className="size-3" /> : null}
+            {cloud === null
+              ? 'Asking Relay Cloud about your machine…'
+              : cloud.state === 'creating'
+                ? 'Your machine is being made. About five minutes, once.'
+                : cloud.state === 'starting'
+                  ? 'Your machine is starting. About a minute.'
+                  : cloud.state === 'queued'
+                    ? `Waiting for room in ${regionName(cloud.region)}.`
+                    : cloud.state === 'stopping'
+                      ? 'Your machine is going to sleep; start it again once it has.'
+                      : (cloud.error ?? 'Your machine is asleep. Start it, then run.')}
+          </span>
+          {cloud !== null && ['none', 'asleep', 'failed'].includes(cloud.state) ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={waking}
+              onClick={async () => {
+                setWaking(true);
+                await cloudAction('wake').catch(() => undefined);
+                setWaking(false);
+              }}
+            >
+              {waking ? <Spinner data-icon="inline-start" /> : <Play data-icon="inline-start" />} {cloud.state === 'none' ? 'Make my machine' : 'Start it'}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {cloudMode && cloudReady && github !== null && !github.loggedIn ? (
+        <Notice tone="warn">
+          GitHub is not signed in on your cloud machine: it can check out a public repository, but not a private one, and it cannot open the pull request.{' '}
+          <Link href="/settings#agents" className="underline underline-offset-2">
+            Sign in
+          </Link>
+        </Notice>
+      ) : null}
+
       {nodes.pipeline === undefined ? (
         <Notice tone="error">This workflow has no Agent pipeline node, so there is nothing to run. Add one from the palette.</Notice>
-      ) : hello?.repository === null || hello?.repository === undefined ? (
+      ) : !cloudMode && (hello?.repository === null || hello?.repository === undefined) ? (
         <Notice tone="error">
           relay connect was started outside a repository, so there is nowhere to run. Stop it and start it again inside the repository this workflow works on.
         </Notice>

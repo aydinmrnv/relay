@@ -86,20 +86,24 @@ export function compiledConfig(workflow: Workflow): Record<string, unknown> {
 }
 
 /**
- * Runs the workflow's pipeline for real on the paired machine, in the
- * repository `relay connect` was started in, and follows it to the end.
+ * Runs the workflow's pipeline for real on the current runner and follows it
+ * to the end: on the paired machine, in the repository `relay connect` was
+ * started in, or on the person's Relay Cloud machine, in the repository the
+ * run names.
  */
-export async function launchMachineRun(workflow: Workflow, task: RunTask, options: Pick<LaunchOptions, 'onEvent'> = {}): Promise<Run> {
-  const hello = useCompanion.getState().hello;
+export async function launchMachineRun(workflow: Workflow, task: RunTask, options: Pick<LaunchOptions, 'onEvent'> & { repository?: string } = {}): Promise<Run> {
+  const { hello, target } = useCompanion.getState();
   const view = await companionFetch<CompanionRunView>('/v1/runs', {
     method: 'POST',
-    body: { workflow: { id: workflow.id, name: workflow.name }, config: compiledConfig(workflow), task },
+    runner: target,
+    body: { workflow: { id: workflow.id, name: workflow.name }, config: compiledConfig(workflow), task, ...(options.repository === undefined ? {} : { repository: options.repository }) },
   });
   const run = createMachineRun(workflow, {
     id: `run_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`,
     companionRunId: view.id,
-    host: hello?.machine ?? 'your machine',
-    repository: repositoryLabel(hello?.repository),
+    host: target === 'cloud' ? 'Relay Cloud' : (hello?.machine ?? 'your machine'),
+    runner: target,
+    repository: view.repository ?? repositoryLabel(hello?.repository),
     task,
     startedAt: view.startedAt,
   });
@@ -121,6 +125,7 @@ export async function attachMachineRun(saved: Run): Promise<Run | undefined> {
     id: saved.id,
     companionRunId: saved.machine.companionRunId,
     host: saved.machine.host,
+    runner: saved.machine.runner ?? 'machine',
     repository: saved.machine.repository,
     task: saved.machine.task,
     startedAt: saved.startedAt,
@@ -128,8 +133,13 @@ export async function attachMachineRun(saved: Run): Promise<Run | undefined> {
   return follow(base, workflow);
 }
 
+/** How many times a dropped stream is picked up again before the run counts as lost. */
+const RESUMES = 6;
+
 async function follow(run: Run, workflow: Workflow, onEvent?: (event: RunEvent, run: Run) => void): Promise<Run> {
   const companionRunId = run.machine!.companionRunId;
+  const runner = run.machine!.runner ?? 'machine';
+  const where = run.machine?.host ?? 'the machine';
   following.set(run.id, companionRunId);
   const fold = new MachineRunFold(run, workflow);
   const publish = (events: RunEvent[]) => {
@@ -140,39 +150,51 @@ async function follow(run: Run, workflow: Workflow, onEvent?: (event: RunEvent, 
   };
 
   try {
-    let response: Response;
-    try {
-      response = await companionRequest(`/v1/runs/${encodeURIComponent(companionRunId)}/events`);
-    } catch (error) {
-      if (error instanceof CompanionError) return lose(run, `${error.message}`);
-      throw error;
-    }
-    if (response.status === 404) return lose(run, `${run.machine?.host ?? 'The machine'} no longer knows this run: \`relay connect\` was restarted while it was going.`);
-    if (!response.ok || response.body === null) return lose(run, `The companion answered ${response.status}.`);
-
-    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buffer = '';
-    for (;;) {
-      const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
-      if (done) break;
-      buffer += value ?? '';
-      let index = buffer.indexOf('\n');
-      while (index !== -1) {
-        const line = buffer.slice(0, index).trim();
-        buffer = buffer.slice(index + 1);
-        index = buffer.indexOf('\n');
-        if (line.length === 0) continue;
-        let record: RunStreamRecord;
-        try {
-          record = JSON.parse(line) as RunStreamRecord;
-        } catch {
-          continue;
-        }
-        publish(fold.apply(record));
+    // The first record not yet folded in: a stream that drops is asked again
+    // from there, so a blink in the connection costs nothing.
+    let next = 0;
+    for (let attempt = 0; ; attempt += 1) {
+      let response: Response | null = null;
+      let failure: string | null = null;
+      try {
+        response = await companionRequest(`/v1/runs/${encodeURIComponent(companionRunId)}/events${next > 0 ? `?since=${next}` : ''}`, { runner });
+      } catch (error) {
+        if (!(error instanceof CompanionError)) throw error;
+        failure = error.message;
       }
+      if (response?.status === 404) return lose(run, `${where} no longer knows this run: it was restarted while the run was going.`);
+      if (response !== null && response.ok && response.body !== null) {
+        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = '';
+        for (;;) {
+          const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
+          if (done) break;
+          buffer += value ?? '';
+          let index = buffer.indexOf('\n');
+          while (index !== -1) {
+            const line = buffer.slice(0, index).trim();
+            buffer = buffer.slice(index + 1);
+            index = buffer.indexOf('\n');
+            if (line.length === 0) continue;
+            let record: RunStreamRecord;
+            try {
+              record = JSON.parse(line) as RunStreamRecord;
+            } catch {
+              continue;
+            }
+            if (record.type !== 'ping') next = Math.max(next, record.seq + 1);
+            publish(fold.apply(record));
+          }
+        }
+        if (fold.finished) return snapshot(fold.run);
+      } else if (response !== null && failure === null) {
+        failure = `${where} answered ${response.status}.`;
+      }
+      if (attempt >= RESUMES) {
+        return lose(run, failure ?? `Lost contact with ${where} before the run finished. ${runner === 'cloud' ? 'Relay Cloud could not reach your machine.' : '`relay connect` stopped or the connection dropped.'}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(15_000, 1_000 * 2 ** attempt)));
     }
-    if (!fold.finished) return lose(run, `Lost contact with ${run.machine?.host ?? 'the machine'} before the run finished. \`relay connect\` stopped or the connection dropped.`);
-    return snapshot(fold.run);
   } finally {
     following.delete(run.id);
   }
@@ -199,7 +221,8 @@ export function cancelRun(runId: string): boolean {
   }
   const companionRunId = following.get(runId);
   if (companionRunId !== undefined) {
-    void companionFetch(`/v1/runs/${encodeURIComponent(companionRunId)}`, { method: 'DELETE' }).catch(() => undefined);
+    const runner = useStudio.getState().runs.find((run) => run.id === runId)?.machine?.runner ?? 'machine';
+    void companionFetch(`/v1/runs/${encodeURIComponent(companionRunId)}`, { method: 'DELETE', runner }).catch(() => undefined);
     return true;
   }
   return false;

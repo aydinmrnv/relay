@@ -60,7 +60,23 @@ export const PUBLIC_URL: string | undefined = (() => {
   return undefined;
 })();
 
+/**
+ * The Relay Cloud hub, when this deployment has one: where a signed-in
+ * person's cloud machine is reached. The browser calls it directly with its
+ * Clerk session token; nothing here holds a secret for it.
+ */
+export const CLOUD_HUB_URL: string | null = (() => {
+  const raw = (process.env.RELAY_CLOUD_HUB_URL ?? '').trim();
+  if (raw.length === 0) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' || (!PRODUCTION && url.protocol === 'http:') ? url.toString().replace(/\/+$/, '') : null;
+  } catch {
+    return null;
+  }
+})();
+
 /** What the browser is told about accounts: whether they exist here, nothing secret. */
 export function authCapabilities(): AuthCapabilities {
-  return { enabled: ACCOUNTS_ENABLED, reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON };
+  return { enabled: ACCOUNTS_ENABLED, reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON, cloudHub: ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null };
 }

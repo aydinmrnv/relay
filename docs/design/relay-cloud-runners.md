@@ -1,49 +1,54 @@
 # Relay Cloud runners
 
-**Status: design.** The runners, the hub and the cloud VMs described here are
-not built yet. Studio accounts are: sign-in through Clerk, and Postgres through
-Drizzle (`web/src/server/db/schema.ts`). The findings under
-[Verified on a real VM](#verified-on-a-real-vm) come from a real Azure VM.
+**Status: built, invite-only.** The hub (`relay hub serve`), dial-out runners
+(`relay connect --hub`), one Azure VM per person made and put to sleep by the
+hub, and the studio's **Relay Cloud** runner (Settings → Where agents run) are
+in this repository and tested end to end on Azure
+([Verified on Azure](#verified-on-azure)). Not built yet: webhook triggers
+waking a runner, per-run GitHub App tokens, snapshots of long-idle disks, and
+a baked VM image. [What changed from the first design](#what-changed-from-the-first-design)
+says why the rest looks the way it does.
 
 Relay runs a workflow's Agent pipeline with Claude Code and Codex, signed in
 with the user's own Claude and ChatGPT plans, so a run costs nothing in API
-fees. Today that only works on the user's own computer, through
+fees. On the user's own computer that happens through
 [`relay connect`](../cli.md#the-studio-companion). Relay Cloud does the same
 thing on a machine Relay runs for them. The user never sees that machine.
 
 ## What a user does
 
-1. Signs in to their Relay account, and installs the Relay GitHub App on the
-   repositories their workflows work on.
-2. Opens **Settings → Agent accounts** and clicks **Sign in with Claude** and
-   **Sign in with ChatGPT**. Each one runs the vendor's own sign-in: a Claude
-   page that shows a code to paste back, and an OpenAI page that asks for a
-   device code. The first time, the studio says *Starting your cloud machine*
-   while one is made for them.
-3. Presses **Run in the cloud** on a workflow, or lets a trigger start one.
+1. Signs in to their Relay account, and picks **Relay Cloud** under
+   Settings → Where agents run. **Make my machine** makes it; the first time
+   takes about five minutes, later starts about a minute.
+2. Under Coding agents, clicks **Sign in with Claude**, **Sign in with ChatGPT**
+   and **Sign in to GitHub**. Each runs the vendor's own sign-in on their
+   machine: a Claude page with a code to paste back, and a device code to type
+   on OpenAI's and GitHub's pages.
+3. Presses **Run in Relay Cloud** on a workflow, names the repository, and
+   watches the canvas light up. The pull request opens as them.
 
-That is all. There is no Azure account, SSH key, VPN or terminal on their side.
-Everything the rest of this document describes is Relay's job.
+There is no Azure account, SSH key, VPN or terminal on their side.
 
 ## The idea: runners
 
-The AI connector stops being a setting of the studio and becomes a property of
-a **runner**. A runner is the place where a run executes and where the coding
-CLIs are signed in. Every AI call is still the vendor's own CLI, unmodified,
-signed in by the user. Relay never calls a model API and never holds a model
-credential ([Design](../cli.md#design)).
+A **runner** is the place where a run executes and where the coding CLIs are
+signed in. Every AI call is still the vendor's own CLI, unmodified, signed in by
+the user. Relay never calls a model API and never holds a model credential
+([Design](../cli.md#design)).
 
-| Runner | Where | Exists today |
+| Runner | Where | Exists |
 |---|---|---|
 | This machine | the user's computer, through `relay connect` | yes |
 | GitHub Actions | an exported workflow, on the user's Actions minutes | yes |
-| **Relay Cloud** | a machine Relay runs for that one user | this document |
-| Self-hosted | the same program as Relay Cloud, on a box the user owns | later |
+| Relay Cloud | a machine Relay runs for that one user | yes, invite-only |
+| Self-hosted | `relay connect --hub` on a box the user owns, with a token from `relay hub token` | yes, by hand |
 
-Agent accounts belong to a runner. The Agent accounts card shows one tab per
-runner, and each tab has its own sign-ins. The Claude Code and Codex connectors
-in the catalog show where they are signed in instead of offering a Connect
-button.
+The studio talks to a runner the same way whichever it is: companion protocol
+v1 (`src/studio/protocol.ts`). The routes live in one place
+(`src/studio/router.ts`) and two transports carry them — the loopback HTTP
+server on a laptop, and the hub's WebSocket to a cloud runner. The studio keeps
+which runner it uses (`target`) next to the pairing, and every machine run
+remembers the runner it started on, so switching does not orphan a run.
 
 ## One machine per person
 
@@ -58,225 +63,244 @@ vendors' rules need:
   must live on one machine and never be shared across machines at once, because
   it rewrites itself when it refreshes. One VM per person gives exactly that.
 
-Several runs of the same user share that VM, each in its own git worktree, as
-they would on a laptop. A VM-wide limit (two at a time on the smallest size)
-keeps them from starving each other.
+Runs on one machine take turns: one at a time by default
+(`RELAY_RUNNER_MAX_RUNS`), because 1 GiB of memory fits one Claude Code or
+Codex plus a test suite, and two would swap. The next waits, marked `queued`,
+and starts when the first ends.
 
-The VM runs only while it is needed. Relay **deallocates** it after a few idle
-minutes, and a deallocated Azure VM bills its disk and nothing else. The next
-sign-in check, run or trigger starts it again, which takes 30–60 seconds.
+The machine runs only while it is needed. The hub **deallocates** it after ten
+idle minutes, and a deallocated Azure VM bills its disk and nothing else.
 
 ## How the pieces talk
 
 ```
- browser (studio) ──HTTPS──▶ hub ◀──WebSocket (outbound)── runner VM (one per user)
-        │                    │                              relay connect --hub
-        └──HTTPS──▶ studio backend (Vercel): sign-in, database, hub tokens
+ browser (studio) ──HTTPS, Clerk session──▶ hub ◀──WebSocket (outbound)── runner VM (one per person)
+                                             │                              relay connect --hub
+                                             └──Azure Resource Manager (managed identity)
 ```
 
-**The runner dials out; nothing dials in.** A runner VM has no public IP
-address and no open port. When it boots, a system service starts
-`relay connect --hub <url>`, which opens a WebSocket *to* the hub and keeps it
-open. The runner only needs outbound internet, which Azure's default outbound
-access gives a VM without a public IP, for free.
+**The runner dials out; nothing dials in.** A runner VM has no public IP and no
+open port. A system service runs `relay connect --hub <url> --token-from azure`,
+which opens a WebSocket *to* the hub and keeps it open. Azure's default
+outbound access gives a subnet its way out, free.
 
-**The hub** is one small, always-on service. It does three jobs:
+**The hub** is one small, always-on process, `relay hub serve`, shipped in the
+same package as the runner (no new dependency: a small RFC 6455 server in
+`src/cloud/ws.ts`, Azure through its REST API). It does three jobs:
 
-1. **Proxy.** It accepts the studio's requests for a user and forwards them over
-   that user's WebSocket. It speaks [companion protocol v1](../../src/studio/protocol.ts)
-   on both sides, so the studio talks to `https://<hub>/u/<user>/v1/...`
-   exactly as it talks to `http://127.0.0.1:4477/v1/...` today.
-2. **Lifecycle.** When a request arrives for a runner that is not connected, the
-   hub starts the VM (or creates it, the first time) and waits for it to dial
-   in. After N idle minutes with no active runs, it asks the runner to drain
-   (`POST /v1/shutdown`) and then deallocates it. It calls Azure through the hub
-   VM's managed identity, so no Azure secret exists anywhere.
-3. **GitHub.** It holds the GitHub App key, mints a token scoped to one
-   repository for each run, and refreshes it before the hour runs out.
+1. **Proxy.** The studio calls the hub at the same paths it calls a laptop's
+   companion — `https://<hub>/v1/agents`, `/v1/runs`, … — and the hub carries
+   each request down the person's socket as a frame (`src/cloud/frames.ts`).
+   `/cloud/v1/runner` is the one thing a laptop does not have: the machine's
+   own state, and wake, sleep and remove.
+2. **Lifecycle.** The fleet (`src/cloud/hub/fleet.ts`) makes, starts and
+   deallocates each person's VM ([below](#keeping-it-reliable)).
+3. **Versions.** It serves its own Relay package to runners at
+   `/runner/relay.tgz`, named by version and content hash, so a runner always
+   runs the Relay its hub does.
 
-**The studio backend** (Next.js route handlers on Vercel) already has accounts
-and Postgres. Relay Cloud adds runners and GitHub App installations to that
-schema, plus a route that mints the short-lived token the browser uses to call
-the hub. The browser talks to the hub directly, so long run streams don't hit
-Vercel's function time limits, and sign-in codes never pass through Vercel.
-
-**Why the runner dials out.** It needs no public IP (about $3.65 a month each on
-Azure), no inbound firewall rule, no VPN and no pairing link. The hub knows
-which WebSocket belongs to which user because each VM is created with its own
-runner token.
+**Who is calling.** A person presents their **Clerk session token**, the
+short-lived JWT the browser already has; the hub verifies it against the Clerk
+instance's published keys (`src/cloud/hub/auth.ts`). No secret is shared with
+the studio's server and there is no token-minting route. A runner presents a
+**runner token**: which machine it is and whose, HMAC-signed by the hub's
+secret. The hub keeps no list of tokens, so a hub that restarts empty still
+knows every runner. A managed VM gets its token in its **user data**, which the
+runner reads from the instance metadata service at every connect — it is never
+written to disk.
 
 ## Sign-in on a VM
 
-The studio's sign-in dialog already handles both flows a machine without a
-browser needs. The runner offers only those:
-
-| Agent | Offered on a cloud runner | Not offered, and why |
+| Account | Offered on a cloud runner | Not offered, and why |
 |---|---|---|
 | Claude Code | Sign in with Claude (open a page, paste the code back); Anthropic Console API key | none |
-| Codex | Device code | ChatGPT browser sign-in: it redirects to `localhost` on the VM, which the user's browser cannot reach |
+| Codex | Device code | ChatGPT browser sign-in: it returns to `localhost` on the VM, which the user's browser cannot reach |
+| GitHub | `gh auth login` device code; `gh auth setup-git` points git at it | none |
 
 A pasted code travels browser → hub → runner → the CLI's stdin. The hub never
-logs or stores request bodies on the sign-in routes. The credential is written
-by the CLI, on the user's VM, and Relay has no route that reads it.
+logs a request body. The credential is written by the CLI, on the user's VM,
+and Relay has no route that reads it.
 
 ## A run in the cloud
 
-1. The studio asks the hub to start a run: the workflow's compiled config, the
-   task, and `owner/repo`.
-2. The hub checks that the user can reach that repository, mints a GitHub token
-   scoped to it, and forwards the run with the token.
-3. The runner fetches or clones the repository under `~/.relay/repos/`, then runs
-   `relay run --json` there with the workflow's config layered over the
-   repository's own. This is the same child process a studio run on a laptop
-   uses today.
-4. The engine's JSON lines stream back through the hub, and the canvas lights up
+1. The studio sends the compiled workflow, the task and `owner/repo`.
+2. The hub wakes the machine if it is asleep (a run is a reason to; a status
+   check never is) and forwards the request.
+3. The runner fetches or clones the repository under `~/.relay/repos/` —
+   blobless, so history without file contents until a worktree needs them — and
+   runs `relay run --json` there with the workflow's config layered over the
+   repository's own: the same child process a laptop runs.
+4. The engine's JSON lines stream back through the hub; the canvas lights up
    as it does for a run on this machine.
-5. Delivery pushes and opens the pull request with the scoped token. Agents
-   never see the token: it reaches only Relay's own `git` and `gh` calls.
+5. Delivery pushes and opens the pull request with the user's own GitHub
+   sign-in.
 
-A trigger (a label, an assignment, a schedule) takes the same path from the
-webhook. The hub wakes the owner's runner and starts
-`relay serve --once --issue <n>`, which is what the GitHub Action runs today,
-with the same allowlist, budgets and kill switches.
+## Keeping it reliable
+
+**The cloud is the source of truth.** Every runner VM carries its owner in its
+tags (`relay-role=runner`, `relay-user=<Clerk id>`) and its name is a hash of
+that id. The hub keeps no database: at start it lists the VMs and rebuilds
+everything, and every 30 seconds it reconciles again. The fleet never assumes
+a request it made has landed; each tick it compares what it wants with what
+Azure last said and with who is connected, and takes the next step. A hub that
+crashed halfway through starting a machine carries on after the restart.
+
+**Nothing stuck, nothing billing by accident.**
+
+- A machine that is running but never dials in is restarted once, then put to
+  sleep with an error the person sees (*Your machine started but Relay could not
+  reach it*), and Start tries again.
+- A VM Azure failed to make is removed and made again on the next wake.
+- A VM left `stopped` — shut down from inside, still holding its CPUs and still
+  billed — is deallocated.
+- A runner that dials back in during the seconds its machine is being
+  deallocated is refused, so a sleeping machine is never mistaken for an awake
+  one.
+- A runner that drops mid-run gets ten extra minutes to come back before its
+  machine is restarted under it.
+
+**The link is expected to drop.** Runs belong to the runner process, not the
+socket. Reconnects back off exponentially with jitter, so a restarted hub is
+not met by every runner in the same second. While a runner is away, the
+studio's run stream stays open at the hub; when it is back, the hub asks for
+the run again from the first record the browser has not seen
+(`/v1/runs/:id/events?since=<seq>`). The studio also retries a stream that
+ends without the run's exit record, from where it left off, before calling the
+run lost.
+
+**Boot repairs itself.** Everything a runner needs is installed by the
+service's own `ExecStartPre` (`relay-runner-prepare`), with retries, before
+`relay connect --hub` starts; cloud-init only writes the files and starts the
+service. A first boot that failed halfway finishes on the next start instead of
+leaving a machine that never works. The same step brings Relay to the hub's
+version and refreshes Claude Code and Codex once a week — at boot, because
+that is when a machine that sleeps most of the time can update without
+interrupting a run.
 
 ## Hosting on Azure
 
-Relay Cloud starts on an Azure for Students subscription and can move to a
-pay-as-you-go one by changing a single setting.
+**The limit that matters is quota, and it is per region.** An Azure for
+Students subscription allows 6 vCPUs running at once *in each region*, and five
+regions. `Standard_B2ats_v2` is offered in four of them (not in Switzerland
+North), so the fleet spreads people across North Central US, Spain Central,
+Mexico Central and Belgium Central: **eleven 2-vCPU runners awake at once**
+with the hub in one region, not the two a single region allows. A new person's
+machine goes to the region with the most room; after that it stays there, with
+its disk. Deallocated VMs do not count, so any number of people can have a
+machine.
+
+**When a region is full.** A wake waits in that region's queue, in order, and
+the studio shows its place. A machine idle for two minutes gives up its slot
+early to someone waiting (its idle timeout is otherwise ten); a busy one never
+does. If Azure refuses a start for quota or capacity, the fleet marks the
+region full for a moment and keeps the person in line.
 
 | Piece | Size | Cost on the student subscription |
 |---|---|---|
-| Hub | `Standard_B2pts_v2` (2 vCPU Arm, 1 GiB), always on | free: 750 h/month of this size for 12 months |
-| Runners | `Standard_B2ats_v2` (2 vCPU AMD, 1 GiB, 4 GiB swap), one per user, deallocated when idle | free up to 750 h/month across all runners, then about $0.01/hour |
-| Disks | a 64 GiB P6 for the hub and the first runner; a 32 GiB Standard HDD for each other runner | 2 × P6 free; about $1.50/month for each other disk |
-| Public IPs | none: runners dial out; the hub is published through Tailscale Funnel while in development | $0 |
-| Outbound traffic | default outbound access | free; the first 100 GB/month out is free |
+| Hub | `Standard_B2pts_v2` (2 vCPU Arm, 1 GiB), always on; or any VM you have | free: 750 h/month of this size for 12 months |
+| Runners | `Standard_B2ats_v2` (2 vCPU AMD, 1 GiB, 4 GiB swap), one per person, deallocated when idle | free up to 750 h/month across runners of this size, then about $0.01/hour |
+| Runner disks | 32 GiB Standard SSD, deleted with the VM | about $2.40/month each |
+| Public IPs | none for runners; the hub is published through Tailscale Funnel, or on a static IP with Caddy | $0, or about $3.65/month |
+| Outbound traffic | default outbound access | the first 100 GB/month are free |
 
-**The limit that matters is quota, not money.** The subscription allows
-6 vCPUs running at once in a region, and the hub uses 2, so **two runners can
-run at the same time**. Deallocated VMs don't count toward the quota, so any
-number of users can have a runner as long as no more than two are awake. Past
-that, the hub queues a start until a slot frees.
+**Admission.** Machines cost money, so the hub makes one only for people on
+`RELAY_CLOUD_ALLOWED_USERS` (Clerk ids, or `*`), and never more than
+`RELAY_CLOUD_MAX_MACHINES` in all.
 
-**Keeping idle users cheap.** A user who has been idle for more than a week has
-their disk turned into a snapshot (about $0.05 per GB-month of used space, so a
-few cents) and then deleted. Their next run restores it, which takes a couple
-of minutes longer than an ordinary start.
-
-**The image.** New runners install everything through
-[`scripts/azure/runner-cloud-init.yaml`](../../scripts/azure/runner-cloud-init.yaml),
-which takes about five minutes, once per user. A captured image in an Azure
-Compute Gallery would cut that to a normal boot, and can come later.
-
-A $1 budget alert on the subscription emails the owner on any real charge.
-
-## What changes in the code
-
-**The CLI (`src/`)**
-
-- `src/studio/server.ts`: move the router out of the HTTP handler, so the same
-  routes can be driven by frames arriving over the hub's WebSocket. Loopback
-  mode keeps its three locks; hub mode is authenticated by the runner token
-  instead.
-- A new `src/studio/dialout.ts`: `relay connect --hub <url>` connects out with
-  Node's built-in `WebSocket`, reconnects with backoff, and multiplexes
-  requests and run streams as `{id, …}` frames. It takes the token from the
-  environment and deletes it immediately, the way `adoptConfigOverlay` does
-  (`src/storage/config.ts:471`).
-- `src/studio/runs.ts`: a repository per run instead of one fixed root, cloning
-  or fetching before the child starts, and a run registry on disk so a restart
-  doesn't lose runs.
-- A new `src/github/credentials.ts`: the per-run token is read from a file by
-  Relay's own `git` (`src/git/repository.ts:39`) and `gh` calls only.
-- `src/studio/agents.ts`: the login modes above, advertised in `hello` so the
-  studio draws the right buttons.
-- `src/agents/sandbox.ts`: `--unshare-pid`, and masks that hide the CLIs'
-  credential folders from test commands and from each other.
-
-**The hub (new, `cloud/hub/`)**: a small Node service, containing the
-WebSocket endpoint, the protocol proxy, Azure lifecycle through the managed
-identity, the idle reaper, and GitHub App tokens.
-
-**The studio (`web/`)**
-
-- `web/src/lib/companion/client.ts`: the base URL and token become a
-  **runner endpoint**: `127.0.0.1:<port>` plus the pairing token for this
-  machine, or the hub URL plus a hub token for the cloud.
-- `use-agent-accounts.ts` and `agent-accounts-card.tsx`: keyed by runner, with
-  buttons from the runner's `hello`. Polling never wakes a stopped cloud runner.
-- `run-launcher.ts` and the builder: **Run in the cloud** next to **Run on this
-  machine**, with a repository field.
-- `running-settings.tsx`: the runner picker. Relay Cloud replaces the greyed-out
-  "Hosted microVMs" card.
-- A `runners` table next to the account tables in
-  `web/src/server/db/schema.ts`, and a route under `web/src/app/api/` that mints
-  a hub token for the signed-in user.
+**Operating it.** [`scripts/azure/deploy-hub.sh`](../../scripts/azure/deploy-hub.sh)
+makes the resource group, one virtual network per runner region, the hub (or
+installs it on a VM you have), its managed identity — Contributor on the
+runners' resource group, nothing else — and the service. Run again with
+`--upgrade` to ship new code; runners follow on their next start. The hub logs
+one JSON line per event to the journal, answers `/healthz`, and has operator
+routes under `/admin/v1` behind a token that never leaves the VM unless you
+print it: the fleet, one person's machine, wake, sleep, remove, drop a
+runner's socket, and mint a token for a self-hosted runner.
 
 ## Security
 
-- **Between users:** a separate VM each. A runner's token lets it reach only its
-  own hub socket, and the hub routes a user's requests only to that user's
-  runner.
-- **From the internet:** runners have no public IP and no inbound rules. The hub
-  is the only thing reachable, and every hub route needs a signed-in user.
-- **Credentials:** model sign-ins live in the CLIs' own files on the user's VM.
-  GitHub tokens are short-lived, scoped to one repository, and never enter the
-  agents' environment.
-- **Inside a VM:** test commands and agents run under bubblewrap with the
-  credential folders masked. An agent can always read its own CLI's sign-in,
-  and nothing can prevent that.
-- **Exposure over time:** deallocating idle VMs, and snapshotting long-idle
-  ones, keeps most users' machines switched off most of the time.
+- **Between users:** a separate VM each. A runner token reaches only its own
+  owner's socket, and the hub routes a person's requests only to their runner.
+- **From the internet:** runners have no public IP and no inbound rules. The
+  hub's routes all need a Clerk session or a runner token, except `/healthz`
+  and the public Relay package. Every frame and body is size-limited; a runner
+  that stops answering pings is cut.
+- **Credentials:** model and GitHub sign-ins live in the CLIs' own files on the
+  person's VM. The Azure credential is the hub's managed identity, scoped to one
+  resource group. The runner token is in the VM's user data, not on its disk.
+- **Inside a VM:** agents run as the unprivileged `relay` user; read-only turns
+  run under bubblewrap. An agent can read the sign-ins on its own machine, as
+  it can on a laptop — with per-run GitHub App tokens (below) that stops being
+  true for GitHub.
 
-## Verified on a real VM
+## What changed from the first design
 
-These come from a `Standard_B2ats_v2` running Ubuntu 24.04 in North Central US,
-set up with [`scripts/azure/create-runner.sh`](../../scripts/azure/create-runner.sh).
+| First design | Now | Why |
+|---|---|---|
+| Two runners awake at once (6 vCPUs, hub takes 2) | Eleven, across four regions | The quota is per region; the size is offered in four of the five allowed |
+| The studio's server mints hub tokens | The hub verifies Clerk session tokens itself | No shared secret, no extra hop, one less route to secure |
+| A `runners` table in the studio's Postgres | No database: VM tags are the record | A hub that loses its memory rebuilds it from Azure; nothing to migrate or keep in step |
+| Runner tokens stored per VM | HMAC tokens carrying their identity, in user data | Stateless to verify; never on disk |
+| GitHub App tokens per run | `gh`'s device flow on the runner, for now | Works today with nothing to register; the App is the next hardening step |
+| Two runs at a time on 1 GiB | One, the rest queued | Two coding agents and a test suite do not fit in 1 GiB |
+| Cloud-init installs everything | The service's start step installs, with retries | A failed first boot repairs itself |
+| Hub on its own VM only | Its own VM, or any VM you have | Deploy on the development VM today, move to a free Arm VM later |
+| 32 GiB Standard HDD disks | 32 GiB Standard SSD | Git and package installs on HDD latency make every run slower, for $0.86/month |
 
-- **bubblewrap needs an AppArmor profile.** Ubuntu 24.04 stops unprivileged
-  programs from creating user namespaces, so `bwrap` failed with `setting up uid
-  map: Permission denied`. A profile allowing `userns` for `/usr/bin/bwrap`
-  alone fixes it, and cloud-init installs it.
-- **Codex's own Linux sandbox works unchanged.** `/tmp` and `$HOME` were
-  read-only inside it.
-- **Claude Code's sign-in works headless.** On a VM with no browser,
-  `claude auth login --claudeai` prints a manual URL, which redirects to
-  `platform.claude.com/oauth/code/callback` and shows a code, followed by
-  `Paste code here if prompted >`. That is exactly what `parseLoginOutput`
-  (`src/studio/agents.ts:299`) already recognises.
-- **No public IP is needed.** With the public IP deleted, the VM kept outbound
-  access through default outbound access and reached GitHub, npm, Anthropic
-  and OpenAI.
-- **`npm install -g github:aydinmrnv/relay` leaves `relay` missing.** npm points
-  the global package at a temporary clone and then deletes the clone.
-  Cloud-init installs a packed tarball of a clone instead. The README's install
-  line has the same problem.
-- **Memory:** 892 MiB usable, with 4 GiB of swap. Memory and CPU during a real
-  run are still to be measured.
-- **Not yet verified:** Codex device-code sign-in on the VM, and a full pipeline
-  run.
+## Verified on Azure
 
-## Milestones
+These come from real VMs in the subscription the design was written for, with
+the hub deployed by `deploy-hub.sh` and a person signed in through Clerk.
 
-1. **Dial-out.** `relay connect --hub`, and a hub that proxies protocol v1 for
-   one hard-coded user. Point the studio at it. This proves the path with the
-   runner that exists today.
-2. **Machines per account.** Runner records on the existing accounts, and the
-   hub creating, starting and deallocating each user's VM.
-3. **Any repository.** A repository per run, GitHub App tokens, and the masks.
-4. **Triggers.** Webhooks wake the owner's runner and start
-   `relay serve --once`.
-5. **AI steps on runners.** The canvas's AI step runs as a single structured
-   turn on the runner instead of being simulated. Until then, `compile.ts`
-   should warn that AI steps are left out of an export rather than dropping
-   them silently.
+- **A first machine, from nothing to connected: 2 minutes 10 seconds**, in
+  Spain Central, the region with the most room. Waking it again from asleep:
+  **30 seconds**, including updating itself to the hub's newer Relay.
+- **The hub rebuilds itself from Azure.** Restarted with one machine asleep, it
+  reported that machine asleep before anyone asked.
+- **All three sign-ins start headless through the hub**: GitHub and Codex show
+  a device code, Claude a page and a paste prompt.
+- **A run in the cloud** cloned `aydinmrnv/relay` (15 MB blobless), branched a
+  worktree from `origin/main` and streamed every record back through the hub.
+- **Listing VMs with `$expand=instanceView` fails once the resource group holds
+  one** ("only supported when Virtual Machine Scale Set resource filter is
+  applied"). The hub lists the group for tags and the subscription with
+  `statusOnly=true` for power states, and merges them by id — which also
+  spells regions in two cases (`spaincentral`, `SpainCentral`).
+- **Run-command truncates scripts past about 150 kB without an error**, so
+  `deploy-hub.sh` ships the package in pieces of that size and checks its
+  hash before installing it.
+- **Some networks block Tailscale Funnel.** A filtering resolver and firewall
+  refused `*.ts.net` — no DNS answer, then a reset TLS handshake — from a home
+  network where it had worked ten minutes earlier. Funnel is fine for trying
+  Relay Cloud; for other people, publish the hub on a static IP with Caddy
+  (`--expose public-ip`) or a domain of your own.
+- **bubblewrap needs an AppArmor profile** on Ubuntu 24.04, which restricts
+  unprivileged user namespaces; runner cloud-init installs one for `bwrap` alone.
+- **Codex's own Linux sandbox works unchanged.**
+- **Claude Code's sign-in works headless**: `claude auth login --claudeai`
+  prints a URL whose page shows a code, then `Paste code here if prompted >`.
+- **GitHub's device flow works headless**: `gh auth login --web` without a
+  terminal prints `First copy your one-time code: XXXX-XXXX` and the device URL,
+  then polls.
+- **No public IP is needed**: default outbound access reaches GitHub, npm,
+  Anthropic and OpenAI.
+- **`npm install -g github:aydinmrnv/relay` leaves `relay` missing**, so
+  runners install a packed tarball — now the hub's own.
+- **Memory:** 892 MiB usable, with 4 GiB of swap.
+- **Quota:** 6 vCPUs per region in each of `northcentralus`, `spaincentral`,
+  `mexicocentral`, `belgiumcentral` and `switzerlandnorth`;
+  `Standard_B2ats_v2` is not offered in `switzerlandnorth`.
 
-## Open questions
+## Next
 
-- Where the hub lives in production: a public IP and a domain on Azure, or a
-  small always-on service elsewhere.
-- Whether a Claude Pro or Max plan's limits hold up under unattended runs, or
-  whether heavy users will want Team plans or an API key on their runner.
-- Whether "deallocated VMs don't count toward the vCPU quota" holds on the
-  student subscription in practice (Azure documents it, but it hasn't been
-  tested here).
+1. **Triggers.** Webhooks wake the owner's runner and start
+   `relay serve --once --issue <n>`, with the same allowlist, budgets and kill
+   switches as the GitHub Action.
+2. **GitHub App tokens.** A token scoped to one repository per run, handed only
+   to Relay's own `git` and `gh`, so no agent ever holds a GitHub credential.
+3. **A baked image** in an Azure Compute Gallery, so a first start is a normal
+   boot and every runner starts from the same bytes.
+4. **Idle disks.** Snapshot a disk idle for weeks and delete it; restore it on
+   the next wake.
+5. **AI steps on runners.** The canvas's AI step as a single structured turn on
+   the runner, instead of simulated.

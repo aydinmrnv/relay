@@ -5,12 +5,17 @@ import { loadPairingToken, pairingPath, pairingUrl } from '../../studio/pairing.
 import { openInBrowser } from '../../studio/open.ts';
 import { DEFAULT_COMPANION_PORT, DEFAULT_STUDIO_URL, type CompanionRepository, type CompanionRunView } from '../../studio/protocol.ts';
 import { selfLauncher, StudioRuns } from '../../studio/runs.ts';
+import { parseTokenSource, startRunner } from '../../cloud/runner.ts';
 import { createCompanion, normalizeOrigin, type CompanionEvent } from '../../studio/server.ts';
 import { EXIT } from '../exit.ts';
 import { emitJsonLine } from '../json.ts';
 import { banner, dim, failure, hint, out, rows, success, theme, warning } from '../output.ts';
 
 export interface ConnectOptions {
+  /** Dial out to a Relay Cloud hub instead of listening on 127.0.0.1. */
+  hub?: string;
+  /** Where the runner token comes from with `--hub`: env, azure or file:<path>. */
+  tokenFrom?: string;
   port?: string;
   studio?: string;
   allowOrigin?: string[];
@@ -40,6 +45,8 @@ const LOCAL_STUDIO_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
  * finds this companion on its own whenever it is running.
  */
 export async function connectCommand(options: ConnectOptions = {}): Promise<number> {
+  const hub = options.hub ?? process.env['RELAY_HUB_URL'];
+  if (hub !== undefined && hub.length > 0) return runnerCommand(hub, options);
   const json = options.json === true;
   const studio = studioUrl(options.studio);
   const port = parsePort(options.port ?? process.env['RELAY_COMPANION_PORT'] ?? String(DEFAULT_COMPANION_PORT));
@@ -97,6 +104,42 @@ export async function connectCommand(options: ConnectOptions = {}): Promise<numb
   await companion.close();
   if (json) emitJsonLine('connect', { type: 'stopped', at: new Date().toISOString() });
   else out(dim('  Companion stopped. The studio falls back to simulated runs until it is back.'));
+  return EXIT.success;
+}
+
+/**
+ * `relay connect --hub`: this machine as a Relay Cloud runner. No port and no
+ * pairing link; it dials out to the hub and serves the studio through it.
+ */
+async function runnerCommand(hub: string, options: ConnectOptions): Promise<number> {
+  const json = options.json === true;
+  try {
+    const url = new URL(hub);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('not http');
+  } catch {
+    throw new RelayError(`"${hub}" is not a hub address.`, { code: 'BAD_FLAG', hint: 'Pass the hub\'s URL, e.g. --hub https://hub.example.com' });
+  }
+  const version = await packageVersion().catch(() => 'unknown');
+  const log = (event: CompanionEvent): void => {
+    if (json) emitJsonLine('connect', { type: 'event', at: new Date().toISOString(), event });
+    else printEvent(event);
+  };
+  const runner = startRunner({ hub, tokenFrom: parseTokenSource(options.tokenFrom), version, log });
+  if (json) emitJsonLine('connect', { type: 'dialing', at: new Date().toISOString(), hub, version });
+  else {
+    banner('a Relay Cloud runner');
+    rows([
+      { label: 'Hub', value: hub },
+      { label: 'Repositories', value: dim('each run names its own; checkouts live in ~/.relay/repos') },
+    ]);
+    out();
+    hint('Leave this running. Ctrl-C stops it; runs in flight are asked to stop first.');
+    out();
+  }
+  await untilStopped(runner.runs, json);
+  await runner.link.stop();
+  if (json) emitJsonLine('connect', { type: 'stopped', at: new Date().toISOString() });
+  else out(dim('  Runner stopped.'));
   return EXIT.success;
 }
 

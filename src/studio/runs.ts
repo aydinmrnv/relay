@@ -8,7 +8,7 @@ import { createLineSplitter, parseJsonLine } from '../process/lines.ts';
 import { CONFIG_OVERLAY_VARIABLE, DEFAULT_CONFIG, mergeConfig } from '../storage/config.ts';
 import { errorMessage } from '../util/errors.ts';
 import { studioRunOverlay } from './overlay.ts';
-import type { CompanionRunView, RunStreamRecord, RunTask, StartRunRequest } from './protocol.ts';
+import type { CompanionRunView, RunStage, RunStreamRecord, RunTask, StartRunRequest } from './protocol.ts';
 
 /**
  * Runs the studio started on this machine.
@@ -41,6 +41,8 @@ const MAX_STDERR_CHARS = 16_000;
 const MAX_TEXT = 20_000;
 /** An issue number, `owner/repo#n`, a URL, a Linear key or a spec path. Never a flag. */
 const ISSUE_REF = /^[A-Za-z0-9][A-Za-z0-9._~:/?#=&%+@-]*$/;
+/** `owner/name` on GitHub: the characters GitHub allows, and never `.` or `..` as a name. */
+export const REPOSITORY_SLUG = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/(?!\.\.?$)[A-Za-z0-9._-]{1,100}$/;
 
 type Listener = (record: RunStreamRecord) => void;
 /** A record before it is numbered. Distributed over the union, so each variant keeps its own fields. */
@@ -48,17 +50,40 @@ type Unnumbered<T> = T extends unknown ? Omit<T, 'seq'> : never;
 
 interface StudioRun {
   view: CompanionRunView;
-  child: ChildProcess;
+  request: StartRunRequest;
+  overlay: Record<string, unknown>;
+  /** Null until the engine is spawned: while queued, and while the repository is checked out. */
+  child: ChildProcess | null;
+  /** Where the engine runs, once known. */
+  root: string | null;
+  /** Stops a checkout in progress. */
+  abort: AbortController;
   records: RunStreamRecord[];
   listeners: Set<Listener>;
   stderr: string;
-  overlayDir: string;
+  overlayDir: string | null;
+  finished: boolean;
+}
+
+export interface StudioRunsOptions {
+  /** Runs at once; the rest wait their turn, in order. Unlimited when absent. */
+  maxConcurrent?: number;
+  /**
+   * Checks out `owner/name` and answers with its root: a companion whose runs
+   * each name their repository (a cloud runner). Without it every run uses
+   * the root the companion was started in.
+   */
+  checkout?: (repository: string, signal: AbortSignal) => Promise<string>;
 }
 
 export class TaskError extends Error {}
 
-/** Checks what the studio sent before anything is spawned. */
-export function parseStartRequest(body: unknown): StartRunRequest {
+/**
+ * Checks what the studio sent before anything is spawned. A companion that
+ * checks out a repository per run needs one named; any other refuses one,
+ * because it would run somewhere other than where the studio asked.
+ */
+export function parseStartRequest(body: unknown, options: { repositoryPerRun?: boolean } = {}): StartRunRequest {
   if (body === null || typeof body !== 'object') throw new TaskError('Expected a JSON object.');
   const raw = body as Record<string, unknown>;
   const workflow = raw['workflow'] as Record<string, unknown> | undefined;
@@ -67,7 +92,16 @@ export function parseStartRequest(body: unknown): StartRunRequest {
   }
   const config = raw['config'];
   if (config === null || typeof config !== 'object' || Array.isArray(config)) throw new TaskError('The request carries no compiled config.');
-  return { workflow: { id: workflow['id'], name: workflow['name'] }, config: config as Record<string, unknown>, task: parseTask(raw['task']) };
+  const parsed: StartRunRequest = { workflow: { id: workflow['id'], name: workflow['name'] }, config: config as Record<string, unknown>, task: parseTask(raw['task']) };
+  const repository = typeof raw['repository'] === 'string' ? raw['repository'].trim() : '';
+  if (options.repositoryPerRun === true) {
+    if (repository.length === 0) throw new TaskError('Say which GitHub repository to run in, as owner/name.');
+    if (!REPOSITORY_SLUG.test(repository)) throw new TaskError(`"${repository.slice(0, 80)}" is not a GitHub repository. Use owner/name, for example acme/api.`);
+    parsed.repository = repository;
+  } else if (repository.length > 0) {
+    throw new TaskError('This machine runs in the repository `relay connect` was started in; it cannot switch to another.');
+  }
+  return parsed;
 }
 
 export function parseTask(value: unknown): RunTask {
@@ -97,14 +131,27 @@ export function runArguments(task: RunTask): string[] {
 
 export class StudioRuns {
   private readonly runs = new Map<string, StudioRun>();
-  private readonly root: string;
+  private readonly root: string | null;
   private readonly launcher: RelayLauncher;
   private readonly onChange: (view: CompanionRunView) => void;
+  private readonly maxConcurrent: number;
+  private readonly checkout: ((repository: string, signal: AbortSignal) => Promise<string>) | undefined;
+  /** Runs waiting for a slot, oldest first. */
+  private readonly waiting: StudioRun[] = [];
+  private occupied = 0;
 
-  constructor(root: string, launcher: RelayLauncher = selfLauncher(), onChange: (view: CompanionRunView) => void = () => undefined) {
+  constructor(
+    root: string | null,
+    launcher: RelayLauncher = selfLauncher(),
+    onChange: (view: CompanionRunView) => void = () => undefined,
+    options: StudioRunsOptions = {},
+  ) {
+    if (root === null && options.checkout === undefined) throw new Error('StudioRuns needs a root or a checkout.');
     this.root = root;
     this.launcher = launcher;
     this.onChange = onChange;
+    this.maxConcurrent = options.maxConcurrent ?? Number.POSITIVE_INFINITY;
+    this.checkout = options.checkout;
   }
 
   async start(request: StartRunRequest): Promise<CompanionRunView> {
@@ -117,12 +164,70 @@ export class StudioRuns {
       throw new TaskError(`The workflow does not compile to a config this Relay accepts: ${errorMessage(error)}`);
     }
 
-    const overlayDir = await mkdtemp(join(tmpdir(), 'relay-studio-'));
-    const overlayPath = join(overlayDir, 'config.json');
-    await writeFile(overlayPath, JSON.stringify(overlay, null, 2), { mode: 0o600 });
+    const id = `sr_${randomBytes(6).toString('base64url')}`;
+    const run: StudioRun = {
+      view: {
+        id,
+        workflow: request.workflow,
+        task: request.task,
+        status: 'running',
+        stage: 'queued',
+        repository: request.repository ?? null,
+        runId: null,
+        exitCode: null,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+      },
+      request,
+      overlay,
+      child: null,
+      root: null,
+      abort: new AbortController(),
+      records: [],
+      listeners: new Set(),
+      stderr: '',
+      overlayDir: null,
+      finished: false,
+    };
+    this.runs.set(id, run);
 
-    const child = spawn(this.launcher.command, [...this.launcher.args, ...runArguments(request.task)], {
-      cwd: this.root,
+    if (this.occupied < this.maxConcurrent) {
+      this.occupied += 1;
+      void this.launch(run);
+    } else {
+      this.waiting.push(run);
+    }
+    this.onChange({ ...run.view });
+    return { ...run.view };
+  }
+
+  /** Checks out the repository if the run names one, then spawns the engine. Holds one slot until the run ends. */
+  private async launch(run: StudioRun): Promise<void> {
+    let root = this.root;
+    try {
+      if (this.checkout !== undefined && run.request.repository !== undefined) {
+        this.stage(run, 'preparing');
+        root = await this.checkout(run.request.repository, run.abort.signal);
+      }
+      if (run.abort.signal.aborted) {
+        this.finish(run, 130, 'Stopped before it started.');
+        return;
+      }
+      if (root === null) throw new Error('This run names no repository to run in.');
+      await this.spawnEngine(run, root);
+    } catch (error) {
+      this.finish(run, run.abort.signal.aborted ? 130 : null, run.abort.signal.aborted ? 'Stopped before it started.' : errorMessage(error));
+    }
+  }
+
+  private async spawnEngine(run: StudioRun, root: string): Promise<void> {
+    const overlayDir = await mkdtemp(join(tmpdir(), 'relay-studio-'));
+    run.overlayDir = overlayDir;
+    const overlayPath = join(overlayDir, 'config.json');
+    await writeFile(overlayPath, JSON.stringify(run.overlay, null, 2), { mode: 0o600 });
+
+    const child = spawn(this.launcher.command, [...this.launcher.args, ...runArguments(run.request.task)], {
+      cwd: root,
       env: { ...process.env, [CONFIG_OVERLAY_VARIABLE]: overlayPath, NO_COLOR: '1', FORCE_COLOR: '0' },
       // A pipe on stdin, never the companion's terminal: nothing in the run
       // may wait for an answer from a person who is looking at a browser.
@@ -135,26 +240,9 @@ export class StudioRuns {
       windowsHide: true,
     });
     child.stdin?.end();
-
-    const id = `sr_${randomBytes(6).toString('base64url')}`;
-    const run: StudioRun = {
-      view: {
-        id,
-        workflow: request.workflow,
-        task: request.task,
-        status: 'running',
-        runId: null,
-        exitCode: null,
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-      },
-      child,
-      records: [],
-      listeners: new Set(),
-      stderr: '',
-      overlayDir,
-    };
-    this.runs.set(id, run);
+    run.child = child;
+    run.root = root;
+    this.stage(run, 'running');
 
     const stdout = createLineSplitter((line) => {
       const data = parseJsonLine(line);
@@ -172,23 +260,41 @@ export class StudioRuns {
       run.stderr = (run.stderr + chunk).slice(-MAX_STDERR_CHARS);
     });
 
-    let finished = false;
-    const finish = (code: number | null, error: string | null) => {
-      if (finished) return;
-      finished = true;
+    child.on('error', (error) => {
       stdout.flush();
-      run.view.status = 'exited';
-      run.view.exitCode = code;
-      run.view.finishedAt = new Date().toISOString();
-      this.push(run, { type: 'exit', code, error: code === 0 ? null : (error ?? lastError(run.stderr)) });
-      this.onChange({ ...run.view });
-      void rm(overlayDir, { recursive: true, force: true });
-    };
-    child.on('error', (error) => finish(null, error.message));
-    child.on('close', (code) => finish(code, null));
+      this.finish(run, null, error.message);
+    });
+    child.on('close', (code) => {
+      stdout.flush();
+      this.finish(run, code, null);
+    });
+  }
 
+  private stage(run: StudioRun, stage: RunStage): void {
+    run.view.stage = stage;
     this.onChange({ ...run.view });
-    return { ...run.view };
+  }
+
+  private finish(run: StudioRun, code: number | null, error: string | null): void {
+    if (run.finished) return;
+    run.finished = true;
+    run.view.status = 'exited';
+    run.view.stage = 'exited';
+    run.view.exitCode = code;
+    run.view.finishedAt = new Date().toISOString();
+    this.push(run, { type: 'exit', code, error: code === 0 ? null : (error ?? lastError(run.stderr)) });
+    this.onChange({ ...run.view });
+    if (run.overlayDir !== null) void rm(run.overlayDir, { recursive: true, force: true });
+
+    const queued = this.waiting.indexOf(run);
+    if (queued >= 0) {
+      this.waiting.splice(queued, 1);
+      return;
+    }
+    // A run that held a slot hands it to the oldest one waiting.
+    const next = this.waiting.shift();
+    if (next === undefined) this.occupied -= 1;
+    else void this.launch(next);
   }
 
   list(): CompanionRunView[] {
@@ -203,12 +309,13 @@ export class StudioRuns {
   /**
    * Replays everything recorded so far, then follows. A studio that reloads
    * mid-run picks the run back up from its first line, not from wherever it
-   * happened to be when the tab went away.
+   * happened to be when the tab went away; a follower that lost its
+   * connection passes `since`, the first record it has not seen.
    */
-  subscribe(id: string, listener: Listener): (() => void) | undefined {
+  subscribe(id: string, listener: Listener, since = 0): (() => void) | undefined {
     const run = this.runs.get(id);
     if (run === undefined) return undefined;
-    for (const record of run.records) listener(record);
+    for (const record of run.records) if (record.seq >= since) listener(record);
     if (run.view.status === 'exited') return () => undefined;
     run.listeners.add(listener);
     return () => run.listeners.delete(listener);
@@ -225,16 +332,23 @@ export class StudioRuns {
   async cancel(id: string): Promise<boolean> {
     const run = this.runs.get(id);
     if (run === undefined || run.view.status === 'exited') return false;
+    const child = run.child;
+    if (child === null) {
+      // Queued, or still checking out: nothing of the engine's to stop yet.
+      run.abort.abort();
+      if (this.waiting.includes(run)) this.finish(run, 130, 'Stopped before it started.');
+      return true;
+    }
     if (process.platform !== 'win32') {
-      run.child.kill('SIGINT');
+      child.kill('SIGINT');
       return true;
     }
     if (run.view.runId === null) {
-      run.child.kill();
+      child.kill();
       return true;
     }
     const stop = spawn(this.launcher.command, [...this.launcher.args, 'stop', run.view.runId, '--json'], {
-      cwd: this.root,
+      cwd: run.root ?? process.cwd(),
       stdio: 'ignore',
       shell: false,
       windowsHide: true,
@@ -242,7 +356,7 @@ export class StudioRuns {
     await new Promise<void>((resolve) => {
       stop.once('close', () => resolve());
       stop.once('error', () => {
-        run.child.kill();
+        child.kill();
         resolve();
       });
     });
