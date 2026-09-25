@@ -58,10 +58,9 @@ export function GeneralSettings() {
       <form onSubmit={save}>
         <div className="grid gap-4 p-4 md:p-5">
           {/* Live preview: how the studio would introduce itself with the draft name. */}
-          <div className="relative overflow-hidden rounded-xl border bg-muted/30 p-4">
-            <div aria-hidden className="pointer-events-none absolute -top-16 -right-12 size-40 rounded-full bg-primary/15 blur-3xl" />
-            <div className="relative flex items-center gap-3">
-              <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-indigo-500 text-lg font-semibold text-white shadow-sm" aria-hidden>
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-md bg-foreground text-lg font-semibold text-background" aria-hidden>
                 {draft.name.charAt(0).toUpperCase()}
               </span>
               <div className="min-w-0">
@@ -70,7 +69,7 @@ export function GeneralSettings() {
               </div>
               {dirty ? <span className="ml-auto shrink-0 rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-warning">Preview, not saved</span> : null}
             </div>
-            <dl className="relative mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            <dl className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
               {derived.map((item) => (
                 <div key={item.label} className="min-w-0">
                   <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{item.label}</dt>

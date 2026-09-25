@@ -47,7 +47,7 @@ export function HelpTip({ term, title, children, detailed = false, side = 'botto
         {heading === undefined ? null : <p className="text-sm font-medium">{heading}</p>}
         <div className="text-[13px] leading-relaxed text-muted-foreground">{body}</div>
         {term === undefined ? null : (
-          <Link href={`/guide#${term}`} className="mt-1 text-xs font-medium text-primary hover:underline">
+          <Link href={`/guide#${term}`} className="mt-1 text-xs font-medium text-signal hover:underline">
             Read more in the guide →
           </Link>
         )}

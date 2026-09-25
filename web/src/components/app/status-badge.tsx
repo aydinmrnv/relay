@@ -4,16 +4,21 @@ import type { NodeRunStatus, RunStatus } from '@/lib/workflow/schema';
 
 type Status = RunStatus | NodeRunStatus;
 
-const STYLES: Record<Status, { chip: string; dot: string }> = {
-  running: { chip: 'border-primary/25 bg-primary/10 text-primary', dot: 'bg-primary animate-pulse' },
-  succeeded: { chip: 'border-success/25 bg-success/10 text-success', dot: 'bg-success' },
-  done: { chip: 'border-success/25 bg-success/10 text-success', dot: 'bg-success' },
-  failed: { chip: 'border-destructive/25 bg-destructive/10 text-destructive', dot: 'bg-destructive' },
-  refused: { chip: 'border-warning/30 bg-warning/12 text-amber-700 dark:text-warning', dot: 'bg-warning' },
-  cancelled: { chip: 'border-border bg-muted text-muted-foreground', dot: 'bg-muted-foreground/60' },
-  waiting: { chip: 'border-info/25 bg-info/10 text-info', dot: 'bg-info animate-pulse' },
-  pending: { chip: 'border-border bg-muted text-muted-foreground', dot: 'bg-muted-foreground/40' },
-  skipped: { chip: 'border-border bg-transparent text-muted-foreground', dot: 'bg-muted-foreground/30' },
+/**
+ * Colour is kept for what needs a look: a run that is live (signal), one that
+ * failed, and one a guardrail refused. Finishing normally is the common case,
+ * so it reads in plain ink rather than competing with those.
+ */
+const STYLES: Record<Status, string> = {
+  running: 'border-signal/30 bg-signal/10 text-signal',
+  succeeded: 'border-border text-foreground',
+  done: 'border-border text-foreground',
+  failed: 'border-destructive/25 bg-destructive/10 text-destructive',
+  refused: 'border-warning/35 bg-warning/12 text-amber-700 dark:text-warning',
+  cancelled: 'border-border bg-muted text-muted-foreground',
+  waiting: 'border-signal/30 bg-signal/10 text-signal',
+  pending: 'border-border bg-muted text-muted-foreground',
+  skipped: 'border-border bg-transparent text-muted-foreground',
 };
 
 const LABELS: Record<Status, string> = {
@@ -39,10 +44,8 @@ export const STATUS_MEANING: Record<RunStatus, string> = {
 };
 
 export function StatusBadge({ status, className }: { status: Status; className?: string }) {
-  const style = STYLES[status];
   return (
-    <Badge variant="outline" className={cn('gap-1.5 font-medium', style.chip, className)}>
-      <span className={cn('size-1.5 rounded-full', style.dot)} />
+    <Badge variant="outline" className={cn('font-medium', STYLES[status], className)}>
       {LABELS[status]}
     </Badge>
   );

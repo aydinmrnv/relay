@@ -164,10 +164,10 @@ export function PipelinePreview() {
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border bg-card text-left" aria-label="Interactive workflow example">
+    <div className="overflow-hidden rounded-lg border bg-card text-left" aria-label="Interactive workflow example">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <Workflow className="size-4 text-primary" />
+          <Workflow className="size-4 text-muted-foreground" />
           <h2 className="text-xs font-medium sm:text-sm">Issue to pull request</h2>
           <span className="rounded border px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground uppercase">
             Example
@@ -181,7 +181,7 @@ export function PipelinePreview() {
         </Link>
       </div>
 
-      <div className="bg-grid border-b">
+      <div className="border-b">
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 text-[11px] sm:px-6">
           <span className="text-muted-foreground">
             <span className="mr-2 font-mono">#142</span> Fix the flaky retry test
@@ -207,12 +207,12 @@ export function PipelinePreview() {
                   onClick={() => setActive(index)}
                   onKeyDown={(event) => navigate(event, index)}
                   className={cn(
-                    'relative flex min-w-0 flex-1 flex-col gap-3 rounded-lg border bg-card p-2.5 text-left sm:p-3 transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-                    index === active && 'border-primary bg-accent shadow-[0_0_0_3px_var(--background)]',
+                    'relative flex min-w-0 flex-1 flex-col gap-3 rounded-md border bg-card p-2.5 text-left sm:p-3 transition-colors hover:border-foreground/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+                    index === active && 'border-foreground bg-background',
                   )}
                 >
                   <span className="flex w-full items-center justify-between">
-                    <span className="flex size-7 items-center justify-center rounded-md border bg-background">
+                    <span className="flex size-7 items-center justify-center rounded-md border">
                       {item.id === 'delivery' ? (
                         <GitPullRequestDraft className="size-3.5" />
                       ) : item.connector ? (
@@ -229,20 +229,6 @@ export function PipelinePreview() {
                       {item.agent}
                     </span>
                   </span>
-                  <span
-                    aria-hidden
-                    className={cn(
-                      'absolute top-1/2 -left-1 size-1.5 rounded-full border bg-card',
-                      index === active && 'border-primary',
-                    )}
-                  />
-                  <span
-                    aria-hidden
-                    className={cn(
-                      'absolute top-1/2 -right-1 size-1.5 rounded-full border bg-card',
-                      index === active && 'border-primary',
-                    )}
-                  />
                 </button>
                 {index < STAGES.length - 1 && (
                   <span
@@ -276,13 +262,13 @@ export function PipelinePreview() {
           className="grid md:min-h-[290px] md:grid-cols-[0.9fr_1.1fr]"
         >
           <div className="flex flex-col items-start p-5 sm:p-6 lg:p-7">
-            <p className="font-mono text-[10px] tracking-wider text-primary uppercase">
+            <p className="font-mono text-xs text-muted-foreground">
               0{active + 1} / {stage.label}
             </p>
             <h3 className="mt-3 text-xl leading-snug font-medium tracking-tight sm:text-2xl">{stage.heading}</h3>
             <p className="mt-3 max-w-md text-[13px] leading-relaxed text-muted-foreground">{stage.description}</p>
             <p className="mt-6 flex items-center gap-2 pt-3 text-[11px] text-muted-foreground md:mt-auto">
-              <ArrowRight className="size-3.5 shrink-0 text-primary" />
+              <ArrowRight className="size-3.5 shrink-0" />
               {stage.output}
             </p>
           </div>
@@ -305,10 +291,13 @@ export function PipelinePreview() {
                     key={index}
                     className={cn(
                       'block min-w-max px-5',
-                      stage.kind === 'diff' && line.startsWith('+') && 'bg-primary/[0.06] text-primary',
+                      // Added and removed lines in git's own colours: the only colour in the sample.
+                      stage.kind === 'diff' &&
+                        line.startsWith('+') &&
+                        'bg-success/[0.07] text-[color-mix(in_oklch,var(--success)_80%,var(--foreground))]',
                       stage.kind === 'diff' &&
                         line.startsWith('-') &&
-                        'bg-destructive/[0.05] text-[color-mix(in_oklch,var(--destructive)_85%,var(--foreground))]',
+                        'bg-destructive/[0.06] text-[color-mix(in_oklch,var(--destructive)_85%,var(--foreground))]',
                     )}
                   >
                     <span aria-hidden className="mr-5 inline-block w-3 select-none text-right text-muted-foreground/70">
@@ -325,12 +314,12 @@ export function PipelinePreview() {
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3 text-[10px] text-muted-foreground sm:px-6">
         <span className="flex items-center gap-1.5">
-          <ShieldCheck className="size-3.5 text-primary" /> Your machine. Your keys. Your approval.
+          <ShieldCheck className="size-3.5" /> Your machine. Your keys. Your approval.
         </span>
         <button
           type="button"
           onClick={() => setActive((active + 1) % STAGES.length)}
-          className="inline-flex items-center gap-1.5 rounded-sm py-1 text-foreground transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+          className="inline-flex items-center gap-1.5 rounded-sm py-1 text-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
         >
           {active === STAGES.length - 1 ? 'Back to the issue' : 'Next step'} <ArrowRight className="size-3" />
         </button>

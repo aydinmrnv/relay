@@ -28,7 +28,7 @@ function WorkflowEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePositi
         markerEnd={markerEnd}
         className={cn(
           'transition-[stroke,opacity] duration-300',
-          state === 'active' ? '!stroke-primary [stroke-dasharray:6] [animation:dashdraw_0.6s_linear_infinite]' : '',
+          state === 'active' ? '!stroke-signal [stroke-dasharray:6] [animation:dashdraw_0.6s_linear_infinite]' : '',
           state === 'travelled' ? '!stroke-success' : '',
           state === 'skipped' ? 'opacity-30' : '',
           state === 'refused' ? '!stroke-warning' : '',

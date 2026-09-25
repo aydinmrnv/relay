@@ -73,15 +73,10 @@ export function GettingStarted({ steps, className }: { steps: ChecklistStep[]; c
         </div>
       </CardHeader>
       <CardContent>
-        <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {/* Steps are rows under a rule, not boxes inside the card: the card is already the container. */}
+        <ol className="grid gap-x-8 sm:grid-cols-2 xl:grid-cols-3">
           {steps.map((step, index) => (
-            <li
-              key={step.id}
-              className={cn(
-                'flex gap-3 rounded-lg border p-3 transition-colors',
-                step.done ? 'border-transparent bg-muted/40' : step === next ? 'border-primary/30 bg-primary/[0.03]' : 'border-border',
-              )}
-            >
+            <li key={step.id} className={cn('flex gap-3 border-t py-3', step.done && 'opacity-70')}>
               <span
                 className={cn(
                   'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',

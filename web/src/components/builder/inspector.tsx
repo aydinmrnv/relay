@@ -106,7 +106,7 @@ function WorkflowPanel({ workflow, issues, onSelect }: { workflow: Workflow; iss
                 <li key={step.nodeId} style={{ paddingLeft: step.depth * 14 }}>
                   <button type="button" onClick={() => onSelect(step.nodeId)} className="group flex w-full gap-2.5 rounded-lg p-2 text-left transition-colors hover:bg-muted">
                     <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border bg-background text-[10px] font-medium text-muted-foreground tabular-nums">
-                      {step.def.kind === 'trigger' ? <Zap className="size-2.5 fill-amber-400 text-amber-500" /> : index}
+                      {step.def.kind === 'trigger' ? <Zap className="size-2.5 text-foreground" /> : index}
                     </span>
                     <span className="min-w-0 flex-1">
                       {step.branch === undefined ? null : (
@@ -156,7 +156,7 @@ function WorkflowPanel({ workflow, issues, onSelect }: { workflow: Workflow; iss
                     {ok ? (
                       <span className="text-success">connected</span>
                     ) : (
-                      <Link href={`/integrations?app=${id}`} className="flex items-center gap-1 font-medium text-primary hover:underline">
+                      <Link href={`/integrations?app=${id}`} className="flex items-center gap-1 font-medium text-signal hover:underline">
                         <Plug className="size-3" /> connect
                       </Link>
                     )}
@@ -168,14 +168,13 @@ function WorkflowPanel({ workflow, issues, onSelect }: { workflow: Workflow; iss
                 const name = agent === 'claude' ? 'Claude Code' : agent === 'codex' ? 'Codex' : agent;
                 return (
                   <li key={agent} className="flex items-center gap-2 rounded-md border px-2 py-1.5">
-                    <span className={cn('size-1.5 rounded-full', account?.loggedIn === true ? 'bg-success' : account === undefined ? 'bg-muted-foreground/40' : 'bg-warning')} />
                     <span className="flex-1 truncate">{name}</span>
                     {account?.loggedIn === true ? (
                       <span className="text-success">signed in</span>
                     ) : account === undefined ? (
                       <span className="text-muted-foreground">unknown</span>
                     ) : (
-                      <Link href="/settings#agents" className="font-medium text-primary hover:underline">
+                      <Link href="/settings#agents" className="font-medium text-signal hover:underline">
                         sign in
                       </Link>
                     )}
@@ -286,7 +285,7 @@ function NodePanel({ node, issues, run, onChange, onDelete, onDuplicate }: Props
         <ConnectorIcon connector={def.connector} size={18} />
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-            {def.kind === 'trigger' ? <Zap className="size-2.5 fill-amber-400 text-amber-500" /> : null}
+            {def.kind === 'trigger' ? <Zap className="size-2.5" /> : null}
             {def.connector.name} · {def.kind}
           </p>
           <p className="flex items-center gap-1.5 text-sm leading-tight font-semibold">
@@ -438,7 +437,7 @@ function AboutNode({ def, sentence }: { def: NodeTypeDef; sentence: string | und
         </div>
       ) : null}
       {def.connector.docsUrl === undefined ? null : (
-        <a href={def.connector.docsUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary hover:underline">
+        <a href={def.connector.docsUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-signal hover:underline">
           {def.connector.name} documentation →
         </a>
       )}

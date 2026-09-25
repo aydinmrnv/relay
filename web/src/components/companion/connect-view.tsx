@@ -103,7 +103,7 @@ function Next({ icon: Icon, title, body, href }: { icon: typeof Play; title: str
         <Icon className="size-3.5 text-muted-foreground" aria-hidden /> {title}
       </span>
       <span className="text-xs text-pretty text-muted-foreground">{body}</span>
-      <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary">
+      <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-signal">
         Go <ArrowRight className="size-3 transition-transform group-hover:translate-x-0.5" aria-hidden />
       </span>
     </Link>

@@ -28,7 +28,7 @@ export function AccountMenu() {
     return (
       <div className="mx-1 flex flex-col gap-2 rounded-lg border border-dashed bg-background/60 p-2.5 text-xs group-data-[collapsible=icon]:hidden">
         <span className="flex items-center gap-1.5 font-medium text-foreground">
-          <CloudUpload className="size-3.5 text-primary" aria-hidden /> Guest mode
+          <CloudUpload className="size-3.5 text-muted-foreground" aria-hidden /> Guest mode
         </span>
         <span className="text-muted-foreground">Your work lives in this browser. An account keeps it everywhere, with sharing and history.</span>
         <div className="flex gap-1.5">

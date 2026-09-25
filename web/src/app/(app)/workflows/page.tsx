@@ -228,7 +228,7 @@ export default function WorkflowsPage() {
           {shown.length === 0 ? (
             <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">
               No workflow matches. {query.length > 0 ? 'Try another word, or ' : ''}
-              <button type="button" className="font-medium text-primary hover:underline" onClick={() => { setQuery(''); setFilter('all'); }}>
+              <button type="button" className="font-medium text-signal hover:underline" onClick={() => { setQuery(''); setFilter('all'); }}>
                 show all
               </button>
               .
@@ -291,7 +291,7 @@ export default function WorkflowsPage() {
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="max-w-full gap-1.5">
-                              <Zap className="fill-amber-400 text-amber-500" />
+                              <Zap className="text-muted-foreground" />
                               <ConnectorIcon connector={trigger.connector} size={10} variant="mark" />
                               <span className="truncate">{trigger.name}</span>
                             </Badge>

@@ -437,7 +437,7 @@ function Ready({ workflow, onOpen }: { workflow: Workflow; onOpen: () => void })
       </div>
       <div className="flex w-full max-w-xl flex-col gap-2 rounded-xl border bg-card p-4 text-left">
         <p className="flex items-center gap-2 text-sm font-medium">
-          <Laptop className="size-4 text-primary" /> Optional: run it for real on your machine
+          <Laptop className="size-4 text-muted-foreground" /> Optional: run it for real on your machine
         </p>
         <p className="text-xs text-muted-foreground">In the repository you want the agents to work on, run this. It pairs the studio with your machine, signs in Claude Code and Codex, and turns test runs into real ones.</p>
         <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 font-mono text-xs">
@@ -452,7 +452,7 @@ function Ready({ workflow, onOpen }: { workflow: Workflow; onOpen: () => void })
 function Title({ eyebrow, title, body, center = false }: { eyebrow: string; title: string; body: string; center?: boolean }) {
   return (
     <div className={cn('flex flex-col gap-2', center && 'items-center')}>
-      <p className="text-xs font-semibold tracking-wide text-primary uppercase">{eyebrow}</p>
+      <p className="font-mono text-xs text-muted-foreground">{eyebrow}</p>
       <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">{title}</h1>
       <p className="max-w-2xl text-pretty text-muted-foreground">{body}</p>
     </div>

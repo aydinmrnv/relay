@@ -16,6 +16,7 @@ import {
   GitBranch,
   Hourglass,
   LayoutDashboard,
+  Loader2,
   MoreHorizontal,
   RotateCcw,
   SearchX,
@@ -318,9 +319,9 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
 }
 
 const OUTCOME_STYLE: Record<RunStatus, { box: string; icon: React.ReactNode; title: string }> = {
-  running: { box: 'border-primary/25 bg-primary/5', icon: <span className="size-2 animate-pulse rounded-full bg-primary" />, title: 'Playing now' },
-  waiting: { box: 'border-info/25 bg-info/5', icon: <Hourglass className="size-4 text-info" />, title: 'Waiting' },
-  succeeded: { box: 'border-success/25 bg-success/5', icon: <CheckCircle2 className="size-4 text-success" />, title: 'Succeeded' },
+  running: { box: 'border-signal/30 bg-signal/5', icon: <Loader2 className="size-4 animate-spin text-signal motion-reduce:animate-none" />, title: 'Playing now' },
+  waiting: { box: 'border-signal/30 bg-signal/5', icon: <Hourglass className="size-4 text-signal" />, title: 'Waiting' },
+  succeeded: { box: 'border-border bg-card', icon: <CheckCircle2 className="size-4 text-success" />, title: 'Succeeded' },
   failed: { box: 'border-destructive/25 bg-destructive/5', icon: <XCircle className="size-4 text-destructive" />, title: 'Failed' },
   refused: { box: 'border-warning/35 bg-warning/8', icon: <ShieldAlert className="size-4 text-amber-600 dark:text-warning" />, title: 'Refused' },
   cancelled: { box: 'border-border bg-muted/40', icon: <Ban className="size-4 text-muted-foreground" />, title: 'Stopped' },

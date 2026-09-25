@@ -57,7 +57,7 @@ export function Faq() {
     <section id="faq" className="scroll-mt-16 border-t py-16 sm:py-24">
       <div className="container max-w-6xl grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-20">
         <Reveal className="flex flex-col gap-3">
-          <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">FAQ</p>
+          <p className="font-mono text-xs text-muted-foreground">FAQ</p>
           <h2 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">A few things to know</h2>
           <p className="text-pretty text-muted-foreground">How the agents run, where your code lives, and what stays in your hands.</p>
           <div className="flex flex-col gap-2">
@@ -65,14 +65,14 @@ export function Faq() {
               href={REPO_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex w-fit items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
+              className="inline-flex w-fit items-center gap-1 text-sm font-medium underline underline-offset-4 decoration-foreground/30 hover:decoration-foreground"
             >
               Read the README on GitHub
               <ArrowUpRight className="size-3.5" />
             </a>
             <Link
               href="/guide"
-              className="inline-flex w-fit items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
+              className="inline-flex w-fit items-center gap-1 text-sm font-medium underline underline-offset-4 decoration-foreground/30 hover:decoration-foreground"
             >
               Explore the guide
               <ArrowRight className="size-3.5" />
@@ -80,7 +80,7 @@ export function Faq() {
           </div>
         </Reveal>
         <Reveal delay={0.06}>
-          <Accordion className="rounded-2xl border bg-card px-5">
+          <Accordion className="border-t">
             {items.map((item) => (
               <AccordionItem key={item.id} value={item.id}>
                 <AccordionTrigger className="py-4 text-[15px] hover:no-underline">{item.question}</AccordionTrigger>

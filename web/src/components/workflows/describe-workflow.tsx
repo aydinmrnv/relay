@@ -176,8 +176,8 @@ function StepChip({ step }: { step: DescribedStep }) {
       title={step.label}
       className={cn(
         'inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background px-1.5 py-0.5 text-xs',
-        // Amber, like the "Trigger" label on builder nodes and the thumbnail's first node.
-        step.kind === 'trigger' ? 'border-amber-500/60 dark:border-amber-400/60' : '',
+        // A heavier ink border, like the thumbnail's first node: the trigger is where the workflow starts.
+        step.kind === 'trigger' ? 'border-foreground/50' : '',
       )}
     >
       {def === undefined ? null : <ConnectorIcon connector={def.connector} size={12} variant="mark" className="shrink-0" />}
@@ -189,11 +189,9 @@ function StepChip({ step }: { step: DescribedStep }) {
 }
 
 function Confidence({ value }: { value: number }) {
-  const [label, tone] =
-    value >= 0.8 ? ['Understood', 'bg-emerald-500'] : value >= 0.5 ? ['Mostly understood', 'bg-amber-500'] : value > 0 ? ['Partly understood', 'bg-amber-500'] : ['A starting point', 'bg-muted-foreground/50'];
+  const label = value >= 0.8 ? 'Understood' : value >= 0.5 ? 'Mostly understood' : value > 0 ? 'Partly understood' : 'A starting point';
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" title={`${Math.round(value * 100)}% of the sentence was understood`}>
-      <span className={cn('size-1.5 rounded-full', tone)} aria-hidden />
       {label}
     </span>
   );

@@ -77,9 +77,8 @@ export function GuideView() {
             { icon: FlaskConical, title: 'Test it for free', body: 'A test run plays it back with simulated agents, costs and refusals. Nothing is called and nothing is billed.' },
             { icon: GitPullRequest, title: 'Run it in your repository', body: 'Export writes the config and a GitHub Actions workflow. It runs on your own minutes, with your own subscriptions.' },
           ].map((fact) => (
-            <StaggerItem key={fact.title} className="relative overflow-hidden rounded-xl border bg-card p-4">
-              <div aria-hidden className="pointer-events-none absolute -top-10 -right-10 size-28 rounded-full bg-primary/10 blur-2xl" />
-              <fact.icon className="size-4 text-primary" aria-hidden />
+            <StaggerItem key={fact.title} className="border-t pt-4">
+              <fact.icon className="size-4 text-muted-foreground" aria-hidden />
               <p className="mt-3 text-sm font-medium">{fact.title}</p>
               <p className="mt-1 text-sm text-pretty text-muted-foreground">{fact.body}</p>
             </StaggerItem>
@@ -147,7 +146,7 @@ function GuideSection({ id, eyebrow, title, description, children }: { id: strin
   return (
     <section id={id} aria-labelledby={`${id}-title`} className={cn('grid min-w-0 grid-cols-1 gap-6', ANCHOR_OFFSET)}>
       <Reveal className="grid max-w-2xl gap-1.5">
-        <p className="text-xs font-medium tracking-wide text-primary uppercase">{eyebrow}</p>
+        <p className="font-mono text-xs text-muted-foreground">{eyebrow}</p>
         <h2 id={`${id}-title`} className="text-xl font-semibold tracking-tight text-balance">
           {title}
         </h2>
@@ -222,11 +221,11 @@ function StartSteps() {
       {steps.map((step, index) => {
         const complete = done[step.key];
         return (
-          <li key={step.key} className="group relative flex gap-4 rounded-xl border bg-card p-4 transition-colors hover:border-primary/30">
+          <li key={step.key} className="group relative flex gap-4 border-t py-4 first:border-t-0">
             <span
               className={cn(
                 'flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold tabular-nums transition-colors',
-                complete ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary',
+                complete ? 'bg-success/15 text-success' : 'border text-foreground',
               )}
               aria-label={complete ? `Step ${index + 1}, done` : `Step ${index + 1}`}
             >
@@ -243,7 +242,7 @@ function StartSteps() {
               </p>
               <p className="text-sm text-pretty text-muted-foreground">{step.body}</p>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                <Link href={step.href} className="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline">
+                <Link href={step.href} className="inline-flex items-center gap-1 text-sm font-medium text-signal underline-offset-4 hover:underline">
                   {step.cta} <ArrowRight className="size-3.5" aria-hidden />
                 </Link>
                 {step.extra === undefined ? null : (
@@ -271,20 +270,20 @@ function Concepts({ productName }: { productName: string }) {
           <a
             key={entry.term}
             href={`#${entry.term}`}
-            className="inline-flex h-7 items-center rounded-full border bg-card px-2.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            className="inline-flex h-7 items-center rounded-full border bg-card px-2.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
           >
             {entry.title}
           </a>
         ))}
       </nav>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-x-10 gap-y-8 md:grid-cols-2">
         {entries.map((entry) => (
           <article
             key={entry.term}
             id={entry.term}
             aria-labelledby={`${entry.term}-title`}
             className={cn(
-              'group/concept flex flex-col gap-2 rounded-xl border bg-card p-4 transition-[border-color,box-shadow] duration-300 target:border-primary/50 target:ring-3 target:ring-primary/15',
+              'group/concept flex flex-col gap-2 border-t pt-4 transition-colors duration-300 target:border-signal',
               ANCHOR_OFFSET,
             )}
           >
@@ -301,7 +300,7 @@ function Concepts({ productName }: { productName: string }) {
             <p className="text-sm text-pretty">{entry.short}</p>
             <p className="text-sm text-pretty text-muted-foreground">{entry.long}</p>
             {entry.href === undefined ? null : (
-              <Link href={entry.href} className="mt-auto inline-flex items-center gap-1 pt-1 text-xs font-medium text-primary underline-offset-4 hover:underline">
+              <Link href={entry.href} className="mt-auto inline-flex items-center gap-1 pt-1 text-xs font-medium text-signal underline-offset-4 hover:underline">
                 Show me <ArrowRight className="size-3" aria-hidden />
               </Link>
             )}

@@ -22,22 +22,21 @@ export function Integrations() {
           title="Keep the tools your team already uses"
           description="Connect triggers and actions on the canvas. Bring tickets into a workflow and send results back to your team."
         />
-        <Reveal className="mx-auto mt-10 grid max-w-4xl grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {/* One ruled grid, not twelve cards: the logos are a list, and the list is one link. */}
+        <Reveal className="mt-12 grid grid-cols-2 border-t border-l sm:grid-cols-3 lg:grid-cols-6">
           {apps.map((app) => (
             <Link
               key={app.id}
               href="/integrations"
-              className="flex min-h-16 items-center gap-3 rounded-xl border bg-card px-4 py-3 transition-colors hover:border-primary/30 hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+              className="flex min-h-20 flex-col justify-between gap-4 border-r border-b p-4 transition-colors hover:bg-muted/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             >
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/60">
-                <AppMark connector={app} size={18} />
-              </span>
-              <span className="text-sm font-medium">{app.name}</span>
+              <AppMark connector={app} size={18} />
+              <span className="text-sm">{app.name}</span>
             </Link>
           ))}
         </Reveal>
-        <div className="mx-auto mt-7 flex max-w-2xl flex-col items-center gap-5 text-center">
-          <p className="text-sm leading-relaxed text-muted-foreground">
+        <div className="mt-8 flex flex-col items-start gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
             {CATALOG_STATS.connectors} apps in the catalog. GitHub and Slack work through exported Actions; other connectors may need a
             bridge.
           </p>

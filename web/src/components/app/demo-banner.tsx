@@ -33,12 +33,9 @@ export function DemoBanner({ className, site = false }: { className?: string; si
 
 function Line({ className, dot, text, href, action }: { className?: string; dot: string; text: string; href: string; action: string }) {
   return (
-    <div className={cn('border-b bg-primary/[0.06] text-xs', className)}>
+    <div className={cn('border-b bg-muted/60 text-xs', className)}>
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 px-4 py-1.5 text-center">
-        <span className="inline-flex items-center gap-1.5 font-medium text-primary">
-          <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-primary" />
-          {dot}
-        </span>
+        <span className="font-medium text-foreground">{dot}</span>
         <span className="text-muted-foreground">{text}</span>
         <Link href={href} className="inline-flex items-center gap-0.5 font-medium text-foreground underline-offset-4 hover:underline">
           {action}

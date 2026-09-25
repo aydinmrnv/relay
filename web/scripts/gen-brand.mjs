@@ -37,13 +37,14 @@ const ROUND = 1.8;
 /** The second pass: the same letter again, a quarter-cell down and right. */
 const ECHO = 2.5;
 
+// Ink on paper, and the cyan the CLI prints its wordmark in (web/src/app/globals.css).
 const COLORS = {
-  tileFrom: '#8b5cf6',
-  tileTo: '#4f46e5',
-  ink: '#ffffff',
-  echo: '#5eead4',
-  night: '#0c0b16',
-  day: '#16151f',
+  tile: '#1a1815',
+  ink: '#fafaf9',
+  echo: '#5fc9db',
+  echoOnLight: '#00758d',
+  night: '#0f0e0c',
+  day: '#1a1815',
 };
 
 function cells(rows, originX, originY, fill) {
@@ -66,12 +67,11 @@ function twoPass(rows, x, y, ink, echo) {
 const GLYPH_SPAN = PITCH * 4 + PIXEL; // 44
 const TILE = 64;
 
-/** The app icon: the brand's first letter, two-pass, on the violet tile. */
+/** The app icon: the brand's first letter, two-pass, on the ink tile. */
 function markSvg(character = LOGO_TEXT[0]) {
   const offset = (TILE - GLYPH_SPAN - ECHO) / 2;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${TILE} ${TILE}">
-  <defs><linearGradient id="relay-tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${COLORS.tileFrom}"/><stop offset="1" stop-color="${COLORS.tileTo}"/></linearGradient></defs>
-  <rect width="${TILE}" height="${TILE}" rx="15" fill="url(#relay-tile)"/>
+  <rect width="${TILE}" height="${TILE}" rx="12" fill="${COLORS.tile}"/>
   ${twoPass(glyph(character), offset, offset, COLORS.ink, COLORS.echo)}
 </svg>
 `;
@@ -135,10 +135,10 @@ ${fontEntries.join('\n')}
 
 write('src/app/icon.svg', markSvg());
 write('public/brand/relay-mark.svg', markSvg());
-write('public/brand/relay-wordmark-dark.svg', wordmarkSvg(COLORS.ink, COLORS.tileFrom));
-write('public/brand/relay-wordmark-light.svg', wordmarkSvg(COLORS.day, COLORS.tileFrom));
-write('public/brand/relay-logo-dark.svg', lockupSvg(COLORS.ink, COLORS.tileFrom));
-write('public/brand/relay-logo-light.svg', lockupSvg(COLORS.day, COLORS.tileFrom));
+write('public/brand/relay-wordmark-dark.svg', wordmarkSvg(COLORS.ink, COLORS.echo));
+write('public/brand/relay-wordmark-light.svg', wordmarkSvg(COLORS.day, COLORS.echoOnLight));
+write('public/brand/relay-logo-dark.svg', lockupSvg(COLORS.ink, COLORS.echo));
+write('public/brand/relay-logo-light.svg', lockupSvg(COLORS.day, COLORS.echoOnLight));
 
 /* ------------------------------------------------------------------ */
 /* PNGs, only when asked                                               */
@@ -234,7 +234,7 @@ function renderPngs() {
 
   const banner = readFileSync(join(root, 'scripts', 'brand-banner.html'), 'utf8').replace(
     '<!--LOGO-->',
-    lockupSvg(COLORS.ink, COLORS.tileFrom),
+    lockupSvg(COLORS.ink, COLORS.echo),
   );
   screenshot(chromium, banner, 1200, 630, join(root, 'src', 'app', 'opengraph-image.png'));
   screenshot(chromium, banner, 1200, 630, join(brand, 'relay-banner.png'), 2);

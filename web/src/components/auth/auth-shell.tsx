@@ -33,8 +33,6 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid min-h-dvh lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
       <aside className="relative hidden overflow-hidden border-r bg-muted/40 lg:flex lg:flex-col">
-        <div aria-hidden className="pointer-events-none absolute -top-40 -left-40 size-[34rem] rounded-full bg-primary/15 blur-3xl" />
-        <div aria-hidden className="pointer-events-none absolute -right-32 bottom-0 size-[26rem] rounded-full bg-sky-400/10 blur-3xl" />
         <div className="relative flex flex-1 flex-col justify-between gap-10 p-10 xl:p-14">
           <Link href="/" className="flex w-fit items-center gap-2.5 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
             <BrandMark className="size-8" />
@@ -49,24 +47,24 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
               initial={reduce ? false : { opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-              className="rounded-2xl border bg-card/80 p-4 shadow-lg shadow-primary/5 backdrop-blur"
+              className="rounded-lg border bg-card p-4"
             >
               <div className="mb-3 flex items-center justify-between gap-2 text-xs">
                 <span className="flex items-center gap-2 font-medium">
                   <AppMark connector="linear" size={14} /> ENG-412 · Fix the flaky retry timeout
                 </span>
-                <span className="rounded-full bg-success/15 px-2 py-0.5 font-medium text-success">Draft PR #88</span>
+                <span className="rounded-md border px-2 py-0.5 font-medium text-muted-foreground">Draft PR #88</span>
               </div>
-              <ol className="flex flex-col gap-1.5">
+              <ol className="flex flex-col divide-y border-y">
                 {RECEIPT.map((step, index) => (
                   <motion.li
                     key={step.label}
                     initial={reduce ? false : { opacity: 0, x: -6 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.25 + index * 0.12, duration: 0.3 }}
-                    className="flex items-center gap-2.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-sm"
+                    className="flex items-center gap-2.5 py-1.5 text-sm"
                   >
-                    <Check className="size-3.5 text-success" aria-hidden />
+                    <Check className="size-3.5 text-muted-foreground" aria-hidden />
                     <span className="flex-1">{step.label}</span>
                     {step.agent === null ? null : <AppMark connector={step.agent} size={13} />}
                     <span className="w-20 text-right font-mono text-xs text-muted-foreground">{step.meta}</span>
@@ -78,9 +76,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
             <ul className="flex flex-col gap-4">
               {POINTS.map((point) => (
                 <li key={point.title} className="flex gap-3">
-                  <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background text-primary">
-                    <point.icon className="size-4" aria-hidden />
-                  </span>
+                  <point.icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
                   <span className="flex flex-col gap-0.5">
                     <span className="text-sm font-medium">{point.title}</span>
                     <span className="text-sm text-muted-foreground">{point.body}</span>

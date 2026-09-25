@@ -107,8 +107,8 @@ export function AppearanceSettings() {
 
 /** A tiny picture of the studio in each theme. Drawn with fixed colours on purpose: it shows the other theme, not the current one. */
 function ThemeSwatch({ mode }: { mode: ThemeChoice }) {
-  const light = <Window className="bg-white" sidebar="bg-zinc-100" line="bg-zinc-200" accent="bg-violet-500" />;
-  const dark = <Window className="bg-zinc-950" sidebar="bg-zinc-900" line="bg-zinc-800" accent="bg-violet-400" />;
+  const light = <Window className="bg-[#fafaf9]" sidebar="bg-[#f1f0ee]" line="bg-[#e4e2df]" accent="bg-[#1a1815]" />;
+  const dark = <Window className="bg-[#0f0e0c]" sidebar="bg-[#161512]" line="bg-[#2a2825]" accent="bg-[#eeede9]" />;
   return (
     <span className="relative mb-1 block h-16 w-full overflow-hidden rounded-md border" aria-hidden>
       {mode === 'dark' ? dark : light}

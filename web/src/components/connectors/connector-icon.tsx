@@ -11,7 +11,7 @@ interface Props {
   name?: string;
   size?: number;
   className?: string;
-  /** `mark` draws the bare glyph; `tile` puts it on a rounded brand-coloured tile. */
+  /** `mark` draws the bare glyph; `tile` puts it on a plain rounded tile. */
   variant?: 'mark' | 'tile';
   /** When true the mark uses the brand colour; otherwise it inherits `currentColor`. */
   colored?: boolean;
@@ -57,7 +57,8 @@ export function ConnectorIcon({ connector, icon, name, size = 20, className, var
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-lg border border-black/5 bg-[color-mix(in_srgb,var(--brand)_10%,transparent)] dark:border-white/10 dark:bg-[color-mix(in_srgb,var(--brand-on-dark)_14%,transparent)]',
+        // A plain tile: the mark carries the brand, so the tile does not repeat it.
+        'inline-flex shrink-0 items-center justify-center rounded-md border bg-background',
         className,
       )}
       style={{ width: tile, height: tile, ...brandVars(color) }}

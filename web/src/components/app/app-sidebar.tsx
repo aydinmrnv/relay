@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'motion/react';
-import { BookOpen, Cable, LayoutDashboard, LayoutTemplate, Play, Settings, Workflow } from 'lucide-react';
+import { BookOpen, Cable, LayoutDashboard, LayoutTemplate, Play, Settings, Loader2, Workflow } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -69,8 +69,8 @@ export function AppSidebar() {
     if (href === '/integrations' && connected > 0) return connected;
     if (href === '/runs' && running > 0) {
       return (
-        <span className="flex items-center gap-1 text-primary">
-          <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+        <span className="flex items-center gap-1 text-signal" title={`${running} running`}>
+          <Loader2 className="size-3 animate-spin motion-reduce:animate-none" aria-hidden />
           {running}
         </span>
       );
@@ -117,7 +117,7 @@ export function AppSidebar() {
                             transition={{ type: 'spring', stiffness: 500, damping: 38 }}
                           />
                         ) : null}
-                        <item.icon className={cn('relative', active ? 'text-primary' : '')} />
+                        <item.icon className="relative" />
                         <span className="relative">{item.label}</span>
                       </SidebarMenuButton>
                       {badge === null ? null : <SidebarMenuBadge>{badge}</SidebarMenuBadge>}
@@ -162,7 +162,6 @@ function AgentsFooter() {
       className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs transition-colors hover:bg-background group-data-[collapsible=icon]:hidden"
     >
       <span className="flex items-center gap-1.5 font-medium text-foreground">
-        <span className={cn('size-1.5 rounded-full', companion === 'connected' ? 'bg-success' : companion === 'connecting' ? 'animate-pulse bg-muted-foreground/40' : 'bg-muted-foreground/40')} />
         <span className="truncate">{companion === 'connected' ? (host ?? 'Your machine') : 'No machine connected'}</span>
       </span>
       {bridge === 'unavailable' ? (
@@ -175,14 +174,9 @@ function AgentsFooter() {
           const state = account === undefined ? 'checking' : account.loggedIn ? 'signed in' : account.installed ? 'not signed in' : 'not installed';
           return (
             <span key={id} className="flex items-center gap-2 text-muted-foreground">
-              <span
-                className={cn(
-                  'size-1.5 rounded-full',
-                  account === undefined ? 'animate-pulse bg-muted-foreground/40' : account.loggedIn ? 'bg-success' : account.installed ? 'bg-warning' : 'bg-muted-foreground/40',
-                )}
-              />
               <span className="text-foreground">{AGENT_META[id].name}</span>
-              <span className="ml-auto">{state}</span>
+              {/* Only the state that needs doing something about gets colour. */}
+              <span className={cn('ml-auto', account?.installed === true && !account.loggedIn && 'text-amber-700 dark:text-warning')}>{state}</span>
             </span>
           );
         })

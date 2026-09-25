@@ -19,13 +19,13 @@ export function SiteHeader() {
   const signedIn = status === 'signed-in' && user !== null;
 
   return (
-    <header className="sticky top-0 z-40 border-b bg-background/75 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-40 border-b bg-background">
       <div className="container max-w-6xl flex h-16 items-center gap-4">
         <Link
           href="/"
           className="mr-auto flex items-center gap-2 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50 lg:mr-0"
         >
-          <BrandMark className="size-7" />
+          <BrandMark className="size-6" />
           <span className="font-semibold tracking-tight">{brand.name}</span>
           <Badge variant="secondary" className="hidden sm:inline-flex">
             beta

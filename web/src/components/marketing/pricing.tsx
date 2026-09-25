@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { ArrowRight, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { useBrand } from '@/hooks/use-brand';
 import { Reveal, SectionHeading } from './primitives';
 
@@ -17,13 +16,11 @@ export function Pricing() {
           title="Free to build. Your infrastructure to run."
           description="Explore the studio without an account. When you run for real, usage stays on the plans you already have."
         />
-        <div className="mx-auto mt-10 grid max-w-4xl gap-5 md:grid-cols-2">
+        {/* Two columns of one table, split by a rule: they are two halves of one answer, not two products to choose between. */}
+        <div className="mt-12 grid overflow-hidden rounded-lg border md:grid-cols-2">
           <Reveal className="h-full">
-            <article className="flex h-full flex-col rounded-2xl border border-primary/30 bg-card p-6 shadow-sm sm:p-8">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="font-semibold">The studio</h3>
-                <Badge variant="secondary">Free</Badge>
-              </div>
+            <article className="flex h-full flex-col p-6 sm:p-8">
+              <h3 className="font-semibold">The studio</h3>
               <p className="mt-6 flex items-baseline gap-2">
                 <span className="text-5xl font-semibold tracking-tight">$0</span>
                 <span className="text-sm text-muted-foreground">No account needed</span>
@@ -41,7 +38,7 @@ export function Pricing() {
                   'Export config and GitHub Actions',
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-2.5 text-sm">
-                    <Check className="size-4 shrink-0 text-primary" />
+                    <Check className="size-4 shrink-0 text-muted-foreground" />
                     {item}
                   </li>
                 ))}
@@ -53,7 +50,7 @@ export function Pricing() {
             </article>
           </Reveal>
           <Reveal className="h-full" delay={0.06}>
-            <article className="flex h-full flex-col rounded-2xl border bg-card p-6 sm:p-8">
+            <article className="flex h-full flex-col border-t p-6 sm:p-8 md:border-t-0 md:border-l">
               <h3 className="font-semibold">Real runs</h3>
               <p className="mt-6 flex items-baseline gap-2">
                 <span className="text-5xl font-semibold tracking-tight">$0</span>
@@ -70,7 +67,7 @@ export function Pricing() {
                   'Keep your config and changes in your repo',
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-2.5 text-sm">
-                    <Check className="size-4 shrink-0 text-primary" />
+                    <Check className="size-4 shrink-0 text-muted-foreground" />
                     {item}
                   </li>
                 ))}

@@ -88,9 +88,7 @@ function GuestAccountCard() {
   }
   return (
     <Card className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-        <CloudUpload className="size-5" aria-hidden />
-      </span>
+      <CloudUpload className="size-5 shrink-0 text-muted-foreground" aria-hidden />
       <div className="flex-1">
         <p className="font-medium">You are using the studio as a guest</p>
         <p className="text-sm text-muted-foreground">A free account keeps your workflows and runs in any browser, adds public share links and version history, and nothing here is lost: you can bring it along when you sign up.</p>

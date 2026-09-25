@@ -47,7 +47,7 @@ export function RunResult({ run, linkPr = true, className }: { run: Run; /** Fal
         rel="noreferrer"
         onClick={(event) => event.stopPropagation()}
         title={run.source === 'machine' ? `Opened by the run on ${run.machine?.host ?? 'your machine'}` : 'Simulated pull request: the number is made up, so GitHub will not find it'}
-        className={cn('inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline', className)}
+        className={cn('inline-flex items-center gap-1.5 text-sm font-medium text-signal underline-offset-4 hover:underline', className)}
       >
         <GitPullRequest className="size-3.5" /> PR #{prNumber(run.prUrl)}
       </a>
@@ -88,7 +88,7 @@ export function StartedAt({ iso, now, className }: { iso: string; now: number; c
 export function RunSourceBadge({ run, className }: { run: Run; className?: string }) {
   if (run.source !== 'machine') return null;
   return (
-    <Badge variant="outline" className={cn('h-5 gap-1 border-primary/30 bg-primary/8 text-[10px] font-medium text-primary', className)} title={`Ran for real on ${run.machine?.host ?? 'your machine'}${run.machine?.repository ? `, in ${run.machine.repository}` : ''}`}>
+    <Badge variant="outline" className={cn('h-5 gap-1 text-[10px] font-medium', className)} title={`Ran for real on ${run.machine?.host ?? 'your machine'}${run.machine?.repository ? `, in ${run.machine.repository}` : ''}`}>
       <Laptop className="size-3" aria-hidden /> {run.machine?.host ?? 'Your machine'}
     </Badge>
   );

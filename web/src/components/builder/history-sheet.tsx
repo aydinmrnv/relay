@@ -30,7 +30,7 @@ export function HistorySheet({ workflow, open, onOpenChange, onRestore }: { work
       <SheetContent side="right" className="w-[92vw] gap-0 p-0 sm:max-w-md">
         <SheetHeader className="border-b">
           <SheetTitle className="flex items-center gap-2">
-            <History className="size-4 text-primary" /> Version history
+            <History className="size-4 text-muted-foreground" /> Version history
           </SheetTitle>
           <SheetDescription>Saved automatically before each editing session, and whenever you save one by hand. Restore any of them; ⌘Z undoes a restore.</SheetDescription>
         </SheetHeader>
@@ -155,7 +155,6 @@ function Versions({ workflow, open, onRestore }: { workflow: Workflow; open: boo
             {versions.map((version) => (
               <li key={version.id} className={cn('rounded-lg border border-transparent', expanded === version.id && 'border-border bg-muted/40')}>
                 <button type="button" onClick={() => void toggle(version.id)} className="flex w-full items-start gap-3 rounded-lg p-2.5 text-left hover:bg-muted/60" aria-expanded={expanded === version.id}>
-                  <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', version.auto ? 'bg-muted-foreground/40' : 'bg-primary')} aria-hidden />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2 text-sm font-medium">
                       <span className="truncate">{version.label ?? 'Before an editing session'}</span>
