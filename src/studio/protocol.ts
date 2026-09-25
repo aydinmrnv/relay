@@ -20,13 +20,46 @@ export const DEFAULT_COMPANION_PORT = 4477;
 /** Where the hosted studio lives, and so where `relay connect` sends you to pair. */
 export const DEFAULT_STUDIO_URL = 'https://relay-olive-omega.vercel.app';
 
-export type CompanionCapability = 'agents' | 'runs' | 'install';
+/**
+ * `agents`: the coding CLIs' sign-ins. `runs`: running a workflow. `install`:
+ * writing an export into the repository. `repositories`: each run names the
+ * GitHub repository it works on, and the companion checks it out (a cloud
+ * runner, which has no repository of its own). `github`: the companion signs
+ * in to GitHub itself, through `gh`'s device flow (a cloud runner again).
+ */
+export type CompanionCapability = 'agents' | 'runs' | 'install' | 'repositories' | 'github';
 
 export interface CompanionRepository {
   root: string;
   owner: string | null;
   name: string | null;
   defaultBranch: string;
+}
+
+/**
+ * A Relay Cloud runner, as the hub describes it: whether the person's machine
+ * is awake, on its way, or asleep, and why not when it should be.
+ *
+ * `none`: no machine yet. `queued`: waiting for room in its region.
+ * `creating`: being made (the first time takes a few minutes). `starting`:
+ * booting, or reconnecting. `ready`: connected. `stopping`: going to sleep.
+ * `asleep`: deallocated, sign-ins kept. `failed`: see `error`. `deleting`:
+ * being removed. `offline`: a runner of the person's own that is not connected.
+ */
+export type CloudRunnerState = 'none' | 'queued' | 'creating' | 'starting' | 'ready' | 'stopping' | 'asleep' | 'failed' | 'deleting' | 'offline';
+
+export interface CloudRunnerStatus {
+  state: CloudRunnerState;
+  /** Whether the hub starts and stops this machine, or it runs somewhere of the person's own. */
+  managed: boolean;
+  region: string | null;
+  /** When it entered this state. */
+  since: string;
+  /** 1-based place in the queue for its region, while `queued`. */
+  position: number | null;
+  error: string | null;
+  /** What is keeping it awake, while it is connected. */
+  activity: { runs: number; queued: number; logins: number } | null;
 }
 
 /** `GET /v1/hello`. Everything past `authorized` is only sent to a paired studio. */
@@ -40,6 +73,8 @@ export interface HelloResponse {
   repository?: CompanionRepository | null;
   capabilities?: CompanionCapability[];
   startedAt?: string;
+  /** Present when the answer came through a Relay Cloud hub. */
+  cloud?: CloudRunnerStatus;
 }
 
 /* ------------------------------------------------------------------ */
@@ -49,6 +84,9 @@ export interface HelloResponse {
 export type AgentId = 'claude' | 'codex';
 
 export const AGENT_IDS: readonly AgentId[] = ['claude', 'codex'];
+
+/** Everything a companion can sign in to: the coding agents, and GitHub on a cloud runner. */
+export type AccountId = AgentId | 'github';
 
 export type AuthMethod = 'subscription' | 'api-key' | 'none' | 'unknown';
 
@@ -77,9 +115,19 @@ export type LoginMode = 'browser' | 'device' | 'console';
 
 export type LoginStatus = 'pending' | 'succeeded' | 'failed' | 'cancelled';
 
+/** `GET /v1/github`, on a companion with the `github` capability. */
+export interface GithubAccount {
+  installed: boolean;
+  version: string | null;
+  loggedIn: boolean;
+  /** The GitHub login, e.g. `octocat`. */
+  login: string | null;
+  loginCommand: string;
+}
+
 export interface LoginSessionView {
   id: string;
-  agent: AgentId;
+  agent: AccountId;
   mode: LoginMode;
   status: LoginStatus;
   url: string | null;
@@ -102,15 +150,27 @@ export interface StartRunRequest {
   /** The workflow compiled to `.relay/config.json` by the studio. Layered over the repository's own. */
   config: Record<string, unknown>;
   task: RunTask;
+  /** `owner/name` on GitHub. Required by a companion with the `repositories` capability, refused by one without. */
+  repository?: string;
 }
 
 export type RunStatus = 'running' | 'exited';
+
+/**
+ * Where a running run is, before the engine's own stream says more.
+ * `queued`: waiting for an earlier run on this machine to finish.
+ * `preparing`: checking out the repository.
+ */
+export type RunStage = 'queued' | 'preparing' | 'running' | 'exited';
 
 export interface CompanionRunView {
   id: string;
   workflow: { id: string; name: string };
   task: RunTask;
   status: RunStatus;
+  stage?: RunStage;
+  /** `owner/name`, when the run named its repository. */
+  repository?: string | null;
   /** The engine's run id, once `relay run` has announced it. */
   runId: string | null;
   exitCode: number | null;
@@ -123,7 +183,8 @@ export interface CompanionRunView {
  *
  * `engine` carries a line of `relay run --json` verbatim — the documented
  * stream, not a re-description of it. `exit` is the last record. `ping` keeps
- * idle connections open and carries nothing.
+ * idle connections open and carries nothing. `?since=<seq>` skips the records
+ * before that one, for a follower picking a stream back up.
  */
 export type RunStreamRecord =
   | { seq: number; type: 'engine'; data: Record<string, unknown> }

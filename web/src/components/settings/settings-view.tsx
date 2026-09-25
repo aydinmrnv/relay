@@ -7,6 +7,8 @@ import { AgentAccountsCard } from '@/components/agents/agent-accounts-card';
 import { AccountSettings } from '@/components/account/account-settings';
 import { useAccount } from '@/lib/cloud/account';
 import { MachineCard } from '@/components/companion/machine-card';
+import { CloudCard, RunnerPicker } from '@/components/companion/cloud-card';
+import { useCompanion } from '@/lib/companion/client';
 import { SectionChips, SectionNav, type SectionLink } from '@/components/guide/section-nav';
 import { FadeIn } from '@/components/motion/fade-in';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,7 +22,7 @@ import { DataSettings } from './data-settings';
 const SECTIONS: SectionLink[] = [
   { id: 'account', label: 'Account', icon: UserRound },
   { id: 'general', label: 'General', icon: Tag },
-  { id: 'machine', label: 'This machine', icon: Laptop },
+  { id: 'machine', label: 'Where agents run', icon: Laptop },
   { id: 'agents', label: 'Coding agents', icon: Bot },
   { id: 'running', label: 'Running & exporting', icon: Rocket },
   { id: 'appearance', label: 'Appearance', icon: Palette },
@@ -33,6 +35,8 @@ export function SettingsView() {
   // the store has read localStorage.
   const hydrated = useStudio((state) => state.hydrated);
   const signedIn = useAccount((state) => state.status === 'signed-in');
+  const target = useCompanion((state) => state.target);
+  const hasCloud = useCompanion((state) => state.cloudHub !== null);
   // Bumped after an import or a reset, so drafts re-seed from the new data.
   const [generation, setGeneration] = useState(0);
 
@@ -89,10 +93,17 @@ export function SettingsView() {
                   id="machine"
                   icon={Laptop}
                   term="companion"
-                  title="This machine"
-                  description="The Relay CLI on your computer, paired with this studio by relay connect. It is how sign-ins, real runs and installing an export reach your machine; the pairing is kept in this browser only, apart from your other data."
+                  title="Where agents run"
+                  description={
+                    hasCloud
+                      ? 'Where sign-ins and real runs happen: your own computer, paired by relay connect, or a machine of your own on Relay Cloud. Either way the agents use your plans and your sign-ins.'
+                      : 'The Relay CLI on your computer, paired with this studio by relay connect. It is how sign-ins, real runs and installing an export reach your machine; the pairing is kept in this browser only, apart from your other data.'
+                  }
                 >
-                  <MachineCard />
+                  <div className="grid gap-4">
+                    {hasCloud ? <RunnerPicker /> : null}
+                    {target === 'cloud' && hasCloud ? <CloudCard /> : <MachineCard />}
+                  </div>
                 </SettingsSection>
 
                 <SettingsSection

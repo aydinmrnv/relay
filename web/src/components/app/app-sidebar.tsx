@@ -21,6 +21,7 @@ import {
 import { useBrand } from '@/hooks/use-brand';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useCompanion } from '@/lib/companion/client';
+import { cloudStatusText } from '@/components/companion/cloud-card';
 import { useStudio } from '@/lib/store';
 import { AGENT_IDS, AGENT_META } from '@/lib/agents/types';
 import { cn } from '@/lib/utils';
@@ -156,18 +157,23 @@ function AgentsFooter() {
   const status = useAgentsStore((state) => state.status);
   const companion = useCompanion((state) => state.status);
   const host = useCompanion((state) => state.hello?.machine);
+  const cloud = useCompanion((state) => (state.target === 'cloud' ? state.cloud : undefined));
   return (
     <Link
-      href={companion === 'connected' ? '/settings#agents' : '/connect'}
+      href={companion === 'connected' ? '/settings#agents' : cloud !== undefined ? '/settings#machine' : '/connect'}
       className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs transition-colors hover:bg-background group-data-[collapsible=icon]:hidden"
     >
       <span className="flex items-center gap-1.5 font-medium text-foreground">
         <span className={cn('size-1.5 rounded-full', companion === 'connected' ? 'bg-success' : companion === 'connecting' ? 'animate-pulse bg-muted-foreground/40' : 'bg-muted-foreground/40')} />
-        <span className="truncate">{companion === 'connected' ? (host ?? 'Your machine') : 'No machine connected'}</span>
+        <span className="truncate">{companion === 'connected' ? (host ?? 'Your machine') : cloud !== undefined ? 'Relay Cloud' : 'No machine connected'}</span>
       </span>
       {bridge === 'unavailable' ? (
         <span className="text-muted-foreground">
-          {companion === 'unreachable' ? 'Start relay connect again to run for real.' : 'Run relay connect to sign in agents and run workflows for real.'}
+          {cloud !== undefined
+            ? `${cloudStatusText(companion, cloud)}. It wakes when you run something.`
+            : companion === 'unreachable'
+              ? 'Start relay connect again to run for real.'
+              : 'Run relay connect to sign in agents and run workflows for real.'}
         </span>
       ) : (
         AGENT_IDS.map((id) => {

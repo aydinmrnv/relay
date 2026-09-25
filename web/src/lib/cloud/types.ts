@@ -8,9 +8,11 @@ export interface AuthCapabilities {
   enabled: boolean;
   /** Why accounts are off, shown only in development. */
   reason: string | null;
+  /** The Relay Cloud hub signed-in people can run on, when this deployment has one. */
+  cloudHub?: string | null;
 }
 
-export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, reason: null };
+export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, reason: null, cloudHub: null };
 
 export interface AccountUser {
   id: string;

@@ -80,7 +80,7 @@ There are no API keys to paste. Claude Code signs in with your Claude plan and C
 
 For GitHub Actions, the export uses the vendors' supported ways of carrying a personal plan into CI: `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and `CODEX_AUTH_JSON` holding `~/.codex/auth.json` (OpenAI's documented method; not for public repositories). Settings can switch either agent to an API key instead.
 
-Relay Cloud is designed, not built. In it, the same sign-ins happen on a cloud machine of each user's own. That machine offers only the flows a machine without a browser can finish: Claude's paste-code page and Codex's device code. See [the design](../docs/design/relay-cloud-runners.md).
+On Relay Cloud the same sign-ins happen on a cloud machine of each user's own, reached through the hub with the person's Clerk session. That machine offers only the flows a machine without a browser can finish: Claude's paste-code page, and Codex's and GitHub's device codes. With `RELAY_CLOUD_HUB_URL` set, Settings → Where agents run offers **Relay Cloud** to signed-in people, next to **This machine**; `src/lib/companion/client.ts` sends the same requests to either, and every machine run remembers which one it started on. See [how it works](../docs/design/relay-cloud-runners.md).
 
 ## The name is not decided
 
@@ -140,4 +140,4 @@ Add a `defineConnector({...})` entry to one of the catalog files. Triggers and a
 | Brand rename, import/export of your data | Approvals (auto-approved after a delay) |
 | Validation, the plain-English description, the zip export | |
 
-The simulated column is what the hosted product replaces: runs on a cloud runner per user ([design](../docs/design/relay-cloud-runners.md)), real webhooks for every connector, and approvals from Slack and email. Until then, a workflow runs for real on your machine through `relay connect`, or unattended through its export.
+The simulated column is what the hosted product replaces: real webhooks for every connector, and approvals from Slack and email. A workflow runs for real on your machine through `relay connect`, on your own Relay Cloud machine ([how](../docs/design/relay-cloud-runners.md)), or unattended through its export.

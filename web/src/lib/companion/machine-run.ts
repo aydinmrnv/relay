@@ -67,6 +67,7 @@ export interface MachineRunStart {
   id: string;
   companionRunId: string;
   host: string;
+  runner?: 'machine' | 'cloud';
   repository: string | null;
   task: RunTask;
   startedAt: string;
@@ -115,7 +116,7 @@ export function createMachineRun(workflow: Workflow, start: MachineRunStart): Ru
     phases: [],
     costUsd: 0,
     source: 'machine',
-    machine: { host: start.host, repository: start.repository, companionRunId: start.companionRunId, runId: null, task: start.task },
+    machine: { host: start.host, ...(start.runner === undefined ? {} : { runner: start.runner }), repository: start.repository, companionRunId: start.companionRunId, runId: null, task: start.task },
   };
 }
 

@@ -11,9 +11,16 @@ export interface CommandDoc {
   options: { flags: string; description: string; defaultValue?: unknown }[];
 }
 
+/** `relay`, `relay connect`, `relay hub serve`: the words that reach a command. */
+function commandPath(command: Command): string {
+  const names: string[] = [];
+  for (let current: Command | null = command; current !== null; current = current.parent) names.unshift(current.name());
+  return names[0] === 'relay' ? names.join(' ') : ['relay', ...names].join(' ');
+}
+
 export function commandDoc(command: Command): CommandDoc {
   const help = new Help();
-  const path = command.name() === 'relay' ? 'relay' : `relay ${command.name()}`;
+  const path = commandPath(command);
   return {
     name: command.name(), aliases: command.aliases(),
     synopsis: `${path}${command.registeredArguments.map((arg) => ` ${arg.required ? `<${arg.name()}>` : `[${arg.name()}]`}`).join('')}`,
@@ -30,9 +37,11 @@ export function commandDocs(program: Command): CommandDoc[] {
 /** Human help and the man page deliberately consume the same derived model. */
 export function formatCommandDoc(command: Command): string {
   const doc = commandDoc(command);
+  const children = new Help().visibleCommands(command).filter((child) => child.name() !== 'help');
   const sections = [
-    `Usage: ${doc.synopsis}`,
+    `Usage: ${doc.synopsis}${children.length > 0 ? ' <command>' : ''}`,
     doc.prose,
+    ...(children.length === 0 ? [] : [`Commands:\n${children.map((child) => `  ${child.name().padEnd(28)}${child.description()}`).join('\n')}`]),
     ...(doc.aliases.length === 0 ? [] : [`Aliases:\n  ${doc.aliases.join(', ')}`]),
     ...(doc.arguments.length === 0 ? [] : [
       `Arguments:\n${doc.arguments.map((arg) => `  ${arg.term.padEnd(20)}${arg.description}${arg.defaultValue === undefined ? '' : ` (default: ${String(arg.defaultValue)})`}`).join('\n')}`,

@@ -110,6 +110,8 @@ export interface Run {
 export interface MachineRunInfo {
   /** The machine's hostname, as `relay connect` reported it. */
   host: string;
+  /** Which runner it went to: the paired machine (absent on older runs), or the person's Relay Cloud machine. */
+  runner?: 'machine' | 'cloud';
   /** `owner/name`, or the folder, of the repository the companion runs in. */
   repository: string | null;
   /** The companion's handle on the run, for following and stopping it. */
