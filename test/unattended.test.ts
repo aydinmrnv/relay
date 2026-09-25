@@ -341,7 +341,8 @@ describe('the kill switch', () => {
 });
 
 describe('the claim ledger', () => {
-  const claim = { issueId: 'github:acme/widgets#142', issueRef: '142', runId: 'r1', label: 'relay:go', actor: 'maintainer', at: '2026-08-25T09:00:00Z' };
+  // Dated now: the ledger prunes claims older than its retention window when it writes.
+  const claim = { issueId: 'github:acme/widgets#142', issueRef: '142', runId: 'r1', label: 'relay:go', actor: 'maintainer', at: new Date().toISOString() };
 
   it('claims an issue once and refuses the second claim', async () => {
     assert.equal((await claimIssue(root, claim)).claimed, true);
