@@ -135,11 +135,51 @@ from its first line.
 | `relay connect --no-open` / `--open` | never / always open the pairing page (default: only when the token is new) |
 | `relay connect --new-token` | rotate the pairing token |
 | `relay connect --json` | one line when listening — URL, port, pairing link, repository — then one per event |
+| `relay connect --hub <url>` | be a Relay Cloud runner: dial out to that hub instead of listening ([below](#a-cloud-runner)); `RELAY_HUB_URL` also works |
+| `relay connect --token-from <source>` | with `--hub`: `env` (`RELAY_RUNNER_TOKEN`, the default), `azure` or `file:<path>` |
 
 Browsers ask before a web page may reach a service on your own machine; allow
 it for the studio. If yours will not let an HTTPS page reach
 `http://127.0.0.1`, run the studio from a checkout (`cd web && npm run dev`)
 and pair that instead.
+
+### A cloud runner
+
+```bash
+relay connect --hub https://hub.example.com --token-from azure
+```
+
+`--hub` makes the companion a [Relay Cloud](design/relay-cloud-runners.md)
+runner instead: no port and no pairing link. It dials out to the hub over one
+WebSocket and keeps it open, and the studio's requests arrive down it — the
+same routes, answered by the same code. What differs is what a machine with
+nothing on it needs:
+
+- **Each run names its repository** (`owner/name`). The runner clones it once
+  under `~/.relay/repos/` (blobless, so history without file contents) and
+  fetches it before every later run; the engine branches from `origin` as
+  always. Runs wait their turn: one at a time by default
+  (`RELAY_RUNNER_MAX_RUNS`), which is what 1 GiB of memory fits.
+- **It signs in to GitHub itself**, through `gh auth login`'s device flow — a
+  code typed at github.com/login/device — and points git at `gh` for
+  github.com. Codex offers only its device code here, because ChatGPT's
+  browser sign-in returns to localhost on the runner.
+- **The connection is expected to drop.** Runs belong to the runner, not the
+  socket, so they carry on; reconnects back off exponentially with jitter, and
+  the hub picks each run's stream back up from the first record it has not
+  seen (`GET /v1/runs/:id/events?since=<seq>`).
+
+The runner token says which machine this is and whose, signed by the hub.
+`--token-from env` reads `RELAY_RUNNER_TOKEN` and removes it from the
+environment; `azure` reads the VM's user data from the instance metadata
+service at every connect, so it is never on disk; `file:<path>` reads a file.
+An operator mints one for a machine they start by hand with
+`relay hub token --user <clerk id> --runner <name>`.
+
+`relay hub serve` is the other end: the hub, configured by `RELAY_HUB_*` and
+`RELAY_CLOUD_*` variables and deployed by
+[`scripts/azure/deploy-hub.sh`](../scripts/azure/deploy-hub.sh). People never
+run it.
 
 ## What actually happens
 
@@ -310,6 +350,7 @@ README — not a defended one.
 | Command | |
 |---|---|
 | `relay connect` | pair this machine with the workflow studio: agent sign-in, real runs and installing exports, from the browser ([details](#the-studio-companion)) |
+| `relay hub serve` / `relay hub token` | run the Relay Cloud hub; mint a runner token for a machine you start yourself ([details](#a-cloud-runner)) |
 | `relay` | the home screen and a prompt: describe the work in plain words, name an issue, or type a `/command` |
 | `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |

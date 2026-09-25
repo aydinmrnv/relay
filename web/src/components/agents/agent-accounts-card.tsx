@@ -17,26 +17,32 @@ import { getConnector } from '@/lib/connectors';
 import { useAgentsStore, type BridgeState } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
-import { AGENT_IDS, AGENT_META, type AgentAccount, type AgentId, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
+import { ACCOUNT_META, AGENT_IDS, AGENT_META, type AccountId, type AgentAccount, type AgentId, type GithubAccount, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
 import { useCompanion } from '@/lib/companion/client';
 import { machineStatusText } from '@/components/companion/machine-card';
+import { cloudStatusText } from '@/components/companion/cloud-card';
 
 const CONNECTOR_FOR: Record<AgentId, string> = { claude: 'claude-code', codex: 'codex-cli' };
 
 /**
- * Sign-in state of the coding CLIs on the paired machine, and buttons that
- * start their own login flows through `relay connect`. The studio never holds
- * a credential: it asks, and it starts the CLI's login.
+ * Sign-in state of the coding CLIs on the runner — the paired machine, or the
+ * person's Relay Cloud machine — and buttons that start their own login flows
+ * there. The studio never holds a credential: it asks, and it starts the
+ * CLI's login.
  */
 export function AgentAccountsCard() {
   const bridge = useAgentsStore((state) => state.bridge);
   const status = useAgentsStore((state) => state.status);
+  const github = useAgentsStore((state) => state.github);
   const loading = useAgentsStore((state) => state.loading);
   const refresh = useAgentsStore((state) => state.refresh);
   const now = useNow();
   const companion = useCompanion((state) => state.status);
-  const host = useCompanion((state) => state.hello?.machine);
-  const [signing, setSigning] = useState<{ agent: AgentId; mode: LoginMode } | null>(null);
+  const cloud = useCompanion((state) => state.target === 'cloud');
+  const cloudStatus = useCompanion((state) => state.cloud);
+  const withGithub = useCompanion((state) => (state.hello?.capabilities ?? []).includes('github'));
+  const host = useCompanion((state) => (state.target === 'cloud' ? 'your cloud machine' : state.hello?.machine));
+  const [signing, setSigning] = useState<{ agent: AccountId; mode: LoginMode } | null>(null);
 
   return (
     <Card>
@@ -44,7 +50,7 @@ export function AgentAccountsCard() {
         <CardTitle>Agent accounts</CardTitle>
         <CardDescription>
           {bridge === 'unavailable'
-            ? `${machineStatusText(companion, host)}, so the studio cannot ask the CLIs.`
+            ? `${cloud ? cloudStatusText(companion, cloudStatus) : machineStatusText(companion, host)}, so the studio cannot ask the CLIs.`
             : status === null
               ? `Asking the CLIs on ${host ?? 'your machine'}…`
               : `Read live from the CLIs on ${host ?? 'your machine'}, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
@@ -59,18 +65,23 @@ export function AgentAccountsCard() {
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3">
-        {bridge === 'unavailable' ? (
+        {bridge === 'unavailable' && cloud ? (
           <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-pretty text-amber-800 dark:text-warning">
-            Sign-in from the browser goes through your machine. Run <span className="font-mono">relay connect</span> in your repository and open the link it prints (see This machine, above), or sign in from a terminal with{' '}
+            Sign-in goes through your Relay Cloud machine, and it is not awake. Start it under Where agents run, above; it keeps every sign-in while it sleeps.
+          </div>
+        ) : bridge === 'unavailable' ? (
+          <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-pretty text-amber-800 dark:text-warning">
+            Sign-in from the browser goes through your machine. Run <span className="font-mono">relay connect</span> in your repository and open the link it prints (see Where agents run, above), or sign in from a terminal with{' '}
             <span className="font-mono">claude auth login</span> and <span className="font-mono">codex login</span>.
           </div>
         ) : null}
         {AGENT_IDS.map((id) => (
-          <AgentRow key={id} id={id} account={status?.agents[id] ?? null} bridge={bridge} onSignIn={(mode) => setSigning({ agent: id, mode })} />
+          <AgentRow key={id} id={id} account={status?.agents[id] ?? null} bridge={bridge} cloud={cloud} onSignIn={(mode) => setSigning({ agent: id, mode })} />
         ))}
+        {withGithub ? <GithubRow account={github} bridge={bridge} onSignIn={() => setSigning({ agent: 'github', mode: 'device' })} /> : null}
       </CardContent>
       <CardFooter className="flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-        <span>These sign-ins live in the CLIs on your machine. GitHub Actions needs its own secrets.</span>
+        <span>{cloud ? 'These sign-ins live in the CLIs on your own cloud machine, which nobody else’s runs touch.' : 'These sign-ins live in the CLIs on your machine.'} GitHub Actions needs its own secrets.</span>
         <Link href="/settings#credentials" className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline">
           Credentials for exported workflows <ArrowRight className="size-3" aria-hidden />
         </Link>
@@ -80,7 +91,7 @@ export function AgentAccountsCard() {
   );
 }
 
-function AgentRow({ id, account, bridge, onSignIn }: { id: AgentId; account: AgentAccount | null; bridge: BridgeState; onSignIn: (mode: LoginMode) => void }) {
+function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; account: AgentAccount | null; bridge: BridgeState; cloud: boolean; onSignIn: (mode: LoginMode) => void }) {
   const meta = AGENT_META[id];
   const connector = getConnector(CONNECTOR_FOR[id]);
   const logout = useAgentsStore((state) => state.logout);
@@ -89,9 +100,14 @@ function AgentRow({ id, account, bridge, onSignIn }: { id: AgentId; account: Age
   const signedIn = account?.loggedIn === true;
   const installed = account?.installed === true;
   const canStart = bridge === 'available' && installed;
+  // ChatGPT's browser sign-in returns to localhost on the machine running Codex,
+  // which a cloud machine's browser-less owner cannot reach: there, the device code is the way.
+  const primary: LoginMode = cloud && id === 'codex' ? 'device' : 'browser';
   const alternative =
     id === 'codex'
-      ? { mode: 'device' as const, icon: Smartphone, label: 'Sign in with a device code instead', hint: 'Shows a one-time code to type on OpenAI’s page. Handy when this browser is not where you are signed in.' }
+      ? cloud
+        ? null
+        : { mode: 'device' as const, icon: Smartphone, label: 'Sign in with a device code instead', hint: 'Shows a one-time code to type on OpenAI’s page. Handy when this browser is not where you are signed in.' }
       : { mode: 'console' as const, icon: KeyRound, label: 'Use an Anthropic Console API account instead', hint: 'Signs Claude Code in with a Console account. Usage is billed per token to it, not to a Claude plan.' };
 
   return (
@@ -152,17 +168,19 @@ function AgentRow({ id, account, bridge, onSignIn }: { id: AgentId; account: Age
           </Button>
         ) : (
           <>
-            <Button size="sm" disabled={!canStart} onClick={() => onSignIn('browser')}>
+            <Button size="sm" disabled={!canStart} onClick={() => onSignIn(primary)}>
               {id === 'claude' ? 'Sign in with Claude' : 'Sign in with ChatGPT'}
             </Button>
-            <Tooltip>
-              <TooltipTrigger render={<Button size="icon-sm" variant="ghost" aria-label={alternative.label} disabled={!canStart} onClick={() => onSignIn(alternative.mode)} />}>
-                <alternative.icon />
-              </TooltipTrigger>
-              <TooltipContent className="max-w-64">
-                <span className="font-medium">{alternative.label}.</span> {alternative.hint}
-              </TooltipContent>
-            </Tooltip>
+            {alternative === null ? null : (
+              <Tooltip>
+                <TooltipTrigger render={<Button size="icon-sm" variant="ghost" aria-label={alternative.label} disabled={!canStart} onClick={() => onSignIn(alternative.mode)} />}>
+                  <alternative.icon />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-64">
+                  <span className="font-medium">{alternative.label}.</span> {alternative.hint}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </>
         )}
       </div>
@@ -170,16 +188,70 @@ function AgentRow({ id, account, bridge, onSignIn }: { id: AgentId; account: Age
   );
 }
 
+/** GitHub on a cloud machine: what clones private repositories and opens the pull request. */
+function GithubRow({ account, bridge, onSignIn }: { account: GithubAccount | null; bridge: BridgeState; onSignIn: () => void }) {
+  const logout = useAgentsStore((state) => state.logout);
+  const [busy, setBusy] = useState(false);
+  const signedIn = account?.loggedIn === true;
+  const connector = getConnector('github');
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+      {connector === undefined ? null : <ConnectorIcon connector={connector} size={18} />}
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+          GitHub
+          {signedIn ? (
+            <Badge variant="outline" className="border-success/40 bg-success/10 text-[10px] text-success">
+              Signed in
+            </Badge>
+          ) : bridge === 'available' ? (
+            <Badge variant="outline" className="border-warning/40 bg-warning/10 text-[10px] text-amber-700 dark:text-warning">
+              Not signed in
+            </Badge>
+          ) : null}
+        </p>
+        <p className="truncate text-xs text-muted-foreground">
+          {signedIn && account?.login ? `@${account.login} — clones your repositories and opens pull requests.` : 'Needed for private repositories and for pull requests. A one-time code, typed at github.com.'}
+        </p>
+      </div>
+      {signedIn ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await logout('github');
+              toast('Signed out of GitHub.');
+            } catch (error) {
+              toast.error(error instanceof Error ? error.message : String(error));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? <Spinner data-icon="inline-start" /> : <LogOut data-icon="inline-start" />} Sign out
+        </Button>
+      ) : (
+        <Button size="sm" disabled={bridge !== 'available' || account?.installed === false} onClick={onSignIn}>
+          Sign in to GitHub
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 
-function SignInDialog({ request, onClose }: { request: { agent: AgentId; mode: LoginMode } | null; onClose: () => void }) {
+function SignInDialog({ request, onClose }: { request: { agent: AccountId; mode: LoginMode } | null; onClose: () => void }) {
   if (request === null) return null;
   // Keyed by agent+mode so every new request mounts with fresh state instead of
   // resetting the old state inside an effect.
   return <SignInFlow key={`${request.agent}:${request.mode}`} agent={request.agent} mode={request.mode} onClose={onClose} />;
 }
 
-function SignInFlow({ agent, mode, onClose }: { agent: AgentId; mode: LoginMode; onClose: () => void }) {
+function SignInFlow({ agent, mode, onClose }: { agent: AccountId; mode: LoginMode; onClose: () => void }) {
   const startLogin = useAgentsStore((state) => state.startLogin);
   const pollLogin = useAgentsStore((state) => state.pollLogin);
   const submitCode = useAgentsStore((state) => state.submitCode);
@@ -205,7 +277,7 @@ function SignInFlow({ agent, mode, onClose }: { agent: AgentId; mode: LoginMode;
         if (next.status === 'pending') timer = setTimeout(() => void tick(id), 1500);
         else if (next.status === 'succeeded') {
           await refresh();
-          toast.success(`${AGENT_META[next.agent].name} is signed in.`);
+          toast.success(`${ACCOUNT_META[next.agent].name} is signed in.`);
           onClose();
         } else if (next.status === 'failed') setError(next.error ?? 'Sign-in failed.');
       } catch (caught) {
@@ -240,7 +312,7 @@ function SignInFlow({ agent, mode, onClose }: { agent: AgentId; mode: LoginMode;
 
   const close = () => onClose();
 
-  const meta = AGENT_META[agent];
+  const meta = ACCOUNT_META[agent];
   const title = mode === 'console' ? `Sign in to ${meta.name} with an API account` : mode === 'device' ? `Sign in to ${meta.name} with a device code` : `Sign in to ${meta.name}`;
 
   return (

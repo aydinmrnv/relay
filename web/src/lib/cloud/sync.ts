@@ -58,6 +58,16 @@ export function setTokenGetter(getter: (() => Promise<string | null>) | null): v
   tokenGetter = getter;
 }
 
+/** A fresh Clerk session token, or null for a guest. The Relay Cloud hub takes the same token. */
+export async function sessionToken(): Promise<string | null> {
+  if (tokenGetter === null) return null;
+  try {
+    return await tokenGetter();
+  } catch {
+    return null;
+  }
+}
+
 async function authorization(): Promise<Record<string, string>> {
   if (tokenGetter === null) return {};
   try {

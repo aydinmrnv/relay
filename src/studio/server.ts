@@ -1,22 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { hostname } from 'node:os';
 
 import { errorMessage } from '../util/errors.ts';
-import { agentsStatus as liveAgentsStatus, AGENT_META, isAgentId, isLoginMode, LoginSessions, logout as liveLogout } from './agents.ts';
-import { InstallError, installFiles as liveInstallFiles } from './install.ts';
+import type { LoginSessions } from './agents.ts';
 import { tokensMatch } from './pairing.ts';
-import {
-  PROTOCOL_VERSION,
-  type AgentId,
-  type AgentsStatus,
-  type CompanionCapability,
-  type CompanionRepository,
-  type CompanionRunView,
-  type HelloResponse,
-  type InstallResponse,
-  type RunStreamRecord,
-} from './protocol.ts';
-import { parseStartRequest, TaskError, type StudioRuns } from './runs.ts';
+import type { AccountId, AgentsStatus, CompanionRepository, InstallResponse, RunStreamRecord } from './protocol.ts';
+import { createRouter, RouteError, type CompanionEvent, type RouteResult } from './router.ts';
+import type { StudioRuns } from './runs.ts';
+
+export type { CompanionEvent } from './router.ts';
 
 /**
  * The companion's HTTP side: a server on the loopback interface that only a
@@ -37,11 +28,6 @@ import { parseStartRequest, TaskError, type StudioRuns } from './runs.ts';
  *      greeting says nothing about this machine without it.
  */
 
-export interface CompanionEvent {
-  kind: 'paired' | 'refused' | 'login' | 'run-started' | 'run-finished' | 'installed' | 'error';
-  message: string;
-}
-
 export interface CompanionOptions {
   token: string;
   /** Origins allowed to call, e.g. `https://studio.example` and `http://localhost:3000`. */
@@ -54,7 +40,7 @@ export interface CompanionOptions {
   log?: (event: CompanionEvent) => void;
   /** Seams for the tests; the defaults ask the real CLIs and write the real repository. */
   agentsStatus?: () => Promise<AgentsStatus>;
-  logout?: (agent: AgentId) => Promise<{ ok: boolean; detail: string }>;
+  logout?: (account: AccountId) => Promise<{ ok: boolean; detail: string }>;
   logins?: LoginSessions;
   installFiles?: (root: string, files: unknown) => Promise<InstallResponse>;
   heartbeatMs?: number;
@@ -70,13 +56,8 @@ export interface Companion {
 const MAX_BODY = 2_000_000;
 const LOOPBACK_NAMES = ['127.0.0.1', 'localhost', '[::1]'];
 
-class HttpError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+/** The loopback server's own refusals share the router's error, so one handler answers both. */
+const HttpError = RouteError;
 
 export function normalizeOrigin(value: string): string {
   const url = new URL(value);
@@ -86,22 +67,26 @@ export function normalizeOrigin(value: string): string {
 export function createCompanion(options: CompanionOptions): Companion {
   const origins = new Set(options.origins.map(normalizeOrigin));
   const log = options.log ?? (() => undefined);
-  const logins = options.logins ?? new LoginSessions();
-  const agentsStatus = options.agentsStatus ?? liveAgentsStatus;
-  const logout = options.logout ?? liveLogout;
-  const install = options.installFiles ?? liveInstallFiles;
   const heartbeatMs = options.heartbeatMs ?? 15_000;
-  const startedAt = new Date().toISOString();
   const pairedOrigins = new Set<string>();
   const refusedOrigins = new Set<string>();
   const streams = new Set<ServerResponse>();
   let boundPort = 0;
 
-  const capabilities: CompanionCapability[] = options.runs === null ? ['agents'] : ['agents', 'runs', 'install'];
+  const router = createRouter({
+    version: options.version,
+    repository: options.repository,
+    runs: options.runs,
+    log,
+    ...(options.agentsStatus === undefined ? {} : { agentsStatus: options.agentsStatus }),
+    ...(options.logout === undefined ? {} : { logout: options.logout }),
+    ...(options.logins === undefined ? {} : { logins: options.logins }),
+    ...(options.installFiles === undefined ? {} : { installFiles: options.installFiles }),
+  });
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
-      const status = error instanceof HttpError ? error.status : 500;
+      const status = error instanceof RouteError ? error.status : 500;
       if (status === 500) log({ kind: 'error', message: errorMessage(error) });
       if (!response.headersSent) send(response, status, { error: errorMessage(error) });
       else response.end();
@@ -152,141 +137,26 @@ export function createCompanion(options: CompanionOptions): Companion {
     const header = request.headers.authorization ?? '';
     const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : null;
     const authorized = tokensMatch(options.token, presented);
+    const method = request.method ?? 'GET';
+    const url = request.url ?? '/';
 
-    const url = new URL(request.url ?? '/', `http://127.0.0.1:${boundPort}`);
-    const parts = url.pathname.split('/').filter(Boolean);
-    const route = `${request.method ?? 'GET'} /${parts.map((part, index) => (index >= 2 ? ':' : part)).join('/')}`;
-
-    if (route === 'GET /v1/hello') {
-      const hello: HelloResponse = { product: 'relay', protocol: PROTOCOL_VERSION, authorized };
-      if (authorized) {
-        if (origin !== undefined && !pairedOrigins.has(origin)) {
-          pairedOrigins.add(origin);
-          log({ kind: 'paired', message: `Studio connected from ${origin}.` });
-        }
-        Object.assign(hello, {
-          version: options.version,
-          machine: hostname(),
-          platform: process.platform,
-          repository: options.repository,
-          capabilities,
-          startedAt,
-        });
+    if (method === 'GET' && new URL(url, 'http://127.0.0.1').pathname.replace(/\/+$/, '') === '/v1/hello') {
+      if (authorized && origin !== undefined && !pairedOrigins.has(origin)) {
+        pairedOrigins.add(origin);
+        log({ kind: 'paired', message: `Studio connected from ${origin}.` });
       }
-      send(response, 200, hello);
+      send(response, 200, router.hello(authorized));
       return;
     }
 
     if (!authorized) throw new HttpError(401, 'Pair this studio first: open the link `relay connect` printed.');
 
-    const [, , a, b, c] = parts;
-    switch (route) {
-      case 'GET /v1/agents':
-        send(response, 200, await agentsStatus());
-        return;
-
-      case 'POST /v1/agents/:/:': {
-        if (!isAgentId(a)) throw new HttpError(404, 'Unknown agent.');
-        if (b === 'logout') {
-          const result = await logout(a);
-          if (result.ok) log({ kind: 'login', message: `Signed out of ${AGENT_META[a].name}.` });
-          send(response, result.ok ? 200 : 500, result);
-          return;
-        }
-        if (b !== 'login') throw new HttpError(404, 'No such route.');
-        const body = await readJson(request, { optional: true });
-        const mode = (body as { mode?: unknown } | undefined)?.mode ?? 'browser';
-        if (!isLoginMode(mode)) throw new HttpError(400, 'Unknown sign-in mode.');
-        const started = await logins.start(a, mode);
-        if (!started.ok) throw new HttpError(500, started.error);
-        log({ kind: 'login', message: `Started ${AGENT_META[a].name}'s own sign-in for the studio.` });
-        send(response, 200, (await logins.awaitDetails(started.session.id)) ?? started.session);
-        return;
-      }
-
-      case 'GET /v1/logins/:': {
-        const found = logins.get(a ?? '');
-        if (found === undefined) throw new HttpError(404, 'No such sign-in.');
-        send(response, 200, found);
-        return;
-      }
-
-      case 'DELETE /v1/logins/:':
-        send(response, 200, { ok: logins.cancel(a ?? '') });
-        return;
-
-      case 'POST /v1/logins/:/:': {
-        if (b !== 'code') throw new HttpError(404, 'No such route.');
-        const body = (await readJson(request)) as { code?: unknown };
-        const result = logins.submitCode(a ?? '', typeof body.code === 'string' ? body.code : '');
-        send(response, result.ok ? 200 : 400, result);
-        return;
-      }
-
-      case 'GET /v1/runs':
-        send(response, 200, { runs: requireRuns().list() });
-        return;
-
-      case 'POST /v1/runs': {
-        const runs = requireRuns();
-        let started: CompanionRunView;
-        try {
-          started = await runs.start(parseStartRequest(await readJson(request)));
-        } catch (error) {
-          if (error instanceof TaskError) throw new HttpError(400, error.message);
-          throw error;
-        }
-        log({ kind: 'run-started', message: `Running "${started.workflow.name}" for the studio: ${describeTask(started)}.` });
-        send(response, 201, started);
-        return;
-      }
-
-      case 'GET /v1/runs/:':
-      case 'GET /v1/runs/:/:': {
-        const found = requireRuns().get(a ?? '');
-        if (found === undefined) throw new HttpError(404, 'No such run on this companion.');
-        if (b === 'events' && c === undefined) {
-          stream(response, a ?? '');
-          return;
-        }
-        if (b !== undefined) throw new HttpError(404, 'No such route.');
-        send(response, 200, found);
-        return;
-      }
-
-      case 'DELETE /v1/runs/:': {
-        const stopped = await requireRuns().cancel(a ?? '');
-        if (!stopped) throw new HttpError(404, 'That run is not running here.');
-        send(response, 202, { ok: true });
-        return;
-      }
-
-      case 'POST /v1/install': {
-        if (options.repository === null) throw new HttpError(409, 'This companion was started outside a repository, so there is nowhere to install to.');
-        const body = (await readJson(request)) as { files?: unknown };
-        try {
-          const result = await install(options.repository.root, body.files);
-          const changed = result.files.filter((file) => file.status !== 'unchanged').map((file) => file.path);
-          log({ kind: 'installed', message: changed.length === 0 ? 'Installed an export; every file was already up to date.' : `Installed ${changed.join(', ')}.` });
-          send(response, 200, result);
-        } catch (error) {
-          if (error instanceof InstallError) throw new HttpError(400, error.message);
-          throw error;
-        }
-        return;
-      }
-
-      default:
-        throw new HttpError(404, 'No such route.');
-    }
+    const result: RouteResult = await router.handle({ method, url, json: (opts) => readJson(request, opts) });
+    if (result.kind === 'json') send(response, result.status, result.body);
+    else stream(response, result.follow);
   }
 
-  function requireRuns(): StudioRuns {
-    if (options.runs === null) throw new HttpError(409, 'This companion was started outside a repository. Start `relay connect` inside the repository the workflow runs on.');
-    return options.runs;
-  }
-
-  function stream(response: ServerResponse, id: string): void {
+  function stream(response: ServerResponse, follow: (write: (record: RunStreamRecord) => void) => () => void): void {
     response.writeHead(200, {
       'content-type': 'application/x-ndjson; charset=utf-8',
       'cache-control': 'no-store',
@@ -310,7 +180,8 @@ export function createCompanion(options: CompanionOptions): Companion {
       }
     }
     response.on('close', done);
-    unsubscribe = options.runs?.subscribe(id, write);
+    unsubscribe = follow(write);
+    if (response.writableEnded) done();
   }
 
   return {
@@ -329,18 +200,12 @@ export function createCompanion(options: CompanionOptions): Companion {
       }),
     close: () =>
       new Promise<void>((resolve) => {
-        logins.cancelAll();
+        router.logins.cancelAll();
         for (const response of streams) response.end();
         server.close(() => resolve());
         server.closeAllConnections();
       }),
   };
-}
-
-function describeTask(run: CompanionRunView): string {
-  if (run.task.kind === 'issue') return `issue ${run.task.ref}`;
-  const text = run.task.text.replace(/\s+/g, ' ');
-  return `"${text.length > 60 ? `${text.slice(0, 57)}…` : text}"`;
 }
 
 function send(response: ServerResponse, status: number, body: unknown): void {

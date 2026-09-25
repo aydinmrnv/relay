@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ReactFlowProvider, addEdge, applyEdgeChanges, applyNodeChanges, useReactFlow, type EdgeChange, type NodeChange, type OnConnect } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import { AlertTriangle, Check, ChevronDown, CircleAlert, CircleDollarSign, FileCode2, FileJson, Globe, History, Laptop, LayoutTemplate, Loader2, PanelLeft, PanelRight, Play, Plug, Plus, Redo2, Sparkles, Undo2, Wand2, Zap } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, CircleAlert, CircleDollarSign, Cloud, FileCode2, FileJson, Globe, History, Laptop, LayoutTemplate, Loader2, PanelLeft, PanelRight, Play, Plug, Plus, Redo2, Sparkles, Undo2, Wand2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -102,7 +102,10 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   const [shareOpen, setShareOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [forecastOpen, setForecastOpen] = useState(false);
-  const canRunOnMachine = useCompanionCan('runs');
+  const cloudTarget = useCompanion((state) => state.target === 'cloud' && state.cloudHub !== null);
+  const machineCanRun = useCompanionCan('runs');
+  // A cloud machine that is asleep can still be picked: the dialog offers to start it.
+  const canRunOnMachine = cloudTarget || machineCanRun;
   const machineHost = useCompanion((state) => state.hello?.machine);
   const [picker, setPicker] = useState<{ open: boolean; source: PickerSource | null; position: { x: number; y: number } | null }>({ open: false, source: null, position: null });
   const [runOpen, setRunOpen] = useState(false);
@@ -535,7 +538,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
 
   /** The same as a test run, except that it happens: on the paired machine, through `relay connect`. */
   const machineRun = useCallback(
-    async (task: RunTask) => {
+    async (task: RunTask, repository?: string) => {
       if (workflow === null || running) return;
       if (validation !== null && !validation.ok) {
         toast.error(`Fix ${validation.errors} problem${validation.errors === 1 ? '' : 's'} before running`, { description: validation.issues.find((issue) => issue.level === 'error')?.message });
@@ -547,6 +550,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
       setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: 'pending', phase: undefined } })));
       try {
         const result = await launchMachineRun(workflow, task, {
+          ...(repository === undefined ? {} : { repository }),
           onEvent: (event, snapshot) => {
             runIdRef.current = snapshot.id;
             applyEvent(event, snapshot);
@@ -735,7 +739,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>For real</DropdownMenuLabel>
                     <DropdownMenuItem onClick={() => setMachineOpen(true)} disabled={!canRunOnMachine || !hasTrigger}>
-                      <Laptop /> {canRunOnMachine ? `Run on ${machineHost ?? 'this machine'}…` : 'Run on this machine…'}
+                      {cloudTarget ? <Cloud /> : <Laptop />} {cloudTarget ? 'Run in Relay Cloud…' : canRunOnMachine ? `Run on ${machineHost ?? 'this machine'}…` : 'Run on this machine…'}
                     </DropdownMenuItem>
                     {canRunOnMachine ? null : (
                       <DropdownMenuItem render={<Link href="/connect" />}>
@@ -818,9 +822,9 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
           workflow={workflow}
           open={machineOpen}
           onOpenChange={setMachineOpen}
-          onRun={(task) => {
+          onRun={(task, repository) => {
             setMachineOpen(false);
-            void machineRun(task);
+            void machineRun(task, repository);
           }}
         />
         <NodePicker open={picker.open} onOpenChange={(open) => setPicker((current) => ({ ...current, open }))} source={picker.source} needsTrigger={!hasTrigger} onPick={onPick} />

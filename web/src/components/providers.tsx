@@ -23,6 +23,10 @@ export function Providers({ capabilities: rendered, clerk, children }: { capabil
   const built = clerk ? rendered : { ...rendered, enabled: false };
   // What the page was rendered with; replaced if the running server says otherwise.
   const [capabilities, setCapabilities] = useState(built);
+  useEffect(() => {
+    // Relay Cloud needs an account: its hub knows people by their Clerk session.
+    useCompanion.getState().setCloudHub(capabilities.enabled ? (capabilities.cloudHub ?? null) : null);
+  }, [capabilities]);
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <CapabilitiesContext value={capabilities}>
@@ -86,9 +90,11 @@ function AccountBoot({ capabilities, onRuntime }: { capabilities: AuthCapabiliti
     fetch('/api/capabilities')
       .then((response) => (response.ok ? (response.json() as Promise<AuthCapabilities>) : null))
       .then((runtime) => {
-        if (cancelled || runtime === null || runtime.enabled === capabilities.enabled) return;
+        if (cancelled || runtime === null) return;
+        const sameHub = (runtime.cloudHub ?? null) === (capabilities.cloudHub ?? null);
+        if (runtime.enabled === capabilities.enabled && sameHub) return;
         onRuntime(runtime);
-        void startAccount(runtime);
+        if (runtime.enabled !== capabilities.enabled) void startAccount(runtime);
       })
       .catch(() => undefined);
     return () => {
@@ -169,9 +175,12 @@ function MachineRunsFollower() {
   const hydrated = useStudio((state) => state.hydrated);
   const runs = useStudio((state) => state.runs);
   const connected = useCompanion((state) => state.status === 'connected');
+  const target = useCompanion((state) => state.target);
   useEffect(() => {
     if (!hydrated || !connected) return;
-    for (const run of runs) if (run.source === 'machine' && run.status === 'running') void attachMachineRun(run);
-  }, [hydrated, connected, runs]);
+    for (const run of runs) {
+      if (run.source === 'machine' && run.status === 'running' && (run.machine?.runner ?? 'machine') === target) void attachMachineRun(run);
+    }
+  }, [hydrated, connected, target, runs]);
   return null;
 }

@@ -170,11 +170,11 @@ In GitHub Actions the export uses each vendor's supported way of carrying a
 personal plan into CI — `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and
 `CODEX_AUTH_JSON` holding `~/.codex/auth.json` — or API keys, if you prefer them.
 
-Relay Cloud, the hosted product, keeps the same rule. It is designed, not built:
-each user gets a cloud machine of their own, signs Claude Code and Codex in there
-through the vendors' own pages, and Relay still never holds a token.
-[The design](docs/design/relay-cloud-runners.md) covers how that machine is
-run, reached and kept cheap.
+Relay Cloud, the hosted runner, keeps the same rule: each user gets a cloud
+machine of their own, signs Claude Code, Codex and GitHub in there through the
+vendors' own pages, and Relay still never holds a token. It is built and
+invite-only; [the design](docs/design/relay-cloud-runners.md) covers how that
+machine is run, reached, kept cheap and kept working.
 
 ## Why a run nobody watched is worth reading
 
@@ -208,15 +208,16 @@ Relay is in beta at <https://relay-olive-omega.vercel.app>, and free. Accounts
 keep your workflows, runs and settings in any browser; as a guest they stay in
 your browser's storage. Everything that needs your machine — agent sign-in, real
 runs, installing an export — goes through `relay connect`, which pairs with the
-hosted studio as readily as with a local one. Hosted runs are the next step,
-and [designed](docs/design/relay-cloud-runners.md): a cloud machine per user,
-signed in with that user's own plans.
+hosted studio as readily as with a local one, or through Relay Cloud: a cloud
+machine per user, signed in with that user's own plans
+([how it works](docs/design/relay-cloud-runners.md)), invite-only for now.
 
 | Works today | Simulated in the studio | Planned for the hosted product |
 |---|---|---|
 | Accounts (Clerk: email, Google, GitHub), onboarding, cloud sync, share links and remixes, version history | | |
-| The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A cloud runner per user, on your own plans ([design](docs/design/relay-cloud-runners.md)) |
+| The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | Triggers that wake a cloud runner |
 | Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your machine, installing an export | App connections: "Connect" stores a local flag | Real webhooks for every connector |
+| Relay Cloud (invite-only): a machine of your own on Azure, woken for a run and put to sleep when idle ([how](docs/design/relay-cloud-runners.md)) | | |
 | Exported workflows running on GitHub Actions, through the engine | Approvals: auto-approved after a delay | Approvals from Slack and email |
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
 
@@ -281,13 +282,13 @@ support the design, the defaults change.
 | Path | What |
 |---|---|
 | [`web/`](web/README.md) | The workflow studio: a Next.js app with the builder, templates, runs, integrations and the export |
-| `src/` | The `relay` CLI (TypeScript, Node ≥ 22.6): the studio companion in `src/studio/`, and the engine |
+| `src/` | The `relay` CLI (TypeScript, Node ≥ 22.6): the studio companion in `src/studio/`, the Relay Cloud hub and runner in `src/cloud/`, and the engine |
 | `action.yml` | The GitHub Action that exported workflows run |
 | [`docs/cli.md`](docs/cli.md) | The CLI reference: the companion and the engine |
-| [`docs/design/`](docs/design/relay-cloud-runners.md) | Designs for what is not built yet: Relay Cloud runners |
+| [`docs/design/`](docs/design/relay-cloud-runners.md) | Relay Cloud runners: how they work, and what is next |
 | [`eval/`](eval/README.md) | The eval harness and its fixtures |
 | `test/`, `scripts/`, `bin/` | The engine's tests, CI fixtures and entry point |
-| `scripts/azure/` | Creates a development runner VM on Azure |
+| `scripts/azure/` | Deploys the Relay Cloud hub on Azure, and creates a development runner VM |
 
 ## Development
 
@@ -324,6 +325,26 @@ Every variable is described in [`web/.env.example`](web/.env.example). Without a
 database the deployment still works as the browser-only studio, with sign-up
 switched off. `GET /api/health` reports the database and which sign-in methods
 are on.
+
+### Relay Cloud on Azure
+
+`scripts/azure/deploy-hub.sh` deploys the hub and everything the runner
+machines need: a resource group, one network per runner region, the hub as a
+system service with a managed identity scoped to that resource group, and a
+public HTTPS address through Tailscale Funnel or a static IP with Caddy. It is
+safe to run again, and `--upgrade` ships new code.
+
+```bash
+az login
+scripts/azure/deploy-hub.sh --vm relay-dev/relay-runner \
+  --clerk-publishable-key pk_test_… --allow user_2abc…   # on a VM you have, via Funnel
+scripts/azure/deploy-hub.sh --vm relay-dev/relay-runner --upgrade
+```
+
+Then set `RELAY_CLOUD_HUB_URL` to the address it prints on the studio's
+deployment. Who may have a machine is `--allow` (Clerk user ids, or `'*'`);
+nobody may until you say. The [design](docs/design/relay-cloud-runners.md#hosting-on-azure)
+lists what it costs.
 
 ### A runner VM on Azure
 

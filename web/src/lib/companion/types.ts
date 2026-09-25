@@ -6,7 +6,25 @@
 
 export const DEFAULT_COMPANION_PORT = 4477;
 
-export type CompanionCapability = 'agents' | 'runs' | 'install';
+/**
+ * `repositories`: each run names its GitHub repository and the runner checks
+ * it out (a Relay Cloud machine). `github`: the runner signs in to GitHub
+ * itself (a Relay Cloud machine again).
+ */
+export type CompanionCapability = 'agents' | 'runs' | 'install' | 'repositories' | 'github';
+
+/** A Relay Cloud machine, as the hub describes it. Mirrors `CloudRunnerStatus` in the engine. */
+export type CloudRunnerState = 'none' | 'queued' | 'creating' | 'starting' | 'ready' | 'stopping' | 'asleep' | 'failed' | 'deleting' | 'offline';
+
+export interface CloudRunnerStatus {
+  state: CloudRunnerState;
+  managed: boolean;
+  region: string | null;
+  since: string;
+  position: number | null;
+  error: string | null;
+  activity: { runs: number; queued: number; logins: number } | null;
+}
 
 export interface CompanionRepository {
   root: string;
@@ -25,6 +43,8 @@ export interface HelloResponse {
   repository?: CompanionRepository | null;
   capabilities?: CompanionCapability[];
   startedAt?: string;
+  /** Present when the answer came through a Relay Cloud hub. */
+  cloud?: CloudRunnerStatus;
 }
 
 export type RunTask = { kind: 'issue'; ref: string } | { kind: 'prompt'; text: string };
@@ -34,6 +54,9 @@ export interface CompanionRunView {
   workflow: { id: string; name: string };
   task: RunTask;
   status: 'running' | 'exited';
+  /** `queued` behind another run, `preparing` its checkout, then `running`. */
+  stage?: 'queued' | 'preparing' | 'running' | 'exited';
+  repository?: string | null;
   runId: string | null;
   exitCode: number | null;
   startedAt: string;
