@@ -80,6 +80,8 @@ There are no API keys to paste. Claude Code signs in with your Claude plan and C
 
 For GitHub Actions, the export uses the vendors' supported ways of carrying a personal plan into CI: `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and `CODEX_AUTH_JSON` holding `~/.codex/auth.json` (OpenAI's documented method; not for public repositories). Settings can switch either agent to an API key instead.
 
+Relay Cloud is designed, not built. In it, the same sign-ins happen on a cloud machine of each user's own. That machine offers only the flows a machine without a browser can finish: Claude's paste-code page and Codex's device code. See [the design](../docs/design/relay-cloud-runners.md).
+
 ## The name is not decided
 
 Nothing hard-codes "Relay". The default comes from `NEXT_PUBLIC_PRODUCT_NAME` (and `NEXT_PUBLIC_PRODUCT_TAGLINE`) at build time; the settings page overrides it at runtime and stores the override locally. Slugs, trigger labels, branch prefixes, exports and page titles all follow.
@@ -138,4 +140,4 @@ Add a `defineConnector({...})` entry to one of the catalog files. Triggers and a
 | Brand rename, import/export of your data | Approvals (auto-approved after a delay) |
 | Validation, the plain-English description, the zip export | |
 
-The simulated column is what the hosted product replaces: runs on a fresh runner, real webhooks for every connector, and approvals from Slack and email. Until then, a workflow runs for real on your machine through `relay connect`, or unattended through its export.
+The simulated column is what the hosted product replaces: runs on a cloud runner per user ([design](../docs/design/relay-cloud-runners.md)), real webhooks for every connector, and approvals from Slack and email. Until then, a workflow runs for real on your machine through `relay connect`, or unattended through its export.

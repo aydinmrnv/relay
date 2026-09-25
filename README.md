@@ -170,6 +170,12 @@ In GitHub Actions the export uses each vendor's supported way of carrying a
 personal plan into CI — `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and
 `CODEX_AUTH_JSON` holding `~/.codex/auth.json` — or API keys, if you prefer them.
 
+Relay Cloud, the hosted product, keeps the same rule. It is designed, not built:
+each user gets a cloud machine of their own, signs Claude Code and Codex in there
+through the vendors' own pages, and Relay still never holds a token.
+[The design](docs/design/relay-cloud-runners.md) covers how that machine is
+run, reached and kept cheap.
+
 ## Why a run nobody watched is worth reading
 
 Running agents is the easy part. These are the rules that make the result
@@ -202,12 +208,14 @@ Relay is in beta at <https://relay-olive-omega.vercel.app>, and free. Accounts
 keep your workflows, runs and settings in any browser; as a guest they stay in
 your browser's storage. Everything that needs your machine — agent sign-in, real
 runs, installing an export — goes through `relay connect`, which pairs with the
-hosted studio as readily as with a local one. Hosted runs are the next step.
+hosted studio as readily as with a local one. Hosted runs are the next step,
+and [designed](docs/design/relay-cloud-runners.md): a cloud machine per user,
+signed in with that user's own plans.
 
 | Works today | Simulated in the studio | Planned for the hosted product |
 |---|---|---|
 | Accounts (Clerk: email, Google, GitHub), onboarding, cloud sync, share links and remixes, version history | | |
-| The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A fresh runner per run |
+| The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | A cloud runner per user, on your own plans ([design](docs/design/relay-cloud-runners.md)) |
 | Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your machine, installing an export | App connections: "Connect" stores a local flag | Real webhooks for every connector |
 | Exported workflows running on GitHub Actions, through the engine | Approvals: auto-approved after a delay | Approvals from Slack and email |
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
@@ -276,8 +284,10 @@ support the design, the defaults change.
 | `src/` | The `relay` CLI (TypeScript, Node ≥ 22.6): the studio companion in `src/studio/`, and the engine |
 | `action.yml` | The GitHub Action that exported workflows run |
 | [`docs/cli.md`](docs/cli.md) | The CLI reference: the companion and the engine |
+| [`docs/design/`](docs/design/relay-cloud-runners.md) | Designs for what is not built yet: Relay Cloud runners |
 | [`eval/`](eval/README.md) | The eval harness and its fixtures |
 | `test/`, `scripts/`, `bin/` | The engine's tests, CI fixtures and entry point |
+| `scripts/azure/` | Creates a development runner VM on Azure |
 
 ## Development
 
@@ -314,6 +324,29 @@ Every variable is described in [`web/.env.example`](web/.env.example). Without a
 database the deployment still works as the browser-only studio, with sign-up
 switched off. `GET /api/health` reports the database and which sign-in methods
 are on.
+
+### A runner VM on Azure
+
+`scripts/azure/create-runner.sh` builds the development runner that the
+[Relay Cloud design](docs/design/relay-cloud-runners.md) was checked against:
+Ubuntu 24.04 on `Standard_B2ats_v2`, which fits the Azure for Students free
+tier, with Claude Code, Codex, gh, bubblewrap and Relay installed. It has no
+public IP; you reach it over Tailscale.
+
+```bash
+az login
+ssh-keygen -t ed25519 -f ~/.ssh/relay_azure -N ""
+scripts/azure/create-runner.sh                            # lists the regions you may deploy to
+scripts/azure/create-runner.sh --location northcentralus  # prints a Tailscale link to approve the VM
+```
+
+With Tailscale on, connect with `ssh -i ~/.ssh/relay_azure relay@<VM's Tailscale
+name or IP>`. On the VM, sign in to `gh`, then run `relay connect --no-open
+--port 4478` in a clone. A tunnel (`ssh -N -L 4478:127.0.0.1:4478 …`) lets the
+studio pair with the VM as if it were this machine.
+
+To stop paying for compute, run `az vm deallocate -g relay-dev -n relay-runner`.
+To remove everything, run `az group delete -n relay-dev`.
 
 ## The name is not decided
 
