@@ -3,7 +3,7 @@
 import { memo } from 'react';
 import { motion } from 'motion/react';
 import { useCalmMotion } from '@/components/motion/use-calm-motion';
-import { ChevronRight, Plug, Unplug } from 'lucide-react';
+import { Check, ChevronRight, Plug, Unplug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
@@ -81,9 +81,9 @@ export const ConnectorCard = memo(function ConnectorCard({ match, connection, in
         <div className="mt-auto flex min-h-7 items-center justify-between gap-2 border-t border-border/60 pt-3">
           {connected ? (
             <span className="flex min-w-0 items-center gap-1.5 text-xs">
-              <span className="size-1.5 shrink-0 rounded-full bg-success" aria-hidden />
+              <Check className="size-3.5 shrink-0 text-success" aria-hidden />
               <span className="truncate text-muted-foreground">
-                <span className="font-medium text-success">Connected</span> as {connection.account}
+                <span className="font-medium text-foreground">Connected</span> as {connection.account}
               </span>
             </span>
           ) : (

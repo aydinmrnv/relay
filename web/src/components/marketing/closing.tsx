@@ -1,54 +1,32 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, ArrowUpRight, LayoutTemplate } from 'lucide-react';
+import { ArrowRight, ArrowUpRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BorderBeam } from '@/components/21st/border-beam';
 import { BrandMark } from '@/components/app/brand-mark';
 import { useBrand } from '@/hooks/use-brand';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
-import { REPO_URL, Reveal, useCalmMotion } from './primitives';
+import { REPO_URL, Reveal } from './primitives';
 
 export function FinalCta() {
-  const reduce = useCalmMotion();
   const signedIn = useAccount((state) => state.status === 'signed-in');
   const invite = useCapabilities().enabled && !signedIn;
   return (
-    <section className="border-t py-16 sm:py-24">
+    <section className="border-t py-20 sm:py-28">
       <div className="container max-w-6xl">
-        <Reveal>
-          <div className="relative overflow-hidden rounded-3xl border bg-card px-6 py-14 text-center sm:px-12 sm:py-16">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_60%_70%_at_50%_100%,#000_30%,transparent_100%)]"
-            />
-            <div
-              aria-hidden
-              className="pointer-events-none absolute bottom-[-16rem] left-1/2 size-[36rem] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,color-mix(in_oklch,var(--primary)_22%,transparent),transparent_65%)] blur-2xl"
-            />
-            <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-4">
-              <h2 className="text-3xl font-semibold tracking-tight text-balance sm:text-5xl">Your next ticket could be a pull request</h2>
-              <p className="text-base leading-relaxed text-pretty text-muted-foreground">
-                Start with a template. Try a simulated run. Connect your machine when you’re ready.
-              </p>
-              <div className="mt-4 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
-                <Button size="lg" className="h-11 px-5 text-[15px]" nativeButton={false} render={<Link href={invite ? '/sign-up' : '/dashboard'} />}>
-                  {invite ? 'Create a free account' : signedIn ? 'Open your studio' : 'Open the studio'}
-                  <ArrowRight data-icon="inline-end" />
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="h-11 px-5 text-[15px]"
-                  nativeButton={false}
-                  render={<Link href="/templates" />}
-                >
-                  <LayoutTemplate data-icon="inline-start" />
-                  Start from a template
-                </Button>
-              </div>
-            </div>
-            {reduce ? null : <BorderBeam size={160} duration={12} colorFrom="#8b5cf6" colorTo="#38bdf8" />}
+        <Reveal className="flex max-w-3xl flex-col gap-4">
+          <h2 className="text-4xl font-semibold tracking-tight text-balance sm:text-6xl">Your next ticket could be a pull request.</h2>
+          <p className="max-w-xl text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg">
+            Start with a template. Try a simulated run. Connect your machine when you’re ready.
+          </p>
+          <div className="mt-4 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
+            <Button size="lg" className="h-11 px-5" nativeButton={false} render={<Link href={invite ? '/sign-up' : '/dashboard'} />}>
+              {invite ? 'Create a free account' : signedIn ? 'Open your studio' : 'Open the studio'}
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+            <Button size="lg" variant="outline" className="h-11 px-5" nativeButton={false} render={<Link href="/templates" />}>
+              Start from a template
+            </Button>
           </div>
         </Reveal>
       </div>
@@ -90,7 +68,7 @@ export function SiteFooter() {
   ];
 
   return (
-    <footer className="border-t bg-muted/20">
+    <footer className="border-t">
       <div className="container max-w-6xl grid grid-cols-1 gap-10 py-14 md:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
         <div className="flex flex-col gap-3">
           <Link href="/" className="flex w-fit items-center gap-2">

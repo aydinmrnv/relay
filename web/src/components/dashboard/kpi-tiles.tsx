@@ -91,12 +91,13 @@ export function KpiTiles(props: Props) {
   ];
 
   return (
-    <Stagger className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    // One ruled strip rather than four floating cards: the rules are the 1px gaps showing the border colour through.
+    <Stagger className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2 xl:grid-cols-4">
       {tiles.map((tile) => (
-        <StaggerItem key={tile.label} className="h-full">
-          <div className="group relative flex h-full flex-col gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10 transition-shadow hover:ring-foreground/20">
+        <StaggerItem key={tile.label} className="h-full bg-card">
+          <div className="group relative flex h-full flex-col gap-3 p-4 transition-colors hover:bg-muted/40">
             {/* The whole tile is a link, drawn underneath so the help button above it stays its own control. */}
-            <Link href={tile.href} className="absolute inset-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/50" aria-label={`${tile.label}: open ${tile.href.slice(1)}`} />
+            <Link href={tile.href} className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset" aria-label={`${tile.label}: open ${tile.href.slice(1)}`} />
             <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
               <span className="flex items-center gap-2 [&_svg]:size-4">
                 {tile.icon}

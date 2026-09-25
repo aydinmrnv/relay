@@ -82,7 +82,7 @@ export function PipelineStepper() {
                       <span
                         className={cn(
                           'relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold tabular-nums',
-                          role === undefined ? 'bg-muted text-muted-foreground' : role.reviewer ? 'border-info/40 bg-info/10 text-info' : 'border-primary/40 bg-primary/10 text-primary',
+                          role === undefined ? 'bg-muted text-muted-foreground' : 'bg-card text-foreground',
                         )}
                       >
                         {NUMBER.get(phase.label)}
@@ -130,7 +130,7 @@ export function PipelineStepper() {
                   <li key={key} className="grid gap-0.5 text-sm">
                     <span className="flex items-center justify-between gap-2">
                       <span className="flex items-center gap-1.5 font-medium">
-                        <span className={cn('size-2 rounded-full', role.reviewer ? 'bg-info' : 'bg-primary')} aria-hidden />
+                        {role.reviewer ? <Eye className="size-3.5 text-muted-foreground" aria-hidden /> : null}
                         {role.label}
                       </span>
                       <span className="text-xs text-muted-foreground">{role.agent}</span>

@@ -2,11 +2,10 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
-import { ArrowRight, CheckCircle2, FileCode2, FlaskConical, Plug, ShieldAlert, Zap } from 'lucide-react';
+import { ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { BorderBeam } from '@/components/21st/border-beam';
 import { useBrand } from '@/hooks/use-brand';
 import { getNodeType, type NodeTypeDef, type PortType } from '@/lib/connectors';
 import { instantiateTemplate } from '@/lib/workflow/templates';
@@ -14,7 +13,7 @@ import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import type { Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
-import { AppTile, Reveal, SectionHeading, useCalmMotion } from './primitives';
+import { AppTile, Reveal, SectionHeading } from './primitives';
 
 const NODE_W = 220;
 const NODE_H = 78;
@@ -22,41 +21,39 @@ const NODE_H = 78;
 const SQUEEZE = 0.88;
 const PAD = 28;
 
+// The builder's port colours (globals.css, --port-*), as SVG strokes and fills.
 const PORT_STROKE: Record<PortType, string> = {
-  issue: 'stroke-sky-500',
-  run: 'stroke-violet-500',
-  change: 'stroke-indigo-500 dark:stroke-indigo-400',
-  message: 'stroke-pink-500',
-  event: 'stroke-zinc-400 dark:stroke-zinc-500',
-  any: 'stroke-zinc-400 dark:stroke-zinc-500',
+  issue: 'stroke-(--port-issue)',
+  run: 'stroke-(--port-run)',
+  change: 'stroke-(--port-change)',
+  message: 'stroke-(--port-message)',
+  event: 'stroke-(--port-event)',
+  any: 'stroke-(--port-event)',
 };
 
 const PORT_FILL: Record<PortType, string> = {
-  issue: 'fill-sky-500',
-  run: 'fill-violet-500',
-  change: 'fill-indigo-500 dark:fill-indigo-400',
-  message: 'fill-pink-500',
-  event: 'fill-zinc-400 dark:fill-zinc-500',
-  any: 'fill-zinc-300 dark:fill-zinc-600',
+  issue: 'fill-(--port-issue)',
+  run: 'fill-(--port-run)',
+  change: 'fill-(--port-change)',
+  message: 'fill-(--port-message)',
+  event: 'fill-(--port-event)',
+  any: 'fill-(--port-any)',
 };
 
 const CAPABILITIES = [
   {
-    icon: Plug,
     title: 'Typed ports',
-    body: 'Blue carries a ticket, violet a finished run, indigo a pull request. The canvas refuses a wire whose colours do not fit.',
+    body: 'Cyan carries a ticket, grey a finished run, ink a pull request. The canvas refuses a wire whose types do not fit.',
   },
   {
-    icon: ShieldAlert,
     title: 'Validation as you edit',
     body: 'The same rules the CLI enforces: one trigger, read-only reviewers, and no unattended path to a merge.',
   },
   {
-    icon: FlaskConical,
     title: 'Free test runs',
     body: 'Play the flow back with a sample ticket: phases, review rounds, budgets and refusals, simulated in your browser.',
   },
-  { icon: FileCode2, title: 'Export that is real', body: 'Inspect the actual config and Actions workflow generated for this template.' },
+  { title: 'Export that is real', body: 'The files on the right are the actual config and Actions workflow generated for this template.' },
 ];
 
 /**
@@ -67,7 +64,6 @@ const CAPABILITIES = [
  */
 export function BuilderShowcase() {
   const brand = useBrand();
-  const reduce = useCalmMotion();
   const workflow = useMemo(() => instantiateTemplate('ticket-to-pr', brand), [brand]);
   const compiled = useMemo(() => (workflow === undefined ? undefined : compileWorkflow(workflow, brand)), [workflow, brand]);
   const validation = useMemo(() => (workflow === undefined ? undefined : validateWorkflow(workflow)), [workflow]);
@@ -78,7 +74,7 @@ export function BuilderShowcase() {
   );
 
   return (
-    <section id="builder" className="scroll-mt-16 border-t bg-muted/20 py-16 sm:py-24">
+    <section id="builder" className="scroll-mt-16 border-t py-16 sm:py-24">
       <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="The studio"
@@ -87,19 +83,14 @@ export function BuilderShowcase() {
         />
 
         <Reveal className="mt-10 sm:mt-12">
-          <div className="relative overflow-hidden rounded-2xl border bg-card shadow-xl shadow-primary/5">
-            <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-4 py-2.5">
-              <div aria-hidden className="mr-1 flex gap-1.5">
-                <span className="size-2.5 rounded-full bg-foreground/15" />
-                <span className="size-2.5 rounded-full bg-foreground/15" />
-                <span className="size-2.5 rounded-full bg-foreground/15" />
-              </div>
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
               <p className="text-xs font-medium">{workflow?.name ?? 'Workflow'}</p>
               {validation === undefined ? null : validation.errors === 0 ? (
-                <Badge variant="secondary" className="bg-success/10 text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">
-                  <CheckCircle2 data-icon="inline-start" />
+                <span className="inline-flex items-center gap-1 text-xs text-[color-mix(in_oklch,var(--success)_80%,var(--foreground))] dark:text-success">
+                  <CheckCircle2 className="size-3.5" />
                   Valid
-                </Badge>
+                </span>
               ) : (
                 <Badge variant="destructive">{validation.errors} errors</Badge>
               )}
@@ -111,26 +102,20 @@ export function BuilderShowcase() {
             <div className="overflow-x-auto bg-grid" tabIndex={0} role="region" aria-label="Workflow canvas preview">
               {workflow === undefined ? null : <MiniCanvas workflow={workflow} />}
             </div>
-            {reduce ? null : <BorderBeam size={120} duration={10} colorFrom="#8b5cf6" colorTo="#38bdf8" />}
           </div>
         </Reveal>
 
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-5">
+        <div className="mt-10 grid grid-cols-1 gap-10 lg:grid-cols-5">
           <Reveal className="lg:col-span-2">
-            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              {CAPABILITIES.map(({ icon: Icon, title, body }) => (
-                <li key={title} className="flex gap-3 rounded-xl border bg-card p-4">
-                  <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary">
-                    <Icon className="size-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold">{title}</p>
-                    <p className="mt-0.5 text-sm leading-relaxed text-pretty text-muted-foreground">{body}</p>
-                  </div>
-                </li>
+            <dl className="flex flex-col divide-y border-y">
+              {CAPABILITIES.map(({ title, body }) => (
+                <div key={title} className="py-4">
+                  <dt className="text-sm font-semibold">{title}</dt>
+                  <dd className="mt-1 text-sm leading-relaxed text-pretty text-muted-foreground">{body}</dd>
+                </div>
               ))}
-            </ul>
-            <Button className="mt-4" variant="outline" nativeButton={false} render={<Link href="/workflows" />}>
+            </dl>
+            <Button className="mt-6" variant="outline" nativeButton={false} render={<Link href="/workflows" />}>
               Open the builder
               <ArrowRight data-icon="inline-end" />
             </Button>
@@ -138,8 +123,8 @@ export function BuilderShowcase() {
 
           <Reveal delay={0.08} className="min-w-0 lg:col-span-3">
             {files.length === 0 ? null : (
-              <Tabs defaultValue={files[0].path} className="h-full gap-0 overflow-hidden rounded-xl border bg-card">
-                <div className="flex items-center gap-2 overflow-x-auto border-b bg-muted/40 px-2 py-2">
+              <Tabs defaultValue={files[0].path} className="h-full gap-0 overflow-hidden rounded-lg border bg-card">
+                <div className="flex items-center gap-2 overflow-x-auto border-b px-2 py-2">
                   <TabsList className="h-8 bg-transparent">
                     {files.map((file) => (
                       <TabsTrigger key={file.path} value={file.path} className="px-2.5 font-mono text-xs">
@@ -231,19 +216,18 @@ function MiniCanvas({ workflow }: { workflow: Workflow }) {
           fill="none"
           strokeWidth={1.75}
           strokeLinecap="round"
-          className={cn(PORT_STROKE[edge.type], 'opacity-80')}
+          className={PORT_STROKE[edge.type]}
         />
       ))}
       {nodes.map(({ node, def, x, y }) => (
         <g key={node.id}>
           <foreignObject x={x} y={y} width={NODE_W} height={NODE_H} className="overflow-visible">
-            <div className="relative flex h-full items-start gap-2.5 overflow-hidden rounded-xl border bg-card p-3 shadow-sm">
-              <div className="absolute inset-x-3 top-0 h-0.5 rounded-b-full opacity-70" style={{ background: def.connector.icon.color }} />
+            <div className="flex h-full items-start gap-2.5 overflow-hidden rounded-lg border bg-card p-3">
               <AppTile connector={def.connector} size={15} />
               <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                  {def.kind === 'trigger' ? <Zap className="size-2.5 fill-current text-warning" /> : null}
-                  <span className="truncate">{def.connector.name}</span>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {def.connector.name}
+                  {def.kind === 'trigger' ? ' · trigger' : ''}
                 </p>
                 <p className="truncate text-[13px] leading-snug font-semibold">{node.data.label ?? def.name}</p>
                 <p className="truncate text-xs text-muted-foreground">{summarize(def, node.data.config)}</p>

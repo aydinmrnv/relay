@@ -170,7 +170,7 @@ function NeededApps({ apps }: { apps: string[] }) {
                 <ConnectorIcon connector={connector} size={12} />
                 <span className="min-w-0 flex-1 truncate font-medium">{connector.name}</span>
                 {connection === undefined ? (
-                  <Link href={`/integrations?app=${encodeURIComponent(id)}`} className="shrink-0 text-xs font-medium text-primary hover:underline">
+                  <Link href={`/integrations?app=${encodeURIComponent(id)}`} className="shrink-0 text-xs font-medium text-signal hover:underline">
                     Connect
                   </Link>
                 ) : (
@@ -211,7 +211,7 @@ function NeededAgents({ agents }: { agents: string[] }) {
                   <CheckCircle2 className="size-3.5" aria-hidden /> Signed in
                 </span>
               ) : (
-                <Link href="/settings" className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline">
+                <Link href="/settings" className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-signal hover:underline">
                   {state === false ? null : <CircleDashed className="size-3" aria-hidden />}
                   {state === false ? 'Sign in' : 'Check'}
                 </Link>

@@ -116,7 +116,7 @@ export function RunTimeline({ run, workflow, compact = false, className }: Props
                 >
                   {def === undefined ? <StatusIcon status={status} /> : <ConnectorIcon connector={def.connector} size={compact ? 12 : 14} variant="mark" />}
                   {status === 'running' || status === 'waiting' ? (
-                    <span className={cn('absolute -inset-px animate-ping rounded-full border motion-reduce:hidden', status === 'waiting' ? 'border-info/40' : 'border-primary/40')} />
+                    <span className="absolute -inset-px animate-ping rounded-full border border-signal/40 motion-reduce:hidden" />
                   ) : null}
                 </span>
                 {index < groups.length - 1 ? <span className="my-1 w-px flex-1 bg-border" /> : null}
@@ -239,9 +239,8 @@ function ring(status: Shown): string {
     case 'refused':
       return 'border-warning/60';
     case 'running':
-      return 'border-primary/60';
     case 'waiting':
-      return 'border-info/60';
+      return 'border-signal/60';
     default:
       return 'border-border';
   }
@@ -258,9 +257,9 @@ function StatusIcon({ status }: { status: Shown }) {
     case 'refused':
       return <ShieldAlert className={cn(cls, 'text-amber-600 dark:text-warning')} aria-label="Refused" />;
     case 'running':
-      return <Loader2 className={cn(cls, 'animate-spin text-primary')} aria-label="Running" />;
+      return <Loader2 className={cn(cls, 'animate-spin text-signal')} aria-label="Running" />;
     case 'waiting':
-      return <Hourglass className={cn(cls, 'text-info')} aria-label="Waiting" />;
+      return <Hourglass className={cn(cls, 'text-signal')} aria-label="Waiting" />;
     case 'stopped':
     case 'cancelled':
       return <Ban className={cn(cls, 'text-muted-foreground')} aria-label="Stopped" />;
@@ -273,7 +272,7 @@ function EventIcon({ event, open }: { event: RunEvent; open: boolean }) {
   const cls = 'mt-0.5 size-3 shrink-0 text-muted-foreground';
   switch (event.kind) {
     case 'phase':
-      if (open) return <Loader2 className={cn(cls, 'animate-spin text-primary')} />;
+      if (open) return <Loader2 className={cn(cls, 'animate-spin text-signal')} />;
       if (event.status === 'running') return <Ban className={cls} />;
       return event.status === 'failed' ? <XCircle className={cn(cls, 'text-destructive')} /> : <CheckCircle2 className={cn(cls, 'text-success')} />;
     case 'cost':

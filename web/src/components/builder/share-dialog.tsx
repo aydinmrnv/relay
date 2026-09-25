@@ -29,7 +29,7 @@ export function ShareDialog({ workflow, open, onOpenChange }: { workflow: Workfl
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Globe className="size-4 text-primary" /> Share “{workflow.name}”
+            <Globe className="size-4 text-muted-foreground" /> Share “{workflow.name}”
           </DialogTitle>
           <DialogDescription>A public page anyone can open, test-run in their own studio and remix — no account needed to look.</DialogDescription>
         </DialogHeader>
@@ -130,13 +130,13 @@ function ShareBody({ workflow, open }: { workflow: Workflow; open: boolean }) {
       <div className="flex flex-col gap-4">
         <ul className="flex flex-col gap-2 text-sm text-muted-foreground">
           <li className="flex gap-2">
-            <Lock className="mt-0.5 size-4 shrink-0 text-primary" /> Secrets, links, email addresses, people’s logins and your repository name are removed from the public copy. Choices, numbers and plain text stay.
+            <Lock className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> Secrets, links, email addresses, people’s logins and your repository name are removed from the public copy. Choices, numbers and plain text stay.
           </li>
           <li className="flex gap-2">
-            <Shuffle className="mt-0.5 size-4 shrink-0 text-primary" /> Anyone can remix it into their own studio; your workflow is never changed by them.
+            <Shuffle className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> Anyone can remix it into their own studio; your workflow is never changed by them.
           </li>
           <li className="flex gap-2">
-            <RefreshCw className="mt-0.5 size-4 shrink-0 text-primary" /> The public copy is a snapshot. Update it whenever you want; stop sharing at any time.
+            <RefreshCw className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> The public copy is a snapshot. Update it whenever you want; stop sharing at any time.
           </li>
         </ul>
         <DialogFooter>

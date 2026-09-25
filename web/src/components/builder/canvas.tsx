@@ -135,7 +135,7 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
           pannable
           zoomable
           ariaLabel="Overview of the whole workflow"
-          nodeColor={(node) => getNodeType((node as CanvasNode).data.typeId)?.connector.icon.color ?? '#94a3b8'}
+          nodeColor="color-mix(in oklch, var(--foreground) 35%, transparent)"
           nodeBorderRadius={6}
           style={{ width: 168, height: 108 }}
           className="!rounded-lg !border !border-border !shadow-xs"

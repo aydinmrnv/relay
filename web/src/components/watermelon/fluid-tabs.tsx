@@ -71,7 +71,7 @@ export const FluidTabs: FC<FluidTabsProps> = ({
                   damping: 25,
                   mass: 0.8,
                 }}
-                className="absolute inset-0 rounded-full border border-border/80 bg-gradient-to-b from-card to-card/90 shadow-xs"
+                className="absolute inset-0 rounded-full border border-border/80 bg-card shadow-xs"
               />
             )}
 

@@ -55,8 +55,8 @@ export function GraphThumbnail({ workflow, className }: { workflow: Workflow; cl
             title={node.name}
             className={cn(
               'absolute flex size-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border bg-card shadow-xs',
-              // Amber, like the "Trigger" label on builder nodes.
-              trigger ? 'border-2 border-amber-500/70 dark:border-amber-400/70' : '',
+              // A heavier ink border: the trigger is where the workflow starts.
+              trigger ? 'border-foreground/60' : '',
               node.wired ? '' : 'border-dashed opacity-60',
             )}
             style={{ left: `${node.x}%`, top: `${node.y}%` }}

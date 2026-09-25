@@ -58,7 +58,7 @@ export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onC
               {formatUsd(run.costUsd)}
             </span>
             {run.prUrl !== undefined ? (
-              <a href={run.prUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+              <a href={run.prUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium text-signal hover:underline">
                 PR #{run.prUrl.split('/').pop()} <ExternalLink className="size-3" />
               </a>
             ) : null}

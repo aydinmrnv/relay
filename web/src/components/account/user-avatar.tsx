@@ -14,7 +14,7 @@ export function UserAvatar({ user, size = 'default', className }: { user: Pick<A
   return (
     <Avatar size={size} className={cn('rounded-lg after:rounded-lg', className)}>
       {user.image === null ? null : <AvatarImage src={user.image} alt="" className="rounded-lg" />}
-      <AvatarFallback className="rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 font-medium text-white">{initials(user.name)}</AvatarFallback>
+      <AvatarFallback className="rounded-lg bg-muted font-medium text-foreground">{initials(user.name)}</AvatarFallback>
     </Avatar>
   );
 }

@@ -44,7 +44,6 @@ export function StatusTabs({ value, counts, onChange, className }: { value: Stat
                   />
                 ) : null}
                 <span className="relative z-10 flex items-center gap-1.5">
-                  {filter.value === 'running' && count > 0 ? <span className="size-1.5 animate-pulse rounded-full bg-primary" /> : null}
                   {filter.label}
                   <span className={cn('rounded-full px-1.5 text-[11px] font-medium tabular-nums', active ? 'bg-muted text-foreground' : 'text-muted-foreground')}>{count}</span>
                 </span>

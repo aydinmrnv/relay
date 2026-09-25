@@ -31,6 +31,8 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -53,80 +55,98 @@
 }
 
 :root {
-  /* A violet-indigo brand on cool neutrals. Semantic colours (success,
-     warning, info) are tokens too, so status chips read the same everywhere. */
-  --background: oklch(0.993 0.002 286);
-  --foreground: oklch(0.17 0.02 285);
+  /* Ink on paper, and one colour. The neutrals carry almost no hue, primary is
+     ink (buttons, emphasis), and --signal is the single accent: the cyan the
+     CLI prints its wordmark in. Signal means "live, selected, or a link" and
+     nothing else. Success, warning and destructive are for statuses only. */
+  --background: oklch(0.985 0.002 90);
+  --foreground: oklch(0.21 0.006 85);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.17 0.02 285);
+  --card-foreground: oklch(0.21 0.006 85);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.17 0.02 285);
-  --primary: oklch(0.52 0.22 281);
-  --primary-foreground: oklch(0.985 0.005 285);
-  --secondary: oklch(0.962 0.008 286);
-  --secondary-foreground: oklch(0.25 0.03 285);
-  --muted: oklch(0.964 0.006 286);
-  --muted-foreground: oklch(0.5 0.02 285);
-  --accent: oklch(0.952 0.02 284);
-  --accent-foreground: oklch(0.32 0.1 281);
-  --destructive: oklch(0.577 0.215 27);
-  --success: oklch(0.6 0.14 160);
-  --warning: oklch(0.72 0.15 70);
-  --info: oklch(0.6 0.14 235);
-  --border: oklch(0.913 0.008 286);
-  --input: oklch(0.9 0.01 286);
-  --ring: oklch(0.62 0.18 281);
-  --chart-1: oklch(0.55 0.22 281);
-  --chart-2: oklch(0.66 0.13 230);
-  --chart-3: oklch(0.66 0.15 160);
-  --chart-4: oklch(0.77 0.15 75);
-  --chart-5: oklch(0.63 0.2 12);
-  --radius: 0.7rem;
-  --sidebar: oklch(0.982 0.004 286);
-  --sidebar-foreground: oklch(0.2 0.02 285);
-  --sidebar-primary: oklch(0.52 0.22 281);
-  --sidebar-primary-foreground: oklch(0.985 0.005 285);
-  --sidebar-accent: oklch(0.948 0.014 285);
-  --sidebar-accent-foreground: oklch(0.2 0.03 285);
-  --sidebar-border: oklch(0.915 0.008 286);
-  --sidebar-ring: oklch(0.62 0.18 281);
+  --popover-foreground: oklch(0.21 0.006 85);
+  --primary: oklch(0.21 0.006 85);
+  --primary-foreground: oklch(0.985 0.002 90);
+  --secondary: oklch(0.955 0.003 90);
+  --secondary-foreground: oklch(0.25 0.006 85);
+  --muted: oklch(0.955 0.003 90);
+  --muted-foreground: oklch(0.5 0.008 85);
+  --accent: oklch(0.945 0.004 90);
+  --accent-foreground: oklch(0.21 0.006 85);
+  --signal: oklch(0.52 0.095 218);
+  --signal-foreground: oklch(0.985 0.002 90);
+  --destructive: oklch(0.55 0.19 27);
+  --success: oklch(0.55 0.12 155);
+  --warning: oklch(0.72 0.14 72);
+  --info: oklch(0.52 0.095 218);
+  --border: oklch(0.905 0.004 90);
+  --input: oklch(0.88 0.005 90);
+  --ring: oklch(0.52 0.095 218);
+  --chart-1: oklch(0.52 0.095 218);
+  --chart-2: oklch(0.45 0.006 85);
+  --chart-3: oklch(0.55 0.12 155);
+  --chart-4: oklch(0.72 0.14 72);
+  --chart-5: oklch(0.55 0.19 27);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.975 0.003 90);
+  --sidebar-foreground: oklch(0.25 0.006 85);
+  --sidebar-primary: oklch(0.21 0.006 85);
+  --sidebar-primary-foreground: oklch(0.985 0.002 90);
+  --sidebar-accent: oklch(0.935 0.004 90);
+  --sidebar-accent-foreground: oklch(0.21 0.006 85);
+  --sidebar-border: oklch(0.905 0.004 90);
+  --sidebar-ring: oklch(0.52 0.095 218);
+  /* Port types on the canvas, told apart by value first and hue second. */
+  --port-issue: var(--signal);
+  --port-run: oklch(0.62 0.006 85);
+  --port-change: var(--foreground);
+  --port-message: oklch(0.6 0.09 60);
+  --port-event: oklch(0.78 0.004 85);
+  --port-any: oklch(0.86 0.004 85);
 }
 
 .dark {
-  --background: oklch(0.145 0.012 285);
-  --foreground: oklch(0.97 0.004 286);
-  --card: oklch(0.178 0.014 285);
-  --card-foreground: oklch(0.97 0.004 286);
-  --popover: oklch(0.19 0.015 285);
-  --popover-foreground: oklch(0.97 0.004 286);
-  --primary: oklch(0.7 0.17 282);
-  --primary-foreground: oklch(0.16 0.03 285);
-  --secondary: oklch(0.235 0.016 285);
-  --secondary-foreground: oklch(0.95 0.006 286);
-  --muted: oklch(0.225 0.014 285);
-  --muted-foreground: oklch(0.7 0.015 285);
-  --accent: oklch(0.26 0.035 283);
-  --accent-foreground: oklch(0.94 0.02 285);
-  --destructive: oklch(0.68 0.19 22);
-  --success: oklch(0.72 0.14 160);
-  --warning: oklch(0.8 0.14 75);
-  --info: oklch(0.72 0.12 235);
+  /* Depth from surface levels, not from glow: each raised surface is a step lighter. */
+  --background: oklch(0.165 0.004 85);
+  --foreground: oklch(0.94 0.004 90);
+  --card: oklch(0.195 0.004 85);
+  --card-foreground: oklch(0.94 0.004 90);
+  --popover: oklch(0.215 0.004 85);
+  --popover-foreground: oklch(0.94 0.004 90);
+  --primary: oklch(0.94 0.004 90);
+  --primary-foreground: oklch(0.18 0.004 85);
+  --secondary: oklch(0.245 0.004 85);
+  --secondary-foreground: oklch(0.94 0.004 90);
+  --muted: oklch(0.235 0.004 85);
+  --muted-foreground: oklch(0.7 0.006 85);
+  --accent: oklch(0.255 0.004 85);
+  --accent-foreground: oklch(0.94 0.004 90);
+  --signal: oklch(0.78 0.1 210);
+  --signal-foreground: oklch(0.18 0.004 85);
+  --destructive: oklch(0.68 0.17 25);
+  --success: oklch(0.72 0.12 155);
+  --warning: oklch(0.8 0.13 75);
+  --info: oklch(0.78 0.1 210);
   --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 13%);
-  --ring: oklch(0.6 0.15 282);
-  --chart-1: oklch(0.7 0.17 282);
-  --chart-2: oklch(0.72 0.12 230);
-  --chart-3: oklch(0.72 0.14 160);
-  --chart-4: oklch(0.8 0.14 75);
-  --chart-5: oklch(0.7 0.18 12);
-  --sidebar: oklch(0.163 0.013 285);
-  --sidebar-foreground: oklch(0.95 0.005 286);
-  --sidebar-primary: oklch(0.7 0.17 282);
-  --sidebar-primary-foreground: oklch(0.16 0.03 285);
-  --sidebar-accent: oklch(0.23 0.02 285);
-  --sidebar-accent-foreground: oklch(0.97 0.004 286);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.78 0.1 210);
+  --chart-1: oklch(0.78 0.1 210);
+  --chart-2: oklch(0.75 0.006 85);
+  --chart-3: oklch(0.72 0.12 155);
+  --chart-4: oklch(0.8 0.13 75);
+  --chart-5: oklch(0.68 0.17 25);
+  --sidebar: oklch(0.18 0.004 85);
+  --sidebar-foreground: oklch(0.92 0.004 90);
+  --sidebar-primary: oklch(0.94 0.004 90);
+  --sidebar-primary-foreground: oklch(0.18 0.004 85);
+  --sidebar-accent: oklch(0.245 0.004 85);
+  --sidebar-accent-foreground: oklch(0.94 0.004 90);
   --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.6 0.15 282);
+  --sidebar-ring: oklch(0.78 0.1 210);
+  --port-run: oklch(0.62 0.006 85);
+  --port-message: oklch(0.7 0.09 60);
+  --port-event: oklch(0.45 0.004 85);
+  --port-any: oklch(0.36 0.004 85);
 }
 
 @layer base {
@@ -152,9 +172,9 @@
   --xy-background-color: var(--background);
   --xy-background-pattern-color: color-mix(in oklch, var(--foreground) 14%, transparent);
   --xy-edge-stroke: color-mix(in oklch, var(--foreground) 30%, transparent);
-  --xy-edge-stroke-selected: var(--primary);
+  --xy-edge-stroke-selected: var(--signal);
   --xy-edge-stroke-width: 1.75;
-  --xy-connectionline-stroke: var(--primary);
+  --xy-connectionline-stroke: var(--signal);
   --xy-connectionline-stroke-width: 2;
   --xy-minimap-background-color: var(--card);
   --xy-minimap-mask-background-color: color-mix(in oklch, var(--background) 70%, transparent);
@@ -163,8 +183,8 @@
   --xy-controls-button-color: var(--foreground);
   --xy-controls-button-border-color: var(--border);
   --xy-attribution-background-color: transparent;
-  --xy-selection-background-color: color-mix(in oklch, var(--primary) 8%, transparent);
-  --xy-selection-border: 1px dashed color-mix(in oklch, var(--primary) 60%, transparent);
+  --xy-selection-background-color: color-mix(in oklch, var(--signal) 8%, transparent);
+  --xy-selection-border: 1px dashed color-mix(in oklch, var(--signal) 60%, transparent);
 }
 .react-flow__handle {
   width: 12px;
@@ -180,16 +200,14 @@
 }
 .react-flow__handle.connectingto,
 .react-flow__handle.valid {
-  box-shadow: 0 0 0 4px color-mix(in oklch, var(--primary) 35%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--signal) 35%, transparent);
 }
 .react-flow__node.selected .wf-node {
-  box-shadow:
-    0 0 0 2px var(--primary),
-    0 8px 24px -8px color-mix(in oklch, var(--primary) 35%, transparent);
+  box-shadow: 0 0 0 2px var(--signal);
 }
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:focus .react-flow__edge-path {
-  stroke: var(--primary);
+  stroke: var(--signal);
   stroke-width: 2.25;
 }
 .react-flow__edge.animated path {
@@ -210,7 +228,7 @@
   font-size: 10px;
 }
 
-/* A faint grid for empty states and hero sections. */
+/* The builder's canvas grid, for previews that stand in for the canvas. */
 @utility bg-grid {
   background-image:
     linear-gradient(to right, color-mix(in oklch, var(--foreground) 6%, transparent) 1px, transparent 1px),

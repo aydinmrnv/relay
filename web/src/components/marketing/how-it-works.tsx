@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Check, CheckCircle2, GitPullRequestDraft, Hand, Lock, Power, ShieldX, Wallet, Zap } from 'lucide-react';
+import { Check, CheckCircle2, GitPullRequestDraft, Hand, Lock, Power, ShieldX, Wallet } from 'lucide-react';
 import { useBrand } from '@/hooks/use-brand';
 import { cn } from '@/lib/utils';
 import { AppMark, AppTile, Reveal, SectionHeading } from './primitives';
@@ -44,22 +44,18 @@ export function HowItWorks() {
           title="A clear path from ticket to pull request"
           description={`Build the workflow once. ${brand.name} handles each handoff and stops when a guardrail says no.`}
         />
-        <ol className="mt-10 sm:mt-12 grid grid-cols-1 gap-4 md:grid-cols-2 lg:gap-5">
+        <ol className="mt-12 border-b sm:mt-14">
           {steps.map((step, index) => (
-            <li key={step.title}>
-              <Reveal delay={(index % 2) * 0.08} className="h-full">
-                <article className="flex h-full flex-col overflow-hidden rounded-2xl border bg-card">
-                  <div className="flex flex-col gap-2 p-6 pb-5">
-                    <div className="flex items-center gap-3">
-                      <span className="inline-flex size-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground tabular-nums">
-                        {index + 1}
-                      </span>
-                      <h3 className="text-lg font-semibold tracking-tight">{step.title}</h3>
-                    </div>
-                    <p className="text-sm leading-relaxed text-pretty text-muted-foreground">{step.body}</p>
+            <li key={step.title} className="border-t py-8 sm:py-10">
+              <Reveal className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] md:gap-12">
+                <div className="flex gap-4">
+                  <span className="pt-1 font-mono text-sm text-muted-foreground tabular-nums">0{index + 1}</span>
+                  <div className="flex flex-col gap-2">
+                    <h3 className="text-xl font-semibold tracking-tight">{step.title}</h3>
+                    <p className="max-w-sm text-sm leading-relaxed text-pretty text-muted-foreground sm:text-base">{step.body}</p>
                   </div>
-                  <div className="flex flex-1 flex-col justify-center border-t bg-muted/30 p-4 sm:p-5">{step.visual}</div>
-                </article>
+                </div>
+                <div className="min-w-0">{step.visual}</div>
               </Reveal>
             </li>
           ))}
@@ -69,9 +65,17 @@ export function HowItWorks() {
   );
 }
 
-function Row({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('flex min-w-0 items-center gap-2.5 rounded-lg border bg-card px-3 py-2 shadow-xs', className)}>{children}</div>;
+/** A mock of the studio's own UI: one bordered panel, rows divided by rules. */
+function Panel({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn('divide-y overflow-hidden rounded-lg border bg-card', className)}>{children}</div>;
 }
+
+function Row({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn('flex min-w-0 items-center gap-3 px-4 py-3', className)}>{children}</div>;
+}
+
+const SUCCESS_TEXT = 'text-[color-mix(in_oklch,var(--success)_80%,var(--foreground))] dark:text-success';
+const DESTRUCTIVE_TEXT = 'text-[color-mix(in_oklch,var(--destructive)_85%,var(--foreground))] dark:text-destructive';
 
 function TriggerVisual({ slug }: { slug: string }) {
   const triggers = [
@@ -80,21 +84,18 @@ function TriggerVisual({ slug }: { slug: string }) {
     { id: 'sentry', name: 'Sentry', event: 'New issue', detail: 'TypeError in retry.ts' },
   ];
   return (
-    <div className="flex flex-col gap-2">
+    <Panel>
       {triggers.map((trigger) => (
         <Row key={trigger.id}>
           <AppTile connector={trigger.id} size={14} />
           <div className="min-w-0 flex-1">
-            <p className="flex items-center gap-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-              <Zap className="size-2.5 fill-current text-warning" />
-              {trigger.name}
-            </p>
+            <p className="text-xs text-muted-foreground">{trigger.name}</p>
             <p className="truncate text-sm font-medium">{trigger.event}</p>
           </div>
-          <span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:block">{trigger.detail}</span>
+          <span className="hidden truncate font-mono text-xs text-muted-foreground sm:block">{trigger.detail}</span>
         </Row>
       ))}
-    </div>
+    </Panel>
   );
 }
 
@@ -106,84 +107,82 @@ function GuardrailVisual() {
     { icon: Power, name: 'Kill switch', detail: 're-read before every start', verdict: 'armed' },
   ];
   return (
-    <div className="flex flex-col gap-2">
+    <Panel>
       {gates.map(({ icon: Icon, name, detail, verdict }) => (
         <Row key={name}>
-          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-success/10 text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">
-            <Icon className="size-3.5" />
-          </span>
+          <Icon className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium">{name}</p>
             <p className="truncate text-xs text-muted-foreground">{detail}</p>
           </div>
           {verdict === 'pass' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">
-              <Check className="size-3" /> Within budget
+            <span className={cn('inline-flex shrink-0 items-center gap-1 text-xs font-medium', SUCCESS_TEXT)}>
+              <Check className="size-3.5" /> Within budget
             </span>
           ) : verdict === 'refused' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-[color-mix(in_oklch,var(--destructive)_80%,var(--foreground))] dark:text-destructive">
-              <ShieldX className="size-3" /> Refused
+            <span className={cn('inline-flex shrink-0 items-center gap-1 text-xs font-medium', DESTRUCTIVE_TEXT)}>
+              <ShieldX className="size-3.5" /> Refused
             </span>
           ) : (
-            <span className="shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">On</span>
+            <span className="shrink-0 text-xs text-muted-foreground">On</span>
           )}
         </Row>
       ))}
-    </div>
+    </Panel>
   );
 }
 
 function ReviewVisual() {
   return (
-    <div className="flex flex-col gap-2">
+    <Panel>
       <Row className="items-start">
         <AppTile connector="codex-cli" size={14} />
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Codex</span> reviews the plan
-            <span className="rounded bg-destructive/10 px-1.5 py-px font-mono text-[10px] font-semibold text-[color-mix(in_oklch,var(--destructive)_80%,var(--foreground))] dark:text-destructive">BLOCKING</span>
+            <span className={cn('font-mono text-[11px] font-semibold', DESTRUCTIVE_TEXT)}>BLOCKING</span>
           </p>
           <p className="mt-1 text-sm text-pretty">
             The plan adds a retry inside withTimeout, which already retries. Two layers multiply the wait.
           </p>
         </div>
       </Row>
-      <Row className="ml-6 items-start">
+      <Row className="items-start">
         <AppTile connector="claude-code" size={14} />
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Claude Code</span> answers
-            <span className="rounded bg-success/10 px-1.5 py-px font-mono text-[10px] font-semibold text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">ACCEPT</span>
+            <span className={cn('font-mono text-[11px] font-semibold', SUCCESS_TEXT)}>ACCEPT</span>
           </p>
           <p className="mt-1 text-sm text-pretty">Revised: retry once, at the call site. Plan v2 goes to implementation.</p>
         </div>
       </Row>
-      <p className="px-1 pt-1 font-mono text-[11px] text-muted-foreground">
+      <p className="bg-muted/40 px-4 py-2.5 font-mono text-xs text-muted-foreground">
         round 1 of 2 · the diff is computed from git, not taken from the agent
       </p>
-    </div>
+    </Panel>
   );
 }
 
 function DeliveryVisual({ slug }: { slug: string }) {
   const checks = ['Tests passed (exit 0)', 'Diff reviewed by Claude Code', 'Secret scan clean'];
   return (
-    <div className="flex flex-col gap-2">
-      <div className="rounded-lg border bg-card p-3 shadow-xs">
+    <Panel>
+      <div className="px-4 py-3">
         <div className="flex items-start gap-2.5">
           <GitPullRequestDraft className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-pretty">Fix the flaky timeout in the retry test</p>
-            <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-              #412 · {slug}/eng-142 → main · <span className="text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success">+84</span> <span className="text-[color-mix(in_oklch,var(--destructive)_80%,var(--foreground))] dark:text-destructive">−12</span>
+            <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+              #412 · {slug}/eng-142 → main · <span className={SUCCESS_TEXT}>+84</span> <span className={DESTRUCTIVE_TEXT}>−12</span>
             </p>
           </div>
-          <span className="shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Draft</span>
+          <span className="shrink-0 rounded-md border px-2 py-0.5 text-xs text-muted-foreground">Draft</span>
         </div>
-        <ul className="mt-2.5 flex flex-col gap-1 border-t pt-2.5">
+        <ul className="mt-3 flex flex-col gap-1.5 pl-6.5">
           {checks.map((check) => (
             <li key={check} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <CheckCircle2 className="size-3.5 text-[color-mix(in_oklch,var(--success)_75%,var(--foreground))] dark:text-success" />
+              <CheckCircle2 className={cn('size-3.5', SUCCESS_TEXT)} />
               {check}
             </li>
           ))}
@@ -200,6 +199,6 @@ function DeliveryVisual({ slug }: { slug: string }) {
           <span className="text-muted-foreground">PR #412 is ready for review · cost $1.84</span>
         </p>
       </Row>
-    </div>
+    </Panel>
   );
 }

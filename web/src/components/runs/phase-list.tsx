@@ -119,8 +119,8 @@ export function PhaseList({ phases, current = null, className }: Props) {
               </TextShimmer>
               <span className="shrink-0 text-xs text-muted-foreground">playing</span>
             </div>
-            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-primary/10">
-              <div className="absolute inset-y-0 left-0 w-1/3 animate-pulse rounded-full bg-primary/40" />
+            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-signal/15">
+              <div className="absolute inset-y-0 left-0 w-1/3 animate-pulse rounded-full bg-signal/60" />
             </div>
           </li>
         ) : null}

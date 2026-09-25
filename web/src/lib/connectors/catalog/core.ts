@@ -28,6 +28,12 @@ export const MERGE_METHOD_OPTIONS = [
   { value: 'rebase', label: 'Rebase' },
 ];
 
+/**
+ * Relay's own building blocks share one colour, ink, so they read as one
+ * family and leave colour to the apps, whose marks are their brands.
+ */
+const CORE_INK = '#1a1815';
+
 export const CORE_CONNECTORS: Connector[] = [
   defineConnector({
     id: 'pipeline',
@@ -35,7 +41,7 @@ export const CORE_CONNECTORS: Connector[] = [
     category: 'core',
     description: 'Plan → plan review → implement → code review → tests, inside an isolated git worktree.',
     auth: 'none',
-    icon: { lucide: 'Workflow', color: '#7c3aed' },
+    icon: { lucide: 'Workflow', color: CORE_INK },
     tags: ['agents', 'plan', 'review', 'implement'],
     popular: true,
     triggers: [],
@@ -91,7 +97,7 @@ export const CORE_CONNECTORS: Connector[] = [
     category: 'core',
     description: 'Budgets, allowlists and human approval. Every gate refuses by default.',
     auth: 'none',
-    icon: { lucide: 'ShieldCheck', color: '#0f766e' },
+    icon: { lucide: 'ShieldCheck', color: CORE_INK },
     tags: ['budget', 'allowlist', 'approval', 'kill switch'],
     popular: true,
     triggers: [],
@@ -168,7 +174,7 @@ export const CORE_CONNECTORS: Connector[] = [
     category: 'core',
     description: 'How far a finished run carries its own work: commit, push, pull request, merge.',
     auth: 'none',
-    icon: { lucide: 'GitPullRequestArrow', color: '#2563eb' },
+    icon: { lucide: 'GitPullRequestArrow', color: CORE_INK },
     tags: ['branch', 'push', 'pull request', 'merge'],
     popular: true,
     triggers: [],
@@ -207,7 +213,7 @@ export const CORE_CONNECTORS: Connector[] = [
     category: 'core',
     description: 'Start on a timer instead of an event.',
     auth: 'none',
-    icon: { lucide: 'CalendarClock', color: '#ea580c' },
+    icon: { lucide: 'CalendarClock', color: CORE_INK },
     tags: ['cron', 'timer', 'interval'],
     triggers: [
       {
@@ -249,7 +255,7 @@ export const CORE_CONNECTORS: Connector[] = [
     category: 'core',
     description: 'Any app with a URL. Receive a webhook, or call one.',
     auth: 'none',
-    icon: { lucide: 'Globe', color: '#475569' },
+    icon: { lucide: 'Globe', color: CORE_INK },
     tags: ['webhook', 'rest', 'api', 'custom'],
     popular: true,
     triggers: [
@@ -297,7 +303,7 @@ export const CORE_CONNECTORS: Connector[] = [
     category: 'core',
     description: 'Branch, filter, transform.',
     auth: 'none',
-    icon: { lucide: 'GitFork', color: '#64748b' },
+    icon: { lucide: 'GitFork', color: CORE_INK },
     tags: ['condition', 'filter', 'branch', 'code'],
     popular: true,
     triggers: [

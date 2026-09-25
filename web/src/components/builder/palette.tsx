@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ChevronRight, Search, X, Zap } from 'lucide-react';
+import { Check, ChevronRight, Search, X, Zap } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -160,7 +160,7 @@ function ConnectorGroup({ connector, open, onOpenChange, connected, keep, onAdd 
           <ChevronRight className={cn('size-3 shrink-0 text-muted-foreground transition-transform', open ? 'rotate-90' : '')} />
           <ConnectorIcon connector={connector} size={12} />
           <span className="flex-1 truncate">{connector.name}</span>
-          {connected ? <span className="size-1.5 rounded-full bg-success" title="Connected" /> : null}
+          {connected ? <Check className="size-3 text-muted-foreground" aria-label="Connected" /> : null}
           <span className="text-[10px] text-muted-foreground tabular-nums">{defs.length}</span>
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -193,7 +193,7 @@ function NodeRow({ def, onAdd, showConnector = false, rich = false }: { def: Nod
       {rich || showConnector ? <ConnectorIcon connector={def.connector} size={rich ? 12 : 10} className={rich ? 'mt-0.5' : ''} /> : null}
       <span className="min-w-0 flex-1">
         <span className={cn('flex items-center gap-1', rich ? 'text-[13px] font-medium' : '')}>
-          {def.kind === 'trigger' ? <Zap className="size-3 shrink-0 fill-amber-400 text-amber-500" aria-label="Trigger" /> : null}
+          {def.kind === 'trigger' ? <Zap className="size-3 shrink-0 text-muted-foreground" aria-label="Trigger" /> : null}
           <span className="truncate">
             {showConnector ? <span className="text-muted-foreground">{def.connector.name} · </span> : null}
             {def.name}

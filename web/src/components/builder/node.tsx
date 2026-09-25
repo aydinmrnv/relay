@@ -63,7 +63,6 @@ function WorkflowNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
     );
   }
 
-  const color = def.connector.icon.color;
   const summary = summarize(data.config, def);
   const isTrigger = def.kind === 'trigger';
   const branching = def.outputs.length > 1;
@@ -73,19 +72,18 @@ function WorkflowNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
       <div
         className={cn(
           'wf-node group/node relative w-68 rounded-xl border bg-card shadow-xs transition-[box-shadow,opacity,border-color] duration-200 hover:shadow-md',
-          status === 'running' ? 'border-primary/60 shadow-[0_0_0_4px_color-mix(in_oklch,var(--primary)_18%,transparent)]' : '',
+          status === 'running' ? 'border-signal/70' : '',
           status === 'done' ? 'border-success/60' : '',
           status === 'failed' ? 'border-destructive/70' : '',
           status === 'refused' ? 'border-warning/80' : '',
-          status === 'waiting' ? 'border-info/60' : '',
+          status === 'waiting' ? 'border-signal/50 border-dashed' : '',
           status === 'skipped' ? 'opacity-45' : '',
           status === 'pending' ? 'opacity-80' : '',
           data.invalid === true && status === undefined ? 'border-destructive/70' : '',
         )}
       >
-        {status === 'running' ? <BorderTrail size={70} className="bg-primary" transition={{ repeat: Infinity, duration: 2.4, ease: 'linear' }} /> : null}
-        {/* The connector's colour as a thin top rule, so a busy canvas still groups by app at a glance. */}
-        <div className="absolute inset-x-3 top-0 h-0.5 rounded-b-full opacity-70" style={{ background: color }} />
+        {/* The one moving thing on the canvas: it marks the node the run is in right now. */}
+        {status === 'running' ? <BorderTrail size={70} className="bg-signal" transition={{ repeat: Infinity, duration: 2.4, ease: 'linear' }} /> : null}
 
         {def.inputs.map((port, index) => (
           <Handle
@@ -104,8 +102,8 @@ function WorkflowNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
               {isTrigger ? (
-                <span className="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400">
-                  <Zap className="size-2.5 fill-current" /> Trigger
+                <span className="inline-flex items-center gap-0.5 text-foreground">
+                  <Zap className="size-2.5" /> Trigger
                 </span>
               ) : null}
               <span className="truncate">{def.connector.name}</span>
@@ -203,7 +201,7 @@ function StatusGlyph({ status }: { status: CanvasNode['data']['status'] }) {
   const cls = 'mt-0.5 size-4 shrink-0';
   switch (status) {
     case 'running':
-      return <Loader2 className={cn(cls, 'animate-spin text-primary')} aria-label="Running" />;
+      return <Loader2 className={cn(cls, 'animate-spin text-signal')} aria-label="Running" />;
     case 'done':
       return <CheckCircle2 className={cn(cls, 'text-success')} aria-label="Done" />;
     case 'failed':
@@ -211,7 +209,7 @@ function StatusGlyph({ status }: { status: CanvasNode['data']['status'] }) {
     case 'refused':
       return <ShieldAlert className={cn(cls, 'text-warning')} aria-label="Refused" />;
     case 'waiting':
-      return <CircleDashed className={cn(cls, 'animate-pulse text-info')} aria-label="Waiting" />;
+      return <CircleDashed className={cn(cls, 'text-signal')} aria-label="Waiting" />;
     case 'skipped':
     case 'pending':
       return <CircleDashed className={cn(cls, 'text-muted-foreground/50')} aria-label={status === 'skipped' ? 'Skipped' : 'Pending'} />;

@@ -16,17 +16,17 @@ import { OUTCOMES, type DayBucket, type Outcome } from './derive';
 
 /**
  * Outcomes are states, not identities, so they wear the status tokens rather
- * than the categorical chart colours. The stack order keeps green and red
- * apart (success, warning, destructive, neutral): checked with the dataviz
- * validator, green↔red is the pair that collapses under deuteranopia. The 2px
- * gaps, the legend, the tooltip and the table view carry identity for anyone
- * the colours fail.
+ * than categorical colours, and only the outcomes that need a look get colour
+ * at all: a success is the normal case, so it is drawn in ink, and a refusal
+ * or a failure stands out against it. Cancelled is the faint grey of "nothing
+ * happened". The 2px gaps, the legend, the tooltip and the table view carry
+ * identity for anyone the colours fail.
  */
 const CONFIG = {
-  succeeded: { label: 'Succeeded', color: 'var(--success)' },
+  succeeded: { label: 'Succeeded', color: 'var(--chart-2)' },
   refused: { label: 'Refused', color: 'var(--warning)' },
   failed: { label: 'Failed', color: 'var(--destructive)' },
-  cancelled: { label: 'Cancelled', color: 'var(--muted-foreground)' },
+  cancelled: { label: 'Cancelled', color: 'color-mix(in oklch, var(--muted-foreground) 40%, transparent)' },
 } satisfies ChartConfig;
 
 const GAP = 2;

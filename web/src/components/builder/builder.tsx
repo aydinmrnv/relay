@@ -654,7 +654,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
         >
           {!hasTrigger && nodes.length > 0 ? (
             <Button size="xs" variant="outline" className="bg-card shadow-xs" onClick={() => openPicker(null)}>
-              <Zap data-icon="inline-start" className="text-amber-500" /> This workflow needs a trigger — add one
+              <Zap data-icon="inline-start" /> This workflow needs a trigger — add one
             </Button>
           ) : nodes.length > 0 && !running ? (
             <Button size="xs" variant="outline" className="bg-card/90 text-muted-foreground shadow-xs backdrop-blur" onClick={() => (selectedId === null ? openPicker(null) : addAfter(selectedId))}>
@@ -924,10 +924,8 @@ function ValidationButton({ issues, errors, warnings, onSelect }: { issues: Vali
 
 function EmptyCanvas({ onAdd }: { onAdd: () => void }) {
   return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="pointer-events-auto flex max-w-sm flex-col items-center gap-3 rounded-2xl border bg-card/95 p-6 text-center shadow-sm backdrop-blur">
-      <span className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500">
-        <Zap className="size-5 fill-current" />
-      </span>
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="pointer-events-auto flex max-w-sm flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center shadow-sm">
+      <Zap className="size-5 text-muted-foreground" />
       <div>
         <p className="font-semibold">Start with a trigger</p>
         <p className="mt-1 text-sm text-muted-foreground">A trigger is what starts the workflow: a ticket assigned, a label added, a schedule, or a button you press.</p>

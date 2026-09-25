@@ -221,7 +221,7 @@ export function CloudCard() {
               className={cn(
                 'gap-1 text-[10px]',
                 tone === 'ok' && 'border-success/40 bg-success/10 text-success',
-                tone === 'busy' && 'border-primary/30 bg-primary/5 text-primary',
+                tone === 'busy' && 'border-signal/30 bg-signal/5 text-signal',
                 tone === 'bad' && 'border-destructive/40 bg-destructive/10 text-destructive',
                 tone === 'idle' && 'text-muted-foreground',
               )}

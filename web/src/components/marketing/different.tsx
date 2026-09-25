@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, CircleDollarSign, GitFork, History, Minus, PencilLine, X } from 'lucide-react';
+import { Check, Minus, X } from 'lucide-react';
 import { useBrand } from '@/hooks/use-brand';
 import { cn } from '@/lib/utils';
 import { Reveal, SectionHeading } from './primitives';
@@ -17,22 +17,18 @@ export function Different() {
 
   const highlights = [
     {
-      icon: PencilLine,
       title: 'Describe it, get a workflow',
       body: 'Type one sentence — “when a Sentry error is new, fix it under $3 and ping Discord” — and watch the graph build itself. It runs in your browser: no model call, no credits, nothing leaves the page.',
     },
     {
-      icon: CircleDollarSign,
       title: 'A spend forecast before the first run',
       body: 'Hundreds of simulated runs of your exact graph give a typical cost, a bad-day cost, a monthly bill at your ticket volume, and how often your budget gate will say no.',
     },
     {
-      icon: GitFork,
       title: 'Share it, remix it, badge it',
       body: 'Publish a workflow at a public link with secrets stripped. Anyone can remix it into their own studio, and a README badge points people to it.',
     },
     {
-      icon: History,
       title: 'Version history with one-click restore',
       body: 'A snapshot before every editing session, named versions when you want them, and a restore you can undo.',
     },
@@ -59,30 +55,28 @@ export function Different() {
           description="Hosted coding agents do the work in someone else’s cloud with one model checking itself. Automation canvases can call a model, but do not know what a pull request is. This is the space between them."
         />
 
-        <div className="mt-14 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-12 grid grid-cols-1 gap-x-10 gap-y-10 sm:mt-14 sm:grid-cols-2 lg:grid-cols-4">
           {highlights.map((item, index) => (
             <Reveal key={item.title} delay={index * 0.05} className="h-full">
-              <article className="flex h-full flex-col gap-3 rounded-2xl border bg-card p-5">
-                <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <item.icon className="size-4.5" aria-hidden />
-                </span>
+              <article className="flex h-full flex-col gap-2 border-t pt-5">
                 <h3 className="font-semibold tracking-tight">{item.title}</h3>
-                <p className="text-sm text-pretty text-muted-foreground">{item.body}</p>
+                <p className="text-sm leading-relaxed text-pretty text-muted-foreground">{item.body}</p>
               </article>
             </Reveal>
           ))}
         </div>
 
-        <Reveal className="mx-auto mt-14 max-w-5xl">
-          <div className="overflow-x-auto rounded-2xl border bg-card">
+        <Reveal className="mt-16">
+          {/* Relative, so the sr-only labels in the cells are clipped by the scroller instead of widening the page on phones. */}
+          <div className="relative overflow-x-auto">
             <table className="w-full min-w-[40rem] text-sm">
               <caption className="sr-only">How {brand.name} compares with hosted coding agents and general automation canvases</caption>
               <thead>
-                <tr className="border-b bg-muted/40 text-left">
-                  <th scope="col" className="p-4 font-medium text-muted-foreground">
+                <tr className="border-b border-foreground/80 text-left">
+                  <th scope="col" className="py-3 pr-4 font-medium text-muted-foreground">
                     What you get
                   </th>
-                  <th scope="col" className="w-32 p-4 text-center font-semibold text-primary">
+                  <th scope="col" className="w-32 p-4 text-center font-semibold">
                     {brand.name}
                   </th>
                   <th scope="col" className="w-36 p-4 text-center font-medium text-muted-foreground">
@@ -96,11 +90,11 @@ export function Different() {
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.label} className="border-b last:border-0">
-                    <th scope="row" className="p-4 text-left font-normal">
+                    <th scope="row" className="py-4 pr-4 text-left font-normal">
                       {row.label}
                       {row.note === undefined ? null : <span className="mt-0.5 block text-xs text-muted-foreground">{row.note}</span>}
                     </th>
-                    <td className="bg-primary/[0.03] p-4 text-center">
+                    <td className="bg-muted/50 p-4 text-center">
                       <MarkIcon mark={row.ours} />
                     </td>
                     <td className="p-4 text-center">
@@ -114,18 +108,19 @@ export function Different() {
               </tbody>
             </table>
           </div>
-          <p className="mt-3 text-center text-xs text-muted-foreground">“Partial” means some tools in the category do it, or it takes setup. Categories, not products: individual tools change often.</p>
+          <p className="mt-4 text-xs text-muted-foreground">“Partial” means some tools in the category do it, or it takes setup. Categories, not products: individual tools change often.</p>
         </Reveal>
       </div>
     </section>
   );
 }
 
+/** Weight, not colour: a firm tick, a quiet dash, a faint cross. */
 function MarkIcon({ mark }: { mark: Mark }) {
   const label = mark === 'yes' ? 'Yes' : mark === 'no' ? 'No' : 'Partly';
   return (
-    <span className={cn('inline-flex size-6 items-center justify-center rounded-full', mark === 'yes' ? 'bg-success/15 text-success' : mark === 'no' ? 'bg-muted text-muted-foreground' : 'bg-warning/15 text-warning')} title={label}>
-      {mark === 'yes' ? <Check className="size-3.5" /> : mark === 'no' ? <X className="size-3.5" /> : <Minus className="size-3.5" />}
+    <span className={cn('inline-flex items-center justify-center', mark === 'yes' ? 'text-foreground' : mark === 'no' ? 'text-muted-foreground/60' : 'text-muted-foreground')} title={label}>
+      {mark === 'yes' ? <Check className="size-4" strokeWidth={2.5} /> : mark === 'no' ? <X className="size-3.5" /> : <Minus className="size-4" />}
       <span className="sr-only">{label}</span>
     </span>
   );

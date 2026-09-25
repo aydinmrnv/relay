@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, ExternalLink, FlaskConical, Globe, Play, Plug, Unplug } from 'lucide-react';
+import { ArrowRight, Check, ExternalLink, FlaskConical, Globe, Play, Plug, Unplug } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
@@ -84,7 +84,7 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {builtIn ? (
             <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-muted px-2.5 text-xs text-muted-foreground">
-              <span className="size-1.5 rounded-full bg-success" aria-hidden /> Always available
+              Always available
             </span>
           ) : connection === undefined ? (
             <>
@@ -95,8 +95,8 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
             </>
           ) : (
             <>
-              <span className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-success/10 px-2.5 text-xs text-success">
-                <span className="size-1.5 shrink-0 rounded-full bg-success" aria-hidden />
+              <span className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-muted px-2.5 text-xs text-foreground">
+                <Check className="size-3.5 shrink-0 text-success" aria-hidden />
                 <span className="truncate">
                   Connected as <span className="font-medium">{connection.account}</span> · {timeAgo(connection.connectedAt, now)}
                 </span>
@@ -178,7 +178,7 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
             <Globe className="mt-0.5 size-3.5 shrink-0" aria-hidden />
             <span>
               Need something {connector.name} does not list here? An HTTP request can call its API directly.{' '}
-              <button type="button" className="font-medium text-primary hover:underline" onClick={() => onOpenApp('http')}>
+              <button type="button" className="font-medium text-signal hover:underline" onClick={() => onOpenApp('http')}>
                 See HTTP & webhooks
               </button>
             </span>
