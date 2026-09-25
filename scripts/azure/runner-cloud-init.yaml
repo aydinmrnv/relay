@@ -1,0 +1,75 @@
+#cloud-config
+#
+# A Relay runner: a Linux VM with the coding CLIs installed and nothing signed
+# in. Sign-ins happen afterwards, through each vendor's own login, as the
+# non-root admin user: Relay never puts a credential on this machine.
+#
+# Used by scripts/azure/create-runner.sh as the VM's custom data. Keep it
+# ASCII: az vm create encodes custom data as Latin-1 and rejects anything else.
+
+package_update: true
+package_upgrade: false
+
+# 1 GiB of RAM (Standard_B2ats_v2) is tight for Claude Code, Codex and a test
+# suite at once; swap keeps a run alive instead of OOM-killing it.
+swap:
+  filename: /swapfile
+  size: 4G
+  maxsize: 4G
+
+packages:
+  - bubblewrap
+  - build-essential
+  - ca-certificates
+  - curl
+  - git
+  - gnupg
+  - jq
+  - tmux
+
+write_files:
+  # The CLIs are installed globally by root, so their self-updaters cannot
+  # write there anyway; say so instead of letting them warn on every start.
+  - path: /etc/profile.d/relay-runner.sh
+    permissions: '0644'
+    content: |
+      export DISABLE_AUTOUPDATER=1
+  # Ubuntu 24.04 lets no unprivileged program create a user namespace
+  # (kernel.apparmor_restrict_unprivileged_userns=1), which is what bwrap
+  # needs to sandbox a read-only reviewer. Allow it for bwrap alone rather
+  # than lifting the restriction for everything.
+  - path: /etc/apparmor.d/bwrap
+    permissions: '0644'
+    content: |
+      abi <abi/4.0>,
+      include <tunables/global>
+
+      profile bwrap /usr/bin/bwrap flags=(unconfined) {
+        userns,
+
+        include if exists <local/bwrap>
+      }
+
+runcmd:
+  # Node 22 (Relay needs >= 22.6).
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+  # GitHub CLI from GitHub's own apt repository: delivery opens pull requests with it.
+  - install -d -m 0755 /etc/apt/keyrings
+  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+  - apt-get update
+  - apt-get install -y gh
+  # Tailscale: how you reach a runner with no public IP. It dials out; nothing listens.
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - apparmor_parser -r /etc/apparmor.d/bwrap
+  # The coding CLIs, unmodified.
+  - npm install -g @anthropic-ai/claude-code @openai/codex
+  # Relay itself, packed from a clone. `npm install -g github:...` leaves the
+  # global package as a symlink into a temporary clone that npm then deletes.
+  - git clone --depth 1 https://github.com/aydinmrnv/relay /opt/relay-src
+  - cd /opt/relay-src && npm ci && npm pack --pack-destination /tmp
+  - npm install -g /tmp/relay-orchestrator-*.tgz
+  - install -d -m 0755 /var/lib/relay-runner
+  - date -u +%FT%TZ > /var/lib/relay-runner/ready
