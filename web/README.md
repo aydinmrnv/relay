@@ -120,12 +120,13 @@ NEXT_PUBLIC_PRODUCT_NAME="Conductor" npm run dev
 | `src/components/{dashboard,runs,integrations,templates,settings,guide,marketing}/` | The pieces of each screen |
 | `src/components/motion/` | The shared motion.dev entrances; all animation honours Settings → Animations and reduced motion |
 | `src/components/ui/` | shadcn/ui (base-nova style, Base UI primitives) |
-| `src/components/watermelon/` | Watermelon UI components installed from its registry |
+| `src/components/watermelon/` | Watermelon UI components installed from its registry (`hero-1.tsx` keeps the art, call to action and entrance the landing hero uses) |
+| `src/components/glass/` | `LiquidGlass`: Apple-style liquid glass. [`@samasante/liquid-glass`](https://github.com/samasante/liquid-glass) frosts and bends the page behind (the bend in Chrome and Edge only), with Apple's milky veil, rim light and shadow on top; frostier and nearly opaque under Reduce Transparency, as on Apple's platforms |
 | `src/components/21st/` | 21st.dev community components (Motion Primitives, Magic UI): the border trail and text shimmer that mark a live run, and the dashboard's number ticker. Taken from the authors' public registries, since 21st.dev's own needs a signed-in API key |
 
 ### Colour
 
-Ink on paper, and one accent (`src/app/globals.css`). Neutrals carry almost no hue; `primary` is ink, for buttons and emphasis; `signal` is the single accent, the cyan the CLI prints its wordmark in, and it means live, selected, or a link — nothing else. Success, warning and destructive are for statuses only, and a normal outcome (a run that succeeded) reads in ink so the ones that need a look stand out. App marks keep their brand colours; Relay's own building blocks are ink. Depth comes from surface steps and rules, not glows or gradients; content is grouped with whitespace and rules, and boxes are kept for things you act on.
+Ink on paper, and one accent (`src/app/globals.css`). Neutrals carry almost no hue; `primary` is ink, for buttons and emphasis; `signal` is the single accent, the cyan the CLI prints its wordmark in, and it means live, selected, or a link — nothing else. Success, warning and destructive are for statuses only, and a normal outcome (a run that succeeded) reads in ink so the ones that need a look stand out. App marks keep their brand colours; Relay's own building blocks are ink. Depth comes from surface steps and rules, not glows or gradients (the one exception is the landing hero's pixel-grid glow, taken from Watermelon UI's Hero 1 and recoloured in the signal cyan, which the floating liquid-glass header refracts as the page scrolls); content is grouped with whitespace and rules, and boxes are kept for things you act on.
 
 `npm run gen:icons` (run automatically before `dev` and `build`) scans the catalog for `si:` / `lucide:` icon names and generates `src/lib/connectors/icons.generated.ts`, so the bundle carries only the brand marks it uses. Names that do not resolve fall back to a monogram.
 
