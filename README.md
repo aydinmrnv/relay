@@ -285,7 +285,7 @@ support the design, the defaults change.
 | `src/` | The `relay` CLI (TypeScript, Node ≥ 22.6): the studio companion in `src/studio/`, the Relay Cloud hub and runner in `src/cloud/`, and the engine |
 | `action.yml` | The GitHub Action that exported workflows run |
 | [`docs/cli.md`](docs/cli.md) | The CLI reference: the companion and the engine |
-| [`docs/design/`](docs/design/relay-cloud-runners.md) | Relay Cloud runners: how they work, and what is next |
+| [`docs/design/`](docs/design/relay-cloud-runners.md) | Relay Cloud runners: how they work, and what is next. [How workflows run for real](docs/design/workflow-execution.md), locally and in the cloud |
 | [`eval/`](eval/README.md) | The eval harness and its fixtures |
 | `test/`, `scripts/`, `bin/` | The engine's tests, CI fixtures and entry point |
 | `scripts/azure/` | Deploys the Relay Cloud hub on Azure, and creates a development runner VM |

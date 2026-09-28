@@ -293,9 +293,10 @@ the hub deployed by `deploy-hub.sh` and a person signed in through Clerk.
 
 ## Next
 
-1. **Triggers.** Webhooks wake the owner's runner and start
-   `relay serve --once --issue <n>`, with the same allowlist, budgets and kill
-   switches as the GitHub Action.
+1. **Triggers.** Webhooks wake the owner's runner, with the same allowlist,
+   budgets and kill switches as the GitHub Action. The studio does the
+   deciding, before anything is woken, and the hub hands the runner a job:
+   [Running workflows for real](workflow-execution.md).
 2. **GitHub App tokens.** A token scoped to one repository per run, handed only
    to Relay's own `git` and `gh`, so no agent ever holds a GitHub credential.
 3. **A baked image** in an Azure Compute Gallery, so a first start is a normal
