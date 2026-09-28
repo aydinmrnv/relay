@@ -9,14 +9,16 @@ import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader,
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CopyButton } from '@/components/runs/copy-button';
 import { REPO_URL } from '@/components/marketing/primitives';
-import { useCompanion, type CompanionStatus } from '@/lib/companion/client';
+import { restartCommand, useCompanion, type CompanionStatus } from '@/lib/companion/client';
 import { repositoryLabel } from '@/lib/companion/types';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { BlockedAccessHelp } from './browser-access';
 
-export const INSTALL_COMMAND = 'npm install -g github:aydinmrnv/relay';
+/** The prebuilt CLI that CI publishes (`.github/workflows/cli-release.yml`); `github:` installs come out empty on current npm. */
+export const INSTALL_COMMAND = 'npm install -g https://github.com/aydinmrnv/relay/releases/download/cli-latest/relay.tgz';
 export const CONNECT_COMMAND = 'relay connect';
 
 /** One line on where the studio's machine stands, for badges and the sidebar. */
@@ -30,33 +32,44 @@ export function machineStatusText(status: CompanionStatus, host: string | undefi
       return 'Paired, but `relay connect` is not running';
     case 'rejected':
       return 'The machine no longer accepts this pairing';
+    case 'blocked':
+      return 'Your browser is blocking the connection to relay connect';
     default:
       return 'No machine connected';
   }
 }
 
-/** The two commands that connect a machine, each with a copy button. */
+/** The two commands that connect a machine, each with a copy button, and the one question the browser asks. */
 export function ConnectSteps({ className }: { className?: string }) {
   return (
     <ol className={cn('grid gap-2 text-sm', className)}>
-      <Step n={1} text="Install the Relay CLI, once:" command={INSTALL_COMMAND} />
-      <Step n={2} text="In the repository your workflows run on, start the companion. It opens this studio with a pairing link:" command={CONNECT_COMMAND} />
+      <Step n={1} text="Install the Relay CLI, once (Node 22.6 or later):" command={INSTALL_COMMAND} />
+      <Step n={2} text="In the repository your workflows run on, start the companion. It opens this studio and pairs it:" command={CONNECT_COMMAND} />
+      <Step n={3} text="If your browser asks whether this site may reach apps on your device, choose Allow. That is the companion." />
     </ol>
   );
 }
 
-function Step({ n, text, command }: { n: number; text: string; command: string }) {
+function Step({ n, text, command }: { n: number; text: string; command?: string }) {
   return (
     <li className="flex gap-2.5">
       <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold">{n}</span>
       <div className="grid min-w-0 flex-1 gap-1">
         <span className="text-pretty">{text}</span>
-        <span className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 py-1 pr-1 pl-2.5 font-mono text-xs">
-          <span className="truncate">{command}</span>
-          <CopyButton value={command} label={`Copy: ${command}`} />
-        </span>
+        {command === undefined ? null : <CommandLine command={command} />}
       </div>
     </li>
+  );
+}
+
+function CommandLine({ command }: { command: string }) {
+  return (
+    <span className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 py-1 pr-1 pl-2.5 font-mono text-xs">
+      <span className="truncate" title={command}>
+        {command}
+      </span>
+      <CopyButton value={command} label={`Copy: ${command}`} />
+    </span>
   );
 }
 
@@ -90,15 +103,27 @@ export function MachineCard() {
               connected ? 'border-success/40 bg-success/10 text-success' : status === 'unpaired' ? 'text-muted-foreground' : 'border-warning/40 bg-warning/10 text-amber-700 dark:text-warning',
             )}
           >
-            {connected ? 'Connected' : status === 'unpaired' ? 'Not paired' : status === 'connecting' ? 'Checking' : status === 'rejected' ? 'Pairing refused' : 'Not running'}
+            {connected
+              ? 'Connected'
+              : status === 'unpaired'
+                ? 'Not paired'
+                : status === 'connecting'
+                  ? 'Checking'
+                  : status === 'rejected'
+                    ? 'Pairing refused'
+                    : status === 'blocked'
+                      ? 'Blocked by the browser'
+                      : 'Not running'}
           </Badge>
         </CardTitle>
         <CardDescription className="text-pretty">
           {connected
             ? `Signs in your coding agents, runs workflows for real and installs exports, through relay connect${checkedAt === null ? '' : ` · checked ${timeAgo(checkedAt, now)}`}.`
             : status === 'unreachable'
-              ? `This browser is paired with the companion on port ${pairing?.port ?? '?'}, but nothing answers there. Start it again in your repository with relay connect.`
-              : status === 'rejected'
+              ? `This browser is paired with ${pairing?.machine ?? 'the companion'} on port ${pairing?.port ?? '?'}, but nothing answers there. Start relay connect again and the studio finds it within seconds.`
+              : status === 'blocked'
+                ? `This browser is paired with the companion on port ${pairing?.port ?? '?'}, but it is not letting this site reach apps on your device.`
+                : status === 'rejected'
                 ? 'The companion is running but refused this browser’s token — it was rotated with --new-token. Open the new link it printed.'
                 : 'The Relay CLI is the studio’s hands on your computer. Connect it and the studio can sign in Claude Code and Codex, run a workflow for real in your repository, and install an export there. Test runs stay free and in this browser either way.'}
         </CardDescription>
@@ -150,6 +175,13 @@ export function MachineCard() {
               <span className="text-muted-foreground"> · 127.0.0.1:{pairing?.port}</span>
             </dd>
           </dl>
+        ) : status === 'blocked' ? (
+          <BlockedAccessHelp />
+        ) : pairing !== null && (status === 'unreachable' || status === 'connecting') ? (
+          <div className="grid gap-1 text-sm">
+            <span className="text-pretty">{pairing.repository === null || pairing.repository === undefined ? 'In the repository your workflows run on, start it again:' : `Start it again in ${repositoryLabel(pairing.repository)}:`}</span>
+            <CommandLine command={restartCommand(pairing)} />
+          </div>
         ) : (
           <ConnectSteps />
         )}

@@ -7,10 +7,13 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
-import { readPairingFragment, useCompanion } from '@/lib/companion/client';
+import { readPairingFragment, useCompanion, type PairingFailure } from '@/lib/companion/client';
+import { DEFAULT_COMPANION_PORT } from '@/lib/companion/types';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useBrand } from '@/hooks/use-brand';
-import { MachineCard } from './machine-card';
+import { CopyButton } from '@/components/runs/copy-button';
+import { AllowAccessNotice, BlockedAccessHelp } from './browser-access';
+import { CONNECT_COMMAND, MachineCard } from './machine-card';
 
 /**
  * Where `relay connect`'s link lands. The port and the token ride in the
@@ -25,6 +28,7 @@ export function ConnectView() {
   const pair = useCompanion((state) => state.pair);
   const refreshAgents = useAgentsStore((state) => state.refresh);
   const pairing = useCompanion((state) => state.attempt);
+  const asking = useCompanion((state) => state.access === 'prompt');
   const handled = useRef(false);
 
   useEffect(() => {
@@ -52,8 +56,11 @@ export function ConnectView() {
 
         {pairing.state === 'pairing' ? (
           <Card>
-            <CardContent className="flex items-center gap-2 text-sm">
-              <Spinner /> Pairing with the companion on this machine…
+            <CardContent className="grid gap-3">
+              <p className="flex items-center gap-2 text-sm">
+                <Spinner /> Pairing with relay connect on 127.0.0.1:{pairing.port}…
+              </p>
+              {asking ? <AllowAccessNotice /> : null}
             </CardContent>
           </Card>
         ) : null}
@@ -62,14 +69,12 @@ export function ConnectView() {
           <Card className="border-destructive/40">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-destructive">
-                <CircleAlert className="size-4" /> Could not pair
+                <CircleAlert className="size-4" /> {FAILURE_TITLE[pairing.reason]}
               </CardTitle>
               <CardDescription className="text-pretty">{pairing.error}</CardDescription>
             </CardHeader>
             <CardContent className="grid justify-items-start gap-3 text-sm text-muted-foreground">
-              <p className="text-pretty">
-                Check that <span className="font-mono text-foreground">relay connect</span> is still running. If your browser asked whether this site may look for apps on your device, allow it — that is the companion — and try again.
-              </p>
+              <FailureHelp reason={pairing.reason} port={pairing.port} />
               <Button variant="outline" size="sm" onClick={() => void pair(pairing.port, pairing.token).then(() => refreshAgents(), () => undefined)}>
                 <RotateCcw data-icon="inline-start" /> Try again
               </Button>
@@ -93,6 +98,43 @@ export function ConnectView() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+const FAILURE_TITLE: Record<PairingFailure, string> = {
+  blocked: 'Your browser blocked the connection',
+  dismissed: 'Allow the connection to pair',
+  unreachable: 'relay connect did not answer',
+  rejected: 'This pairing link is out of date',
+};
+
+function FailureHelp({ reason, port }: { reason: PairingFailure; port: number }) {
+  if (reason === 'blocked') return <BlockedAccessHelp className="text-foreground" />;
+  if (reason === 'dismissed') {
+    return <p className="text-pretty">Press Try again, and choose Allow when your browser asks whether this site may reach apps on your device. That is relay connect, on this computer only.</p>;
+  }
+  if (reason === 'rejected') {
+    return <p className="text-pretty">It was started with a new token since this link was made. Open the newest link in its terminal, or stop it and run relay connect again.</p>;
+  }
+  const command = port === DEFAULT_COMPANION_PORT ? CONNECT_COMMAND : `${CONNECT_COMMAND} --port ${port}`;
+  const here = typeof window === 'undefined' ? null : window.location.origin;
+  return (
+    <ul className="grid list-disc gap-1.5 pl-4 text-pretty">
+      <li>
+        Is it still running? Start it again in your repository:{' '}
+        <span className="inline-flex items-center gap-1 rounded border bg-muted/40 pl-1.5 font-mono text-xs text-foreground">
+          {command}
+          <CopyButton value={command} label={`Copy: ${command}`} />
+        </span>
+      </li>
+      <li>If its terminal printed a newer link, open that one: the port may have changed.</li>
+      <li>If your browser asks whether this site may reach apps on your device, choose Allow.</li>
+      {here === null ? null : (
+        <li>
+          If its terminal says <span className="font-mono text-foreground">Refused {here}</span>, it was started for another studio: run it with <span className="font-mono text-foreground">--studio {here}</span>.
+        </li>
+      )}
+    </ul>
   );
 }
 

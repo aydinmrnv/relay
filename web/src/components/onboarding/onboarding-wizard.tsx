@@ -43,6 +43,7 @@ import { workflowFromDescription } from '@/lib/workflow/from-description';
 import type { Workflow } from '@/lib/workflow/schema';
 import { blankWorkflow, instantiateTemplate, TEMPLATES } from '@/lib/workflow/templates';
 import { cn } from '@/lib/utils';
+import { INSTALL_COMMAND } from '@/components/companion/machine-card';
 
 type Role = 'solo' | 'team' | 'oss' | 'learning';
 type AgentChoice = 'both' | 'claude' | 'codex';
@@ -419,7 +420,7 @@ export function OnboardingWizard() {
 
 function Ready({ workflow, onOpen }: { workflow: Workflow; onOpen: () => void }) {
   const brand = useBrand();
-  const command = `npm install -g github:aydinmrnv/relay && ${brand.slug} connect`;
+  const command = `${INSTALL_COMMAND} && ${brand.slug} connect`;
   return (
     <div className="flex flex-col items-center gap-8 text-center">
       <motion.span initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 260, damping: 18 }} className="flex size-14 items-center justify-center rounded-2xl bg-success/15 text-success">

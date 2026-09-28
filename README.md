@@ -49,10 +49,16 @@ sign in your own Claude Code and Codex, run a workflow for real there, and
 install its export.
 
 ```bash
-npm install -g github:aydinmrnv/relay
+npm install -g https://github.com/aydinmrnv/relay/releases/download/cli-latest/relay.tgz
 cd ~/code/your-repo
-relay connect          # opens the studio with a one-time pairing link
+relay connect          # opens the studio and pairs it
 ```
+
+Your browser asks once whether the studio may reach apps on your device —
+choose **Allow**; that is `relay connect`, on 127.0.0.1 only. After that the
+studio finds it whenever it is running. (Node 22.6 or later. The tarball is the
+CLI prebuilt by CI; `npm install -g github:aydinmrnv/relay` installs an empty
+package on current npm.)
 
 1. **Open the studio** and start from a template, or from a blank canvas.
 2. **Test-run it** with a sample ticket or your own JSON payload. Nodes and edges

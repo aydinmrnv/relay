@@ -1,0 +1,77 @@
+# Publishes the CLI as one prebuilt tarball, so installing it is one command:
+#
+#   npm install -g https://github.com/aydinmrnv/relay/releases/download/cli-latest/relay.tgz
+#
+# Relay is not on the npm registry, and installing it straight from the
+# repository does not work: `npm install -g github:aydinmrnv/relay` leaves an
+# empty package on current npm (git dependencies no longer run the build that
+# produces dist/). `npm pack` here runs `prepack` — the build and the man page —
+# and the result is attached to a rolling `cli-latest` release, replaced on
+# every push to main that touches the CLI.
+name: CLI release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'bin/**'
+      - 'eval/**'
+      - 'scripts/generate-man.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.build.json'
+      - '.github/workflows/cli-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cli-release
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --pack-destination "$RUNNER_TEMP/pack"
+          mv "$RUNNER_TEMP"/pack/relay-orchestrator-*.tgz "$RUNNER_TEMP/pack/relay.tgz"
+          tar tzf "$RUNNER_TEMP/pack/relay.tgz" | grep -qx 'package/dist/index.js'
+
+      - name: The tarball installs and runs
+        run: |
+          set -euo pipefail
+          npm install -g --prefix "$RUNNER_TEMP/prefix" "$RUNNER_TEMP/pack/relay.tgz"
+          "$RUNNER_TEMP/prefix/bin/relay" --version
+          "$RUNNER_TEMP/prefix/bin/relay" connect --help > /dev/null
+
+      - name: Publish to the cli-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="The Relay CLI, built from ${GITHUB_SHA::7}. Install or update with:
+
+          \`\`\`
+          npm install -g https://github.com/${GITHUB_REPOSITORY}/releases/download/cli-latest/relay.tgz
+          \`\`\`"
+          if gh release view cli-latest > /dev/null 2>&1; then
+            gh release upload cli-latest "$RUNNER_TEMP/pack/relay.tgz" --clobber
+            gh release edit cli-latest --notes "$notes"
+          else
+            gh release create cli-latest "$RUNNER_TEMP/pack/relay.tgz" --title 'Relay CLI (latest)' --notes "$notes" --target "$GITHUB_SHA" --prerelease
+          fi

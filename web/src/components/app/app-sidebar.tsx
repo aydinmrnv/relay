@@ -172,7 +172,9 @@ function AgentsFooter() {
             ? `${cloudStatusText(companion, cloud)}. It wakes when you run something.`
             : companion === 'unreachable'
               ? 'Start relay connect again to run for real.'
-              : 'Run relay connect to sign in agents and run workflows for real.'}
+              : companion === 'blocked'
+                ? 'Your browser is blocking it. Allow local network access for this site.'
+                : 'Run relay connect to sign in agents and run workflows for real.'}
         </span>
       ) : (
         AGENT_IDS.map((id) => {

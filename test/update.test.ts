@@ -388,7 +388,7 @@ describe('installation detection', () => {
     const root = await scratch('relay-detect-');
     await write(join(root, 'package.json'), manifest('0.1.0'));
 
-    assert.equal((await describeInstallation(moduleIn(root))).spec, 'github:aydinmrnv/relay');
+    assert.equal((await describeInstallation(moduleIn(root))).spec, 'https://github.com/aydinmrnv/relay/releases/download/cli-latest/relay.tgz');
   });
 
   it('falls back to the package name when there is no repository', async () => {
