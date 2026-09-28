@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, ArrowUpRight } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { motion } from 'motion/react';
+import { ArrowUpRight } from 'lucide-react';
+import { LiquidGlass } from '@/components/glass/liquid-glass';
+import { Hero1Art, Hero1Cta, useHero1Stagger } from '@/components/watermelon/hero-1';
 import { useBrand } from '@/hooks/use-brand';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { PipelinePreview } from './pipeline-preview';
@@ -14,47 +16,58 @@ export function Hero() {
   const brand = useBrand();
   const signedIn = useAccount((state) => state.status === 'signed-in');
   const accounts = useCapabilities().enabled;
+  const { container, item, initial } = useHero1Stagger();
   // Signed out, the first button makes an account and the second is the no-sign-up way in.
   const invite = accounts && !signedIn;
   return (
-    <section>
-      <div className="container max-w-6xl pt-16 pb-12 sm:pt-24 sm:pb-16">
-        <p className="font-mono text-xs text-muted-foreground">The workflow layer for coding agents</p>
-        <h1 className="mt-5 max-w-4xl text-[clamp(2.5rem,9vw,5.25rem)] leading-[1.02] font-semibold tracking-[-0.045em] text-balance">
-          Ticket in.
-          <br />
-          <span className="text-muted-foreground">Reviewed PR out.</span>
-        </h1>
-        <p className="mt-6 max-w-xl text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg">
-          Claude Code and Codex, working together on your repository. {brand.name} connects the plan, the code, and the
-          review. You decide what ships.
-        </p>
-        <div className="mt-8 flex w-full max-w-sm flex-col gap-3 sm:w-auto sm:max-w-none sm:flex-row">
-          <Button size="lg" className="h-11 px-5" nativeButton={false} render={<Link href={invite ? '/sign-up' : '/dashboard'} />}>
-            {invite ? 'Get started free' : signedIn ? 'Open your studio' : 'Open the studio'}
-            <ArrowRight data-icon="inline-end" />
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            className="h-11 px-5"
-            nativeButton={false}
-            render={<Link href={invite ? '/dashboard' : '/guide'} />}
+    <section id="top" className="relative isolate overflow-hidden">
+      <div className="relative">
+        {/* The grid glows up from behind the sample workflow; its brightest edge stays under the card. */}
+        <Hero1Art
+          side="right"
+          className="absolute right-0 -bottom-40 -z-10 h-[calc(100%+10rem)] w-full mask-[linear-gradient(to_bottom,black_70%,transparent)] md:w-[72%]"
+        />
+        <motion.div variants={container} initial={initial} animate="visible" className="container max-w-6xl pt-28 pb-12 sm:pt-36 sm:pb-16">
+          <motion.p variants={item} className="font-mono text-xs text-muted-foreground">
+            The workflow layer for coding agents
+          </motion.p>
+          <motion.h1
+            variants={item}
+            className="mt-5 max-w-4xl text-[clamp(2.5rem,9vw,5.25rem)] leading-[1.02] font-semibold tracking-[-0.045em] text-balance"
           >
-            {invite ? 'Try it without an account' : 'Read the docs'}
-          </Button>
-        </div>
-        <ul className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted-foreground">
-          {TRUST.map((text) => (
-            <li key={text}>{text}</li>
-          ))}
-          <li>
-            <a href={REPO_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline">
-              Open source on GitHub
-              <ArrowUpRight className="size-3.5" />
-            </a>
-          </li>
-        </ul>
+            Ticket in.
+            <br />
+            <span className="text-muted-foreground">Reviewed PR out.</span>
+          </motion.h1>
+          <motion.p variants={item} className="mt-6 max-w-xl text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg">
+            Claude Code and Codex, working together on your repository. {brand.name} connects the plan, the code, and the
+            review. You decide what ships.
+          </motion.p>
+          <motion.div variants={item} className="mt-8 flex flex-wrap items-center gap-3">
+            <Hero1Cta href={invite ? '/sign-up' : '/dashboard'}>
+              {invite ? 'Get started free' : signedIn ? 'Open your studio' : 'Open the studio'}
+            </Hero1Cta>
+            <LiquidGlass className="rounded-full transition-[background-color,scale] duration-300 hover:bg-white/60 active:scale-[0.97] dark:hover:bg-white/[0.13]">
+              <Link
+                href={invite ? '/dashboard' : '/guide'}
+                className="inline-flex h-11 items-center rounded-full px-5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {invite ? 'Try it without an account' : 'Read the docs'}
+              </Link>
+            </LiquidGlass>
+          </motion.div>
+          <motion.ul variants={item} className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted-foreground">
+            {TRUST.map((text) => (
+              <li key={text}>{text}</li>
+            ))}
+            <li>
+              <a href={REPO_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline">
+                Open source on GitHub
+                <ArrowUpRight className="size-3.5" />
+              </a>
+            </li>
+          </motion.ul>
+        </motion.div>
       </div>
       <div className="container max-w-6xl pb-16 sm:pb-24">
         <PipelinePreview />

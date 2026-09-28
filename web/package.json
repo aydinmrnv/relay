@@ -20,6 +20,7 @@
     "@electric-sql/pglite": "^0.5.8",
     "@hugeicons/core-free-icons": "^4.3.5",
     "@hugeicons/react": "^1.1.10",
+    "@samasante/liquid-glass": "^0.1.1",
     "@xyflow/react": "^12.11.6",
     "class-variance-authority": "^0.7.1",
     "cmdk": "^1.1.1",

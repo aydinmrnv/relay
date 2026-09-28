@@ -27,7 +27,7 @@ export function Landing() {
         Skip to content
       </a>
       <DemoBanner site />
-      <SiteHeader />
+      <SiteHeader overlay />
       <main id="main-content" className="flex-1">
         <Hero />
         <HowItWorks />
