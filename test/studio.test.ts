@@ -13,6 +13,8 @@ import { loadPairingToken, pairingUrl, tokensMatch } from '../src/studio/pairing
 import type { AgentsStatus, RunStreamRecord } from '../src/studio/protocol.ts';
 import { lastError, parseTask, runArguments, StudioRuns, type RelayLauncher } from '../src/studio/runs.ts';
 import { createCompanion, type Companion, type CompanionEvent } from '../src/studio/server.ts';
+import { probeCompanion } from '../src/cli/commands/connect.ts';
+import { createServer } from 'node:http';
 
 async function tempDir(): Promise<string> {
   return realpath(await mkdtemp(join(tmpdir(), 'relay-studio-test-')));
@@ -340,6 +342,22 @@ describe('the companion server', () => {
       assert.equal(paired['repository'], null);
       assert.ok(events.some((event) => event.kind === 'paired'));
     } finally {
+      await companion.close();
+    }
+  });
+
+  it('lets a second `relay connect` recognise the one already on its port', async () => {
+    const { companion, base } = await started({ root: '/work/api' });
+    const other = createServer((_request, response) => response.end('not relay'));
+    await new Promise<void>((resolve) => other.listen(0, '127.0.0.1', resolve));
+    try {
+      const found = await probeCompanion(Number(new URL(base).port), 'secret-token');
+      assert.equal(found?.authorized, true);
+      assert.equal(found?.repository?.root, '/work/api');
+      const address = other.address();
+      assert.equal(await probeCompanion(typeof address === 'object' && address !== null ? address.port : 0, 'secret-token'), null);
+    } finally {
+      other.close();
       await companion.close();
     }
   });

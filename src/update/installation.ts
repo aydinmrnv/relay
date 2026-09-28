@@ -129,6 +129,11 @@ async function samePath(left: string, right: string): Promise<boolean> {
   }
 }
 
+/** Where CI publishes the prebuilt CLI for a GitHub repository (`.github/workflows/cli-release.yml`). */
+export function releaseTarball(owner: string, name: string): string {
+  return `https://github.com/${owner}/${name}/releases/download/cli-latest/relay.tgz`;
+}
+
 /**
  * The spec that reinstalls this package. Relay is distributed from its
  * repository rather than the npm registry, so the repository field is the
@@ -137,11 +142,12 @@ async function samePath(left: string, right: string): Promise<boolean> {
 function npmSpec(manifest: Manifest): string | null {
   const url = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url;
   if (url !== undefined && url.length > 0) {
-    // `git+https://github.com/owner/repo.git` is a valid spec on its own, but
-    // `github:owner/repo` is the one a person can read back out of a log.
     const normalized = url.replace(/^git\+/, '');
     const slug = parseRemoteUrl(normalized);
-    if (slug !== null && slug.host.endsWith('github.com')) return `github:${slug.owner}/${slug.name}`;
+    // Not `github:owner/repo`: current npm installs a git dependency globally
+    // as an empty package, because the build that makes dist/ never runs. The
+    // repository's CI publishes the built package instead.
+    if (slug !== null && slug.host.endsWith('github.com')) return releaseTarball(slug.owner, slug.name);
     return normalized;
   }
 

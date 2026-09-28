@@ -3,7 +3,7 @@ import { packageVersion } from '../../update/installation.ts';
 import { isRelayError, RelayError } from '../../util/errors.ts';
 import { loadPairingToken, pairingPath, pairingUrl } from '../../studio/pairing.ts';
 import { openInBrowser } from '../../studio/open.ts';
-import { DEFAULT_COMPANION_PORT, DEFAULT_STUDIO_URL, type CompanionRepository, type CompanionRunView } from '../../studio/protocol.ts';
+import { DEFAULT_COMPANION_PORT, DEFAULT_STUDIO_URL, type CompanionRepository, type CompanionRunView, type HelloResponse } from '../../studio/protocol.ts';
 import { selfLauncher, StudioRuns } from '../../studio/runs.ts';
 import { parseTokenSource, startRunner } from '../../cloud/runner.ts';
 import { createCompanion, normalizeOrigin, type CompanionEvent } from '../../studio/server.ts';
@@ -27,6 +27,16 @@ export interface ConnectOptions {
 
 /** A studio running from a checkout (`cd web && npm run dev`) is always allowed. */
 const LOCAL_STUDIO_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+/**
+ * How long an already-paired studio gets to find a restarted companion before
+ * the studio is opened anyway. An open studio tab checks every few seconds
+ * while its machine is away, so one that is there answers well inside this.
+ */
+const RECONNECT_GRACE_MS = 8_000;
+
+/** How long to wait for any studio before explaining what usually went wrong. */
+const PAIRING_HINT_MS = 30_000;
 
 /**
  * `relay connect`: make this machine the studio's hands.
@@ -55,7 +65,13 @@ export async function connectCommand(options: ConnectOptions = {}): Promise<numb
   const { token, created } = await loadPairingToken({ rotate: options.newToken === true });
   const version = await packageVersion().catch(() => 'unknown');
 
+  let paired = false;
+  const waiting: NodeJS.Timeout[] = [];
   const log = (event: CompanionEvent): void => {
+    if (event.kind === 'paired' && !paired) {
+      paired = true;
+      for (const timer of waiting) clearTimeout(timer);
+    }
     if (json) emitJsonLine('connect', { type: 'event', at: new Date().toISOString(), event });
     else printEvent(event);
   };
@@ -71,18 +87,18 @@ export async function connectCommand(options: ConnectOptions = {}): Promise<numb
   try {
     bound = await companion.listen(port);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-      throw new RelayError(`Port ${port} is already in use — probably another \`relay connect\`.`, {
-        code: 'PORT_IN_USE',
-        hint: `Stop the other one, or start this one elsewhere: relay connect --port ${port + 1}\nThe pairing link carries the port, so the studio follows.`,
-      });
-    }
+    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') throw await portInUse(port, token, repository);
     throw error;
   }
 
   const link = pairingUrl(studio, bound, token);
-  const shouldOpen = options.open ?? (created && theme().interactive && !json);
-  const opened = shouldOpen ? await openInBrowser(link) : false;
+  // Opening the studio is the next step for a person at a terminal, so it
+  // happens unless asked not to: at once for a new pairing, and otherwise
+  // only if no paired studio tab picks the restarted companion up by itself.
+  const interactive = theme().interactive && !json;
+  const openNow = options.open === true || (options.open === undefined && created && interactive);
+  const openLater = options.open === undefined && !created && interactive;
+  const opened = openNow ? await openInBrowser(link) : false;
 
   if (json) {
     emitJsonLine('connect', {
@@ -97,10 +113,32 @@ export async function connectCommand(options: ConnectOptions = {}): Promise<numb
       repository,
     });
   } else {
-    printHeader({ bound, studio, repository, link, opened, created });
+    printHeader({ bound, studio, repository, link, opened, created, openLater });
   }
 
+  // A studio can say hello while the browser is still being opened above, so
+  // each timer checks again when it fires.
+  if (openLater) {
+    waiting.push(
+      setTimeout(() => {
+        if (paired) return;
+        void openInBrowser(link).then((ok) => {
+          if (ok && !paired) out(`  ${dim(time())}  Opened the studio.`);
+        });
+      }, RECONNECT_GRACE_MS),
+    );
+  }
+  if (!json) {
+    waiting.push(
+      setTimeout(() => {
+        if (!paired) printPairingHelp(link);
+      }, (openLater ? RECONNECT_GRACE_MS : 0) + PAIRING_HINT_MS),
+    );
+  }
+  for (const timer of waiting) timer.unref();
+
   await untilStopped(runs, json);
+  for (const timer of waiting) clearTimeout(timer);
   await companion.close();
   if (json) emitJsonLine('connect', { type: 'stopped', at: new Date().toISOString() });
   else out(dim('  Companion stopped. The studio falls back to simulated runs until it is back.'));
@@ -181,8 +219,8 @@ async function findRepository(): Promise<CompanionRepository | null> {
   }
 }
 
-function printHeader(input: { bound: number; studio: string; repository: CompanionRepository | null; link: string; opened: boolean; created: boolean }): void {
-  const { bound, studio, repository, link, opened, created } = input;
+function printHeader(input: { bound: number; studio: string; repository: CompanionRepository | null; link: string; opened: boolean; created: boolean; openLater: boolean }): void {
+  const { bound, studio, repository, link, opened, created, openLater } = input;
   banner('the studio’s companion on this machine');
   rows([
     { label: 'Studio', value: studio },
@@ -196,24 +234,69 @@ function printHeader(input: { bound: number; studio: string; repository: Compani
     },
   ]);
   out();
-  if (opened) {
-    out(`  ${success('Opened the studio to pair it.')} If it did not open, use this link:`);
-  } else {
-    out(created ? '  Pair the studio by opening this link:' : '  Paired studios reconnect on their own. To pair another browser, open:');
-  }
+  if (opened) out(`  ${success('Opened the studio to pair it.')} If it did not open, use this link:`);
+  else if (openLater) out('  A studio you paired before reconnects by itself; if none has in a few seconds, this opens:');
+  else out(created ? '  Pair the studio by opening this link:' : '  To pair a studio, open:');
   out(`  ${link}`);
-  hint(`The link holds this machine's pairing token (${pairingPath()}); treat it like a password.`);
-  hint('`relay connect --new-token` unpairs every studio that has it.');
+  hint('Your browser may ask whether the studio may reach apps on this device. Choose Allow: that is this companion.');
+  hint(`The link holds this machine's pairing token (${pairingPath()}); treat it like a password. \`relay connect --new-token\` unpairs every studio that has it.`);
   out();
   hint('Leave this running while you use the studio. Ctrl-C stops it.');
   out();
 }
 
+/** Printed once, when nothing has paired a while after the link went out. */
+function printPairingHelp(link: string): void {
+  out();
+  out(warning('  No studio has connected yet.'));
+  hint('If the browser asked whether the studio may reach apps on this device (local network access), choose Allow.');
+  hint('If it was blocked: open the site settings from the icon left of the address, allow local network access, and press Try again.');
+  hint(`Or open the link again: ${link}`);
+  out();
+}
+
+/**
+ * Explains a taken port. A companion already there answers this machine's own
+ * token, so it can say which repository it serves; anything else is a
+ * different program.
+ */
+async function portInUse(port: number, token: string, repository: CompanionRepository | null): Promise<RelayError> {
+  const other = await probeCompanion(port, token);
+  if (other === null) {
+    return new RelayError(`Port ${port} is taken by another program.`, {
+      code: 'PORT_IN_USE',
+      hint: `Start the companion on another port: relay connect --port ${port + 1}\nThe pairing link carries the port, so the studio follows.`,
+    });
+  }
+  const where = other.repository === null || other.repository === undefined ? 'outside any repository' : `for ${other.repository.root}`;
+  const same = other.repository?.root !== undefined && other.repository.root === repository?.root;
+  return new RelayError(same ? `\`relay connect\` is already running for this repository, on port ${port}.` : `\`relay connect\` is already running on port ${port}, ${where}.`, {
+    code: 'PORT_IN_USE',
+    hint: same
+      ? 'Nothing more to start: the studio talks to that one. Stop it with Ctrl-C in its terminal to restart it.'
+      : `Stop that one with Ctrl-C in its terminal and run this again, or run both: relay connect --port ${port + 1}\nThe studio talks to one at a time; opening a companion's link switches it.`,
+  });
+}
+
+/** The companion on a port, if one answers with this machine's token. */
+export async function probeCompanion(port: number, token: string): Promise<HelloResponse | null> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/hello`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(2_000) });
+    const body = (await response.json()) as Partial<HelloResponse>;
+    return body.product === 'relay' ? (body as HelloResponse) : null;
+  } catch {
+    return null;
+  }
+}
+
+function time(): string {
+  return new Date().toTimeString().slice(0, 8);
+}
+
 function printEvent(event: CompanionEvent): void {
-  const time = new Date().toTimeString().slice(0, 8);
   const text =
     event.kind === 'error' ? failure(event.message) : event.kind === 'refused' ? warning(event.message) : event.kind === 'paired' ? success(event.message) : event.message;
-  out(`  ${dim(time)}  ${text}`);
+  out(`  ${dim(time())}  ${text}`);
 }
 
 function finishedMessage(view: CompanionRunView): string {

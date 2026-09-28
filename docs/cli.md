@@ -87,11 +87,26 @@ installs need one.
 which a browser never sends to a server; the studio reads it once, takes it out
 of the address bar, checks it against the companion and keeps it in its own
 storage key, apart from your exported data. After that the studio finds the
-companion whenever it is running, and a later `relay connect` only prints the
-link. `--new-token` rotates it and unpairs every studio that had the old one.
-The studio never probes for a companion it was not paired with, so a visitor
-who never ran `relay connect` is never asked by their browser about reaching
-their machine.
+companion whenever it is running: an open studio tab whose machine has gone
+away checks every five seconds, so a later `relay connect` is picked up by it,
+and opens the studio itself only if no paired tab has reconnected within a few
+seconds. `--new-token` rotates the token and unpairs every studio that had the
+old one. The studio never probes for a companion it was not paired with, so a
+visitor who never ran `relay connect` is never asked by their browser about
+reaching their machine.
+
+**The browser asks once.** Chrome, Edge and Brave ask before a website may
+reach a service on your own computer ("Local network access"). The first time
+the studio reaches the companion the browser asks whether the site may reach
+apps on this device; choose Allow. The studio waits for the answer, says so
+while it is asked, and if the answer was no, shows where to change it and
+connects by itself once it is allowed. The terminal says the same if no studio
+has connected half a minute after the link went out.
+
+**A port already taken** is explained: a `relay connect` already there answers
+this machine's token, so the second one names the repository the first serves;
+anything else is another program, and `--port` moves the companion (the
+pairing link carries the port).
 
 **Three locks, because it can start agents that write code.**
 
@@ -132,7 +147,7 @@ from its first line.
 | `relay connect --port <n>` | listen elsewhere (default 4477, or `RELAY_COMPANION_PORT`); the pairing link carries the port |
 | `relay connect --studio <url>` | pair with another studio, e.g. `http://localhost:3000` |
 | `relay connect --allow-origin <origin>` | let another studio origin connect (repeatable) |
-| `relay connect --no-open` / `--open` | never / always open the pairing page (default: only when the token is new) |
+| `relay connect --no-open` / `--open` | never / always open the pairing page (default: at once when the token is new, otherwise only if no paired studio reconnects within a few seconds) |
 | `relay connect --new-token` | rotate the pairing token |
 | `relay connect --json` | one line when listening — URL, port, pairing link, repository — then one per event |
 | `relay connect --hub <url>` | be a Relay Cloud runner: dial out to that hub instead of listening ([below](#a-cloud-runner)); `RELAY_HUB_URL` also works |
@@ -1245,7 +1260,7 @@ all three. Windows needs a little more saying, which is the next section.
 
 ```powershell
 winget install OpenJS.NodeJS.LTS Git.Git GitHub.cli
-npm install -g github:aydinmrnv/relay
+npm install -g https://github.com/aydinmrnv/relay/releases/download/cli-latest/relay.tgz
 
 npm install -g @anthropic-ai/claude-code    # whichever agent CLIs you want
 npm install -g @openai/codex
@@ -1321,7 +1336,8 @@ relay --update
 It updates Relay itself, from anywhere: the repository you happen to be
 standing in is never the thing it touches. How depends on how this copy was
 installed — a git checkout is fetched and **fast-forwarded**, an npm-managed
-copy is reinstalled from the repository, and an arrangement Relay does not
+copy is reinstalled from the prebuilt tarball CI publishes on the repository's
+`cli-latest` release, and an arrangement Relay does not
 recognize is reported with the command to run instead of being guessed at.
 
 A checkout with local commits of its own is left alone: Relay only

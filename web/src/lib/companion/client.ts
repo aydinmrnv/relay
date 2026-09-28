@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { sessionToken } from '../cloud/sync';
-import type { CloudRunnerStatus, HelloResponse } from './types';
+import { DEFAULT_COMPANION_PORT, type CloudRunnerStatus, type CompanionRepository, type HelloResponse } from './types';
 
 /**
  * The studio's side of `relay connect`.
@@ -34,6 +34,10 @@ export interface Pairing {
   port: number;
   token: string;
   pairedAt: string;
+  /** Where the companion last answered from, so a stopped one can be started again in the right place. */
+  machine?: string;
+  repository?: CompanionRepository | null;
+  platform?: string;
 }
 
 /**
@@ -41,8 +45,27 @@ export interface Pairing {
  * the companion answered and knows this studio. `unreachable`: nothing on the
  * paired port — usually `relay connect` is not running. `rejected`: something
  * answered but refused the token, which is what a rotated token looks like.
+ * `blocked`: the browser will not let this page reach 127.0.0.1 at all (see
+ * `LoopbackAccess`).
  */
-export type CompanionStatus = 'unpaired' | 'connecting' | 'connected' | 'unreachable' | 'rejected';
+export type CompanionStatus = 'unpaired' | 'connecting' | 'connected' | 'unreachable' | 'rejected' | 'blocked';
+
+/**
+ * Whether this browser lets the page reach 127.0.0.1. Chrome, Edge and Brave
+ * ask the person first — "Local network access": a public site reaching a
+ * service on their own computer needs a yes, once per site — and a request
+ * made while the question is up waits for the answer. `unsupported`: a
+ * browser that does not ask, or cannot say.
+ */
+export type LoopbackAccess = 'granted' | 'prompt' | 'denied' | 'unsupported';
+
+/**
+ * Why a pairing link did not pair. `blocked`: the browser has been told no.
+ * `dismissed`: it asked, and the question was closed without a yes.
+ * `unreachable`: allowed, and nothing answered. `rejected`: a companion
+ * answered but did not know the token.
+ */
+export type PairingFailure = 'blocked' | 'dismissed' | 'unreachable' | 'rejected';
 
 export class CompanionError extends Error {
   readonly status: number | null;
@@ -53,7 +76,7 @@ export class CompanionError extends Error {
 }
 
 /** A failed attempt keeps what the link carried, in memory only, so the page can try again without it. */
-export type PairingAttempt = { state: 'idle' } | { state: 'pairing' } | { state: 'failed'; error: string; port: number; token: string };
+export type PairingAttempt = { state: 'idle' } | { state: 'pairing'; port: number } | { state: 'failed'; reason: PairingFailure; error: string; port: number; token: string };
 
 interface CompanionStore {
   pairing: Pairing | null;
@@ -66,6 +89,8 @@ interface CompanionStore {
   hello: HelloResponse | null;
   checkedAt: string | null;
   hydrated: boolean;
+  /** The browser's answer on reaching 127.0.0.1, kept current while the page is open. */
+  access: LoopbackAccess;
   /** The pairing link being checked, for the page it landed on. */
   attempt: PairingAttempt;
   /** Verifies a pairing against the companion before keeping it. */
@@ -80,6 +105,68 @@ interface CompanionStore {
 }
 
 const STORAGE_KEY = 'relay-companion';
+
+/**
+ * How long a check waits for the companion. Refused connections fail at once
+ * whatever this is; the wait only matters while the browser is asking the
+ * person whether this page may reach their machine, and that answer can take
+ * as long as reading the question does.
+ */
+const QUICK_TIMEOUT_MS = 5_000;
+const ASKING_TIMEOUT_MS = 120_000;
+
+/**
+ * With nothing listening a request can fail within milliseconds and leave the
+ * permission unanswered, which is not the person saying no. A failure that
+ * took longer than a person takes to read the question is the question being
+ * closed without a yes.
+ */
+const HUMAN_ANSWER_MS = 1_500;
+
+let accessStatus: PermissionStatus | null = null;
+
+/**
+ * Reads the browser's loopback permission and follows it. Chrome names it
+ * `loopback-network` now and `local-network-access` before that; a browser
+ * that knows neither never asks. A studio served from this machine itself
+ * (`localhost:3000`) is already on the loopback side and is never asked.
+ */
+async function readAccess(): Promise<LoopbackAccess> {
+  const onLoopback = typeof window !== 'undefined' && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+  if (accessStatus === null && !onLoopback && typeof navigator !== 'undefined' && navigator.permissions !== undefined) {
+    for (const name of ['loopback-network', 'local-network-access']) {
+      try {
+        accessStatus = await navigator.permissions.query({ name: name as PermissionName });
+        accessStatus.addEventListener('change', onAccessChange);
+        break;
+      } catch {
+        // Not a permission this browser knows; try the older name.
+      }
+    }
+  }
+  const access: LoopbackAccess = accessStatus === null ? 'unsupported' : (accessStatus.state as LoopbackAccess);
+  if (useCompanion.getState().access !== access) useCompanion.setState({ access });
+  return access;
+}
+
+/** Allowing access in the site settings pairs a link that was blocked, and reconnects a paired studio, without a click. */
+function onAccessChange(): void {
+  void readAccess().then((access) => {
+    if (access !== 'granted') return;
+    const state = useCompanion.getState();
+    if (state.attempt.state === 'failed') void state.pair(state.attempt.port, state.attempt.token).catch(() => undefined);
+    else if (state.pairing !== null) void state.refresh();
+  });
+}
+
+function timeoutFor(access: LoopbackAccess): number {
+  return access === 'granted' || access === 'unsupported' ? QUICK_TIMEOUT_MS : ASKING_TIMEOUT_MS;
+}
+
+/** Where the companion last answered from, remembered alongside the pairing. */
+function remembered(pairing: Pairing, answer: HelloResponse): Pairing {
+  return { ...pairing, machine: answer.machine ?? pairing.machine, repository: answer.repository ?? null, platform: answer.platform ?? pairing.platform };
+}
 
 export function companionBase(port: number): string {
   return `http://127.0.0.1:${port}`;
@@ -105,11 +192,11 @@ async function cloudHello(hub: string, token: string): Promise<HelloResponse> {
   return body;
 }
 
-async function hello(port: number, token: string): Promise<HelloResponse> {
+async function hello(port: number, token: string, timeoutMs: number): Promise<HelloResponse> {
   const response = await fetch(`${companionBase(port)}/v1/hello`, {
     headers: { authorization: `Bearer ${token}` },
     cache: 'no-store',
-    signal: AbortSignal.timeout(4000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new CompanionError(`The companion answered ${response.status}.`, response.status);
   const body = (await response.json()) as HelloResponse;
@@ -128,27 +215,52 @@ export const useCompanion = create<CompanionStore>()(
       hello: null,
       checkedAt: null,
       hydrated: false,
+      access: 'unsupported',
       attempt: { state: 'idle' },
 
       pair: async (port, token) => {
-        set({ attempt: { state: 'pairing' } });
+        set({ attempt: { state: 'pairing', port } });
+        const started = Date.now();
         let answer: HelloResponse;
         try {
-          answer = await hello(port, token);
-          if (!answer.authorized) throw new CompanionError('The companion did not recognise that token. Open the newest link `relay connect` printed.');
+          // A browser that has not been asked yet asks now, and this waits for the answer.
+          if ((await readAccess()) === 'denied') throw new CompanionError(BLOCKED);
+          answer = await hello(port, token, ASKING_TIMEOUT_MS);
+          if (!answer.authorized) throw new CompanionError('relay connect is running, but did not recognise this link. Open the newest link it printed.', 401);
         } catch (caught) {
-          const error = caught instanceof CompanionError ? caught : new CompanionError(`Nothing answered on 127.0.0.1:${port}. Is \`relay connect\` still running?`);
-          set({ attempt: { state: 'failed', error: error.message, port, token } });
-          throw error;
+          const access = await readAccess();
+          const reason: PairingFailure =
+            caught instanceof CompanionError && caught.status !== null
+              ? 'rejected'
+              : access === 'denied'
+                ? 'blocked'
+                : access === 'prompt' && Date.now() - started >= HUMAN_ANSWER_MS
+                  ? 'dismissed'
+                  : 'unreachable';
+          const message =
+            reason === 'rejected'
+              ? (caught as CompanionError).message
+              : reason === 'blocked'
+                ? BLOCKED
+                : reason === 'dismissed'
+                  ? 'Your browser asked whether this site may reach apps on your device, and it was not allowed.'
+                  : `Nothing answered on 127.0.0.1:${port}.`;
+          set({ attempt: { state: 'failed', reason, error: message, port, token } });
+          throw new CompanionError(message);
         }
         // Pairing a machine is choosing it: sign-ins and runs go there from now on.
-        set({ pairing: { port, token, pairedAt: new Date().toISOString() }, target: 'machine', status: 'connected', hello: answer, checkedAt: new Date().toISOString(), attempt: { state: 'idle' } });
+        const pairing = remembered({ port, token, pairedAt: new Date().toISOString() }, answer);
+        set({ pairing, target: 'machine', status: 'connected', hello: answer, checkedAt: new Date().toISOString(), attempt: { state: 'idle' } });
         return answer;
       },
 
       forget: () => set(get().target === 'machine' ? { pairing: null, status: 'unpaired', hello: null, checkedAt: null } : { pairing: null }),
 
-      markHydrated: () => set({ hydrated: true, status: get().target === 'cloud' || get().pairing !== null ? 'connecting' : 'unpaired' }),
+      markHydrated: () => {
+        set({ hydrated: true, status: get().target === 'cloud' || get().pairing !== null ? 'connecting' : 'unpaired' });
+        // After the store exists: this can run while it is still being created.
+        queueMicrotask(() => void readAccess());
+      },
 
       setTarget: (target) => {
         if (target === get().target) return;
@@ -199,11 +311,23 @@ export const useCompanion = create<CompanionStore>()(
           return;
         }
         if (get().status !== 'connected') set({ status: 'connecting' });
+        const access = await readAccess();
+        if (access === 'denied') {
+          set({ status: 'blocked', hello: null, checkedAt: new Date().toISOString() });
+          return;
+        }
         try {
-          const answer = await hello(pairing.port, pairing.token);
-          set({ status: answer.authorized ? 'connected' : 'rejected', hello: answer.authorized ? answer : null, checkedAt: new Date().toISOString() });
+          const answer = await hello(pairing.port, pairing.token, timeoutFor(access));
+          const current = get().pairing;
+          set({
+            status: answer.authorized ? 'connected' : 'rejected',
+            hello: answer.authorized ? answer : null,
+            checkedAt: new Date().toISOString(),
+            // Only the pairing this answer was for; a new link may have replaced it meanwhile.
+            ...(answer.authorized && current !== null && current.token === pairing.token && current.port === pairing.port ? { pairing: remembered(current, answer) } : {}),
+          });
         } catch {
-          set({ status: 'unreachable', hello: null, checkedAt: new Date().toISOString() });
+          set({ status: (await readAccess()) === 'denied' ? 'blocked' : 'unreachable', hello: null, checkedAt: new Date().toISOString() });
         }
       },
     }),
@@ -250,13 +374,28 @@ export async function companionRequest(path: string, init: CompanionRequestInit 
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     void useCompanion.getState().refresh();
-    throw new CompanionError(runner === 'cloud' ? 'Could not reach Relay Cloud. Check your connection and try again.' : 'Could not reach this machine. Is `relay connect` still running?');
+    if (runner === 'cloud') throw new CompanionError('Could not reach Relay Cloud. Check your connection and try again.');
+    throw new CompanionError((await readAccess()) === 'denied' ? BLOCKED : 'Could not reach this machine. Is `relay connect` still running?');
   }
 }
 
 /** Whether the current runner can do this, right now. */
 export function useCompanionCan(capability: 'agents' | 'runs' | 'install' | 'repositories' | 'github'): boolean {
   return useCompanion((state) => state.status === 'connected' && (state.hello?.capabilities ?? []).includes(capability));
+}
+
+const BLOCKED = 'Your browser is not letting this site reach relay connect on your computer.';
+
+/**
+ * The command that starts the companion again where it last ran: in the
+ * repository it served, which is where runs and installs go.
+ */
+export function restartCommand(pairing: Pairing | null): string {
+  // The studio looks on the paired port, so the companion has to come back on it.
+  const connect = pairing === null || pairing.port === DEFAULT_COMPANION_PORT ? 'relay connect' : `relay connect --port ${pairing.port}`;
+  const root = pairing?.repository?.root;
+  if (root === undefined || pairing?.platform === 'win32') return connect;
+  return `cd ${/^[\w@%+=:,./-]+$/.test(root) ? root : `'${root.replace(/'/g, `'\\''`)}'`} && ${connect}`;
 }
 
 /** Parses the pairing link's fragment: `#port=4477&token=…`. */

@@ -89,15 +89,20 @@ const MOVING = new Set(['queued', 'creating', 'starting', 'stopping', 'deleting'
 /**
  * Mount once. Polls while the tab is visible, re-checks on focus, and follows
  * pairing changes. A cloud machine on its way up or down is watched every few
- * seconds; the checks never wake it.
+ * seconds; the checks never wake it. So is a paired machine that is not
+ * answering, so a restarted `relay connect` is found in seconds — which is
+ * also how it knows this tab is here and it need not open another.
  */
 export function useAgentsPoller(intervalMs = 30_000): void {
   const refresh = useAgentsStore((state) => state.refresh);
   const hydrated = useCompanion((state) => state.hydrated);
-  const pairing = useCompanion((state) => state.pairing);
+  // Which pairing, not what it last learned: a check that remembers the repository must not restart the timer.
+  const pairing = useCompanion((state) => (state.pairing === null ? null : `${state.pairing.port}:${state.pairing.token}`));
   const target = useCompanion((state) => state.target);
   const moving = useCompanion((state) => state.target === 'cloud' && state.cloud !== null && MOVING.has(state.cloud.state));
-  const every = moving ? 4_000 : intervalMs;
+  // `connecting` too: each check passes through it, and the interval must not change mid-check.
+  const away = useCompanion((state) => state.target === 'machine' && state.pairing !== null && (state.status === 'unreachable' || state.status === 'connecting'));
+  const every = moving ? 4_000 : away ? 5_000 : intervalMs;
   useEffect(() => {
     if (!hydrated) return;
     void refresh();

@@ -16,3 +16,6 @@ dist/
 
 # Eval results are written here by default: local measurements, not the project.
 .relay/eval/
+
+# `npm pack` writes the man page here from the CLI help.
+man/
