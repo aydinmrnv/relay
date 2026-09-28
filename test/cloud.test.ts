@@ -4,7 +4,7 @@ import { generateKeyPairSync, createSign, type KeyObject } from 'node:crypto';
 import { createServer } from 'node:http';
 
 import { acceptWebSocket, isWebSocketUpgrade, refuseUpgrade, type WsConnection } from '../src/cloud/ws.ts';
-import { backoffDelay } from '../src/cloud/dialout.ts';
+import { backoffDelay, dialOut } from '../src/cloud/dialout.ts';
 import { runnerSocketUrl } from '../src/cloud/frames.ts';
 import { AuthError, ClerkVerifier, clerkIssuerFromPublishableKey, mintRunnerToken, verifyRunnerToken } from '../src/cloud/hub/auth.ts';
 import { AzureDriver, classifyArmError, machineFromArm, vmFamilyUsageName } from '../src/cloud/hub/azure.ts';
@@ -12,6 +12,7 @@ import { runnerCloudInit } from '../src/cloud/hub/cloudInit.ts';
 import { CloudError, type CloudDriver, type CloudMachine, type MachineSpec, type RegionCapacity } from '../src/cloud/hub/driver.ts';
 import { Fleet, runnerName, type FleetLink } from '../src/cloud/hub/fleet.ts';
 import { readHubConfig } from '../src/cli/commands/hub.ts';
+import type { Router } from '../src/studio/router.ts';
 
 /* ------------------------------------------------------------------ */
 /* The WebSocket server                                                */
@@ -68,9 +69,12 @@ describe('the hub’s WebSocket server', () => {
     let closedWith: number | null = null;
     const server = await wsServer((ws) => ws.onClose((code) => (closedWith = code)), 1024);
     try {
+      // `error`, not `close`: Node 22's client fires no `close` after a refused handshake.
       const refused = client(server.url, 'wrong');
-      await new Promise<void>((resolve) => refused.addEventListener('close', () => resolve()));
-      assert.equal(refused.readyState, WebSocket.CLOSED);
+      let opened = false;
+      refused.addEventListener('open', () => (opened = true));
+      await new Promise<void>((resolve) => refused.addEventListener('error', () => resolve()));
+      assert.equal(opened, false);
 
       const ws = client(server.url);
       await new Promise((resolve) => ws.addEventListener('open', resolve));
@@ -575,6 +579,23 @@ describe('dialing out', () => {
     assert.equal(backoffDelay(3, 1000, 30_000, () => 1), 8000);
     assert.equal(backoffDelay(20, 1000, 30_000, () => 1), 30_000);
     assert.ok(backoffDelay(20, 1000, 30_000, () => 0) >= 15_000);
+  });
+
+  it('dials again after the hub refuses it', async () => {
+    const server = await wsServer(() => undefined);
+    const tokens = ['wrong', 'wrong', 'ok'];
+    const router = { hello: () => ({}), pendingLogins: () => 0 } as unknown as Router;
+    const runner = dialOut({ hub: server.url.replace('ws:', 'http:'), token: async () => tokens.shift() ?? 'ok', router, runs: null, minDelayMs: 5, maxDelayMs: 20 });
+    // A runner that never redials would wait forever; stopping it rejects `ready` instead.
+    const giveUp = setTimeout(() => void runner.stop(), 5_000);
+    try {
+      await runner.ready;
+      assert.deepEqual(tokens, []);
+    } finally {
+      clearTimeout(giveUp);
+      await runner.stop();
+      await server.close();
+    }
   });
 
   it('turns a hub address into its runner socket', () => {
