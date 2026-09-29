@@ -5,7 +5,7 @@ import { safeNext } from '@/lib/safe-next';
 import { ACCOUNTS_ENABLED } from '@/server/env';
 import { firstParam, redirectIfSignedIn } from '../../session';
 
-export const metadata: Metadata = { title: 'Sign in' };
+export const metadata: Metadata = { title: 'Sign in', robots: { index: false, follow: true } };
 
 export default async function SignInPage({ searchParams }: PageProps<'/sign-in/[[...sign-in]]'>) {
   await connection();

@@ -2,17 +2,19 @@
 
 import Link from 'next/link';
 import { useEffect, useRef } from 'react';
-import { ArrowRight, CircleAlert, FileCode2, KeyRound, Play, RotateCcw } from 'lucide-react';
+import { ArrowRight, CircleAlert, Cloud, FileCode2, KeyRound, Play, RotateCcw, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { readPairingFragment, useCompanion, type PairingFailure } from '@/lib/companion/client';
 import { DEFAULT_COMPANION_PORT } from '@/lib/companion/types';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useBrand } from '@/hooks/use-brand';
 import { CopyButton } from '@/components/runs/copy-button';
 import { AllowAccessNotice, BlockedAccessHelp } from './browser-access';
+import { RunnerStatus } from './runner-compare';
 import { CONNECT_COMMAND, MachineCard } from './machine-card';
 
 /**
@@ -44,14 +46,17 @@ export function ConnectView() {
     );
   }, [hydrated, pair, refreshAgents]);
 
-  const connected = status === 'connected' && pairing.state !== 'pairing';
+  // `status` follows the target, so a connected cloud machine would otherwise
+  // make this page claim the computer is paired.
+  const paired = useCompanion((state) => state.pairing);
+  const connected = status === 'connected' && paired !== null && pairing.state !== 'pairing';
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 pb-16 md:p-6">
       <div className="mx-auto grid w-full max-w-3xl gap-6">
         <PageHeader
           title={connected ? 'Your machine is connected' : 'Connect your machine'}
-          description={`${brand.name} draws, checks and compiles workflows here in the browser. The coding agents, their sign-ins and your repository are on your computer, and relay connect is the door between the two.`}
+          description={`${brand.name} draws, checks and compiles workflows here in the browser. The coding agents, their sign-ins and your repository are on your computer, and relay connect is the door between the two. Relay Cloud does the same job on a machine Relay runs for you; the card at the bottom compares them.`}
         />
 
         {pairing.state === 'pairing' ? (
@@ -84,6 +89,8 @@ export function ConnectView() {
 
         {pairing.state !== 'pairing' ? <MachineCard /> : null}
 
+        {pairing.state !== 'pairing' ? <NotThisComputer /> : null}
+
         {connected ? (
           <Card>
             <CardHeader>
@@ -107,6 +114,64 @@ const FAILURE_TITLE: Record<PairingFailure, string> = {
   unreachable: 'relay connect did not answer',
   rejected: 'This pairing link is out of date',
 };
+
+/**
+ * The other answer, next to the one this page is about: the same run, on a
+ * machine Relay runs for you. Without it, pairing looks like the only way.
+ */
+function NotThisComputer() {
+  const hub = useCompanion((state) => state.cloudHub);
+  const signedIn = useAccount((state) => state.status === 'signed-in');
+  const accounts = useCapabilities().enabled;
+  const target = useCompanion((state) => state.target);
+  const status = useCompanion((state) => state.status);
+  const cloud = useCompanion((state) => state.cloud);
+  // `status` belongs to the current target and `cloud` keeps its last value, so
+  // "runs go to the cloud" needs both to agree — opening a pairing link switches
+  // the target to the computer and leaves the cloud's awake state behind.
+  const inUse = target === 'cloud' && status === 'connected' && cloud?.state === 'ready';
+  const offered = hub !== null && accounts;
+
+  return (
+    <Card className="border-dashed">
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          <Cloud className="size-4 text-muted-foreground" aria-hidden />
+          Not on this computer?
+          {offered ? (
+            <span className="ml-auto">
+              <RunnerStatus target="cloud" />
+            </span>
+          ) : null}
+        </CardTitle>
+        <CardDescription className="text-pretty">
+          {!offered
+            ? 'Relay Cloud is the same thing on a machine Relay runs for you, with nothing to install. This deployment has no hub behind it, so your own computer is the runner here.'
+            : inUse
+              ? 'Your cloud machine is awake, and it is where sign-ins and runs currently go. Pairing your computer as well does no harm: you can switch between the two at any time.'
+              : 'Relay Cloud is a Linux machine of your own that Relay makes for you, wakes when you run something and sleeps when it is idle. Nothing to install and no terminal: you name the repository on each run instead.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-center gap-2">
+        <Button size="sm" nativeButton={false} render={<Link href="/runners" />}>
+          Compare the two
+          <ArrowRight data-icon="inline-end" />
+        </Button>
+        {offered && !signedIn ? (
+          <Button size="sm" variant="ghost" nativeButton={false} render={<Link href="/sign-up?next=/runners" />}>
+            <UserPlus data-icon="inline-start" /> Create an account for it
+          </Button>
+        ) : null}
+        {offered && signedIn ? (
+          <Button size="sm" variant="ghost" nativeButton={false} render={<Link href="/settings#machine" />}>
+            <Cloud data-icon="inline-start" /> Use Relay Cloud
+          </Button>
+        ) : null}
+        <p className="text-xs text-pretty text-muted-foreground">Your plans and your sign-ins are used the same way either way.</p>
+      </CardContent>
+    </Card>
+  );
+}
 
 function FailureHelp({ reason, port }: { reason: PairingFailure; port: number }) {
   if (reason === 'blocked') return <BlockedAccessHelp className="text-foreground" />;

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useSyncExternalStore } from 'react';
 import { SignIn, SignUp } from '@clerk/nextjs';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Check, Cloud, Laptop } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCapabilities } from '@/lib/cloud/account';
@@ -52,14 +52,17 @@ export function ClerkSignIn({ next }: { next: string }) {
   const hydrated = useHydrated();
   if (!hydrated) return <FormPlaceholder />;
   return (
-    <SignIn
-      routing="path"
-      path="/sign-in"
-      appearance={APPEARANCE}
-      fallbackRedirectUrl={next}
-      signUpUrl={next === '/dashboard' ? '/sign-up' : `/sign-up?next=${encodeURIComponent(next)}`}
-      signUpFallbackRedirectUrl="/onboarding"
-    />
+    <div className="flex flex-col gap-4">
+      <SignIn
+        routing="path"
+        path="/sign-in"
+        appearance={APPEARANCE}
+        fallbackRedirectUrl={next}
+        signUpUrl={next === '/dashboard' ? '/sign-up' : `/sign-up?next=${encodeURIComponent(next)}`}
+        signUpFallbackRedirectUrl="/onboarding"
+      />
+      <AccountWhy />
+    </div>
   );
 }
 
@@ -88,6 +91,44 @@ export function ClerkSignUp({ next }: { next: string }) {
         .
       </p>
       <GuestWorkNote />
+      <AccountWhy />
+    </div>
+  );
+}
+
+/**
+ * What signing in buys, and the one thing that needs it. An account is not
+ * required to use the studio — pairing your own computer and running for real
+ * works as a guest — but Relay Cloud is reached with the account's session,
+ * so it cannot be used without one. Saying that here answers the question the
+ * form itself raises.
+ */
+function AccountWhy() {
+  return (
+    <div className="grid gap-1.5 text-xs text-pretty text-muted-foreground">
+      <p className="font-medium text-foreground">What an account adds</p>
+      <ul className="grid gap-1">
+        <li className="flex gap-1.5">
+          <Check className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
+          <span>Your workflows, runs and settings in every browser you sign in to, with version history and public share links.</span>
+        </li>
+        <li className="flex gap-1.5">
+          <Cloud className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
+          <span>
+            <strong className="font-medium text-foreground">Relay Cloud</strong>: a machine of your own that Relay runs and wakes for you, with nothing to install.
+          </span>
+        </li>
+        <li className="flex gap-1.5">
+          <Laptop className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <span>
+            Not required: your own computer, paired with relay connect, runs workflows for real as a guest.{' '}
+            <Link href="/runners" className="underline underline-offset-4 hover:text-foreground">
+              See the two side by side
+            </Link>
+            .
+          </span>
+        </li>
+      </ul>
     </div>
   );
 }

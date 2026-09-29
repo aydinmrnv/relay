@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'motion/react';
-import { BookOpen, Cable, LayoutDashboard, LayoutTemplate, Play, Settings, Loader2, Workflow } from 'lucide-react';
+import { BookOpen, Cable, Laptop, LayoutDashboard, LayoutTemplate, Play, Settings, Loader2, Workflow } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -54,7 +54,10 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   },
   {
     label: 'Learn',
-    items: [{ href: '/guide', label: 'Guide', icon: BookOpen, hint: 'How the studio works, and what every part does' }],
+    items: [
+      { href: '/runners', label: 'Where agents run', icon: Laptop, hint: 'Your computer through relay connect, or Relay Cloud — the two places a run happens' },
+      { href: '/guide', label: 'Guide', icon: BookOpen, hint: 'How the studio works, and what every part does' },
+    ],
   },
 ];
 
@@ -151,44 +154,51 @@ export function AppSidebar() {
   );
 }
 
-/** The paired machine, and which coding agents are signed in there: the things a real run cannot do without. */
+/** The runner in use, and which coding agents are signed in there: the things a real run cannot do without. */
 function AgentsFooter() {
   const bridge = useAgentsStore((state) => state.bridge);
   const status = useAgentsStore((state) => state.status);
   const companion = useCompanion((state) => state.status);
   const host = useCompanion((state) => state.hello?.machine);
+  const target = useCompanion((state) => state.target);
   const cloud = useCompanion((state) => (state.target === 'cloud' ? state.cloud : undefined));
   return (
-    <Link
-      href={companion === 'connected' ? '/settings#agents' : cloud !== undefined ? '/settings#machine' : '/connect'}
-      className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs transition-colors hover:bg-background group-data-[collapsible=icon]:hidden"
-    >
-      <span className="flex items-center gap-1.5 font-medium text-foreground">
-        <span className="truncate">{companion === 'connected' ? (host ?? 'Your machine') : cloud !== undefined ? 'Relay Cloud' : 'No machine connected'}</span>
-      </span>
-      {bridge === 'unavailable' ? (
-        <span className="text-muted-foreground">
-          {cloud !== undefined
-            ? `${cloudStatusText(companion, cloud)}. It wakes when you run something.`
-            : companion === 'unreachable'
-              ? 'Start relay connect again to run for real.'
-              : companion === 'blocked'
-                ? 'Your browser is blocking it. Allow local network access for this site.'
-                : 'Run relay connect to sign in agents and run workflows for real.'}
+    <div className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs group-data-[collapsible=icon]:hidden">
+      <Link
+        href={companion === 'connected' ? '/settings#agents' : cloud !== undefined ? '/settings#machine' : '/runners'}
+        className="grid gap-1.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        <span className="flex items-center gap-1.5 font-medium text-foreground">
+          <span className="truncate">{companion === 'connected' ? (host ?? 'Your machine') : cloud !== undefined ? 'Relay Cloud' : 'No runner yet'}</span>
         </span>
-      ) : (
-        AGENT_IDS.map((id) => {
-          const account = status?.agents[id];
-          const state = account === undefined ? 'checking' : account.loggedIn ? 'signed in' : account.installed ? 'not signed in' : 'not installed';
-          return (
-            <span key={id} className="flex items-center gap-2 text-muted-foreground">
-              <span className="text-foreground">{AGENT_META[id].name}</span>
-              {/* Only the state that needs doing something about gets colour. */}
-              <span className={cn('ml-auto', account?.installed === true && !account.loggedIn && 'text-amber-700 dark:text-warning')}>{state}</span>
-            </span>
-          );
-        })
-      )}
-    </Link>
+        {bridge === 'unavailable' ? (
+          <span className="text-muted-foreground">
+            {cloud !== undefined
+              ? `${cloudStatusText(companion, cloud)}. It wakes when you run something.`
+              : companion === 'unreachable'
+                ? 'Start relay connect again to run for real.'
+                : companion === 'blocked'
+                  ? 'Your browser is blocking it. Allow local network access for this site.'
+                  : 'Run relay connect to sign in agents and run workflows for real.'}
+          </span>
+        ) : (
+          AGENT_IDS.map((id) => {
+            const account = status?.agents[id];
+            const state = account === undefined ? 'checking' : account.loggedIn ? 'signed in' : account.installed ? 'not signed in' : 'not installed';
+            return (
+              <span key={id} className="flex items-center gap-2 text-muted-foreground">
+                <span className="text-foreground">{AGENT_META[id].name}</span>
+                {/* Only the state that needs doing something about gets colour. */}
+                <span className={cn('ml-auto', account?.installed === true && !account.loggedIn && 'text-amber-700 dark:text-warning')}>{state}</span>
+              </span>
+            );
+          })
+        )}
+      </Link>
+      {/* The local-or-cloud question, wherever the studio is looking right now. */}
+      <Link href="/runners" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+        {target === 'cloud' ? 'Relay Cloud, or your computer' : 'Your computer, or Relay Cloud'} →
+      </Link>
+    </div>
   );
 }

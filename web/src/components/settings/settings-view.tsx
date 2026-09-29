@@ -1,13 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Database, Laptop, Palette, Rocket, Tag, UserRound } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowRight, Bot, Database, Laptop, Palette, Rocket, Tag, UserRound } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/page-header';
 import { AgentAccountsCard } from '@/components/agents/agent-accounts-card';
 import { AccountSettings } from '@/components/account/account-settings';
 import { useAccount } from '@/lib/cloud/account';
 import { MachineCard } from '@/components/companion/machine-card';
 import { CloudCard, RunnerPicker } from '@/components/companion/cloud-card';
+import { RunnerNote } from '@/components/companion/runner-compare';
 import { useCompanion } from '@/lib/companion/client';
 import { SectionChips, SectionNav, type SectionLink } from '@/components/guide/section-nav';
 import { FadeIn } from '@/components/motion/fade-in';
@@ -92,17 +95,22 @@ export function SettingsView() {
                 <SettingsSection
                   id="machine"
                   icon={Laptop}
-                  term="companion"
+                  term="runner"
                   title="Where agents run"
                   description={
                     hasCloud
-                      ? 'Where sign-ins and real runs happen: your own computer, paired by relay connect, or a machine of your own on Relay Cloud. Either way the agents use your plans and your sign-ins.'
+                      ? 'The runner: where your coding agents are signed in and where a run happens. Your own computer, paired by relay connect, or a machine Relay runs for you in Relay Cloud — same plans, same sign-ins either way.'
                       : 'The Relay CLI on your computer, paired with this studio by relay connect. It is how sign-ins, real runs and installing an export reach your machine; the pairing is kept in this browser only, apart from your other data.'
                   }
                 >
                   <div className="grid gap-4">
                     {hasCloud ? <RunnerPicker /> : null}
                     {target === 'cloud' && hasCloud ? <CloudCard /> : <MachineCard />}
+                    <RunnerNote />
+                    <Button size="sm" variant="ghost" className="w-fit" nativeButton={false} render={<Link href="/runners" />}>
+                      Your computer or Relay Cloud, side by side
+                      <ArrowRight data-icon="inline-end" />
+                    </Button>
                   </div>
                 </SettingsSection>
 
@@ -111,7 +119,7 @@ export function SettingsView() {
                   icon={Bot}
                   term="subscription"
                   title="Coding agents"
-                  description="The pipeline’s work is done by coding CLIs on your own plan: Claude Code with a Claude subscription, Codex with a ChatGPT one. No API keys to paste. Sign in once; the studio asks the CLIs on your machine whether they are signed in and never sees a token."
+                  description="The pipeline’s work is done by coding CLIs on your own plan: Claude Code with a Claude subscription, Codex with a ChatGPT one. No API keys to paste. Sign in once; the studio asks the CLIs on your runner whether they are signed in and never sees a token."
                 >
                   <AgentAccountsCard />
                 </SettingsSection>

@@ -37,7 +37,7 @@ export function Different() {
   const rows: Array<{ label: string; ours: Mark; agents: Mark; canvases: Mark; note?: string }> = [
     { label: 'Two vendors’ agents review each other’s plan and diff', ours: 'yes', agents: 'no', canvases: 'no' },
     { label: 'Runs on the Claude and ChatGPT plans you already pay for', ours: 'yes', agents: 'partial', canvases: 'no', note: 'Hosted agents usually bill seats or credits of their own; canvases call APIs per key.' },
-    { label: 'Your code stays on your machine or your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
+    { label: 'Your code stays on your computer, on a machine of yours in Relay Cloud, or on your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'Forecast what a workflow will cost before it runs', ours: 'yes', agents: 'no', canvases: 'no' },
     { label: 'Build a workflow from a sentence without spending AI credits', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'Guardrails that refuse by default: budgets, allowlists, approval', ours: 'yes', agents: 'partial', canvases: 'partial' },

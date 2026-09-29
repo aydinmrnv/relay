@@ -15,20 +15,27 @@ export default function PrivacyPage() {
       <p>Last updated {UPDATED}. This is the plain version: what {name} keeps, why, and how to get rid of it.</p>
 
       <h2>Without an account</h2>
-      <p>Everything you make as a guest — workflows, test runs, settings — stays in your browser’s local storage. It is not sent to us.</p>
+      <p>
+        Everything you make as a guest — workflows, test runs, settings — stays in your browser’s local storage. It is not sent to us. A real run on your own computer goes from your browser to relay connect on 127.0.0.1 and never reaches our servers either.
+      </p>
 
       <h2>With an account</h2>
       <ul>
         <li>Your account itself — name, email address, password or the Google or GitHub sign-in you chose — is held by Clerk, our sign-in provider. The studio only keeps your Clerk user id.</li>
-        <li>What you build in the studio: workflow definitions, the records of test runs and runs on your machine (phases, costs, summaries), settings, saved versions, and share links you create.</li>
+        <li>What you build in the studio: workflow definitions, the records of test runs and of runs on your runner (phases, costs, summaries), settings, saved versions, and share links you create.</li>
         <li>Clerk keeps session records, with the IP address and browser that signed in, so you can see and end sessions from Settings and so sign-in attempts can be protected against abuse.</li>
       </ul>
 
       <h2>What we never have</h2>
       <ul>
-        <li>Your source code. Agents run on your machine or on your own CI runner; the studio only keeps the workflow and the run’s summary.</li>
-        <li>Your Claude, ChatGPT or GitHub tokens for the coding agents. Those CLIs sign in on your machine, and the studio only asks them whether they are signed in.</li>
+        <li>Your source code, in the studio. Agents work in a checkout on the runner you picked — your own computer, a Relay Cloud machine, or your own CI runner — and only the workflow and the run’s summary come back to us.</li>
+        <li>Your Claude, ChatGPT or GitHub tokens for the coding agents. The CLIs sign in on the runner and keep the credentials in their own files there, and the studio only asks them whether they are signed in. Relay’s code has no route that reads a credential file.</li>
       </ul>
+
+      <h2>If you use Relay Cloud</h2>
+      <p>
+        Relay Cloud is a Linux machine we run for you, one per person. Your sign-ins and a checkout of the repositories you name sit on that machine’s disk, on infrastructure we operate, and stay there between runs — remove the machine and the disk goes with it. Nobody else’s runs touch it: the hub routes a request only to the machine belonging to the signed-in person who made it, and a machine cannot be reached from the internet. Nothing is copied onto the studio’s database.
+      </p>
 
       <h2>Public share links</h2>
       <p>When you share a workflow, a copy of it becomes public at its link, with your name as the author. Settings that look like secrets, allowlisted logins and your repository name are removed from that copy first. Stop sharing at any time and the link stops working.</p>

@@ -131,7 +131,7 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
       <PageHeader
         title="Runs"
         term="run"
-        description="Every run this browser has seen, newest first: test runs, played back for free, and runs on your machine, performed for real through relay connect and marked with its name. They are stored only here. Open one for its step-by-step timeline."
+        description="Every run this browser has seen, newest first: test runs, played back for free, and runs on your runner, performed for real on your computer or in Relay Cloud and marked with its name. They are stored only here. Open one for its step-by-step timeline."
         actions={
           <>
             {runs.length > 0 ? (

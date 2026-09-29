@@ -10,7 +10,7 @@ import { useBrand } from '@/hooks/use-brand';
 
 const POINTS = [
   { icon: GitCompareArrows, title: 'Nothing grades its own homework', body: 'Claude Code and Codex review each other’s plan and diff before a pull request exists.' },
-  { icon: KeyRound, title: 'Your plans, your runners', body: 'No API keys to paste. Agents run on the subscriptions you already pay for.' },
+  { icon: KeyRound, title: 'Your plans, on your machine', body: 'No API keys to paste. Agents run on the subscriptions you already pay for, on your computer or on a machine we make for you.' },
   { icon: ShieldCheck, title: 'Guardrails refuse by default', body: 'Budgets, allowlists and approvals stand in front of every unattended run.' },
 ];
 
@@ -84,8 +84,11 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
                 </li>
               ))}
             </ul>
+            <p className="border-t pt-4 text-sm text-pretty text-muted-foreground">
+              An account is for keeping your work in every browser, and for Relay Cloud. Pairing your own computer with relay connect needs no account — the studio works as a guest.
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">Free while in beta. Your code never passes through our servers.</p>
+          <p className="text-xs text-muted-foreground">Free while in beta. Your code never passes through our servers — the agents work in your repository, or on your own cloud machine.</p>
         </div>
       </aside>
       <main className="flex flex-col">

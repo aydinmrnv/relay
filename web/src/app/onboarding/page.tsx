@@ -5,7 +5,7 @@ import { OnboardingWizard } from '@/components/onboarding/onboarding-wizard';
 import { getUserId } from '@/server/auth';
 import { ACCOUNTS_ENABLED } from '@/server/env';
 
-export const metadata: Metadata = { title: 'Set up your studio' };
+export const metadata: Metadata = { title: 'Set up your studio', robots: { index: false } };
 
 /** Right after sign-up: a few questions, then a first workflow built from the answers. */
 export default async function OnboardingPage() {

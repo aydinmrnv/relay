@@ -39,7 +39,17 @@ export default function DashboardPage() {
   const hydrated = useStudio((state) => state.hydrated);
   const checklistDismissed = useStudio((state) => state.checklistDismissed);
   const bridge = useAgentsStore((state) => state.bridge);
-  const machine = useCompanion((state) => (state.status === 'connected' ? state.hello : null));
+  // `status` describes whichever runner is the target, so the computer is only
+  // "a machine" while it is the target and answering; `cloud` is only read
+  // while the cloud is the target, for the same reason.
+  const machine = useCompanion((state) => (state.target === 'machine' && state.status === 'connected' ? state.hello : null));
+  const target = useCompanion((state) => state.target);
+  const cloud = useCompanion((state) => (state.target === 'cloud' ? state.cloud : null));
+  // A cloud machine counts as chosen once it exists: it sleeps by itself after
+  // ten idle minutes, and a checklist that un-ticks itself every night would be
+  // telling the truth about the wrong thing.
+  const cloudChosen = cloud !== null && cloud.state !== 'none' && cloud.state !== 'failed';
+  const runnerLabel = machine !== null ? (machine.machine ?? 'your machine') : target === 'cloud' ? 'Relay Cloud' : 'your machine';
   const signedIn = useSignedIn();
   const accounts = useCapabilities().enabled;
   const account = useAccount((state) => (state.status === 'signed-in' ? state.user : null));
@@ -87,19 +97,23 @@ export default function DashboardPage() {
       : []),
     {
       id: 'machine',
-      title: 'Connect your machine',
-      why: 'Run relay connect in your repository. The studio can then sign in your coding agents, run workflows for real there and install exports — test runs stay free either way.',
-      done: machine !== null,
-      doneNote: `Connected to ${machine?.machine ?? 'your machine'}${repositoryLabel(machine?.repository) === null ? '' : `, in ${repositoryLabel(machine?.repository)}`}.`,
-      action: { label: 'How to connect', href: '/connect' },
+      title: 'Choose where your agents run',
+      why: 'Your coding agents run somewhere: on your own computer through relay connect, or on a machine Relay runs for you in Relay Cloud. Both use your Claude and ChatGPT plans, and test runs stay free either way.',
+      done: machine !== null || cloudChosen,
+      doneNote:
+        machine !== null
+          ? `Connected to ${machine.machine ?? 'your machine'}${repositoryLabel(machine.repository) === null ? '' : `, in ${repositoryLabel(machine.repository)}`}.`
+          : 'Sign-ins and runs go to Relay Cloud, which wakes when you need it and sleeps when it is idle.',
+      action: { label: 'Compare the two runners', href: '/runners' },
+      extra: { label: 'Connect your computer', href: '/connect' },
     },
     {
       id: 'agent',
       title: 'Sign in a coding agent',
       why: 'The pipeline runs on Claude Code or Codex with your own subscription. Nothing to paste; the studio never sees a token.',
       done: agentNames.length > 0,
-      doneNote: `${agentNames.join(' and ')} ${agentNames.length === 1 ? 'is' : 'are'} signed in on ${machine?.machine ?? 'your machine'}.`,
-      ...(bridge === 'unavailable' ? { warning: 'Sign-in from the browser goes through your machine: connect it first, or sign in from a terminal.' } : {}),
+      doneNote: `${agentNames.join(' and ')} ${agentNames.length === 1 ? 'is' : 'are'} signed in on ${runnerLabel}.`,
+      ...(bridge === 'unavailable' ? { warning: `Sign-in from the browser goes through your runner: connect one first, or sign in from a terminal.` } : {}),
       action: { label: 'Open Settings', href: '/settings#agents' },
     },
     {

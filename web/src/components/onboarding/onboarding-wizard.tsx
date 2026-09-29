@@ -301,7 +301,7 @@ export function OnboardingWizard() {
 
               {step === 2 ? (
                 <>
-                  <Title eyebrow="Your agents" title="Who does the work?" body={`${brand.name} runs the coding agents you already pay for, signed in on your own machine. No API keys.`} />
+                  <Title eyebrow="Your agents" title="Who does the work?" body={`${brand.name} runs the coding agents you already pay for, signed in on your runner: your own computer, or a machine Relay runs for you in Relay Cloud. No API keys.`} />
                   <div className="grid gap-3">
                     {AGENTS.map((option) => (
                       <Tile
@@ -438,13 +438,19 @@ function Ready({ workflow, onOpen }: { workflow: Workflow; onOpen: () => void })
       </div>
       <div className="flex w-full max-w-xl flex-col gap-2 rounded-xl border bg-card p-4 text-left">
         <p className="flex items-center gap-2 text-sm font-medium">
-          <Laptop className="size-4 text-muted-foreground" /> Optional: run it for real on your machine
+          <Laptop className="size-4 text-muted-foreground" /> Optional: run it for real
         </p>
-        <p className="text-xs text-muted-foreground">In the repository you want the agents to work on, run this. It pairs the studio with your machine, signs in Claude Code and Codex, and turns test runs into real ones.</p>
+        <p className="text-xs text-pretty text-muted-foreground">
+          A run happens on a runner. Pair your own computer with relay connect and it works in your repository, on your toolchain; or use Relay Cloud and Relay makes a machine for you, with nothing to install. Either way the
+          agents use your plans and the pull request opens as you.
+        </p>
         <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 font-mono text-xs">
           <span className="flex-1 truncate">{command}</span>
           <CopyButton value={command} />
         </div>
+        <Link href="/runners" className="inline-flex w-fit items-center gap-1 text-xs font-medium text-signal underline-offset-4 hover:underline">
+          Compare your computer and Relay Cloud <ArrowRight className="size-3" aria-hidden />
+        </Link>
       </div>
     </div>
   );

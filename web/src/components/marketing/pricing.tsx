@@ -57,12 +57,12 @@ export function Pricing() {
                 <span className="text-sm text-muted-foreground">paid to {brand.name}</span>
               </p>
               <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-                Connect your machine or export to your repository. Your providers bill their own usage.
+                Pair your own computer with relay connect, run on a Relay Cloud machine we make for you, or export to your repository. Your providers bill their own usage.
               </p>
               <ul className="my-6 space-y-3 border-t pt-6">
                 {[
                   'Use your Claude Code and Codex sign-ins',
-                  'Run locally in an isolated worktree',
+                  'Run on your computer or on a machine of your own, in an isolated worktree',
                   'Automate with your GitHub Actions minutes',
                   'Keep your config and changes in your repo',
                 ].map((item) => (
@@ -72,8 +72,8 @@ export function Pricing() {
                   </li>
                 ))}
               </ul>
-              <Button className="mt-auto h-10 w-full" variant="outline" nativeButton={false} render={<Link href="/connect" />}>
-                Connect your machine
+              <Button className="mt-auto h-10 w-full" variant="outline" nativeButton={false} render={<Link href="/runners" />}>
+                Your computer or Relay Cloud?
                 <ArrowRight data-icon="inline-end" />
               </Button>
             </article>

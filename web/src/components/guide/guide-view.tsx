@@ -11,6 +11,7 @@ import {
   Hash,
   Keyboard,
   Layers,
+  Laptop,
   MessageCircleQuestion,
   MousePointerClick,
   Signpost,
@@ -29,6 +30,7 @@ import { useStudio } from '@/lib/store';
 import { explain, GLOSSARY_ORDER } from '@/lib/glossary';
 import { isMac, keyLabel, SHORTCUTS } from '@/lib/shortcuts';
 import { cn } from '@/lib/utils';
+import { RunnerCompare } from '@/components/companion/runner-compare';
 import { Reveal } from './reveal';
 import { SectionChips, SectionNav, type SectionLink } from './section-nav';
 import { WorkflowAnatomy } from './workflow-anatomy';
@@ -38,6 +40,7 @@ const SECTIONS: SectionLink[] = [
   { id: 'start', label: 'Start here', icon: Signpost },
   { id: 'anatomy', label: 'Anatomy of a workflow', icon: WorkflowIcon },
   { id: 'pipeline-inside', label: 'Inside the pipeline', icon: Layers },
+  { id: 'runners', label: 'Where runs happen', icon: Laptop },
   { id: 'concepts', label: 'Concepts', icon: BookOpen },
   { id: 'real-vs-simulated', label: 'Real or simulated', icon: FlaskConical },
   { id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
@@ -117,6 +120,15 @@ export function GuideView() {
           </GuideSection>
 
           <GuideSection
+            id="runners"
+            eyebrow="Where runs happen"
+            title="Your computer, or Relay Cloud"
+            description="A real run happens wherever your coding agents are signed in, and there are two runners for that. Everything else about the run is the same, so the only real question is which machine should do the work."
+          >
+            <RunnerCompare />
+          </GuideSection>
+
+          <GuideSection
             id="real-vs-simulated"
             eyebrow="Real or simulated"
             title="What is real today"
@@ -178,10 +190,10 @@ function StartSteps() {
   const steps: Array<{ key: keyof typeof done; title: string; body: string; href: string; cta: string; extra?: { href: string; label: string } }> = [
     {
       key: 'agents',
-      title: 'Connect your machine and sign in your agents',
-      body: 'Run relay connect in your repository and open the link it prints. Then sign in Claude Code with your Claude plan and Codex with your ChatGPT plan: the studio starts each CLI’s own login on your machine and never sees a token.',
-      href: '/connect',
-      cta: 'Connect your machine',
+      title: 'Choose where your agents run, then sign them in',
+      body: 'A real run needs the coding agents somewhere to run: on your own computer through relay connect, or on a machine Relay runs for you in Relay Cloud. Then sign in Claude Code with your Claude plan and Codex with your ChatGPT plan — the studio starts each CLI’s own login and never sees a token.',
+      href: '/runners',
+      cta: 'Your computer or Relay Cloud?',
       extra: { href: '/settings#agents', label: 'Settings → Coding agents' },
     },
     {
@@ -318,17 +330,18 @@ type Reality = 'real' | 'simulated' | 'later';
 const REALITY: Array<{ what: string; status: Reality; detail: string }> = [
   { what: 'The catalog, the canvas and validation', status: 'real', detail: 'Every node and rule you see is the one the export and the CLI use.' },
   { what: 'The compiler and its files', status: 'real', detail: 'Export produces a config, an Actions workflow and a SETUP.md you can commit today.' },
-  { what: 'Signing in to Claude Code and Codex', status: 'real', detail: 'Through relay connect: runs the vendors’ own CLI logins on your machine and reads their status.' },
-  { what: 'Running a workflow on your machine', status: 'real', detail: 'Through relay connect: the pipeline runs in your repository with your sign-ins and streams back to the canvas.' },
-  { what: 'Installing an export into your repository', status: 'real', detail: 'Through relay connect, or by unzipping the download yourself.' },
-  { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions.' },
+  { what: 'Signing in to Claude Code and Codex', status: 'real', detail: 'Through the runner: runs the vendors’ own CLI logins on your computer, or on your machine in Relay Cloud, and reads their status.' },
+  { what: 'Running a workflow for real', status: 'real', detail: 'On the runner you picked: your computer through relay connect, or Relay Cloud. The pipeline runs in the repository with your own sign-ins and streams back to the canvas.' },
+  { what: 'Installing an export into your repository', status: 'real', detail: 'Through relay connect on your computer, or by unzipping the download yourself.' },
+  { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions. This is the only way a workflow starts by itself today.' },
   { what: 'Accounts, sync, share links and version history', status: 'real', detail: 'Kept in the studio’s database. As a guest, everything stays in this browser instead.' },
   { what: 'Describe-to-workflow and the spend forecast', status: 'real', detail: 'The sentence parser runs in your browser with no model call. The forecast is built from simulated runs, so it is an estimate.' },
   { what: 'Renaming the product, importing and exporting your data', status: 'real', detail: 'Stored in your account or this browser; the export is a plain JSON file.' },
   { what: 'Test runs', status: 'simulated', detail: 'Phases, review rounds, costs, refusals and pull request numbers are played back, seeded per workflow.' },
   { what: 'Connections to apps', status: 'simulated', detail: '“Connect” marks an app as ready so you can design against the whole catalog. No app is signed in to; an export uses your repository’s secrets.' },
   { what: 'Human approvals', status: 'simulated', detail: 'In a test run, an approval gate approves itself after a short pause.' },
-  { what: 'Hosted and self-hosted runners', status: 'later', detail: 'Your own machine and your own GitHub Actions are what exist today. The others are shown in Settings as “later”.' },
+  { what: 'A run started by a ticket, a label or a schedule', status: 'later', detail: 'A real run is started by a person pressing Run. Unattended starts are real through the GitHub Actions export only.' },
+  { what: 'A runner in your own network, or one isolated VM per exported run', status: 'later', detail: 'A machine of your own can join Relay Cloud by hand; the studio does not offer it. Exporting to GitHub Actions is what runs unattended today.' },
 ];
 
 const REALITY_BADGE: Record<Reality, { label: string; className: string }> = {
@@ -414,7 +427,7 @@ function Faq({ productName, slug }: { productName: string; slug: string }) {
       question: 'Where is my data kept?',
       answer: (
         <p>
-          With an account, in the studio’s database: workflows, runs, connections, the product name and your settings, so they follow you to any browser. Values typed into secret fields stay in the browser they were typed in, and your code is never stored. As a guest, all of it stays in this browser’s local storage. Download everything, import it elsewhere or start over under{' '}
+          With an account, in the studio’s database: workflows, runs, connections, the product name and your settings, so they follow you to any browser. Values typed into secret fields stay in the browser they were typed in. The studio itself never stores your code: the agents work in a checkout on the runner you picked — your own computer, your cloud machine, or a GitHub runner — and only the workflow and the run’s summary come back. As a guest, all of it stays in this browser’s local storage. Download everything, import it elsewhere or start over under{' '}
           <Link href="/settings#data" className={link}>
             Settings → Your data
           </Link>
@@ -441,9 +454,13 @@ function Faq({ productName, slug }: { productName: string; slug: string }) {
       question: 'Where do runs actually execute?',
       answer: (
         <p>
-          Test runs execute nowhere: they are played back in this tab. Real runs execute in one of two places. On your machine, when you start one from the builder with relay connect running: the pipeline works
-          in your repository with your own sign-ins and streams back here. Or on GitHub Actions in your repository, once you export a workflow and commit its files: the Action installs Claude Code and Codex on
-          a GitHub runner and runs the pipeline there, unattended. Hosted and self-hosted runners are planned, not built.
+          In one of three places. <strong>Your computer</strong>, through relay connect: the pipeline works in your repository with your own sign-ins and streams back here.{' '}
+          <strong>Relay Cloud</strong>, if you would rather install nothing: the same run, on a machine of yours that Relay makes and puts to sleep, reached with your account instead of a loopback pairing.{' '}
+          <strong>Your repository’s GitHub Actions</strong>, once you export a workflow and commit its files: the Action installs Claude Code and Codex on a GitHub runner and runs the pipeline there, unattended, on your own minutes (free on public repositories). The first two are{' '}
+          <Link href="/runners" className={link}>
+            runners
+          </Link>
+          , and you pick one; the third is what a label, a ticket or a schedule triggers today. Test runs execute nowhere: they are played back in this tab.
         </p>
       ),
     },
