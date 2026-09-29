@@ -71,7 +71,7 @@ export function AgentAccountsCard() {
           </div>
         ) : bridge === 'unavailable' ? (
           <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-pretty text-amber-800 dark:text-warning">
-            Sign-in from the browser goes through your machine. Run <span className="font-mono">relay connect</span> in your repository and open the link it prints (see Where agents run, above), or sign in from a terminal with{' '}
+            Sign-in from the browser goes through your runner. Run <span className="font-mono">relay connect</span> in your repository and open the link it prints, pick Relay Cloud instead (see Where agents run, above), or sign in from a terminal with{' '}
             <span className="font-mono">claude auth login</span> and <span className="font-mono">codex login</span>.
           </div>
         ) : null}

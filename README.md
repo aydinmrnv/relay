@@ -299,7 +299,7 @@ support the design, the defaults change.
 ## Development
 
 ```bash
-# the studio: accounts work out of the box (Clerk keyless mode, embedded Postgres)
+# the studio: embedded Postgres, and accounts once `npx clerk env pull` has written the keys
 cd web
 npm install
 npm run dev            # http://localhost:3000

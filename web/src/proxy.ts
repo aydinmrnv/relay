@@ -4,13 +4,14 @@ import { NextResponse } from 'next/server';
 /**
  * Clerk's middleware, which keeps each request's session readable by
  * `auth()`. Pages and routes stay public here — the studio works for guests —
- * and each API route checks the session itself. A production build with no
- * Clerk keys (CI, or a deployment that has not set them up) passes straight
- * through as the browser-only studio.
+ * and each API route checks the session itself.
+ *
+ * It runs only with both keys: the middleware throws without them, and a 500
+ * on every route is a worse answer than a studio with no accounts. A checkout
+ * without keys serves the browser-only studio instead, and `/sign-in` says
+ * accounts are off here, and why.
  */
-const clerkReady =
-  ((process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '').length > 0 && (process.env.CLERK_SECRET_KEY ?? '').length > 0) ||
-  (process.env.NODE_ENV !== 'production' && process.env.CI === undefined);
+const clerkReady = (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '').length > 0 && (process.env.CLERK_SECRET_KEY ?? '').length > 0;
 
 export default clerkReady ? clerkMiddleware() : () => NextResponse.next();
 

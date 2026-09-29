@@ -8,7 +8,7 @@ import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { PipelinePreview } from './pipeline-preview';
 import { REPO_URL } from './primitives';
 
-const TRUST = ['Runs on your machine', 'Uses the AI subscriptions you already have', 'Free to start'];
+const TRUST = ['Runs on your computer, or on a machine we make for you', 'Uses the AI subscriptions you already have', 'Free to start'];
 
 export function Hero() {
   const brand = useBrand();
@@ -59,7 +59,7 @@ export function Hero() {
       <div className="container max-w-6xl pb-16 sm:pb-24">
         <PipelinePreview />
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-          A sample workflow, step by step. Connect your machine to run your own.
+          A sample workflow, step by step. Run it on your own computer, or on a machine Relay makes for you.
         </p>
       </div>
     </section>

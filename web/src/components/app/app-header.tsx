@@ -33,6 +33,7 @@ const TITLES: Record<string, string> = {
   templates: 'Templates',
   settings: 'Settings',
   guide: 'Guide',
+  runners: 'Where agents run',
   connect: 'Your machine',
 };
 

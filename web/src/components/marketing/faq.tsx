@@ -26,7 +26,13 @@ export function Faq() {
       id: 'real',
       question: 'Are the runs in the studio real?',
       answer:
-        'Test runs are simulated so you can explore a workflow for free. Connect the CLI with relay connect to run it on your machine with your own agents, or export it to run in GitHub Actions.',
+        'Test runs are simulated so you can explore a workflow for free. For a real run you pick a runner: pair your own computer with relay connect, or use Relay Cloud, where Relay makes and wakes a machine for you. Export a workflow and it runs unattended on your repository’s own GitHub Actions minutes.',
+    },
+    {
+      id: 'cloud',
+      question: 'What is Relay Cloud?',
+      answer:
+        'A Linux machine of yours that Relay makes for you, wakes when you run something and puts itself to sleep after ten idle minutes — one machine per person, so your sign-ins and your code stay yours and nobody else’s. It speaks the same protocol as relay connect on your own computer, so the run is identical: same agents, same plans, same pull request. The difference is that there is nothing to install, and it is there when your laptop is shut. It needs an account, because Relay knows your machine by your sign-in.',
     },
     {
       id: 'agents',
@@ -49,7 +55,7 @@ export function Faq() {
       id: 'code',
       question: 'Where does my code go?',
       answer:
-        'Nowhere new. The agents work in a separate git worktree on your machine or on your Actions runner, so your own checkout is only read. Nothing is pushed until the delivery step, after a secret scan, and only as far as your delivery setting allows.',
+        'Nowhere new. The agents work in a separate git worktree on your computer, on your Relay Cloud machine, or on your Actions runner, so your own checkout is only read. Nothing is pushed until the delivery step, after a secret scan, and only as far as your delivery setting allows.',
     },
   ];
 

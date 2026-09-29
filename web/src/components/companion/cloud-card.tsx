@@ -47,7 +47,13 @@ export function regionName(region: string | null): string {
   return region === null ? 'a region with room' : (REGION_NAMES[region] ?? region);
 }
 
-/** One line on the cloud machine, for badges, the sidebar and the accounts card. */
+/**
+ * One line on the cloud machine, for badges, the sidebar and the accounts card.
+ *
+ * `status` describes whichever runner is the target, so callers that ask about
+ * the cloud while the computer is the target pass the cloud's own status rather
+ * than this one — a paired laptop would otherwise read as an awake VM.
+ */
 export function cloudStatusText(status: CompanionStatus, cloud: CloudRunnerStatus | null): string {
   if (status === 'unpaired') return 'Sign in to use Relay Cloud';
   if (status === 'rejected') return 'Relay Cloud did not accept this session';

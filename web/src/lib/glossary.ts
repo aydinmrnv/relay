@@ -36,6 +36,7 @@ export type Term =
   | 'worktree'
   | 'secrets'
   | 'execution'
+  | 'runner'
   | 'companion';
 
 export interface GlossaryEntry {
@@ -229,14 +230,23 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'companion',
     title: 'Your machine (relay connect)',
     short: 'The Relay CLI on your computer, paired with the studio: it signs in your coding agents, runs workflows for real and installs exports.',
-    long: `The studio draws, checks and compiles workflows in your browser; your coding agents, their sign-ins and your repository are on your computer. \`relay connect\`, run inside a repository, starts a small server on 127.0.0.1 that only a paired studio may use, and prints a link that pairs this browser with it. From then on the studio can start Claude Code’s and Codex’s own sign-ins, run a workflow’s pipeline for real in that repository — streaming every phase back to the canvas — and install an export straight into it. Test runs stay free and in the browser either way. The pairing token never leaves the browser and your machine, and the companion never sees an agent credential.`,
+    long: `The studio draws, checks and compiles workflows in your browser; your coding agents, their sign-ins and your repository are on your computer. \`relay connect\`, run inside a repository, starts a small server on 127.0.0.1 that only a paired studio may use, and prints a link that pairs this browser with it. From then on the studio can start Claude Code’s and Codex’s own sign-ins, run a workflow’s pipeline for real in that repository — streaming every phase back to the canvas — and install an export straight into it. Test runs stay free and in the browser either way. The pairing token never leaves the browser and your machine, and the companion never sees an agent credential. Relay Cloud is the same job on a machine Relay runs for you instead; /runners compares the two.`,
     href: '/connect',
+  },
+  runner: {
+    term: 'runner',
+    title: 'Runner: your computer, or Relay Cloud',
+    short: 'The place a run actually executes and your coding agents are signed in: your own computer through relay connect, or a machine Relay runs for you.',
+    long: `Two runners, one protocol, the same result either way. **Your computer**: \`relay connect\` inside a repository, reachable only on 127.0.0.1, with your sign-ins in the CLIs’ own files where they already are. Free, and available without an account — but only while that process is running. **Relay Cloud**: a Linux machine of yours that Relay makes and deallocates when idle. Nothing to install, no terminal, and it wakes in about a minute when you press Run, so it works from any browser even with your laptop shut. It needs an account, because the hub knows your machine by your sign-in, and it has no public address: it dials out, and only your own signed-in studio reaches it.
+
+Whichever you pick, the agents run with your own Claude and ChatGPT plans, Relay never asks you for a model credential and has no route that reads one, the code lands in your repository as a branch and a pull request, and test runs stay free in the browser. What does differ is where things sit: on your computer, your checkout and sign-ins never leave it; on Relay Cloud they live on your own cloud machine’s disk, which Relay operates and which goes away when you remove the machine. You choose which runner sign-ins and runs go to, and every run remembers the machine it started on, so switching never orphans one.`,
+    href: '/runners',
   },
   execution: {
     term: 'execution',
     title: 'Where runs execute',
-    short: 'Real runs execute on your own machine through relay connect, or on your repository’s GitHub Actions minutes once exported. Hosted runners come later.',
-    long: `There are two ways a workflow runs for real today. From the studio, on your own machine: with \`relay connect\` running in the repository, "Run on this machine" runs the pipeline there with your own sign-ins and streams it back. Unattended, from your repository: an exported workflow is a GitHub Actions workflow that installs the coding CLIs on a GitHub runner and runs the pipeline there, on your own Actions minutes (free on public repositories). Hosted microVMs, one isolated VM per run, and a self-hosted runner in your own network are planned but not built. Test runs never execute anything; they are played back in your browser.`,
+    short: 'A real run executes on the runner you picked — your computer or Relay Cloud — and an exported workflow runs unattended on your repository’s own GitHub Actions minutes.',
+    long: `There are three places work happens, and they answer different questions. **The runner you picked** (/runners): "Run in Relay Cloud" or "Run on this machine" sends the Agent pipeline there — the pipeline and delivery only, started by a person — with your own sign-ins, streaming every phase back to the canvas. **Your repository’s GitHub Actions**: Export compiles the whole graph into plain files you commit; GitHub events and schedules are real triggers there, on your own Actions minutes, free on public repositories. That is the only way a workflow starts by itself today. **Your browser**: a test run never executes anything; it is played back node by node with simulated agents, costs and refusals. Hosted microVMs for exported runs and a self-hosted runner in your own network are planned, not built.`,
     href: '/settings#running',
   },
 };
@@ -278,6 +288,7 @@ export const GLOSSARY_ORDER: Term[] = [
   'export',
   'secrets',
   'execution',
+  'runner',
   'companion',
   'connection',
   'subscription',

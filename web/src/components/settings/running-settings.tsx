@@ -69,7 +69,7 @@ export function RunningSettings() {
       title: 'Your GitHub Actions',
       icon: WorkflowIcon,
       badge: { label: 'Available', tone: 'ok' },
-      description: 'Exported workflows run in your repository on your own Actions minutes: free on public repositories, included minutes on private ones.',
+      description: 'Exported workflows run in your repository on your own Actions minutes: free on public repositories, included minutes on private ones. This is the only way a workflow starts by itself today.',
     },
     {
       value: 'hosted',
@@ -77,7 +77,7 @@ export function RunningSettings() {
       icon: Cloud,
       badge: { label: 'Later', tone: 'muted' },
       disabled: true,
-      description: 'One isolated VM per run, with every connector bridged. Not built yet.',
+      description: 'One isolated VM per exported run, with every connector bridged. Not built yet. Relay Cloud is the hosted runner you can use today: one machine per person, started by hand.',
     },
     {
       value: 'self-hosted',
@@ -87,7 +87,7 @@ export function RunningSettings() {
       disabled: true,
       description: (
         <>
-          <code className="font-mono text-[11px]">{brand.slug} serve</code> inside your own network, pointed at the control plane. Not built yet.
+          A runner of your own — a Mac mini, a Linux box — joined to Relay Cloud by hand with <code className="font-mono text-[11px]">{brand.slug} connect --hub</code>. Not offered in the studio yet.
         </>
       ),
     },
@@ -98,12 +98,20 @@ export function RunningSettings() {
       <SettingBlock
         title={
           <span className="inline-flex items-center gap-1.5">
-            Where runs execute <HelpTip term="execution" />
+            Where exported workflows run <HelpTip term="execution" />
           </span>
         }
-        description="Where an exported workflow does its unattended work. A run you start from the builder on your machine happens there, through relay connect; test runs are always played back in this browser."
+        description={
+          <>
+            Only about exports. An exported workflow does its unattended work on your repository’s own GitHub Actions, where a label, a ticket or a schedule can start it. A run you press in the builder happens on the runner you picked in{' '}
+            <a href="/runners" className="font-medium text-foreground underline underline-offset-4">
+              Where agents run
+            </a>{' '}
+            — your computer or Relay Cloud — and a test run is played back in this browser.
+          </>
+        }
       >
-        <ChoiceCards name="tier" label="Where runs execute" value={tier} onValueChange={(value) => updateSettings({ executionTier: value })} options={tiers} />
+        <ChoiceCards name="tier" label="Where exported workflows run" value={tier} onValueChange={(value) => updateSettings({ executionTier: value })} options={tiers} />
       </SettingBlock>
       <Separator />
       <RepositorySetting />

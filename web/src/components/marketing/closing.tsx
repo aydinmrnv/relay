@@ -17,7 +17,7 @@ export function FinalCta() {
         <Reveal className="flex max-w-3xl flex-col gap-4">
           <h2 className="text-4xl font-semibold tracking-tight text-balance sm:text-6xl">Your next ticket could be a pull request.</h2>
           <p className="max-w-xl text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg">
-            Start with a template. Try a simulated run. Connect your machine when you’re ready.
+            Start with a template. Try a simulated run. Pick a runner when you’re ready.
           </p>
           <div className="mt-4 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
             <Button size="lg" className="h-11 px-5" nativeButton={false} render={<Link href={invite ? '/sign-up' : '/dashboard'} />}>
@@ -51,7 +51,7 @@ export function SiteFooter() {
       title: 'Resources',
       links: [
         { label: 'Documentation', href: '/guide' },
-        { label: 'Connect your machine', href: '/connect' },
+        { label: 'Your computer or Relay Cloud', href: '/runners' },
         { label: 'Source on GitHub', href: REPO_URL },
         { label: 'FAQ', href: '/#faq' },
       ],

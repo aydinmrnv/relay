@@ -87,7 +87,11 @@ export function MachineCard() {
   const now = useNow();
   const [busy, setBusy] = useState(false);
 
-  const connected = status === 'connected';
+  // This card is about the computer, and `status` follows the target: a
+  // connected cloud machine is not a paired computer. Settings renders this
+  // card even when the cloud is the target, so the pairing is the test.
+  const pairingState = useCompanion((state) => state.pairing);
+  const connected = status === 'connected' && pairingState !== null;
   const repo = repositoryLabel(hello?.repository);
 
   return (

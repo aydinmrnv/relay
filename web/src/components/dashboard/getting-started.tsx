@@ -24,6 +24,8 @@ export interface ChecklistStep {
   warning?: string;
   optional?: boolean;
   action: { label: string; href: string } | { label: string; onClick: () => void; icon?: 'play' | 'plus' } | null;
+  /** A second way in, for a step with more than one door. */
+  extra?: { label: string; href: string };
 }
 
 /**
@@ -98,7 +100,7 @@ export function GettingStarted({ steps, className }: { steps: ChecklistStep[]; c
                 </p>
                 <p className="text-xs text-pretty text-muted-foreground">{step.done && step.doneNote !== undefined ? step.doneNote : step.why}</p>
                 {!step.done && step.warning !== undefined ? <p className="text-xs text-pretty text-amber-700 dark:text-warning">{step.warning}</p> : null}
-                {!step.done && step.action !== null ? <StepAction action={step.action} primary={step === next} /> : null}
+                {!step.done && step.action !== null ? <StepAction action={step.action} extra={step.extra} primary={step === next} /> : null}
               </div>
             </li>
           ))}
@@ -108,19 +110,26 @@ export function GettingStarted({ steps, className }: { steps: ChecklistStep[]; c
   );
 }
 
-function StepAction({ action, primary }: { action: NonNullable<ChecklistStep['action']>; primary: boolean }) {
+function StepAction({ action, extra, primary }: { action: NonNullable<ChecklistStep['action']>; extra?: ChecklistStep['extra']; primary: boolean }) {
   const variant = primary ? 'default' : 'outline';
-  if ('href' in action) {
-    return (
-      <Button size="xs" variant={variant} className="mt-1 w-fit" nativeButton={false} render={<Link href={action.href} />}>
-        {action.label} <ArrowRight data-icon="inline-end" />
-      </Button>
-    );
-  }
+  const button = 'mt-1 w-fit';
   return (
-    <Button size="xs" variant={variant} className="mt-1 w-fit" onClick={action.onClick}>
-      {action.icon === 'play' ? <Play data-icon="inline-start" /> : action.icon === 'plus' ? <Plus data-icon="inline-start" /> : null}
-      {action.label}
-    </Button>
+    <div className="mt-1 flex flex-wrap gap-1.5">
+      {'href' in action ? (
+        <Button size="xs" variant={variant} className={button} nativeButton={false} render={<Link href={action.href} />}>
+          {action.label} <ArrowRight data-icon="inline-end" />
+        </Button>
+      ) : (
+        <Button size="xs" variant={variant} className={button} onClick={action.onClick}>
+          {action.icon === 'play' ? <Play data-icon="inline-start" /> : action.icon === 'plus' ? <Plus data-icon="inline-start" /> : null}
+          {action.label}
+        </Button>
+      )}
+      {extra === undefined ? null : (
+        <Button size="xs" variant="ghost" className={button} nativeButton={false} render={<Link href={extra.href} />}>
+          {extra.label}
+        </Button>
+      )}
+    </div>
   );
 }

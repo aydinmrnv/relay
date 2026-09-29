@@ -2,12 +2,12 @@
  * What this deployment can do, read once from the environment.
  *
  * Accounts need two things: Clerk, for who someone is, and a database, for
- * their workflows. Locally neither has to be configured — the database is an
- * embedded Postgres (PGlite) in `web/.data/`, and without Clerk keys the
- * Clerk SDK runs in keyless mode with a temporary development app. In
- * production both must be set, and a deployment that lacks either keeps
- * working as the browser-only studio, with sign-up turned off and a line in
- * the log saying why, rather than failing every request.
+ * their workflows. Locally the database need not be configured — it is an
+ * embedded Postgres (PGlite) in `web/.data/` — but Clerk cannot: its
+ * middleware throws without keys, so a deployment without them keeps working
+ * as the browser-only studio, with sign-up turned off and a line in the log
+ * saying why, rather than failing every request. `npx clerk env pull` writes
+ * the keys to `.env.local`; after that accounts work in development too.
  */
 import type { AuthCapabilities } from '@/lib/cloud/types';
 
@@ -32,11 +32,11 @@ export const DATABASE: { kind: DatabaseKind; url: string } =
 const CLERK_KEYS = (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '').trim().length > 0 && (process.env.CLERK_SECRET_KEY ?? '').trim().length > 0;
 
 /**
- * Whether Clerk can run: with its keys, or in development without them,
- * where the SDK provisions a temporary keyless app. CI builds are
- * production builds without keys, so they build the browser-only studio.
+ * Whether Clerk can run. The keys are required in every environment: the
+ * middleware throws without them, so "accounts off" is the honest answer.
+ * `npx clerk env pull` writes them to `.env.local` for development.
  */
-export const CLERK_CONFIGURED = CLERK_KEYS || (!PRODUCTION && process.env.CI === undefined);
+export const CLERK_CONFIGURED = CLERK_KEYS;
 
 /** Why accounts are off, for the log and the settings page. `null` when they are on. */
 export const ACCOUNTS_UNAVAILABLE_REASON: string | null =

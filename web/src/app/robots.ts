@@ -5,7 +5,7 @@ import { PUBLIC_URL } from '@/server/env';
 export default function robots(): MetadataRoute.Robots {
   const base = PUBLIC_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined);
   return {
-    rules: { userAgent: '*', allow: ['/', '/s/', '/privacy', '/terms', '/guide', '/templates'], disallow: ['/api/', '/settings', '/onboarding', '/workflows/', '/runs/'] },
+    rules: { userAgent: '*', allow: ['/', '/s/', '/privacy', '/terms', '/guide', '/templates'], disallow: ['/api/', '/settings', '/onboarding', '/workflows/', '/runs/', '/connect', '/runners', '/sign-in', '/sign-up'] },
     ...(base === undefined ? {} : { sitemap: `${base}/sitemap.xml` }),
   };
 }
