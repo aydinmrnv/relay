@@ -192,11 +192,10 @@ export function dialOut(options: DialOutOptions): DialOut {
     ws.addEventListener('message', (event) => {
       if (typeof event.data === 'string') onMessage(event.data);
     });
-    ws.addEventListener('error', () => {
-      // `close` follows and does the work; an error before `open` is the hub
-      // being unreachable or refusing the token, which looks the same from here.
-    });
-    ws.addEventListener('close', (event) => {
+    let ended = false;
+    const end = (code: number, reason: string): void => {
+      if (ended) return;
+      ended = true;
       const wasOpen = open;
       open = false;
       if (socket === ws) socket = null;
@@ -204,10 +203,18 @@ export function dialOut(options: DialOutOptions): DialOut {
       if (stopped) return;
       // A connection that held for a while resets the backoff; a flapping one does not.
       if (wasOpen && Date.now() - connectedAt > 30_000) attempt = 0;
-      if (wasOpen) log(`Lost the hub (${event.code}${event.reason ? `: ${event.reason}` : ''}). Reconnecting.`, 'warn');
+      if (wasOpen) log(`Lost the hub (${code}${reason ? `: ${reason}` : ''}). Reconnecting.`, 'warn');
       else if (attempt === 0 || attempt % 10 === 0) log(`Could not reach the hub at ${url}. Retrying.`, 'warn');
       schedule();
+    };
+    ws.addEventListener('error', () => {
+      // An error always ends the connection, and an error before `open` is the
+      // hub being unreachable or refusing the token, which look the same from
+      // here. It is handled as the close: Node 22's WebSocket fires no `close`
+      // after a failed handshake, and waiting for one would never retry.
+      end(1006, '');
     });
+    ws.addEventListener('close', (event) => end(event.code, event.reason));
   }
 
   void connect();
