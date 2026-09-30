@@ -6,6 +6,11 @@
 /** What this deployment supports, decided on the server from its environment. */
 export interface AuthCapabilities {
   enabled: boolean;
+  /**
+   * Whether the studio opens without an account: only a development copy
+   * without accounts. Everywhere else the studio needs a sign-in.
+   */
+  guests: boolean;
   /** Why accounts are off, shown only in development. */
   reason: string | null;
   /** The Relay Cloud hub signed-in people can run on, when this deployment has one. */
@@ -14,7 +19,7 @@ export interface AuthCapabilities {
   credentials?: boolean;
 }
 
-export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, reason: null, cloudHub: null, credentials: false };
+export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, guests: false, reason: null, cloudHub: null, credentials: false };
 
 export interface AccountUser {
   id: string;

@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { motion } from 'motion/react';
-import { ArrowRight, Menu } from 'lucide-react';
+import { ArrowRight, LayoutDashboard, LogOut, Menu, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { BrandMark } from '@/components/app/brand-mark';
 import { LiquidGlass } from '@/components/glass/liquid-glass';
@@ -12,6 +13,8 @@ import { useScrollSpy } from '@/components/guide/use-scroll-spy';
 import { useBrand } from '@/hooks/use-brand';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { UserAvatar } from '@/components/account/user-avatar';
+import { useSignOut } from '@/components/account/account-menu';
+import type { AccountUser } from '@/lib/cloud/types';
 import { cn } from '@/lib/utils';
 import { AppMark, REPO_URL, SECTIONS, useCalmMotion, useStudioEntry } from './primitives';
 
@@ -95,10 +98,13 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
               <AppMark connector="github" size={16} />
             </Button>
             {signedIn ? (
-              <Button className="h-10 gap-2 rounded-full pr-4 pl-2" nativeButton={false} render={<Link href="/dashboard" />}>
-                <UserAvatar user={user} size="sm" className="size-6" />
-                {entry.label}
-              </Button>
+              <>
+                <Button className="h-10 rounded-full pr-3.5 pl-4" nativeButton={false} render={<Link href="/dashboard" />}>
+                  {entry.label}
+                  <ArrowRight data-icon="inline-end" />
+                </Button>
+                <SiteAccountMenu user={user} />
+              </>
             ) : accounts ? (
               <>
                 <Button
@@ -160,6 +166,7 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
                       Sign in
                     </Button>
                   ) : null}
+                  {signedIn ? <SheetSignOut /> : null}
                   <Button variant="outline" nativeButton={false} render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
                     <AppMark connector="github" size={14} />
                     The CLI on GitHub
@@ -171,5 +178,52 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
         </div>
       </LiquidGlass>
     </header>
+  );
+}
+
+/** Who is signed in, with the way to the studio and out of the account. Only rendered signed in. */
+function SiteAccountMenu({ user }: { user: AccountUser }) {
+  const leave = useSignOut();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon" className="hidden size-10 rounded-full hover:bg-foreground/[0.07] sm:inline-flex dark:hover:bg-foreground/[0.07]" aria-label="Your account" />}
+      >
+        <UserAvatar user={user} size="sm" className="size-7" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="flex items-center gap-2 py-1.5">
+            <UserAvatar user={user} size="sm" />
+            <span className="grid min-w-0 text-left leading-tight">
+              <span className="truncate font-medium text-foreground">{user.name}</span>
+              <span className="truncate text-xs">{user.email}</span>
+            </span>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem render={<Link href="/dashboard" />}>
+            <LayoutDashboard /> Dashboard
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link href="/settings" />}>
+            <Settings /> Settings
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => void leave()}>
+          <LogOut /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function SheetSignOut() {
+  const leave = useSignOut();
+  return (
+    <SheetClose render={<Button variant="outline" />} onClick={() => void leave()}>
+      <LogOut data-icon="inline-start" /> Sign out
+    </SheetClose>
   );
 }

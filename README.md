@@ -37,11 +37,11 @@ as a commit, a branch or a draft pull request, as far as you allow.
 
 ## Quick start
 
-**Try it free:** <https://relay-olive-omega.vercel.app>. Create a free account,
-answer four onboarding questions and get a first workflow built from your
-answers. Test runs are simulated, so it costs nothing to try. (A copy of the
-studio you run yourself without Clerk keys has no accounts: it works as a
-guest, with your work kept in your browser.)
+**Try it free:** <https://relay-olive-omega.vercel.app>. Sign in, or create a
+free account in the same form, answer four onboarding questions and get a
+first workflow built from your answers. Test runs are simulated, so it costs
+nothing to try. (Only a development copy, `npm run dev` without Clerk keys,
+opens the studio without an account, keeping your work in your browser.)
 
 **Connect your machine** to make it real. The `relay` CLI is the studio's
 companion: run it in the repository your workflows work on, and the studio can
@@ -216,7 +216,7 @@ The full list, and how each rule is enforced, is under
 
 Relay is in beta at <https://relay-olive-omega.vercel.app>, and free. The hosted
 studio needs a free account, which keeps your workflows, runs and settings in
-any browser; a self-run copy without accounts keeps them in your browser's
+any browser; a development copy without accounts keeps them in your browser's
 storage. Everything that needs your machine — agent sign-in, real
 runs, installing an export — goes through `relay connect`, which pairs with the
 hosted studio as readily as with a local one, or through Relay Cloud: a cloud
@@ -333,10 +333,10 @@ On Vercel, import the repository with `web` as the root directory, then:
 3. Recommended: a Clerk webhook for `user.deleted` pointing at
    `/api/webhooks/clerk`, with `CLERK_WEBHOOK_SIGNING_SECRET`.
 
-Every variable is described in [`web/.env.example`](web/.env.example). Without a
-database the deployment still works as the browser-only studio, with sign-up
-switched off. `GET /api/health` reports the database and which sign-in methods
-are on.
+Every variable is described in [`web/.env.example`](web/.env.example). The
+studio needs both: without a database or the Clerk keys the deployment keeps
+the site up, but the studio stays closed and `/sign-in` says sign-in is not
+available. `GET /api/health` reports the database and whether accounts are on.
 
 ### Relay Cloud on Azure
 

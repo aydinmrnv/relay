@@ -45,9 +45,9 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
   const connectors = useMemo(() => [...new Set(workflow.nodes.map((node) => node.data.typeId.split('.')[0] ?? ''))].map((id) => getConnector(id)).filter((connector) => connector !== undefined), [workflow]);
 
   const remix = async () => {
-    // The studio needs an account here: make one, then remix from this page.
+    // The studio needs an account: sign in or make one, then remix from this page.
     if (entry.invite) {
-      router.push(`/sign-up?next=${encodeURIComponent(`/s/${share.slug}`)}`);
+      router.push(entry.into(`/s/${share.slug}`));
       return;
     }
     setBusy(true);

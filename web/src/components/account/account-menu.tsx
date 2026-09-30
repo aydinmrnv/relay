@@ -46,19 +46,27 @@ export function AccountMenu() {
   return <SignedInMenu />;
 }
 
-/** Only ever rendered signed in, which means inside Clerk's provider. */
-function SignedInMenu() {
+/**
+ * Signs out once what is queued has been saved, and goes back to the site.
+ * Only for someone signed in, which means inside Clerk's provider.
+ */
+export function useSignOut(): () => Promise<void> {
   const router = useRouter();
   const clerk = useClerk();
-  const { isMobile } = useSidebar();
-  const user = useAccount((state) => state.user)!;
-  const onboarded = useAccount((state) => state.onboardedAt !== null);
-
-  const leave = async () => {
+  return async () => {
     if (!(await signOut(() => clerk.signOut()))) return;
     toast.success('Signed out', { description: 'Your workflows are safe in your account.' });
     router.push('/');
   };
+}
+
+/** Only ever rendered signed in, which means inside Clerk's provider. */
+function SignedInMenu() {
+  const clerk = useClerk();
+  const { isMobile } = useSidebar();
+  const user = useAccount((state) => state.user)!;
+  const onboarded = useAccount((state) => state.onboardedAt !== null);
+  const leave = useSignOut();
 
   return (
     <SidebarMenu>

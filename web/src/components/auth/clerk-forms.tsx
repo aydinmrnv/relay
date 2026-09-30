@@ -48,6 +48,11 @@ function FormPlaceholder() {
   );
 }
 
+/**
+ * Sign in or sign up, in one form: "Try it free" and "Sign in" both land
+ * here, and an email Clerk does not know carries on into making an account
+ * (`withSignUp`) instead of stopping at "no such account".
+ */
 export function ClerkSignIn({ next }: { next: string }) {
   const hydrated = useHydrated();
   if (!hydrated) return <FormPlaceholder />;
@@ -56,12 +61,14 @@ export function ClerkSignIn({ next }: { next: string }) {
       <SignIn
         routing="path"
         path="/sign-in"
+        withSignUp
         appearance={APPEARANCE}
         fallbackRedirectUrl={next}
         signUpUrl={next === '/dashboard' ? '/sign-up' : `/sign-up?next=${encodeURIComponent(next)}`}
         // A new account made from here goes where the visitor was headed, like one made on the sign-up page.
         signUpFallbackRedirectUrl={next === '/dashboard' ? '/onboarding' : next}
       />
+      <Agreement />
       <AccountWhy />
     </div>
   );
@@ -80,20 +87,26 @@ export function ClerkSignUp({ next }: { next: string }) {
         signInUrl={next === '/onboarding' ? '/sign-in' : `/sign-in?next=${encodeURIComponent(next)}`}
         signInFallbackRedirectUrl="/dashboard"
       /> : null}
-      <p className="text-center text-xs text-muted-foreground">
-        By creating an account you agree to the{' '}
-        <Link href="/terms" className="underline underline-offset-4 hover:text-foreground">
-          terms
-        </Link>{' '}
-        and{' '}
-        <Link href="/privacy" className="underline underline-offset-4 hover:text-foreground">
-          privacy policy
-        </Link>
-        .
-      </p>
+      <Agreement />
       <GuestWorkNote />
       <AccountWhy />
     </div>
+  );
+}
+
+function Agreement() {
+  return (
+    <p className="text-center text-xs text-muted-foreground">
+      By creating an account you agree to the{' '}
+      <Link href="/terms" className="underline underline-offset-4 hover:text-foreground">
+        terms
+      </Link>{' '}
+      and{' '}
+      <Link href="/privacy" className="underline underline-offset-4 hover:text-foreground">
+        privacy policy
+      </Link>
+      .
+    </p>
   );
 }
 
@@ -144,13 +157,28 @@ function GuestWorkNote() {
   );
 }
 
-/** What a page says when this deployment has no accounts, instead of a form that cannot work. */
+/**
+ * What a sign-in page says when this deployment has no accounts, instead of
+ * a form that cannot work. A development copy opens the studio anyway; any
+ * other has it closed until its keys and database are set.
+ */
 export function AccountsUnavailable() {
-  const reason = useCapabilities().reason;
+  const { guests, reason } = useCapabilities();
+  if (!guests) {
+    return (
+      <div className="flex flex-col gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">Sign-in is not available right now</h1>
+        <p className="text-sm text-pretty text-muted-foreground">The studio needs an account, and accounts are not switched on here yet, so it is closed for now. Please come back a little later.</p>
+        <Button variant="outline" className="mt-2 w-fit" nativeButton={false} render={<Link href="/" />}>
+          Back to the site
+        </Button>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-3">
       <h1 className="text-2xl font-semibold tracking-tight">Accounts are not switched on here</h1>
-      <p className="text-sm text-muted-foreground">This copy of the studio runs without accounts. Everything still works, and your work is kept in this browser.</p>
+      <p className="text-sm text-pretty text-muted-foreground">This development copy runs without accounts, so the studio opens without signing in and keeps your work in this browser. Deployed, it needs an account.</p>
       {reason === null ? null : <p className="rounded-lg border border-dashed px-3 py-2 font-mono text-xs text-muted-foreground">{reason}</p>}
       <Button className="mt-2 w-fit" nativeButton={false} render={<Link href="/dashboard" />}>
         Open the studio
