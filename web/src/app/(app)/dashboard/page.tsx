@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/page-header';
 import { FadeIn } from '@/components/motion/fade-in';
 import { ActivityChart } from '@/components/dashboard/activity-chart';
+import { ConnectionsCard, appRows } from '@/components/dashboard/connections-card';
 import { attentionItems, dailyCeiling, dailyOutcomes, spendByWorkflow, spendToday, weekStats } from '@/components/dashboard/derive';
 import { GettingStarted, type ChecklistStep } from '@/components/dashboard/getting-started';
 import { KpiTiles } from '@/components/dashboard/kpi-tiles';
@@ -20,12 +21,16 @@ import { useBrand } from '@/hooks/use-brand';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { useNow } from '@/hooks/use-now';
 import { DEFAULT_BRAND } from '@/lib/brand';
-import { CONNECTORS } from '@/lib/connectors';
+import { CONNECTORS, getConnector } from '@/lib/connectors';
+import { connectionState } from '@/lib/connectors/connection-state';
+import { CREDENTIAL_SPECS } from '@/lib/connectors/credentials';
 import { useStudio, useWorkflows } from '@/lib/store';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import { useCompanion } from '@/lib/companion/client';
 import { repositoryLabel } from '@/lib/companion/types';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
+
+const REAL_APPS = CREDENTIAL_SPECS.map((spec) => getConnector(spec.connectorId)?.name ?? spec.connectorId).join(' and ');
 
 export default function DashboardPage() {
   const brand = useBrand();
@@ -62,8 +67,20 @@ export default function DashboardPage() {
   const spend = useMemo(() => spendByWorkflow(runs, workflowMap, now), [runs, workflowMap, now]);
   const ceiling = useMemo(() => dailyCeiling(workflows), [workflows]);
   const today = useMemo(() => spendToday(runs, now), [runs, now]);
-  const attention = useMemo(() => attentionItems(runs, workflows, now), [runs, workflows, now]);
-  const connected = Object.keys(connections).length;
+  const attention = useMemo(() => attentionItems(runs, workflows, now, connections), [runs, workflows, now, connections]);
+  // Counted by what each connection is, not by how many entries there are: a marker is not a sign-in.
+  const tally = useMemo(() => {
+    const result = { verified: 0, marked: 0, failing: 0, missing: 0 };
+    for (const connection of Object.values(connections)) {
+      const connector = getConnector(connection.connectorId);
+      if (connector === undefined) continue;
+      const state = connectionState(connector, connection);
+      if (state === 'verified' || state === 'marked' || state === 'failing') result[state] += 1;
+    }
+    result.missing = appRows(workflows, connections).filter((row) => row.state === 'missing').length;
+    return result;
+  }, [connections, workflows]);
+  const connected = tally.verified + tally.marked + tally.failing;
 
   // Before the store hydrates the server has no clock of ours to agree with, so the greeting waits too.
   const hour = new Date(now).getHours();
@@ -118,11 +135,12 @@ export default function DashboardPage() {
     },
     {
       id: 'connect',
-      title: 'Connect an app',
-      why: 'Triggers and actions talk to apps like Linear, GitHub and Slack. For now a connection marks the app as ready for your workflows; the export wires the real credentials.',
+      title: 'Connect your apps',
+      why: `${REAL_APPS} connect for real: paste a webhook and ${brand.name} checks it with the app. Other apps can be marked ready until their sign-in is built.`,
       done: connected > 0,
-      doneNote: `${connected} ${connected === 1 ? 'app' : 'apps'} connected.`,
-      action: { label: 'Browse integrations', href: '/integrations' },
+      doneNote: [tally.verified > 0 ? `${tally.verified} connected for real` : null, tally.marked > 0 ? `${tally.marked} marked ready` : null, tally.failing > 0 ? `${tally.failing} failing` : null].filter(Boolean).join(', ') + '.',
+      ...(tally.missing > 0 ? { warning: `${tally.missing} ${tally.missing === 1 ? 'app your workflows use is' : 'apps your workflows use are'} not connected yet.` } : {}),
+      action: { label: 'Browse integrations', href: tally.missing > 0 ? '/integrations?filter=in-use' : '/integrations' },
     },
     {
       id: 'workflow',
@@ -200,6 +218,7 @@ export default function DashboardPage() {
             finished={week.finished}
             spend={week.spend}
             connected={connected}
+            connections={tally}
             catalog={CONNECTORS.length}
           />
 
@@ -217,6 +236,10 @@ export default function DashboardPage() {
               {...(firstValid === undefined ? {} : { onTest: () => runAgain(firstValid.id, { navigate: true }), testLabel: `Test ${firstValid.name}` })}
             />
             <NeedsAttention items={attention} now={now} />
+          </FadeIn>
+
+          <FadeIn delay={0.16}>
+            <ConnectionsCard workflows={workflows} connections={connections} now={now} />
           </FadeIn>
         </>
       )}

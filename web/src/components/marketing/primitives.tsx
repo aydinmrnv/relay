@@ -80,6 +80,25 @@ export function Reveal({
 }
 
 /**
+ * The page's buttons, one shape throughout: a pill, like the header's. Pass
+ * to `Button` with `variant="outline"` for the quieter of a pair.
+ */
+export const PILL = 'h-10 rounded-full px-4 has-data-[icon=inline-end]:pr-3.5';
+
+/** A section's label: small capitals in the mono face, with a short rule before it. */
+export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <p className={cn('flex items-center gap-2.5 font-mono text-[11px] font-medium tracking-[0.14em] text-muted-foreground uppercase', className)}>
+      <span aria-hidden className="h-px w-5 bg-foreground/30" />
+      {children}
+    </p>
+  );
+}
+
+/** A section's claim, the one size every section uses. */
+export const SECTION_TITLE = 'text-3xl leading-[1.1] font-semibold tracking-[-0.03em] text-balance sm:text-[2.75rem]';
+
+/**
  * A section's opening: a small label, the claim, and a line of support. Left
  * aligned, so the page reads like a document rather than a stack of banners.
  */
@@ -95,11 +114,11 @@ export function SectionHeading({
   className?: string;
 }) {
   return (
-    <Reveal className={cn('flex max-w-2xl flex-col gap-3', className)}>
-      <p className="font-mono text-xs text-muted-foreground">{eyebrow}</p>
-      <h2 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">{title}</h2>
+    <Reveal className={cn('flex max-w-3xl flex-col gap-4', className)}>
+      <Eyebrow>{eyebrow}</Eyebrow>
+      <h2 className={SECTION_TITLE}>{title}</h2>
       {description === undefined ? null : (
-        <p className="max-w-xl text-base leading-relaxed text-pretty text-muted-foreground">{description}</p>
+        <p className="max-w-xl text-base leading-relaxed text-pretty text-muted-foreground sm:text-[17px]">{description}</p>
       )}
     </Reveal>
   );

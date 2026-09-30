@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { useBrand } from '@/hooks/use-brand';
-import { REPO_URL, Reveal } from './primitives';
+import { Eyebrow, REPO_URL, Reveal, SECTION_TITLE } from './primitives';
 
 export function Faq() {
   const brand = useBrand();
@@ -62,11 +62,11 @@ export function Faq() {
   return (
     <section id="faq" className="scroll-mt-16 border-t py-16 sm:py-24">
       <div className="container max-w-6xl grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-20">
-        <Reveal className="flex flex-col gap-3">
-          <p className="font-mono text-xs text-muted-foreground">FAQ</p>
-          <h2 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">A few things to know</h2>
-          <p className="text-pretty text-muted-foreground">How the agents run, where your code lives, and what stays in your hands.</p>
-          <div className="flex flex-col gap-2">
+        <Reveal className="flex flex-col gap-4">
+          <Eyebrow>FAQ</Eyebrow>
+          <h2 className={SECTION_TITLE}>A few things to know</h2>
+          <p className="text-pretty text-muted-foreground sm:text-[17px]">How the agents run, where your code lives, and what stays in your hands.</p>
+          <div className="mt-2 flex flex-col gap-2">
             <a
               href={REPO_URL}
               target="_blank"

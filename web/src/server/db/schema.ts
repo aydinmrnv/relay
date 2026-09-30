@@ -96,4 +96,27 @@ export const share = pgTable(
   (table) => [uniqueIndex('share_owner_idx').on(table.userId, table.workflowId)],
 );
 
-export const schema = { workspace, workflow, run, workflowVersion, share };
+/**
+ * An app connected for real: the credential sealed with the server's key
+ * (see `server/credentials/crypto.ts`), and what the studio may show about it.
+ * One per app per person; markers stay in `workspace.connections`.
+ */
+export const connection = pgTable(
+  'connection',
+  {
+    userId: text('user_id').notNull(),
+    connectorId: text('connector_id').notNull(),
+    kind: text('kind').notNull(),
+    account: text('account').notNull(),
+    secret: text('secret').notNull(),
+    hint: text('hint').notNull(),
+    status: text('status').notNull().default('connected'),
+    error: text('error'),
+    checkedAt: timestamp('checked_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.connectorId] })],
+);
+
+export const schema = { workspace, workflow, run, workflowVersion, share, connection };

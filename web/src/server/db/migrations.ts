@@ -150,4 +150,24 @@ export const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS "user";
     `,
   },
+  {
+    // Apps connected for real: an encrypted credential per app per person.
+    id: '0003_connection_credentials',
+    sql: `
+      CREATE TABLE IF NOT EXISTS connection (
+        user_id text NOT NULL,
+        connector_id text NOT NULL,
+        kind text NOT NULL,
+        account text NOT NULL,
+        secret text NOT NULL,
+        hint text NOT NULL,
+        status text NOT NULL DEFAULT 'connected',
+        error text,
+        checked_at timestamptz NOT NULL DEFAULT now(),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (user_id, connector_id)
+      );
+    `,
+  },
 ];

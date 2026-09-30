@@ -1,6 +1,7 @@
 'use client';
 
-import { Check, Minus, X } from 'lucide-react';
+import { ChartColumn, Check, History, Minus, Share2, Sparkles, X } from 'lucide-react';
+import { BrandMark } from '@/components/app/brand-mark';
 import { useBrand } from '@/hooks/use-brand';
 import { cn } from '@/lib/utils';
 import { Reveal, SectionHeading } from './primitives';
@@ -17,18 +18,22 @@ export function Different() {
 
   const highlights = [
     {
+      icon: Sparkles,
       title: 'Describe it, get a workflow',
       body: 'Type one sentence — “when a Sentry error is new, fix it under $3 and ping Discord” — and watch the graph build itself. It runs in your browser: no model call, no credits, nothing leaves the page.',
     },
     {
+      icon: ChartColumn,
       title: 'A spend forecast before the first run',
       body: 'Hundreds of simulated runs of your exact graph give a typical cost, a bad-day cost, a monthly bill at your ticket volume, and how often your budget gate will say no.',
     },
     {
+      icon: Share2,
       title: 'Share it, remix it, badge it',
       body: 'Publish a workflow at a public link with secrets stripped. Anyone can remix it into their own studio, and a README badge points people to it.',
     },
     {
+      icon: History,
       title: 'Version history with one-click restore',
       body: 'A snapshot before every editing session, named versions when you want them, and a restore you can undo.',
     },
@@ -56,9 +61,10 @@ export function Different() {
         />
 
         <div className="mt-12 grid grid-cols-1 gap-x-10 gap-y-10 sm:mt-14 sm:grid-cols-2 lg:grid-cols-4">
-          {highlights.map((item, index) => (
+          {highlights.map(({ icon: Icon, ...item }, index) => (
             <Reveal key={item.title} delay={index * 0.05} className="h-full">
               <article className="flex h-full flex-col gap-2 border-t pt-5">
+                <Icon className="mb-2 size-4.5 text-foreground" strokeWidth={1.75} />
                 <h3 className="font-semibold tracking-tight">{item.title}</h3>
                 <p className="text-sm leading-relaxed text-pretty text-muted-foreground">{item.body}</p>
               </article>
@@ -76,8 +82,11 @@ export function Different() {
                   <th scope="col" className="py-3 pr-4 font-medium text-muted-foreground">
                     What you get
                   </th>
-                  <th scope="col" className="w-32 p-4 text-center font-semibold">
-                    {brand.name}
+                  <th scope="col" className="w-32 rounded-t-lg bg-muted/70 p-4 text-center font-semibold">
+                    <span className="inline-flex items-center gap-1.5">
+                      <BrandMark className="size-4" />
+                      {brand.name}
+                    </span>
                   </th>
                   <th scope="col" className="w-36 p-4 text-center font-medium text-muted-foreground">
                     Hosted coding agents
@@ -94,7 +103,7 @@ export function Different() {
                       {row.label}
                       {row.note === undefined ? null : <span className="mt-0.5 block text-xs text-muted-foreground">{row.note}</span>}
                     </th>
-                    <td className="bg-muted/50 p-4 text-center">
+                    <td className="bg-muted/70 p-4 text-center">
                       <MarkIcon mark={row.ours} />
                     </td>
                     <td className="p-4 text-center">
