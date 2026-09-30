@@ -103,6 +103,8 @@
   --port-message: oklch(0.6 0.09 60);
   --port-event: oklch(0.78 0.004 85);
   --port-any: oklch(0.86 0.004 85);
+  /* The one lift a marketing panel gets over the paper: a hairline and a soft fall. */
+  --shadow-panel: 0 1px 2px oklch(0.21 0.006 85 / 4%), 0 16px 40px -20px oklch(0.21 0.006 85 / 16%);
 }
 
 .dark {
@@ -147,6 +149,8 @@
   --port-message: oklch(0.7 0.09 60);
   --port-event: oklch(0.45 0.004 85);
   --port-any: oklch(0.36 0.004 85);
+  /* On ink the card is already a step lighter; a shadow would only muddy it. */
+  --shadow-panel: inset 0 1px 0 oklch(1 0 0 / 4%);
 }
 
 @layer base {
@@ -226,6 +230,11 @@
 .react-flow__attribution a {
   color: var(--muted-foreground);
   font-size: 10px;
+}
+
+/* Marketing panels: product mocks, the pricing table, the closing band. */
+@utility shadow-panel {
+  box-shadow: var(--shadow-panel);
 }
 
 /* The builder's canvas grid, for previews that stand in for the canvas. */
