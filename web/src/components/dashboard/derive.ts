@@ -1,5 +1,5 @@
-import { getNodeType } from '@/lib/connectors';
-import type { Run, Workflow } from '@/lib/workflow/schema';
+import { getConnector, getNodeType } from '@/lib/connectors';
+import type { Connection, Run, Workflow } from '@/lib/workflow/schema';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import { isLive, outcomeReason } from '@/components/runs/run-utils';
 
@@ -176,13 +176,30 @@ export function spendToday(runs: Run[], now: number): number {
 }
 
 export type AttentionItem =
+  | { kind: 'connection'; id: string; href: string; title: string; reason: string; at: string }
   | { kind: 'run'; id: string; href: string; status: 'failed' | 'refused'; title: string; reason: string; at: string; shortId: string }
   | { kind: 'workflow'; id: string; href: string; title: string; reason: string; errors: number };
 
-/** Failed or refused runs from the last 7 days, newest first, then workflows that would not validate. */
-export function attentionItems(runs: Run[], workflows: Workflow[], now: number): AttentionItem[] {
+/**
+ * Connections an app refused at the last check first, since every real run
+ * that posts there would fail; then failed or refused runs from the last 7
+ * days, newest first; then workflows that would not validate.
+ */
+export function attentionItems(runs: Run[], workflows: Workflow[], now: number, connections: Record<string, Connection> = {}): AttentionItem[] {
   const weekAgo = now - 7 * DAY;
   const items: AttentionItem[] = [];
+  for (const connection of Object.values(connections)) {
+    if (connection.credential === undefined || connection.status !== 'error') continue;
+    const name = getConnector(connection.connectorId)?.name ?? connection.connectorId;
+    items.push({
+      kind: 'connection',
+      id: connection.connectorId,
+      href: `/integrations?app=${encodeURIComponent(connection.connectorId)}`,
+      title: `${name} connection is failing`,
+      reason: connection.credential.error ?? `${name} refused it at the last check.`,
+      at: connection.credential.checkedAt,
+    });
+  }
   for (const run of runs) {
     if (run.status !== 'failed' && run.status !== 'refused') continue;
     if (new Date(run.startedAt).getTime() <= weekAgo) continue;

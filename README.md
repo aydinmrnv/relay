@@ -182,6 +182,10 @@ vendors' own pages, and Relay still never holds a token. It is built and
 invite-only; [the design](docs/design/relay-cloud-runners.md) covers how that
 machine is run, reached, kept cheap and kept working.
 
+Relay never holds a model credential or a code credential. It holds the
+notification connections you add — a Slack or Discord webhook, which can post
+to one channel and nothing else — encrypted with a key only the server has.
+
 ## Why a run nobody watched is worth reading
 
 Running agents is the easy part. These are the rules that make the result
@@ -222,7 +226,8 @@ machine per user, signed in with that user's own plans
 |---|---|---|
 | Accounts (Clerk: email, Google, GitHub), onboarding, cloud sync, share links and remixes, version history | | |
 | The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | Triggers that wake a cloud runner |
-| Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your machine, installing an export | App connections: "Connect" stores a local flag | Real webhooks for every connector |
+| Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your machine, installing an export | Other apps' connections: "Mark ready" records a label and signs in to nothing | Sign-in for every connector |
+| Connecting Slack and Discord: the webhook is checked with the app, kept encrypted, and rechecked from the dashboard | | Real runs posting through those connections, from the control plane |
 | Relay Cloud (invite-only): a machine of your own on Azure, woken for a run and put to sleep when idle ([how](docs/design/relay-cloud-runners.md)) | | |
 | Exported workflows running on GitHub Actions, through the engine | Approvals: auto-approved after a delay | Approvals from Slack and email |
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |

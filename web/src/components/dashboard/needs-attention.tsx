@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, CircleCheck, OctagonAlert, ShieldAlert, XCircle } from 'lucide-react';
+import { ChevronRight, CircleCheck, OctagonAlert, ShieldAlert, Unplug, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { timeAgo } from '@/lib/format';
@@ -21,7 +21,7 @@ export function NeedsAttention({ items, now, className }: { items: AttentionItem
       <CardHeader>
         <CardTitle>Needs attention</CardTitle>
         <CardDescription>
-          {items.length === 0 ? 'Nothing is waiting on you.' : 'Failed or refused runs from the last 7 days, and workflows with errors.'}
+          {items.length === 0 ? 'Nothing is waiting on you.' : 'Failing connections, failed or refused runs from the last 7 days, and workflows with errors.'}
         </CardDescription>
         {failed + refused > 0 ? (
           <CardAction>
@@ -36,7 +36,7 @@ export function NeedsAttention({ items, now, className }: { items: AttentionItem
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center">
             <CircleCheck className="size-5 text-success" />
             <p className="text-sm font-medium">All clear</p>
-            <p className="max-w-64 text-xs text-muted-foreground">No failed or refused runs this week, and every workflow validates.</p>
+            <p className="max-w-64 text-xs text-muted-foreground">No failed or refused runs this week, every workflow validates, and no connection is failing.</p>
           </div>
         ) : (
           <ul className="-mx-2 flex flex-col">
@@ -48,13 +48,13 @@ export function NeedsAttention({ items, now, className }: { items: AttentionItem
                     <div className="flex items-baseline justify-between gap-2">
                       <p className="truncate text-sm font-medium">{item.title}</p>
                       <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {item.kind === 'run' ? timeAgo(item.at, now) : `${item.errors} ${item.errors === 1 ? 'error' : 'errors'}`}
+                        {item.kind === 'workflow' ? `${item.errors} ${item.errors === 1 ? 'error' : 'errors'}` : timeAgo(item.at, now)}
                       </span>
                     </div>
                     <p className="line-clamp-2 text-xs text-pretty text-muted-foreground">{item.reason}</p>
                   </div>
                   <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" aria-hidden />
-                  <span className="sr-only">{item.kind === 'run' ? `Open run ${item.shortId}` : 'Fix it in the builder'}</span>
+                  <span className="sr-only">{item.kind === 'run' ? `Open run ${item.shortId}` : item.kind === 'connection' ? 'Fix the connection' : 'Fix it in the builder'}</span>
                 </Link>
               </li>
             ))}
@@ -69,5 +69,6 @@ export function NeedsAttention({ items, now, className }: { items: AttentionItem
 function ItemIcon({ item }: { item: AttentionItem }) {
   const cls = 'mt-0.5 size-4 shrink-0';
   if (item.kind === 'workflow') return <OctagonAlert className={cn(cls, 'text-destructive')} aria-label="Validation errors" />;
+  if (item.kind === 'connection') return <Unplug className={cn(cls, 'text-destructive')} aria-label="Connection failing" />;
   return item.status === 'failed' ? <XCircle className={cn(cls, 'text-destructive')} aria-label="Failed" /> : <ShieldAlert className={cn(cls, 'text-amber-600 dark:text-warning')} aria-label="Refused" />;
 }
