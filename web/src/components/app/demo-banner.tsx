@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * One line at the top of the studio with the single most useful next step:
- * finish onboarding, keep a guest's work by making an account, or — once
+ * finish onboarding, make an account (the studio needs one), or — once
  * both are done — pick a runner so runs stop being simulated.
  */
 export function DemoBanner({ className, site = false }: { className?: string; site?: boolean }) {
@@ -25,7 +25,7 @@ export function DemoBanner({ className, site = false }: { className?: string; si
     );
   }
   if (!site && status === 'guest') {
-    return <Line className={className} dot="Guest mode" text="Your work is saved in this browser only." href={`/sign-up?next=${encodeURIComponent(pathname)}`} action="Create a free account to keep it" />;
+    return <Line className={className} dot="Not signed in" text="Make a free account to build, test and run workflows." href="/sign-up" action="Try it free" />;
   }
   if (!HOSTED_DEMO || connected) return null;
   return <Line className={className} dot={site ? 'Free beta' : 'Simulated runs'} text="Test runs are played back in your browser at no cost." href="/runners" action="Choose where your agents run" />;

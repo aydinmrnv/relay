@@ -6,19 +6,15 @@ import { ArrowUpRight } from 'lucide-react';
 import { LiquidGlass } from '@/components/glass/liquid-glass';
 import { Hero1Art, Hero1Cta, useHero1Stagger } from '@/components/watermelon/hero-1';
 import { useBrand } from '@/hooks/use-brand';
-import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { PipelinePreview } from './pipeline-preview';
-import { REPO_URL } from './primitives';
+import { REPO_URL, useStudioEntry } from './primitives';
 
 const TRUST = ['Runs on your computer, or on a machine we make for you', 'Uses the AI subscriptions you already have', 'Free to start'];
 
 export function Hero() {
   const brand = useBrand();
-  const signedIn = useAccount((state) => state.status === 'signed-in');
-  const accounts = useCapabilities().enabled;
+  const entry = useStudioEntry();
   const { container, item, initial } = useHero1Stagger();
-  // Signed out, the first button makes an account and the second is the no-sign-up way in.
-  const invite = accounts && !signedIn;
   return (
     <section id="top" className="relative isolate overflow-hidden">
       <div className="relative">
@@ -44,15 +40,13 @@ export function Hero() {
             review. You decide what ships.
           </motion.p>
           <motion.div variants={item} className="mt-8 flex flex-wrap items-center gap-3">
-            <Hero1Cta href={invite ? '/sign-up' : '/dashboard'}>
-              {invite ? 'Get started free' : signedIn ? 'Open your studio' : 'Open the studio'}
-            </Hero1Cta>
+            <Hero1Cta href={entry.href}>{entry.label}</Hero1Cta>
             <LiquidGlass className="rounded-full transition-[background-color,scale] duration-300 hover:bg-white/60 active:scale-[0.97] dark:hover:bg-white/[0.13]">
               <Link
-                href={invite ? '/dashboard' : '/guide'}
+                href="/guide"
                 className="inline-flex h-11 items-center rounded-full px-5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
-                {invite ? 'Try it without an account' : 'Read the docs'}
+                Read the docs
               </Link>
             </LiquidGlass>
           </motion.div>

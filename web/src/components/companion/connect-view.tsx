@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
-import { readPairingFragment, useCompanion, type PairingFailure } from '@/lib/companion/client';
+import { readPairingFragment, takeStashedPairing, useCompanion, type PairingFailure } from '@/lib/companion/client';
 import { DEFAULT_COMPANION_PORT } from '@/lib/companion/types';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
@@ -36,7 +36,7 @@ export function ConnectView() {
   useEffect(() => {
     if (!hydrated || handled.current) return;
     handled.current = true;
-    const found = readPairingFragment(window.location.hash);
+    const found = readPairingFragment(window.location.hash) ?? takeStashedPairing();
     if (window.location.hash.length > 0) window.history.replaceState(null, '', window.location.pathname);
     if (found === null) return;
     // The store records how it went; this page only renders it.

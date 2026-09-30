@@ -11,9 +11,8 @@
 and Codex plan, cross-review, implement and test your tickets, behind guardrails
 you draw on a canvas.
 
-**[Try it live →](https://relay-olive-omega.vercel.app)** — no account needed to
-look around; sign up free to keep your workflows, share them and get version
-history.
+**[Try it free →](https://relay-olive-omega.vercel.app)** — make a free account
+and your workflows, share links and version history follow you to any browser.
 
 ![The Relay studio: a Linear-to-pull-request workflow on the canvas](docs/images/studio.png)
 
@@ -38,10 +37,11 @@ as a commit, a branch or a draft pull request, as far as you allow.
 
 ## Quick start
 
-**Open the studio:** <https://relay-olive-omega.vercel.app>. Try it as a guest —
-your work stays in your browser — or create a free account, answer four
-onboarding questions and get a first workflow built from your answers. Test
-runs are simulated, so it costs nothing to try.
+**Try it free:** <https://relay-olive-omega.vercel.app>. Create a free account,
+answer four onboarding questions and get a first workflow built from your
+answers. Test runs are simulated, so it costs nothing to try. (A copy of the
+studio you run yourself without Clerk keys has no accounts: it works as a
+guest, with your work kept in your browser.)
 
 **Connect your machine** to make it real. The `relay` CLI is the studio's
 companion: run it in the repository your workflows work on, and the studio can
@@ -210,9 +210,10 @@ The full list, and how each rule is enforced, is under
 
 ## Status
 
-Relay is in beta at <https://relay-olive-omega.vercel.app>, and free. Accounts
-keep your workflows, runs and settings in any browser; as a guest they stay in
-your browser's storage. Everything that needs your machine — agent sign-in, real
+Relay is in beta at <https://relay-olive-omega.vercel.app>, and free. The hosted
+studio needs a free account, which keeps your workflows, runs and settings in
+any browser; a self-run copy without accounts keeps them in your browser's
+storage. Everything that needs your machine — agent sign-in, real
 runs, installing an export — goes through `relay connect`, which pairs with the
 hosted studio as readily as with a local one, or through Relay Cloud: a cloud
 machine per user, signed in with that user's own plans

@@ -15,7 +15,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AppMark, useCalmMotion } from './primitives';
+import { AppMark, useCalmMotion, useStudioEntry } from './primitives';
 
 const STAGES = [
   {
@@ -148,6 +148,7 @@ export function PipelinePreview() {
   const id = useId();
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
   const reduce = useCalmMotion();
+  const entry = useStudioEntry();
   const stage = STAGES[active];
 
   function navigate(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -174,7 +175,7 @@ export function PipelinePreview() {
           </span>
         </div>
         <Link
-          href="/templates"
+          href={entry.into('/templates')}
           className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Explore templates <ArrowUpRight className="size-3.5" />

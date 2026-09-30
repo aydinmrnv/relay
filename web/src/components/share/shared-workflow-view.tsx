@@ -12,6 +12,7 @@ import { BrandMark } from '@/components/app/brand-mark';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { GraphView } from '@/components/templates/graph-view';
 import { branchParent, StepItem } from '@/components/templates/template-preview';
+import { useStudioEntry } from '@/components/marketing/primitives';
 import { useBrand } from '@/hooks/use-brand';
 import { useAccount, useWorkspaceReady } from '@/lib/cloud/account';
 import { getConnector } from '@/lib/connectors';
@@ -36,6 +37,7 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
   const router = useRouter();
   const ready = useWorkspaceReady();
   const signedIn = useAccount((state) => state.status === 'signed-in');
+  const entry = useStudioEntry();
   const repository = useStudio((state) => state.settings.defaultRepository);
   const [busy, setBusy] = useState(false);
   const { workflow } = share;
@@ -43,6 +45,11 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
   const connectors = useMemo(() => [...new Set(workflow.nodes.map((node) => node.data.typeId.split('.')[0] ?? ''))].map((id) => getConnector(id)).filter((connector) => connector !== undefined), [workflow]);
 
   const remix = async () => {
+    // The studio needs an account here: make one, then remix from this page.
+    if (entry.invite) {
+      router.push(`/sign-up?next=${encodeURIComponent(`/s/${share.slug}`)}`);
+      return;
+    }
     setBusy(true);
     const now = new Date().toISOString();
     const copy: Workflow = {
@@ -79,13 +86,13 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
             <BrandMark className="size-7" />
             {brand.name}
           </Link>
-          {signedIn ? null : (
-            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/sign-up" />}>
-              Create an account
+          {entry.invite ? (
+            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/sign-in" />}>
+              Sign in
             </Button>
-          )}
-          <Button size="sm" variant="outline" nativeButton={false} render={<Link href="/dashboard" />}>
-            Open the studio
+          ) : null}
+          <Button size="sm" variant="outline" nativeButton={false} render={<Link href={entry.href} />}>
+            {entry.label}
           </Button>
         </div>
       </header>
@@ -121,7 +128,7 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
           <div className="flex flex-wrap gap-2">
             <Button size="lg" onClick={() => void remix()} disabled={!ready || busy}>
               {busy || !ready ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Shuffle data-icon="inline-start" />}
-              Remix into my studio
+              {entry.invite ? 'Sign up to remix' : 'Remix into my studio'}
             </Button>
             <Button size="lg" variant="outline" onClick={() => void copyLink()}>
               <Link2 data-icon="inline-start" /> Copy link

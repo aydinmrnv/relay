@@ -5,6 +5,7 @@ import { motion } from 'motion/react';
 import { useCalmMotion } from '@/components/motion/use-calm-motion';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { getConnector, type Connector } from '@/lib/connectors';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { cn } from '@/lib/utils';
 
 /** The engine's public repository. The only external product link on the page. */
@@ -21,6 +22,24 @@ export const SECTIONS = [
 ] as const;
 
 const EASE = [0.22, 1, 0.36, 1] as const;
+
+/**
+ * The way into the studio, the same on every button. Where this deployment
+ * has accounts the studio needs one, so someone signed out is asked to make
+ * one first — `into` sends them to sign up and then on to the page the link
+ * was for. A copy without accounts opens the studio directly.
+ */
+export function useStudioEntry() {
+  const signedIn = useAccount((state) => state.status === 'signed-in');
+  const invite = useCapabilities().enabled && !signedIn;
+  return {
+    signedIn,
+    invite,
+    href: invite ? '/sign-up' : '/dashboard',
+    label: signedIn ? 'Go to dashboard' : 'Try it free',
+    into: (path: string) => (invite ? `/sign-up?next=${encodeURIComponent(path)}` : path),
+  };
+}
 
 export { useCalmMotion };
 

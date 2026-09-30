@@ -5,12 +5,10 @@ import { ArrowRight, ArrowUpRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BrandMark } from '@/components/app/brand-mark';
 import { useBrand } from '@/hooks/use-brand';
-import { useAccount, useCapabilities } from '@/lib/cloud/account';
-import { REPO_URL, Reveal } from './primitives';
+import { REPO_URL, Reveal, useStudioEntry } from './primitives';
 
 export function FinalCta() {
-  const signedIn = useAccount((state) => state.status === 'signed-in');
-  const invite = useCapabilities().enabled && !signedIn;
+  const entry = useStudioEntry();
   return (
     <section className="border-t py-20 sm:py-28">
       <div className="container max-w-6xl">
@@ -20,11 +18,11 @@ export function FinalCta() {
             Start with a template. Try a simulated run. Pick a runner when you’re ready.
           </p>
           <div className="mt-4 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
-            <Button size="lg" className="h-11 px-5" nativeButton={false} render={<Link href={invite ? '/sign-up' : '/dashboard'} />}>
-              {invite ? 'Create a free account' : signedIn ? 'Open your studio' : 'Open the studio'}
+            <Button size="lg" className="h-11 px-5" nativeButton={false} render={<Link href={entry.href} />}>
+              {entry.label}
               <ArrowRight data-icon="inline-end" />
             </Button>
-            <Button size="lg" variant="outline" className="h-11 px-5" nativeButton={false} render={<Link href="/templates" />}>
+            <Button size="lg" variant="outline" className="h-11 px-5" nativeButton={false} render={<Link href={entry.into('/templates')} />}>
               Start from a template
             </Button>
           </div>
@@ -36,14 +34,15 @@ export function FinalCta() {
 
 export function SiteFooter() {
   const brand = useBrand();
+  const entry = useStudioEntry();
 
   const columns = [
     {
       title: 'Product',
       links: [
-        { label: 'Open the studio', href: '/dashboard' },
-        { label: 'Templates', href: '/templates' },
-        { label: 'Integrations', href: '/integrations' },
+        { label: entry.label, href: entry.href },
+        { label: 'Templates', href: entry.into('/templates') },
+        { label: 'Integrations', href: entry.into('/integrations') },
         { label: 'Pricing', href: '/#pricing' },
       ],
     },
