@@ -1,4 +1,4 @@
-import { getNodeType, type NodeTypeDef, type PortType } from '../connectors';
+import { getNodeType, retiredNodeType, type NodeTypeDef, type PortType } from '../connectors';
 import type { Workflow, WorkflowEdge, WorkflowNode } from './schema';
 
 export type IssueLevel = 'error' | 'warning' | 'info';
@@ -39,6 +39,15 @@ export function isUnattendedTrigger(node: WorkflowNode): boolean {
   return def.id !== 'logic.trigger.manual';
 }
 
+/** Apps whose events come from systems (CI, error trackers, scanners, flag services), not from a person asking. */
+const SYSTEM_CATEGORIES = new Set(['ci-cd', 'hosting', 'observability', 'testing', 'security', 'feature-flags']);
+
+/** Whether a trigger fires because a person asked (a label, an assignment, a mention), so an allowlist means something. */
+export function startedByPerson(def: NodeTypeDef | undefined): boolean {
+  if (def === undefined || def.kind !== 'trigger') return false;
+  return def.connectorId !== 'schedule' && !SYSTEM_CATEGORIES.has(def.connector.category);
+}
+
 export interface ValidationContext {
   /** Which agents are signed in on this machine, when the local bridge knows. Missing = unknown, never assumed. */
   signedIn?: Partial<Record<string, boolean>>;
@@ -50,10 +59,14 @@ export function validateWorkflow(workflow: Workflow, context: ValidationContext 
   const edges = workflow.edges;
   const byId = new Map(nodes.map((node) => [node.id, node]));
 
-  // Unknown node types (a catalog entry was renamed, or an import from elsewhere).
+  // Unknown node types: an app or step taken out of the catalog, or an import from elsewhere.
   for (const node of nodes) {
-    if (resolveNode(node) === undefined) {
+    if (resolveNode(node) !== undefined) continue;
+    const retired = retiredNodeType(node.data.typeId);
+    if (retired === undefined) {
       issues.push({ level: 'error', nodeId: node.id, message: `Unknown node type "${node.data.typeId}".`, hint: 'Delete it and drag the node in again from the palette.' });
+    } else {
+      issues.push({ level: 'error', nodeId: node.id, message: retiredMessage(retired), hint: retiredHint(retired) });
     }
   }
 
@@ -176,11 +189,15 @@ export function validateWorkflow(workflow: Workflow, context: ValidationContext 
   // Guardrails are opt-in, and their absence is worth saying out loud.
   if (unattended && pipelines.length > 0) {
     const hasBudget = nodes.some((node) => resolveNode(node)?.id === 'gates.action.budget');
-    const hasAllowlist = nodes.some((node) => resolveNode(node)?.id === 'gates.action.allowlist');
+    // A person approving each run is a stronger answer to "who may start this" than a list.
+    const hasAllowlist = nodes.some((node) => resolveNode(node)?.id === 'gates.action.allowlist' || resolveNode(node)?.id === 'gates.action.approval');
     if (!hasBudget) {
       issues.push({ level: 'warning', message: 'No budget gate.', hint: 'Anyone who can trigger this can spend money. Put a Budget gate between the trigger and the pipeline.' });
     }
-    if (!hasAllowlist) {
+    // An allowlist is about who may ask. A red build, a crash or a finished
+    // flag is not asked for by anyone, so there is nobody to list; the budget
+    // and concurrency gates are what bound those.
+    if (!hasAllowlist && triggers.some((node) => startedByPerson(resolveNode(node)))) {
       issues.push({ level: 'warning', message: 'No author allowlist.', hint: 'On a public repository, a drive-by label is a funded denial-of-wallet attack.' });
     }
   }
@@ -226,4 +243,15 @@ function hasCycle(nodes: WorkflowNode[], outgoing: Map<string, WorkflowEdge[]>):
     return false;
   };
   return nodes.some((node) => visit(node.id));
+}
+
+/** "YouTube is no longer in the catalog", or "GitHub no longer offers “merge pr”". */
+export function retiredMessage(retired: { app: string; step: string; appRetired: boolean }): string {
+  return retired.appRetired ? `${retired.app} is no longer in the catalog.` : `${retired.app} no longer offers “${retired.step}”.`;
+}
+
+export function retiredHint(retired: { app: string; step: string; appRetired: boolean }): string {
+  return retired.appRetired
+    ? 'Start from it with an Incoming webhook, or call it with an HTTP request, then delete this step.'
+    : `Pick one of ${retired.app}'s current steps from the palette, or use an HTTP request, then delete this one.`;
 }

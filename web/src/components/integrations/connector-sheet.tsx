@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Check, ExternalLink, FlaskConical, Globe, Play, Plug, Unplug } from 'lucide-react';
+import { ArrowRight, Check, CornerDownRight, ExternalLink, FlaskConical, Globe, LayoutTemplate, Play, Plug, Unplug } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
@@ -10,6 +10,7 @@ import { HelpTip } from '@/components/app/help-tip';
 import { PORT_STYLE } from '@/components/builder/ports';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { useBrand } from '@/hooks/use-brand';
+import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { useNow } from '@/hooks/use-now';
 import { useStudio } from '@/lib/store';
 import { CATEGORY_LABELS, nodeTypeId, type ActionSpec, type Connector, type FieldSpec, type PortSpec, type TriggerSpec } from '@/lib/connectors';
@@ -17,7 +18,7 @@ import { workflowFromTrigger } from '@/lib/workflow/templates';
 import { timeAgo } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { ConnectDialog } from './connect-dialog';
-import { AUTH_ICON, authExplainer, authLabel, isBuiltIn } from './connector-meta';
+import { AUTH_ICON, authExplainer, authLabel, isBuiltIn, templatesUsing } from './connector-meta';
 
 interface Props {
   connector: Connector | undefined;
@@ -48,8 +49,10 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
   const upsertWorkflow = useStudio((state) => state.upsertWorkflow);
   const repository = useStudio((state) => state.settings.defaultRepository);
   const [connectOpen, setConnectOpen] = useState(false);
+  const create = useCreateWorkflow();
 
   const builtIn = isBuiltIn(connector);
+  const templates = templatesUsing(connector.id);
   const how = authExplainer(connector, brand.name);
   const AuthIcon = AUTH_ICON[connector.auth];
 
@@ -115,6 +118,44 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-7 overflow-y-auto p-5">
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold">What teams use it for</h3>
+          <ul className="flex flex-col gap-1.5">
+            {connector.uses.map((use) => (
+              <li key={use} className="flex gap-2 text-[13px] leading-relaxed">
+                <CornerDownRight className="mt-1 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="text-pretty">{use}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        {templates.length === 0 ? null : (
+          <section className="flex flex-col gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                Ready-made workflows
+                <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium text-muted-foreground tabular-nums">{templates.length}</span>
+              </h3>
+              <p className="mt-0.5 text-[13px] text-muted-foreground">Complete workflows that use {connector.name}, guardrails included. Start from one and change what you need.</p>
+            </div>
+            {templates.map((template) => (
+              <div key={template.id} className="rounded-lg border p-3.5">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  <LayoutTemplate className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  {template.name}
+                </p>
+                <p className="mt-1 text-[13px] leading-snug text-pretty text-muted-foreground">{template.when}</p>
+                <div className="mt-2.5 flex justify-end">
+                  <Button size="xs" onClick={() => create.fromTemplate(template.id)}>
+                    Use this template <ArrowRight data-icon="inline-end" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
         <section className="rounded-lg border bg-muted/30 p-3.5">
           <p className="flex items-center gap-2 text-sm font-medium">
             <AuthIcon className="size-4 text-muted-foreground" aria-hidden />

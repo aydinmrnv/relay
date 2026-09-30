@@ -3,7 +3,7 @@
 import { motion } from 'motion/react';
 import { Blocks, LayoutGrid, Plug, Star, type LucideIcon } from 'lucide-react';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { connectorsByCategory, type Connector, type ConnectorCategory } from '@/lib/connectors';
+import { CATEGORY_LABELS, CONNECTORS, JOBS, type Connector, type ConnectorCategory } from '@/lib/connectors';
 import { cn } from '@/lib/utils';
 
 export type Filter = 'all' | 'popular' | 'connected' | ConnectorCategory;
@@ -20,13 +20,23 @@ export const SHORTCUT_FILTERS: FilterDef[] = [
   { key: 'connected', label: 'Connected', icon: Plug },
 ];
 
-/** Built-in nodes first (they are what every workflow is made of), then vendor categories in catalog order. */
-export const CATEGORY_FILTERS: FilterDef[] = [
-  { key: 'core', label: 'Built in', icon: Blocks },
-  ...connectorsByCategory()
-    .filter((group) => group.category !== 'core')
-    .map((group) => ({ key: group.category, label: group.label })),
-];
+/**
+ * Categories grouped by the job their apps do in a workflow: where work comes
+ * from, what breaks, upkeep, people. Built-in nodes last, since every workflow
+ * has them whatever it connects to.
+ */
+export const JOB_GROUPS: Array<{ label: string; description: string; items: FilterDef[] }> = [...JOBS]
+  .sort((a, b) => Number(a.job === 'core') - Number(b.job === 'core'))
+  .map((entry) => ({
+    label: entry.label,
+    description: entry.description,
+    items: entry.categories
+      .filter((category) => CONNECTORS.some((connector) => connector.category === category))
+      .map((category) => (category === 'core' ? { key: category, label: 'Built in', icon: Blocks } : { key: category, label: CATEGORY_LABELS[category] })),
+  }))
+  .filter((group) => group.items.length > 0);
+
+export const CATEGORY_FILTERS: FilterDef[] = JOB_GROUPS.flatMap((group) => group.items);
 
 const ALL_FILTERS = [...SHORTCUT_FILTERS, ...CATEGORY_FILTERS];
 
@@ -59,10 +69,14 @@ export function CategoryRail({ value, onChange, counts }: Props) {
   return (
     <nav aria-label="Filter apps" className="flex flex-col gap-4 text-sm">
       <RailGroup items={SHORTCUT_FILTERS} value={value} onChange={onChange} counts={counts} />
-      <div className="flex flex-col gap-1">
-        <p className="px-2.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Categories</p>
-        <RailGroup items={CATEGORY_FILTERS} value={value} onChange={onChange} counts={counts} />
-      </div>
+      {JOB_GROUPS.map((group) => (
+        <div key={group.label} className="flex flex-col gap-1">
+          <p className="px-2.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase" title={group.description}>
+            {group.label}
+          </p>
+          <RailGroup items={group.items} value={value} onChange={onChange} counts={counts} />
+        </div>
+      ))}
     </nav>
   );
 }
@@ -114,15 +128,17 @@ export function CategorySelect({ value, onChange, counts, className }: Props & {
             </SelectItem>
           ))}
         </SelectGroup>
-        <SelectSeparator />
-        <SelectGroup>
-          <SelectLabel>Categories</SelectLabel>
-          {CATEGORY_FILTERS.map((item) => (
-            <SelectItem key={item.key} value={item.key}>
-              {item.label} <span className="text-muted-foreground tabular-nums">{counts[item.key] ?? 0}</span>
-            </SelectItem>
-          ))}
-        </SelectGroup>
+        {JOB_GROUPS.map((group) => [
+          <SelectSeparator key={`${group.label}-separator`} />,
+          <SelectGroup key={group.label}>
+            <SelectLabel>{group.label}</SelectLabel>
+            {group.items.map((item) => (
+              <SelectItem key={item.key} value={item.key}>
+                {item.label} <span className="text-muted-foreground tabular-nums">{counts[item.key] ?? 0}</span>
+              </SelectItem>
+            ))}
+          </SelectGroup>,
+        ])}
       </SelectContent>
     </Select>
   );

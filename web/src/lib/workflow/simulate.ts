@@ -259,7 +259,7 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       case 'delivery.action.comment-summary': {
         tick(2500);
         const body = renderTemplate(String(config['body'] ?? '{{run.summary}}'), context);
-        return { status: 'done', message: `Commented on ${String(payload['id'] ?? 'the issue')}.`, detail: body, nextHandles: 'all' };
+        return { status: 'done', message: `Commented on ${String((context.issue as Record<string, unknown>)['id'] ?? 'the issue')}.`, detail: body, nextHandles: 'all' };
       }
       case 'logic.action.condition': {
         const left = renderTemplate(String(config['left'] ?? ''), context);
@@ -280,8 +280,14 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
         const cost = round(0.01 + rng() * 0.08);
         tick(6000 + rng() * 9000);
         run.costUsd = round(run.costUsd + cost);
-        const kinds = ['bug', 'feature', 'chore'];
-        const verdict = `${kinds[Math.floor(rng() * kinds.length)]}, size ${['S', 'M', 'L'][Math.floor(rng() * 3)]}`;
+        // Answer with one of the options the prompt asks for ("Answer fixable or
+        // needs-a-person"), so a condition written against the prompt can take
+        // either branch. The first option is the likelier one, as it tends to be.
+        const options = answerOptions(prompt);
+        const verdict =
+          options === undefined
+            ? `${['bug', 'feature', 'chore'][Math.floor(rng() * 3)]}, size ${['S', 'M', 'L'][Math.floor(rng() * 3)]}`
+            : (rng() < 0.7 ? options[0] : options[1 + Math.floor(rng() * (options.length - 1))])!;
         (context.issue as Record<string, unknown>).triage = verdict;
         emit({ nodeId, kind: 'cost', message: `${String(config['model'] ?? 'model')} · ${usd(cost)}`, costUsd: cost });
         return { status: 'done', message: `Model answered: ${verdict}.`, detail: prompt, nextHandles: 'all' };
@@ -321,8 +327,9 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
     const maxCode = Number(config['maxCodeReviewRounds'] ?? 2);
     const maxCost = config['maxCostUsd'] === undefined || config['maxCostUsd'] === '' || config['maxCostUsd'] === null ? null : Number(config['maxCostUsd']);
     const runTests = config['runTests'] !== false;
-    const key = String(payload['id'] ?? 'task');
-    const branch = `${String(config['branchPrefix'] ?? options.brand.slug)}/${key.toLowerCase()}-${slug(String(payload['title'] ?? 'change')).slice(0, 32)}`;
+    const ticket = context.issue as Record<string, unknown>;
+    const key = String(ticket['id'] ?? 'task');
+    const branch = `${String(config['branchPrefix'] ?? options.brand.slug)}/${slug(key)}-${slug(String(ticket['title'] ?? 'change')).slice(0, 32)}`;
     run.branch = branch;
     (context.run as Record<string, unknown>).branch = branch;
     (context.run as Record<string, unknown>).codeReviewer = AGENT_NAMES[agents.codeReviewer] ?? agents.codeReviewer;
@@ -378,7 +385,7 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
         (context.run as Record<string, unknown>).diff = `+${run.diff.additions} −${run.diff.deletions} across ${run.diff.files} files`;
         emit({ nodeId, kind: 'artifact', message: `Diff: +${run.diff.additions} −${run.diff.deletions} across ${run.diff.files} files`, detail: 'Computed from git, not from what the agent said it did.' });
       }
-      if (name === 'PLANNING') emit({ nodeId, kind: 'artifact', message: 'plan.md written', detail: samplePlan(String(payload['title'] ?? 'the change')) });
+      if (name === 'PLANNING') emit({ nodeId, kind: 'artifact', message: 'plan.md written', detail: samplePlan(String(ticket['title'] ?? 'the change')) });
 
       if (maxCost !== null && run.costUsd > maxCost) {
         emit({ nodeId, kind: 'cost', status: 'failed', message: `Budget exceeded: ${usd(run.costUsd)} spent of ${usd(maxCost)}. Work so far is committed to ${branch}; nothing is published.` });
@@ -429,6 +436,13 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
 
   async function genericAction(nodeId: string, def: NodeTypeDef, config: Record<string, unknown>) {
     tick(800 + rng() * 2500);
+    // "Create issue" and friends file a new ticket, and every step after it is
+    // about that ticket: the pipeline works on it, a reply can name its key.
+    if (def.outputs.some((port) => port.type === 'issue') && def.fields.some((field) => field.key === 'title')) {
+      const created = createdIssue(def, config);
+      context.issue = created;
+      return { status: 'done' as NodeRunStatus, message: `${def.connector.name}: created ${String(created['key'])} · ${String(created['title'])}`, detail: String(created['body'] ?? ''), nextHandles: 'all' as const };
+    }
     const rendered = def.fields
       .filter((field) => field.type === 'template')
       .map((field) => `${field.label}: ${renderTemplate(String(config[field.key] ?? field.default ?? ''), context)}`)
@@ -443,9 +457,31 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       nextHandles: 'all' as const,
     };
   }
+
+  function createdIssue(def: NodeTypeDef, config: Record<string, unknown>): Record<string, unknown> {
+    const render = (key: string) => renderTemplate(String(config[key] ?? def.fields.find((field) => field.key === key)?.default ?? ''), context);
+    const number = 100 + Math.floor(rng() * 900);
+    const team = String(config['team'] ?? config['project'] ?? 'ENG');
+    const [key, url] =
+      def.connectorId === 'linear' ? [`${team}-${number}`, `https://linear.app/acme/issue/${team}-${number}`]
+      : def.connectorId === 'jira' ? [`${team === 'ENG' ? 'PROJ' : team}-${number}`, `https://acme.atlassian.net/browse/${team === 'ENG' ? 'PROJ' : team}-${number}`]
+      : def.connectorId === 'github-issues' ? [`#${number + 1000}`, `https://github.com/${repository}/issues/${number + 1000}`]
+      : [`${def.connectorId}-${number}`, ''];
+    const previous = context.issue as Record<string, unknown>;
+    const labels = String(config['labels'] ?? '').split(',').map((label) => label.trim()).filter(Boolean);
+    return { ...previous, id: key, key, title: render('title') || previous['title'], body: render('body') || render('description'), url, labels: labels.length > 0 ? labels : previous['labels'] };
+  }
 }
 
 /* ------------------------------------------------------------------ */
+
+/** "Answer fixable or needs-a-person" → ['fixable', 'needs-a-person']. */
+export function answerOptions(prompt: string): string[] | undefined {
+  const match = /\banswer\s+(?:with\s+)?((?:[\w-]+\s*,\s*)*[\w-]+\s+or\s+[\w-]+)/i.exec(prompt) ?? /\b(?:as|is it)\s+((?:[\w-]+\s*,\s*)*[\w-]+\s+or\s+[\w-]+)/i.exec(prompt);
+  if (match === null) return undefined;
+  const options = match[1]!.split(/\s*,\s*|\s+or\s+/).map((option) => option.trim().toLowerCase()).filter(Boolean);
+  return options.length >= 2 ? options : undefined;
+}
 
 /**
  * The payload a test run of this workflow would start with, for the "Run with

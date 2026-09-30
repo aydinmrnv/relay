@@ -158,7 +158,7 @@ export function compileWorkflow(workflow: Workflow, brand: Brand, options: Compi
     { path: 'SETUP.md', language: 'markdown', content: renderSetup({ workflow, brand, secrets, warnings, unattended, auth }), description: 'What to add where.' },
   ];
 
-  return { files, warnings, secrets };
+  return { files, warnings, secrets: [...new Map(secrets.map((secret) => [secret.name, secret])).values()] };
 }
 
 /* ------------------------------------------------------------------ */

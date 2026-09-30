@@ -44,6 +44,7 @@ export const CORE_CONNECTORS: Connector[] = [
     icon: { lucide: 'Workflow', color: CORE_INK },
     tags: ['agents', 'plan', 'review', 'implement'],
     popular: true,
+    uses: ['Every workflow that changes code runs through it: plan, cross-review, implement, review the diff, test.'],
     triggers: [],
     actions: [
       {
@@ -100,6 +101,7 @@ export const CORE_CONNECTORS: Connector[] = [
     icon: { lucide: 'ShieldCheck', color: CORE_INK },
     tags: ['budget', 'allowlist', 'approval', 'kill switch'],
     popular: true,
+    uses: ['Cap what a run and a day may cost, and refuse runs nobody on the allowlist asked for.', 'Hold a customer-reported fix until an engineer approves it.'],
     triggers: [],
     actions: [
       {
@@ -177,6 +179,7 @@ export const CORE_CONNECTORS: Connector[] = [
     icon: { lucide: 'GitPullRequestArrow', color: CORE_INK },
     tags: ['branch', 'push', 'pull request', 'merge'],
     popular: true,
+    uses: ['Stop at a draft pull request for a person to review; unattended runs can never merge.'],
     triggers: [],
     actions: [
       {
@@ -215,6 +218,7 @@ export const CORE_CONNECTORS: Connector[] = [
     auth: 'none',
     icon: { lucide: 'CalendarClock', color: CORE_INK },
     tags: ['cron', 'timer', 'interval'],
+    uses: ['Weekly dependency upgrades, or a nightly sweep, started by the clock.', 'Hold a notification until business hours.'],
     triggers: [
       {
         id: 'cron',
@@ -258,6 +262,7 @@ export const CORE_CONNECTORS: Connector[] = [
     icon: { lucide: 'Globe', color: CORE_INK },
     tags: ['webhook', 'rest', 'api', 'custom'],
     popular: true,
+    uses: ['Start a workflow from any tool that can send a webhook.', 'Call an API this catalog has no node for.'],
     triggers: [
       {
         id: 'webhook',
@@ -306,6 +311,7 @@ export const CORE_CONNECTORS: Connector[] = [
     icon: { lucide: 'GitFork', color: CORE_INK },
     tags: ['condition', 'filter', 'branch', 'code'],
     popular: true,
+    uses: ['Let a model sort what arrives: fixable from the stack trace, or needs a person.', 'Send small tickets one way and large ones another.'],
     triggers: [
       {
         id: 'manual',

@@ -57,7 +57,7 @@ const CAPABILITIES = [
 ];
 
 /**
- * The builder, shown rather than described: the "Ticket to pull request"
+ * The builder, shown rather than described: the "Linear ticket to pull request"
  * template drawn as a static canvas, next to the exact files the compiler
  * writes for it. Both are generated from the live catalog and templates, so
  * the page cannot drift from what the studio does.

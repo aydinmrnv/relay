@@ -87,7 +87,7 @@ export function WorkflowAnatomy() {
           </ol>
         </div>
         <figcaption className="relative border-t bg-background/60 px-5 py-2.5 text-xs text-muted-foreground">
-          Shaped like the <span className="font-medium text-foreground">Ticket to pull request</span> template, trimmed to five nodes. The numbers match the notes below.
+          Shaped like the <span className="font-medium text-foreground">Linear ticket to pull request</span> template, trimmed to five nodes. The numbers match the notes below.
           <span className="ml-1 sm:hidden">Scroll sideways to see all of it.</span>
         </figcaption>
       </figure>

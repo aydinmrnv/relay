@@ -5,6 +5,7 @@
  */
 import { Box, KeyRound, Laptop, Puzzle, ShieldCheck, Ticket, type LucideIcon } from 'lucide-react';
 import { CATEGORY_LABELS, type AuthKind, type Connector } from '@/lib/connectors';
+import { TEMPLATES, type TemplateMeta } from '@/lib/workflow/templates';
 
 const AUTH_LABEL: Record<AuthKind, string> = {
   oauth: 'OAuth sign-in',
@@ -100,6 +101,7 @@ export function matchConnector(connector: Connector, tokens: string[]): Connecto
     [(connector.tags ?? []).join(' ').toLowerCase(), 4],
     [CATEGORY_LABELS[connector.category].toLowerCase(), 3],
     [specs.map((spec) => spec.name).join(' · ').toLowerCase(), 2],
+    [connector.uses.join(' ').toLowerCase(), 2],
     [connector.description.toLowerCase(), 1],
   ];
   let score = 0;
@@ -119,29 +121,34 @@ export function matchConnector(connector: Connector, tokens: string[]): Connecto
   return { connector, score, hits: [...new Set(hits)] };
 }
 
-export type SortKey = 'recommended' | 'name' | 'size' | 'connected';
+export type SortKey = 'recommended' | 'templates' | 'name' | 'connected';
 
 export const SORT_LABELS: Record<SortKey, string> = {
   recommended: 'Recommended',
+  templates: 'In the most templates',
   name: 'Name, A–Z',
-  size: 'Most triggers & actions',
   connected: 'Connected first',
 };
 
 export function sortMatches(matches: ConnectorMatch[], sort: SortKey, connected: (id: string) => boolean): ConnectorMatch[] {
   const byName = (a: ConnectorMatch, b: ConnectorMatch) => a.connector.name.localeCompare(b.connector.name);
   const popular = (m: ConnectorMatch) => (m.connector.popular === true ? 1 : 0);
-  const size = (m: ConnectorMatch) => m.connector.triggers.length + m.connector.actions.length;
+  const used = (m: ConnectorMatch) => templatesUsing(m.connector.id).length;
   const copy = [...matches];
   switch (sort) {
     case 'name':
       return copy.sort(byName);
-    case 'size':
-      return copy.sort((a, b) => size(b) - size(a) || byName(a, b));
+    case 'templates':
+      return copy.sort((a, b) => used(b) - used(a) || popular(b) - popular(a) || byName(a, b));
     case 'connected':
       return copy.sort((a, b) => Number(connected(b.connector.id)) - Number(connected(a.connector.id)) || popular(b) - popular(a) || byName(a, b));
     case 'recommended':
       // Relevance first when searching, then the apps most people reach for.
       return copy.sort((a, b) => b.score - a.score || popular(b) - popular(a) || byName(a, b));
   }
+}
+
+/** The starter templates that use an app, so its page can offer a working workflow rather than a lone trigger. */
+export function templatesUsing(connectorId: string): TemplateMeta[] {
+  return TEMPLATES.filter((template) => template.connectors.includes(connectorId));
 }

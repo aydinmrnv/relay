@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { CATALOG_STATS, getConnector } from '@/lib/connectors';
+import { getConnector } from '@/lib/connectors';
 import { AppMark, Reveal, SectionHeading } from './primitives';
 
 const FEATURED_APPS = ['github', 'linear', 'slack', 'sentry', 'discord', 'notion', 'jira', 'gitlab', 'bitbucket', 'zendesk', 'vercel', 'figma'];
@@ -37,8 +37,8 @@ export function Integrations() {
         </Reveal>
         <div className="mt-8 flex flex-col items-start gap-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
-            {CATALOG_STATS.connectors} apps in the catalog. GitHub and Slack work through exported Actions; other connectors may need a
-            bridge.
+            The apps coding work comes from and the places people hear back: trackers, CI, error trackers, security scanners, support and
+            chat. GitHub and Slack work through exported Actions; other connectors may need a bridge.
           </p>
           <Button variant="outline" nativeButton={false} render={<Link href="/integrations" />}>
             Explore the integrations <ArrowRight data-icon="inline-end" />
