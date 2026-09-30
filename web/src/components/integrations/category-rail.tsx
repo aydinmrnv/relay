@@ -1,12 +1,12 @@
 'use client';
 
 import { motion } from 'motion/react';
-import { Blocks, LayoutGrid, Plug, Star, type LucideIcon } from 'lucide-react';
+import { Blocks, LayoutGrid, Plug, Star, Workflow, type LucideIcon } from 'lucide-react';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { connectorsByCategory, type Connector, type ConnectorCategory } from '@/lib/connectors';
 import { cn } from '@/lib/utils';
 
-export type Filter = 'all' | 'popular' | 'connected' | ConnectorCategory;
+export type Filter = 'all' | 'popular' | 'in-use' | 'connected' | ConnectorCategory;
 
 interface FilterDef {
   key: Filter;
@@ -17,6 +17,7 @@ interface FilterDef {
 export const SHORTCUT_FILTERS: FilterDef[] = [
   { key: 'all', label: 'All apps', icon: LayoutGrid },
   { key: 'popular', label: 'Popular', icon: Star },
+  { key: 'in-use', label: 'In your workflows', icon: Workflow },
   { key: 'connected', label: 'Connected', icon: Plug },
 ];
 
@@ -30,18 +31,25 @@ export const CATEGORY_FILTERS: FilterDef[] = [
 
 const ALL_FILTERS = [...SHORTCUT_FILTERS, ...CATEGORY_FILTERS];
 
+/** A filter from the address (`?filter=in-use`), or `all` when it names none. */
+export function parseFilter(value: string | null): Filter {
+  return ALL_FILTERS.find((entry) => entry.key === value)?.key ?? 'all';
+}
+
 export function filterLabel(filter: Filter): string {
   return ALL_FILTERS.find((entry) => entry.key === filter)?.label ?? 'All apps';
 }
 
-export function inFilter(connector: Connector, filter: Filter, isConnected: (id: string) => boolean): boolean {
+export function inFilter(connector: Connector, filter: Filter, is: { connected: (id: string) => boolean; used: (id: string) => boolean }): boolean {
   switch (filter) {
     case 'all':
       return true;
     case 'popular':
       return connector.popular === true;
+    case 'in-use':
+      return is.used(connector.id);
     case 'connected':
-      return isConnected(connector.id);
+      return is.connected(connector.id);
     default:
       return connector.category === filter;
   }

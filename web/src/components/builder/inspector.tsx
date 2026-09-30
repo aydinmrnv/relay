@@ -18,6 +18,9 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { AgentStatusStrip } from '@/components/agents/agent-status-strip';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { getConnector, getNodeType, type FieldSpec, type NodeTypeDef } from '@/lib/connectors';
+import { connectionState, uncoveredNodes } from '@/lib/connectors/connection-state';
+import { credentialSpec } from '@/lib/connectors/credentials';
+import { ConnectionStatus } from '@/components/integrations/connection-status';
 import { VARIABLE_HINTS } from '@/lib/workflow/template';
 import { describeNode, describeWorkflow } from '@/lib/workflow/describe';
 import { useStudio } from '@/lib/store';
@@ -148,17 +151,17 @@ function WorkflowPanel({ workflow, issues, onSelect }: { workflow: Workflow; iss
               {description.apps.map((id) => {
                 const connector = getConnector(id);
                 if (connector === undefined) return null;
-                const ok = connections[id] !== undefined || connector.auth === 'none';
+                const state = connectionState(connector, connections[id]);
                 return (
                   <li key={id} className="flex items-center gap-2 rounded-md border px-2 py-1.5">
                     <ConnectorIcon connector={connector} size={11} />
                     <span className="flex-1 truncate">{connector.name}</span>
-                    {ok ? (
-                      <span className="text-success">connected</span>
-                    ) : (
-                      <Link href={`/integrations?app=${id}`} className="flex items-center gap-1 font-medium text-signal hover:underline">
-                        <Plug className="size-3" /> connect
+                    {state === 'missing' || state === 'failing' ? (
+                      <Link href={`/integrations?app=${id}`} className={cn('flex items-center gap-1 font-medium hover:underline', state === 'failing' ? 'text-destructive' : 'text-signal')}>
+                        <Plug className="size-3" /> {state === 'failing' ? 'fix' : credentialSpec(id) === undefined ? 'mark ready' : 'connect'}
                       </Link>
+                    ) : (
+                      <ConnectionStatus state={state} compact />
                     )}
                   </li>
                 );
@@ -275,7 +278,10 @@ function NodePanel({ node, issues, run, onChange, onDelete, onDuplicate }: Props
   }
 
   const nodeIssues = issues.filter((issue) => issue.nodeId === node.id);
-  const connected = connections[def.connectorId] !== undefined || def.connector.category === 'core' || def.connector.auth === 'none';
+  const connection = connections[def.connectorId];
+  const state = connectionState(def.connector, connection);
+  const spec = credentialSpec(def.connectorId);
+  const uncovered = state === 'verified' && uncoveredNodes(def.connectorId, [def]).length > 0;
   const term = NODE_TERMS[def.id];
   const events = run === null ? [] : run.events.filter((event) => event.nodeId === node.id);
 
@@ -312,16 +318,38 @@ function NodePanel({ node, issues, run, onChange, onDelete, onDuplicate }: Props
         <TabsContent value="settings" className="min-h-0 flex-1">
           <ScrollArea className="h-full">
             <div className="flex flex-col gap-4 p-4">
-              {!connected ? (
+              {state === 'missing' ? (
                 <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs">
                   <Plug className="mt-0.5 size-3.5 shrink-0" />
                   <p>
-                    {def.connector.name} isn’t connected. Test runs still work; connect it before a real run.{' '}
+                    {def.connector.name} isn’t connected. Test runs still work; {spec === undefined ? 'its sign-in is not built yet, so for now you can mark it ready.' : 'connect it before a real run.'}{' '}
                     <Link href={`/integrations?app=${def.connectorId}`} className="font-medium underline underline-offset-2">
-                      Connect {def.connector.name}
+                      {spec === undefined ? `Mark ${def.connector.name} ready` : `Connect ${def.connector.name}`}
                     </Link>
                   </p>
                 </div>
+              ) : state === 'failing' ? (
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs">
+                  <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                  <p>
+                    <span className="font-medium text-destructive">{def.connector.name}’s connection is failing.</span> {connection?.credential?.error}{' '}
+                    <Link href={`/integrations?app=${def.connectorId}`} className="font-medium underline underline-offset-2">
+                      Fix it
+                    </Link>
+                  </p>
+                </div>
+              ) : uncovered && spec !== undefined ? (
+                <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs">
+                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                  <p>
+                    {def.connector.name} is connected with {spec.noun}, which can only post. {def.name} needs a full {def.connector.name} sign-in, which is not built yet: it plays in test runs, and a real run stops here.
+                  </p>
+                </div>
+              ) : state === 'verified' && spec?.caveat !== undefined && def.fields.some((field) => field.key === 'channel') ? (
+                <p className="flex items-start gap-2 text-xs text-muted-foreground">
+                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                  {spec.caveat}
+                </p>
               ) : null}
 
               {nodeIssues.length > 0 ? (

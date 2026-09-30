@@ -169,8 +169,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
   connection: {
     term: 'connection',
     title: 'Connections',
-    short: 'Which apps the workflow may talk to. In this prototype a connection is a local flag, not a real login.',
-    long: 'You can design against all of the catalog without connecting anything. Connecting an app marks it available and removes the reminder on its nodes; the hosted product would run the app’s own sign-in here.',
+    short: 'Which apps a workflow may talk to. Slack and Discord connect for real, with a webhook the studio checks; other apps can be marked ready.',
+    long: 'You can design and test against the whole catalog without connecting anything. Slack and Discord take a webhook URL: the studio checks it with the app, keeps it encrypted in your account and only ever shows its last four characters. A webhook can post to one channel and do nothing else. Every other app can be marked ready, which records a label and signs in to nothing, until its own sign-in is built.',
     href: '/integrations',
   },
   subscription: {

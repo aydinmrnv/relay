@@ -30,6 +30,8 @@ interface Props {
   finished: number;
   spend: number;
   connected: number;
+  /** Real connections the app accepted, markers, real ones it refused, and apps workflows use with no connection. */
+  connections: { verified: number; marked: number; failing: number; missing: number };
   catalog: number;
 }
 
@@ -86,7 +88,7 @@ export function KpiTiles(props: Props) {
       icon: <Cable />,
       term: 'connection',
       value: props.connected,
-      hint: props.connected === 0 ? `None of ${props.catalog} yet — connect one` : `of ${props.catalog} in the catalog · markers, not real logins`,
+      hint: <ConnectionsHint {...props.connections} catalog={props.catalog} />,
     },
   ];
 
@@ -119,5 +121,24 @@ export function KpiTiles(props: Props) {
         </StaggerItem>
       ))}
     </Stagger>
+  );
+}
+
+function ConnectionsHint({ verified, marked, failing, missing, catalog }: Props['connections'] & { catalog: number }) {
+  if (verified + marked + failing === 0) return missing > 0 ? <span className="text-amber-700 dark:text-warning">{missing} your workflows use, none connected</span> : <>None of {catalog} yet — connect one</>;
+  const parts: React.ReactNode[] = [];
+  if (failing > 0) parts.push(<span key="failing" className="text-destructive">{failing} failing</span>);
+  if (verified > 0) parts.push(<span key="verified">{verified} live</span>);
+  if (marked > 0) parts.push(<span key="marked">{marked} marked ready</span>);
+  if (missing > 0) parts.push(<span key="missing" className="text-amber-700 dark:text-warning">{missing} still needed</span>);
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={index}>
+          {index > 0 ? ' · ' : null}
+          {part}
+        </span>
+      ))}
+    </>
   );
 }

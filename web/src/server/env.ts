@@ -48,6 +48,33 @@ export const ACCOUNTS_UNAVAILABLE_REASON: string | null =
 
 export const ACCOUNTS_ENABLED = ACCOUNTS_UNAVAILABLE_REASON === null;
 
+export const IS_PRODUCTION = PRODUCTION;
+
+/**
+ * The key app credentials (a Slack or Discord webhook URL) are encrypted
+ * with before they reach the database: 32 random bytes, base64, e.g. from
+ * `openssl rand -base64 32`. Development makes its own and keeps it in
+ * `.data/`, next to the embedded database; production needs this set, or
+ * apps can only be marked ready.
+ */
+export const CREDENTIALS_KEY: Buffer | null = (() => {
+  const raw = (process.env.RELAY_CREDENTIALS_KEY ?? '').trim();
+  if (raw.length === 0) return null;
+  const key = Buffer.from(raw, 'base64');
+  if (key.length === 32) return key;
+  console.error('[credentials] RELAY_CREDENTIALS_KEY is not 32 bytes of base64 (openssl rand -base64 32); real connections are off.');
+  return null;
+})();
+
+/** Why real connections are off while accounts are on, for the log and development. `null` when they work. */
+export const CREDENTIALS_UNAVAILABLE_REASON: string | null = !ACCOUNTS_ENABLED
+  ? 'Real connections need accounts.'
+  : CREDENTIALS_KEY === null && PRODUCTION
+    ? 'No RELAY_CREDENTIALS_KEY: set it to 32 random bytes, base64 (openssl rand -base64 32).'
+    : null;
+
+export const CREDENTIALS_ENABLED = CREDENTIALS_UNAVAILABLE_REASON === null;
+
 /**
  * The public origin, for absolute links (social cards, the sitemap).
  * Explicit configuration wins; on Vercel the production domain is known.
@@ -78,5 +105,5 @@ export const CLOUD_HUB_URL: string | null = (() => {
 
 /** What the browser is told about accounts: whether they exist here, nothing secret. */
 export function authCapabilities(): AuthCapabilities {
-  return { enabled: ACCOUNTS_ENABLED, reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON, cloudHub: ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null };
+  return { enabled: ACCOUNTS_ENABLED, reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON, cloudHub: ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null, credentials: CREDENTIALS_ENABLED };
 }

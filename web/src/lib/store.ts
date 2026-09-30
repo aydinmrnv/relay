@@ -61,7 +61,10 @@ export interface StudioState {
   markTourSeen: (id: string, seen?: boolean) => void;
   checklistDismissed: boolean;
   dismissChecklist: (dismissed: boolean) => void;
+  /** Marks an app ready: a label, with nothing signed in to. */
   connect: (connectorId: string, account: string) => void;
+  /** Keeps a real connection as the server described it. */
+  setConnection: (connection: Connection) => void;
   disconnect: (connectorId: string) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   seedDemo: () => Promise<void>;
@@ -162,6 +165,7 @@ export const useStudio = create<StudioState>()(
         set((state) => ({
           connections: { ...state.connections, [connectorId]: { connectorId, status: 'connected', account, connectedAt: new Date().toISOString(), mock: true } },
         })),
+      setConnection: (connection) => set((state) => ({ connections: { ...state.connections, [connection.connectorId]: connection } })),
       disconnect: (connectorId) =>
         set((state) => {
           const connections = { ...state.connections };
@@ -241,7 +245,8 @@ export const useStudio = create<StudioState>()(
           set((state) => ({
             workflows: { ...state.workflows, ...workflows },
             runs: Array.isArray(data['runs']) ? (data['runs'] as Run[]) : state.runs,
-            connections: typeof data['connections'] === 'object' && data['connections'] !== null ? (data['connections'] as Record<string, Connection>) : state.connections,
+            // Markers only: a real connection belongs to the account that made it, and its credential never leaves that server.
+            connections: typeof data['connections'] === 'object' && data['connections'] !== null ? { ...markers(data['connections'] as Record<string, Connection>), ...realConnections(state.connections) } : state.connections,
             brand: typeof data['brand'] === 'object' && data['brand'] !== null ? (data['brand'] as Brand) : state.brand,
             seeded: true,
           }));
@@ -286,6 +291,14 @@ export const useStudio = create<StudioState>()(
     },
   ),
 );
+
+function markers(connections: Record<string, Connection>): Record<string, Connection> {
+  return Object.fromEntries(Object.entries(connections).filter(([, connection]) => connection.credential === undefined));
+}
+
+function realConnections(connections: Record<string, Connection>): Record<string, Connection> {
+  return Object.fromEntries(Object.entries(connections).filter(([, connection]) => connection.credential !== undefined));
+}
 
 /** Sorted newest first. Memoised on the map reference, because a selector that
  * returns a fresh array on every call is an infinite loop under useSyncExternalStore. */
