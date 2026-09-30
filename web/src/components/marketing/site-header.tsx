@@ -13,7 +13,7 @@ import { useBrand } from '@/hooks/use-brand';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { UserAvatar } from '@/components/account/user-avatar';
 import { cn } from '@/lib/utils';
-import { AppMark, REPO_URL, SECTIONS, useCalmMotion } from './primitives';
+import { AppMark, REPO_URL, SECTIONS, useCalmMotion, useStudioEntry } from './primitives';
 
 // The hero first, so no section is marked while the reader is still above them all.
 const SPY = ['top', ...SECTIONS.map((section) => section.id)];
@@ -33,6 +33,7 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
   const user = useAccount((state) => state.user);
   const accounts = useCapabilities().enabled;
   const signedIn = status === 'signed-in' && user !== null;
+  const entry = useStudioEntry();
   // Only the landing page has the sections; elsewhere the links lead back to it.
   const current = useScrollSpy(overlay ? SPY : NONE);
   const calm = useCalmMotion();
@@ -96,7 +97,7 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
             {signedIn ? (
               <Button className="h-10 gap-2 rounded-full pr-4 pl-2" nativeButton={false} render={<Link href="/dashboard" />}>
                 <UserAvatar user={user} size="sm" className="size-6" />
-                Open your studio
+                {entry.label}
               </Button>
             ) : accounts ? (
               <>
@@ -108,14 +109,14 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
                 >
                   Sign in
                 </Button>
-                <Button className="h-10 rounded-full pr-3.5 pl-4" nativeButton={false} render={<Link href="/sign-up" />}>
-                  Get started
+                <Button className="h-10 rounded-full pr-3.5 pl-4" nativeButton={false} render={<Link href={entry.href} />}>
+                  {entry.label}
                   <ArrowRight data-icon="inline-end" />
                 </Button>
               </>
             ) : (
-              <Button className="h-10 rounded-full pr-3.5 pl-4" nativeButton={false} render={<Link href="/dashboard" />}>
-                Open the studio
+              <Button className="h-10 rounded-full pr-3.5 pl-4" nativeButton={false} render={<Link href={entry.href} />}>
+                {entry.label}
                 <ArrowRight data-icon="inline-end" />
               </Button>
             )}
@@ -135,7 +136,7 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
               <SheetContent side="right" className="w-72">
                 <SheetHeader>
                   <SheetTitle>{brand.name}</SheetTitle>
-                  <SheetDescription>Jump to a section, or open the studio.</SheetDescription>
+                  <SheetDescription>Jump to a section, or get started.</SheetDescription>
                 </SheetHeader>
                 <nav aria-label="Sections" className="flex flex-col px-2">
                   {SECTIONS.map((section) => (
@@ -150,21 +151,15 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
                   ))}
                 </nav>
                 <div className="mt-auto flex flex-col gap-2 border-t p-4">
-                  {accounts && !signedIn ? (
-                    <>
-                      <Button nativeButton={false} render={<Link href="/sign-up" />}>
-                        Create a free account
-                        <ArrowRight data-icon="inline-end" />
-                      </Button>
-                      <Button variant="outline" nativeButton={false} render={<Link href="/sign-in" />}>
-                        Sign in
-                      </Button>
-                    </>
-                  ) : null}
-                  <Button variant={accounts && !signedIn ? 'ghost' : 'default'} nativeButton={false} render={<Link href="/dashboard" />}>
-                    {signedIn ? 'Open your studio' : accounts ? 'Try it without an account' : 'Open the studio'}
+                  <Button nativeButton={false} render={<Link href={entry.href} />}>
+                    {entry.label}
                     <ArrowRight data-icon="inline-end" />
                   </Button>
+                  {accounts && !signedIn ? (
+                    <Button variant="outline" nativeButton={false} render={<Link href="/sign-in" />}>
+                      Sign in
+                    </Button>
+                  ) : null}
                   <Button variant="outline" nativeButton={false} render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
                     <AppMark connector="github" size={14} />
                     The CLI on GitHub

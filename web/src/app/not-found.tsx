@@ -14,7 +14,7 @@ export default function NotFound() {
       </div>
       <div className="flex gap-2">
         <Button nativeButton={false} render={<Link href="/dashboard" />}>
-          Open the studio
+          Go to dashboard
         </Button>
         <Button variant="outline" nativeButton={false} render={<Link href="/guide" />}>
           Read the guide

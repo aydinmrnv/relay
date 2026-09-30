@@ -406,3 +406,31 @@ export function readPairingFragment(hash: string): { port: number; token: string
   if (!Number.isInteger(port) || port < 1 || port > 65_535 || token.length < 16) return null;
   return { port, token };
 }
+
+const PENDING_PAIRING = 'relay:pending-pairing';
+
+/**
+ * A pairing link opened while signed out arrives at the sign-in page with
+ * its fragment. Held in this tab's session storage — still never sent
+ * anywhere — and out of the address bar, until `/connect` takes it.
+ */
+export function stashPairing(): void {
+  if (readPairingFragment(window.location.hash) === null) return;
+  try {
+    window.sessionStorage.setItem(PENDING_PAIRING, window.location.hash);
+  } catch {
+    // Storage refused: the link can simply be opened again once signed in.
+  }
+  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+}
+
+/** The pairing link held by `stashPairing`, once. */
+export function takeStashedPairing(): { port: number; token: string } | null {
+  try {
+    const hash = window.sessionStorage.getItem(PENDING_PAIRING);
+    window.sessionStorage.removeItem(PENDING_PAIRING);
+    return hash === null ? null : readPairingFragment(hash);
+  } catch {
+    return null;
+  }
+}

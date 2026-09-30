@@ -4,17 +4,18 @@ import Link from 'next/link';
 import { ArrowRight, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBrand } from '@/hooks/use-brand';
-import { Reveal, SectionHeading } from './primitives';
+import { Reveal, SectionHeading, useStudioEntry } from './primitives';
 
 export function Pricing() {
   const brand = useBrand();
+  const entry = useStudioEntry();
   return (
     <section id="pricing" className="scroll-mt-20 border-t py-16 sm:py-24">
       <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="Pricing"
           title="Free to build. Your infrastructure to run."
-          description="Explore the studio without an account. When you run for real, usage stays on the plans you already have."
+          description="Make a free account and build as much as you like. When you run for real, usage stays on the plans you already have."
         />
         {/* Two columns of one table, split by a rule: they are two halves of one answer, not two products to choose between. */}
         <div className="mt-12 grid overflow-hidden rounded-lg border md:grid-cols-2">
@@ -23,7 +24,7 @@ export function Pricing() {
               <h3 className="font-semibold">The studio</h3>
               <p className="mt-6 flex items-baseline gap-2">
                 <span className="text-5xl font-semibold tracking-tight">$0</span>
-                <span className="text-sm text-muted-foreground">No account needed</span>
+                <span className="text-sm text-muted-foreground">with a free account</span>
               </p>
               <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
                 Design a workflow, inspect every step, and try it with simulated runs.
@@ -34,7 +35,7 @@ export function Pricing() {
                   'Visual builder and connector catalog',
                   'Describe a workflow in a sentence',
                   'Spend forecasts and free simulated test runs',
-                  'Free account: sync, share links, version history',
+                  'Sync across browsers, share links and version history',
                   'Export config and GitHub Actions',
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-2.5 text-sm">
@@ -43,8 +44,8 @@ export function Pricing() {
                   </li>
                 ))}
               </ul>
-              <Button className="mt-auto h-10 w-full" nativeButton={false} render={<Link href="/dashboard" />}>
-                Open the studio
+              <Button className="mt-auto h-10 w-full" nativeButton={false} render={<Link href={entry.href} />}>
+                {entry.label}
                 <ArrowRight data-icon="inline-end" />
               </Button>
             </article>

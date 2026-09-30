@@ -13,7 +13,7 @@ import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import type { Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
-import { AppTile, Reveal, SectionHeading } from './primitives';
+import { AppTile, Reveal, SectionHeading, useStudioEntry } from './primitives';
 
 const NODE_W = 220;
 const NODE_H = 78;
@@ -64,6 +64,7 @@ const CAPABILITIES = [
  */
 export function BuilderShowcase() {
   const brand = useBrand();
+  const entry = useStudioEntry();
   const workflow = useMemo(() => instantiateTemplate('ticket-to-pr', brand), [brand]);
   const compiled = useMemo(() => (workflow === undefined ? undefined : compileWorkflow(workflow, brand)), [workflow, brand]);
   const validation = useMemo(() => (workflow === undefined ? undefined : validateWorkflow(workflow)), [workflow]);
@@ -115,7 +116,7 @@ export function BuilderShowcase() {
                 </div>
               ))}
             </dl>
-            <Button className="mt-6" variant="outline" nativeButton={false} render={<Link href="/workflows" />}>
+            <Button className="mt-6" variant="outline" nativeButton={false} render={<Link href={entry.into('/workflows')} />}>
               Open the builder
               <ArrowRight data-icon="inline-end" />
             </Button>

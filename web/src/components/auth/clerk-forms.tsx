@@ -59,7 +59,8 @@ export function ClerkSignIn({ next }: { next: string }) {
         appearance={APPEARANCE}
         fallbackRedirectUrl={next}
         signUpUrl={next === '/dashboard' ? '/sign-up' : `/sign-up?next=${encodeURIComponent(next)}`}
-        signUpFallbackRedirectUrl="/onboarding"
+        // A new account made from here goes where the visitor was headed, like one made on the sign-up page.
+        signUpFallbackRedirectUrl={next === '/dashboard' ? '/onboarding' : next}
       />
       <AccountWhy />
     </div>
@@ -97,16 +98,14 @@ export function ClerkSignUp({ next }: { next: string }) {
 }
 
 /**
- * What signing in buys, and the one thing that needs it. An account is not
- * required to use the studio — pairing your own computer and running for real
- * works as a guest — but Relay Cloud is reached with the account's session,
- * so it cannot be used without one. Saying that here answers the question the
- * form itself raises.
+ * What the account is for, next to the form that makes one: the studio needs
+ * it, and Relay Cloud is reached with its session. Your own computer, paired
+ * with relay connect, is the other runner; the link compares the two.
  */
 function AccountWhy() {
   return (
     <div className="grid gap-1.5 text-xs text-pretty text-muted-foreground">
-      <p className="font-medium text-foreground">What an account adds</p>
+      <p className="font-medium text-foreground">What your account gives you</p>
       <ul className="grid gap-1">
         <li className="flex gap-1.5">
           <Check className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
@@ -119,9 +118,9 @@ function AccountWhy() {
           </span>
         </li>
         <li className="flex gap-1.5">
-          <Laptop className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <Laptop className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
           <span>
-            Not required: your own computer, paired with relay connect, runs workflows for real as a guest.{' '}
+            Or your own computer, paired with relay connect, running on the Claude and Codex plans you already have.{' '}
             <Link href="/runners" className="underline underline-offset-4 hover:text-foreground">
               See the two side by side
             </Link>

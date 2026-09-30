@@ -20,7 +20,7 @@ export function Faq() {
       id: 'account',
       question: 'Do I need an account, and what do you store?',
       answer:
-        'No: everything works as a guest, with your work kept in this browser. A free account adds sync across browsers, share links and version history. Sign-in is handled by Clerk; the studio stores only the workflows and run records you make, under your Clerk user id — never your code, your repository or your agents’ tokens. Download everything or delete your account from Settings at any time.',
+        'Yes, a free one: it takes a minute, and it keeps your workflows in every browser you sign in to, with share links and version history. Sign-in is handled by Clerk; the studio stores only the workflows and run records you make, under your Clerk user id — never your code, your repository or your agents’ tokens. Download everything or delete your account from Settings at any time.',
     },
     {
       id: 'real',

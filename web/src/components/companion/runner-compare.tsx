@@ -58,7 +58,7 @@ const MACHINE: RunnerFacts = {
     'The machine you already have: nothing to switch on, no waiting for a machine to start.',
     'Your repository, beside your checkout. Xcode, simulators, local databases and private networks all work.',
     'Free. It is your own hardware and your own electricity.',
-    'No account needed: a guest can pair a machine and run for real, then sign in later without losing anything.',
+    'Relay never registers it: the pairing lives in your browser and your terminal, and nowhere else.',
   ],
   rows: [
     'Install the CLI, then run relay connect inside a repository. It prints a link that pairs this browser.',
@@ -67,7 +67,7 @@ const MACHINE: RunnerFacts = {
     'In a worktree beside your own checkout. Your working copy is only read.',
     "In the CLIs' own files on this computer — the Claude and Codex you already signed in to.",
     'Only on your computer. Nothing of yours is copied onto Relay infrastructure.',
-    'No. A guest can pair a machine and run for real.',
+    'Not for the machine itself: Relay never registers it, or knows it exists.',
     'Nothing but your own hardware. Model usage counts against your Claude and ChatGPT plans.',
     'Xcode builds, simulators, local services, private networks, localhost dependencies.',
     '127.0.0.1 only, and only a studio holding the token from your terminal.',

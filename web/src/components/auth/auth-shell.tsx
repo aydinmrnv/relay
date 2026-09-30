@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect } from 'react';
 import { motion } from 'motion/react';
 import { ArrowLeft, Check, GitCompareArrows, KeyRound, ShieldCheck } from 'lucide-react';
 import { BrandMark } from '@/components/app/brand-mark';
 import { useCalmMotion } from '@/components/motion/use-calm-motion';
 import { AppMark } from '@/components/marketing/primitives';
 import { useBrand } from '@/hooks/use-brand';
+import { stashPairing } from '@/lib/companion/client';
 
 const POINTS = [
   { icon: GitCompareArrows, title: 'Nothing grades its own homework', body: 'Claude Code and Codex review each other’s plan and diff before a pull request exists.' },
@@ -30,6 +32,8 @@ const RECEIPT = [
 export function AuthShell({ children }: { children: React.ReactNode }) {
   const brand = useBrand();
   const reduce = useCalmMotion();
+  // A `relay connect` link opened while signed out lands here on its way to `/connect`.
+  useEffect(stashPairing, []);
   return (
     <div className="grid min-h-dvh lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
       <aside className="relative hidden overflow-hidden border-r bg-muted/40 lg:flex lg:flex-col">
@@ -85,14 +89,14 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
               ))}
             </ul>
             <p className="border-t pt-4 text-sm text-pretty text-muted-foreground">
-              An account is for keeping your work in every browser, and for Relay Cloud. Pairing your own computer with relay connect needs no account — the studio works as a guest.
+              Your account keeps your workflows, runs and settings in every browser you sign in to, and is how Relay Cloud knows which machine is yours.
             </p>
           </div>
           <p className="text-xs text-muted-foreground">Free while in beta. Your code never passes through our servers — the agents work in your repository, or on your own cloud machine.</p>
         </div>
       </aside>
       <main className="flex flex-col">
-        <div className="flex items-center justify-between gap-2 p-4 sm:p-6">
+        <div className="flex items-center gap-2 p-4 sm:p-6">
           <Link href="/" className="flex items-center gap-2 rounded-md text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
             <ArrowLeft className="size-4" aria-hidden />
             <span className="lg:hidden">
@@ -100,9 +104,6 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
               {brand.name}
             </span>
             <span className="hidden lg:inline">Back to the site</span>
-          </Link>
-          <Link href="/dashboard" className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-            Try it without an account
           </Link>
         </div>
         <div className="flex flex-1 items-center justify-center px-4 pb-16 sm:px-6">
