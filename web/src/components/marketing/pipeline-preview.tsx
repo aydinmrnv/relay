@@ -165,7 +165,7 @@ export function PipelinePreview() {
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border bg-card text-left" aria-label="Interactive workflow example">
+    <div className="overflow-hidden rounded-xl border bg-card text-left shadow-panel" aria-label="Interactive workflow example">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6">
         <div className="flex items-center gap-2.5">
           <Workflow className="size-4 text-muted-foreground" />

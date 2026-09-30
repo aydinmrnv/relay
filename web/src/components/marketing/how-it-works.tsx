@@ -67,7 +67,7 @@ export function HowItWorks() {
 
 /** A mock of the studio's own UI: one bordered panel, rows divided by rules. */
 function Panel({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('divide-y overflow-hidden rounded-lg border bg-card', className)}>{children}</div>;
+  return <div className={cn('divide-y overflow-hidden rounded-xl border bg-card shadow-panel', className)}>{children}</div>;
 }
 
 function Row({ children, className }: { children: ReactNode; className?: string }) {

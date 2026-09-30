@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CATALOG_STATS, getConnector } from '@/lib/connectors';
-import { AppMark, Reveal, SectionHeading } from './primitives';
+import { AppMark, PILL, Reveal, SectionHeading } from './primitives';
 
 const FEATURED_APPS = ['github', 'linear', 'slack', 'sentry', 'discord', 'notion', 'jira', 'gitlab', 'bitbucket', 'zendesk', 'vercel', 'figma'];
 
@@ -23,15 +23,15 @@ export function Integrations() {
           description="Connect triggers and actions on the canvas. Bring tickets into a workflow and send results back to your team."
         />
         {/* One ruled grid, not twelve cards: the logos are a list, and the list is one link. */}
-        <Reveal className="mt-12 grid grid-cols-2 border-t border-l sm:grid-cols-3 lg:grid-cols-6">
+        <Reveal className="mt-12 grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border shadow-panel sm:grid-cols-3 lg:grid-cols-6">
           {apps.map((app) => (
             <Link
               key={app.id}
               href="/integrations"
-              className="flex min-h-20 flex-col justify-between gap-4 border-r border-b p-4 transition-colors hover:bg-muted/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              className="flex min-h-24 flex-col justify-between gap-4 bg-card p-5 transition-colors hover:bg-muted/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             >
-              <AppMark connector={app} size={18} />
-              <span className="text-sm">{app.name}</span>
+              <AppMark connector={app} size={20} />
+              <span className="text-sm font-medium">{app.name}</span>
             </Link>
           ))}
         </Reveal>
@@ -40,7 +40,7 @@ export function Integrations() {
             {CATALOG_STATS.connectors} apps in the catalog. GitHub and Slack work through exported Actions; other connectors may need a
             bridge.
           </p>
-          <Button variant="outline" nativeButton={false} render={<Link href="/integrations" />}>
+          <Button variant="outline" className={PILL} nativeButton={false} render={<Link href="/integrations" />}>
             Explore the integrations <ArrowRight data-icon="inline-end" />
           </Button>
         </div>
