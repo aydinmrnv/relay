@@ -38,6 +38,8 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             signInFallbackRedirectUrl="/dashboard"
             signUpFallbackRedirectUrl="/onboarding"
             afterSignOutUrl="/"
+            // `/sign-in` also makes accounts (`withSignUp`), so it should not greet everyone with "Welcome back".
+            localization={{ signIn: { start: { subtitleCombined: 'Sign in, or create a free account.' } } }}
           >
             {studio}
           </ClerkProvider>

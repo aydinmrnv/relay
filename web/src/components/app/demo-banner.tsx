@@ -25,7 +25,7 @@ export function DemoBanner({ className, site = false }: { className?: string; si
     );
   }
   if (!site && status === 'guest') {
-    return <Line className={className} dot="Not signed in" text="Make a free account to build, test and run workflows." href="/sign-up" action="Try it free" />;
+    return <Line className={className} dot="Not signed in" text="Make a free account to build, test and run workflows." href="/sign-in" action="Try it free" />;
   }
   if (!HOSTED_DEMO || connected) return null;
   return <Line className={className} dot={site ? 'Free beta' : 'Simulated runs'} text="Test runs are played back in your browser at no cost." href="/runners" action="Choose where your agents run" />;

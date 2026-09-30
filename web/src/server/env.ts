@@ -4,10 +4,11 @@
  * Accounts need two things: Clerk, for who someone is, and a database, for
  * their workflows. Locally the database need not be configured — it is an
  * embedded Postgres (PGlite) in `web/.data/` — but Clerk cannot: its
- * middleware throws without keys, so a deployment without them keeps working
- * as the browser-only studio, with sign-up turned off and a line in the log
- * saying why, rather than failing every request. `npx clerk env pull` writes
- * the keys to `.env.local`; after that accounts work in development too.
+ * middleware throws without keys. Without them a development copy runs as
+ * the browser-only studio, and a production one keeps its site up but its
+ * studio closed (see `GUEST_STUDIO`), with a line in the log saying why,
+ * rather than failing every request. `npx clerk env pull` writes the keys to
+ * `.env.local`; after that accounts work in development too.
  */
 import type { AuthCapabilities } from '@/lib/cloud/types';
 
@@ -49,6 +50,14 @@ export const ACCOUNTS_UNAVAILABLE_REASON: string | null =
 export const ACCOUNTS_ENABLED = ACCOUNTS_UNAVAILABLE_REASON === null;
 
 /**
+ * Whether the studio opens without an account. Only in development, so
+ * `npm run dev` works before `clerk env pull`: everywhere else the studio
+ * needs a sign-in, and a deployment missing its keys or its database is
+ * closed until they are set rather than open to anyone.
+ */
+export const GUEST_STUDIO = !ACCOUNTS_ENABLED && !PRODUCTION;
+
+/**
  * The public origin, for absolute links (social cards, the sitemap).
  * Explicit configuration wins; on Vercel the production domain is known.
  */
@@ -78,5 +87,5 @@ export const CLOUD_HUB_URL: string | null = (() => {
 
 /** What the browser is told about accounts: whether they exist here, nothing secret. */
 export function authCapabilities(): AuthCapabilities {
-  return { enabled: ACCOUNTS_ENABLED, reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON, cloudHub: ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null };
+  return { enabled: ACCOUNTS_ENABLED, guests: GUEST_STUDIO, reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON, cloudHub: ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null };
 }

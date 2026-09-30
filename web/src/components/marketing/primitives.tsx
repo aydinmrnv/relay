@@ -6,6 +6,7 @@ import { useCalmMotion } from '@/components/motion/use-calm-motion';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { getConnector, type Connector } from '@/lib/connectors';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
+import { signInThenTo } from '@/lib/studio-routes';
 import { cn } from '@/lib/utils';
 
 /** The engine's public repository. The only external product link on the page. */
@@ -24,20 +25,21 @@ export const SECTIONS = [
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 /**
- * The way into the studio, the same on every button. Where this deployment
- * has accounts the studio needs one, so someone signed out is asked to make
- * one first — `into` sends them to sign up and then on to the page the link
- * was for. A copy without accounts opens the studio directly.
+ * The way into the studio, the same on every button. The studio needs an
+ * account, so someone signed out is sent to sign in — one form that also
+ * makes a new account — and `into` then carries on to the page the link was
+ * for. Only a development copy without accounts opens the studio directly.
  */
 export function useStudioEntry() {
   const signedIn = useAccount((state) => state.status === 'signed-in');
-  const invite = useCapabilities().enabled && !signedIn;
+  const guests = useCapabilities().guests;
+  const invite = !signedIn && !guests;
   return {
     signedIn,
     invite,
-    href: invite ? '/sign-up' : '/dashboard',
+    href: invite ? '/sign-in' : '/dashboard',
     label: signedIn ? 'Go to dashboard' : 'Try it free',
-    into: (path: string) => (invite ? `/sign-up?next=${encodeURIComponent(path)}` : path),
+    into: (path: string) => (invite ? signInThenTo(path) : path),
   };
 }
 
