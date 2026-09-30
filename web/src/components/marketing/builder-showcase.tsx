@@ -13,7 +13,7 @@ import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import type { Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
-import { AppTile, Reveal, SectionHeading, useStudioEntry } from './primitives';
+import { AppTile, PILL, Reveal, SectionHeading, useStudioEntry } from './primitives';
 
 const NODE_W = 220;
 const NODE_H = 78;
@@ -84,7 +84,7 @@ export function BuilderShowcase() {
         />
 
         <Reveal className="mt-10 sm:mt-12">
-          <div className="overflow-hidden rounded-lg border bg-card">
+          <div className="overflow-hidden rounded-xl border bg-card shadow-panel">
             <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
               <p className="text-xs font-medium">{workflow?.name ?? 'Workflow'}</p>
               {validation === undefined ? null : validation.errors === 0 ? (
@@ -116,7 +116,7 @@ export function BuilderShowcase() {
                 </div>
               ))}
             </dl>
-            <Button className="mt-6" variant="outline" nativeButton={false} render={<Link href={entry.into('/workflows')} />}>
+            <Button className={cn('mt-6', PILL)} variant="outline" nativeButton={false} render={<Link href={entry.into('/workflows')} />}>
               Open the builder
               <ArrowRight data-icon="inline-end" />
             </Button>
@@ -124,7 +124,7 @@ export function BuilderShowcase() {
 
           <Reveal delay={0.08} className="min-w-0 lg:col-span-3">
             {files.length === 0 ? null : (
-              <Tabs defaultValue={files[0].path} className="h-full gap-0 overflow-hidden rounded-lg border bg-card">
+              <Tabs defaultValue={files[0].path} className="h-full gap-0 overflow-hidden rounded-xl border bg-card shadow-panel">
                 <div className="flex items-center gap-2 overflow-x-auto border-b px-2 py-2">
                   <TabsList className="h-8 bg-transparent">
                     {files.map((file) => (

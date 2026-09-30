@@ -1,23 +1,30 @@
 'use client';
 
-import { useState } from 'react';
+import Link from 'next/link';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Check, CornerDownRight, ExternalLink, FlaskConical, Globe, LayoutTemplate, Play, Plug, Unplug } from 'lucide-react';
+import { ArrowRight, CircleCheck, CircleDashed, CornerDownRight, ExternalLink, Globe, LayoutTemplate, Play, Plug, RefreshCw, Send, ShieldCheck, Unplug, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
+import { Spinner } from '@/components/ui/spinner';
 import { HelpTip } from '@/components/app/help-tip';
 import { PORT_STYLE } from '@/components/builder/ports';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { useBrand } from '@/hooks/use-brand';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { useNow } from '@/hooks/use-now';
-import { useStudio } from '@/lib/store';
+import { useStudio, useWorkflows } from '@/lib/store';
+import { appsInUse, connectionState, nothingToConnect, STATE_LABEL, uncoveredNodes, type AppUsage } from '@/lib/connectors/connection-state';
+import { credentialSpec } from '@/lib/connectors/credentials';
 import { CATEGORY_LABELS, nodeTypeId, type ActionSpec, type Connector, type FieldSpec, type PortSpec, type TriggerSpec } from '@/lib/connectors';
 import { workflowFromTrigger } from '@/lib/workflow/templates';
 import { timeAgo } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { ConnectDialog } from './connect-dialog';
+import { ConnectDialog, useConnectMode } from './connect-dialog';
+import { ConnectionStatus } from './connection-status';
+import { DisconnectDialog } from './disconnect-dialog';
+import { useConnectionActions } from './use-connection-actions';
 import { AUTH_ICON, authExplainer, authLabel, isBuiltIn, templatesUsing } from './connector-meta';
 
 interface Props {
@@ -48,10 +55,17 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
   const disconnect = useStudio((state) => state.disconnect);
   const upsertWorkflow = useStudio((state) => state.upsertWorkflow);
   const repository = useStudio((state) => state.settings.defaultRepository);
+  const workflows = useWorkflows();
+  const usage = useMemo(() => appsInUse(workflows).get(connector.id), [workflows, connector.id]);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const actions = useConnectionActions();
   const create = useCreateWorkflow();
 
   const builtIn = isBuiltIn(connector);
+  const state = connectionState(connector, connection);
+  const spec = credentialSpec(connector.id);
+  const mode = useConnectMode(connector.id);
   const templates = templatesUsing(connector.id);
   const how = authExplainer(connector, brand.name);
   const AuthIcon = AUTH_ICON[connector.auth];
@@ -64,11 +78,11 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
     router.push(`/workflows/${workflow.id}`);
   };
 
-  const onDisconnect = () => {
+  const unmark = () => {
     if (connection === undefined) return;
     const account = connection.account;
     disconnect(connector.id);
-    toast(`Disconnected ${connector.name}`, { action: { label: 'Undo', onClick: () => connect(connector.id, account) } });
+    toast(`Unmarked ${connector.name}`, { action: { label: 'Undo', onClick: () => connect(connector.id, account) } });
   };
 
   return (
@@ -85,28 +99,33 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
         </div>
         <p className="mt-3 text-sm leading-relaxed text-pretty">{connector.description}</p>
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {builtIn ? (
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-muted px-2.5 text-xs text-muted-foreground">
-              Always available
-            </span>
-          ) : connection === undefined ? (
+          {nothingToConnect(state) ? (
+            <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-muted px-2.5 text-xs text-muted-foreground">{builtIn ? 'Always available' : STATE_LABEL[state]}</span>
+          ) : state === 'missing' ? (
             <>
               <Button size="sm" onClick={() => setConnectOpen(true)}>
-                <Plug data-icon="inline-start" /> Connect
+                {spec === undefined ? <CircleDashed data-icon="inline-start" /> : <Plug data-icon="inline-start" />} {spec === undefined ? 'Mark ready' : 'Connect'}
               </Button>
               <span className="text-xs text-muted-foreground">Not connected. You can still build and test with it.</span>
             </>
           ) : (
             <>
-              <span className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-muted px-2.5 text-xs text-foreground">
-                <Check className="size-3.5 shrink-0 text-success" aria-hidden />
-                <span className="truncate">
-                  Connected as <span className="font-medium">{connection.account}</span> · {timeAgo(connection.connectedAt, now)}
-                </span>
+              <span className="inline-flex h-7 max-w-full items-center rounded-full bg-muted px-2.5">
+                <ConnectionStatus state={state} connection={connection} />
+                {connection === undefined ? null : <span className="ml-1 shrink-0 text-xs text-muted-foreground">· {timeAgo(connection.credential?.checkedAt ?? connection.connectedAt, now)}</span>}
               </span>
-              <Button size="sm" variant="outline" onClick={onDisconnect}>
-                <Unplug data-icon="inline-start" /> Disconnect
-              </Button>
+              {state === 'marked' ? (
+                <>
+                  {spec === undefined ? null : (
+                    <Button size="sm" onClick={() => setConnectOpen(true)}>
+                      <Plug data-icon="inline-start" /> Connect for real
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={unmark}>
+                    Unmark
+                  </Button>
+                </>
+              ) : null}
             </>
           )}
           {connector.docsUrl === undefined ? null : (
@@ -129,6 +148,80 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
             ))}
           </ul>
         </section>
+
+        {spec !== undefined && connection?.credential !== undefined ? (
+          <section className={cn('rounded-lg border p-3.5', state === 'failing' ? 'border-destructive/40 bg-destructive/5' : 'bg-muted/30')}>
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />
+              Connected with {spec.noun}
+              <HelpTip term="connection" className="ml-auto" />
+            </p>
+            <dl className="mt-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[13px]">
+              <dt className="text-muted-foreground">Posts as</dt>
+              <dd className="truncate font-medium">{connection.account}</dd>
+              <dt className="text-muted-foreground">Credential</dt>
+              <dd className="font-mono text-xs leading-5">···{connection.credential.hint}</dd>
+              <dt className="text-muted-foreground">Last check</dt>
+              <dd className={state === 'failing' ? 'text-destructive' : ''}>
+                {state === 'failing' ? `Refused ${timeAgo(connection.credential.checkedAt, now)}: ${connection.credential.error ?? `${connector.name} did not accept it.`}` : `${connector.name} accepted it ${timeAgo(connection.credential.checkedAt, now)}`}
+              </dd>
+            </dl>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {state === 'failing' ? (
+                <Button size="sm" onClick={() => setConnectOpen(true)}>
+                  <Plug data-icon="inline-start" /> Paste a new one
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" disabled={actions.busy !== null} onClick={() => void actions.test(connector)}>
+                  {actions.busy === 'test' ? <Spinner data-icon="inline-start" /> : <Send data-icon="inline-start" />} Send a test message
+                </Button>
+              )}
+              <Button size="sm" variant="outline" disabled={actions.busy !== null} onClick={() => void actions.check(connector)}>
+                {actions.busy === 'check' ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />} Check again
+              </Button>
+              {state === 'failing' ? null : (
+                <Button size="sm" variant="ghost" onClick={() => setConnectOpen(true)}>
+                  Replace
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={actions.busy !== null} onClick={() => setConfirmOpen(true)}>
+                <Unplug data-icon="inline-start" /> Disconnect
+              </Button>
+            </div>
+            <p className="mt-3 border-t border-dashed pt-2.5 text-[13px] leading-relaxed text-muted-foreground">
+              {spec.scope} Checking asks {connector.name} whether it still works and posts nothing.
+            </p>
+          </section>
+        ) : (
+          <section className="rounded-lg border bg-muted/30 p-3.5">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              {spec === undefined ? <AuthIcon className="size-4 text-muted-foreground" aria-hidden /> : <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />}
+              {spec === undefined ? how.title : `Connects with ${spec.noun}`}
+              {spec === undefined && !nothingToConnect(state) ? (
+                <span className="rounded-full border px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Planned</span>
+              ) : null}
+              <HelpTip term="connection" className="ml-auto" />
+            </p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
+              {spec === undefined ? how.body : `${connector.name} checks it before ${brand.name} keeps it, encrypted. ${spec.scope}`}
+            </p>
+            {nothingToConnect(state) ? null : spec === undefined ? (
+              <p className="mt-2.5 flex gap-2 border-t border-dashed pt-2.5 text-[13px] leading-relaxed text-muted-foreground">
+                <CircleDashed className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <span>Until then you can mark it ready, which records a label and signs in to nothing. Every trigger and action below works in the builder and in test runs either way.</span>
+              </p>
+            ) : mode === 'needs-account' ? (
+              <p className="mt-2.5 flex gap-2 border-t border-dashed pt-2.5 text-[13px] leading-relaxed text-muted-foreground">
+                <UserPlus className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <span>Connecting for real keeps it in your account, so it needs one. Free, and what you made in this browser comes with you.</span>
+              </p>
+            ) : null}
+          </section>
+        )}
+
+        {spec === undefined ? null : <Coverage connector={connector} actions={spec.actions} caveat={spec.caveat} name={spec.name} />}
+
+        {usage === undefined ? null : <UsedBy usage={usage} />}
 
         {templates.length === 0 ? null : (
           <section className="flex flex-col gap-3">
@@ -155,23 +248,6 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
             ))}
           </section>
         )}
-
-        <section className="rounded-lg border bg-muted/30 p-3.5">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <AuthIcon className="size-4 text-muted-foreground" aria-hidden />
-            {how.title}
-            <HelpTip term="connection" className="ml-auto" />
-          </p>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">{how.body}</p>
-          {builtIn ? null : (
-            <p className="mt-2.5 flex gap-2 border-t border-dashed pt-2.5 text-[13px] leading-relaxed text-muted-foreground">
-              <FlaskConical className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-              <span>
-                For now that step is a marker: connecting only records a label with your workflows. Every trigger and action below works in the builder and in test runs either way.
-              </span>
-            </p>
-          )}
-        </section>
 
         <section className="flex flex-col gap-3">
           <SectionHeading
@@ -228,7 +304,59 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
       </div>
 
       <ConnectDialog connector={connector} open={connectOpen} onOpenChange={setConnectOpen} />
+      <DisconnectDialog connector={connector} open={confirmOpen} onOpenChange={setConfirmOpen} onConfirm={() => void actions.disconnect(connector)} />
     </>
+  );
+}
+
+/** What a webhook can do among the app's steps, and what still needs a full sign-in. */
+function Coverage({ connector, actions, caveat, name }: { connector: Connector; actions: string[]; caveat: string | undefined; name: string }) {
+  const covered = connector.actions.filter((action) => actions.includes(action.id));
+  const rest = connector.actions.filter((action) => !actions.includes(action.id));
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold">What the {name.toLowerCase()} can do</h3>
+      <ul className="grid gap-1 text-[13px]">
+        {covered.map((action) => (
+          <li key={action.id} className="flex items-center gap-2">
+            <CircleCheck className="size-3.5 shrink-0 text-success" aria-hidden />
+            {action.name}
+          </li>
+        ))}
+      </ul>
+      <p className="text-[13px] leading-relaxed text-muted-foreground">
+        {rest.length > 0 ? `${rest.map((action) => action.name).join(', ')}${connector.triggers.length > 0 ? ' and its triggers' : ''} need a full ${connector.name} sign-in, which is not built yet; they still play in test runs.` : null} {caveat}
+      </p>
+    </section>
+  );
+}
+
+/** The workflows that use this app, one click from each. */
+function UsedBy({ usage }: { usage: AppUsage }) {
+  const uncovered = uncoveredNodes(usage.connectorId, usage.nodes);
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="flex items-center gap-2 text-sm font-semibold">
+        In your workflows
+        <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium text-muted-foreground tabular-nums">{usage.workflows.length}</span>
+      </h3>
+      <ul className="divide-y rounded-lg border">
+        {usage.workflows.map((workflow) => (
+          <li key={workflow.id}>
+            <Link href={`/workflows/${workflow.id}`} className="flex items-center gap-2 px-3 py-2 text-[13px] outline-none hover:bg-muted/50 focus-visible:bg-muted/50">
+              <WorkflowIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1 truncate font-medium">{workflow.name}</span>
+              <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {uncovered.length === 0 ? null : (
+        <p className="text-xs text-pretty text-amber-700 dark:text-warning">
+          They use {uncovered.map((def) => def.name).join(', ')}, which a webhook cannot do: a real run stops there until {usage.nodes[0]?.connector.name ?? 'the app'} has a full sign-in.
+        </p>
+      )}
+    </section>
   );
 }
 

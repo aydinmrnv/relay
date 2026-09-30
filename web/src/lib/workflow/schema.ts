@@ -126,13 +126,34 @@ export interface MachineRunInfo {
 /* Connections & settings                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * An app the workspace may talk to. Either a marker — a label someone typed,
+ * with nothing signed in to — or a real credential the studio's server holds
+ * encrypted, of which the browser only ever sees `credential`, a summary.
+ */
 export interface Connection {
   connectorId: string;
+  /** `error`: the last check found the credential revoked or wrong. Markers are always `connected`. */
   status: 'connected' | 'error';
+  /** What the card and the builder show: a channel, a webhook's name, or a label someone typed. */
   account: string;
   connectedAt: string;
-  /** Prototype only: nothing is real, and the UI says so. */
-  mock: true;
+  /** A marker: nothing was signed in to, and nothing can use it yet. */
+  mock?: true;
+  credential?: CredentialSummary;
+}
+
+export type CredentialKind = 'slack-webhook' | 'discord-webhook';
+
+/** What the browser is told about a stored credential. Never the credential itself. */
+export interface CredentialSummary {
+  kind: CredentialKind;
+  /** Its last four characters, to recognise it by. */
+  hint: string;
+  /** When the app last confirmed it works, or refused it. */
+  checkedAt: string;
+  /** Why the last check failed, in a sentence. Set when the connection's status is `error`. */
+  error?: string;
 }
 
 export type ExecutionTier = 'actions' | 'hosted' | 'self-hosted';

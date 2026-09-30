@@ -5,6 +5,7 @@
  */
 import { Box, KeyRound, Laptop, Puzzle, ShieldCheck, Ticket, type LucideIcon } from 'lucide-react';
 import { CATEGORY_LABELS, type AuthKind, type Connector } from '@/lib/connectors';
+import { credentialSpec } from '@/lib/connectors/credentials';
 import { TEMPLATES, type TemplateMeta } from '@/lib/workflow/templates';
 
 const AUTH_LABEL: Record<AuthKind, string> = {
@@ -16,8 +17,9 @@ const AUTH_LABEL: Record<AuthKind, string> = {
   none: 'No sign-in',
 };
 
-export function authLabel(connector: Pick<Connector, 'auth' | 'category'>): string {
-  return connector.category === 'core' ? 'Built in' : AUTH_LABEL[connector.auth];
+/** How the app signs in: the real credential it takes when there is one, else how it will. */
+export function authLabel(connector: Pick<Connector, 'id' | 'auth' | 'category'>): string {
+  return connector.category === 'core' ? 'Built in' : (credentialSpec(connector.id)?.name ?? AUTH_LABEL[connector.auth]);
 }
 
 export const AUTH_ICON: Record<AuthKind, LucideIcon> = {
@@ -29,7 +31,7 @@ export const AUTH_ICON: Record<AuthKind, LucideIcon> = {
   none: Box,
 };
 
-/** How connecting this kind of app would work in the hosted product, in a sentence or two. */
+/** How connecting this kind of app will work once its sign-in is built, in a sentence or two. */
 export function authExplainer(connector: Pick<Connector, 'name' | 'auth' | 'category'>, product: string): { title: string; body: string } {
   const name = connector.name;
   if (connector.category === 'core') {
@@ -39,32 +41,32 @@ export function authExplainer(connector: Pick<Connector, 'name' | 'auth' | 'cate
     case 'oauth':
       return {
         title: `Sign in with ${name}`,
-        body: `You would press Connect, sign in to ${name} and approve what ${product} asks to do. ${name} hands back a token you can revoke from its own settings at any time; you never type a password here.`,
+        body: `You will press Connect, sign in to ${name} and approve what ${product} may do. ${name} hands back a token you can revoke from its own settings at any time; you never type a password here.`,
       };
     case 'api-key':
       return {
         title: 'Paste an API key',
-        body: `You create a key in ${name}'s settings and paste it here. It would be stored encrypted and used only by workflows in this workspace, so give it the narrowest scope that covers the actions you use.`,
+        body: `You will create a key in ${name}’s settings and paste it here. ${product} keeps it encrypted, for this workspace’s workflows only, so give it the narrowest scope that covers the actions you use.`,
       };
     case 'token':
       return {
         title: 'Paste an access token',
-        body: `A personal or bot token from ${name}. It works like an API key but belongs to an account, so anything the workflow does shows up as that account. A bot account keeps it out of your own name.`,
+        body: `A personal or bot token from ${name}. It works like an API key but belongs to an account, so anything a workflow does shows up as that account; a bot account keeps it out of your own name.`,
       };
     case 'app':
       return {
         title: `Install the ${product} app`,
-        body: `You install ${product}'s app in your ${name} workspace or organisation and choose what it may see. The app has its own identity and fine-grained permissions, so nothing runs as a person.`,
+        body: `You will install ${product}’s app in your ${name} workspace or organisation and choose what it may see. The app has its own identity and fine-grained permissions, so nothing runs as a person.`,
       };
     case 'local':
       return {
-        title: 'Runs on your machine',
-        body: `${name} runs through the local runner, on your laptop or a self-hosted runner. There is nothing to authorise: the tools only need to be installed where the workflow runs.`,
+        title: 'Runs on your runner',
+        body: `${name} runs where your agents run: your computer through relay connect, or your Relay Cloud machine. There is nothing to authorise here; the tools only need to be installed and signed in there.`,
       };
     case 'none':
       return {
         title: 'No sign-in',
-        body: `${name} only reads public data, so there is no account to connect. Marking it connected simply tells ${product} you mean to use it.`,
+        body: `${name} only reads public data, so there is no account to connect. Use its nodes as they are.`,
       };
   }
 }

@@ -10,6 +10,9 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { useSignedIn } from '@/hooks/use-agent-accounts';
 import { useStudio } from '@/lib/store';
 import { getConnector } from '@/lib/connectors';
+import { connectionState } from '@/lib/connectors/connection-state';
+import { credentialSpec } from '@/lib/connectors/credentials';
+import { ConnectionStatus } from '@/components/integrations/connection-status';
 import { AGENT_OPTIONS } from '@/lib/connectors/catalog/core';
 import type { DescribedStep } from '@/lib/workflow/describe';
 import type { Workflow } from '@/lib/workflow/schema';
@@ -176,19 +179,17 @@ function NeededApps({ apps }: { apps: string[] }) {
           {apps.map((id) => {
             const connector = getConnector(id);
             if (connector === undefined) return null;
-            const connection = connections[id];
+            const state = connectionState(connector, connections[id]);
             return (
               <li key={id} className="flex items-center gap-2 text-[13px]">
                 <ConnectorIcon connector={connector} size={12} />
                 <span className="min-w-0 flex-1 truncate font-medium">{connector.name}</span>
-                {connection === undefined ? (
-                  <Link href={`/integrations?app=${encodeURIComponent(id)}`} className="shrink-0 text-xs font-medium text-signal hover:underline">
-                    Connect
+                {state === 'missing' || state === 'failing' ? (
+                  <Link href={`/integrations?app=${encodeURIComponent(id)}`} className={cn('shrink-0 text-xs font-medium hover:underline', state === 'failing' ? 'text-destructive' : 'text-signal')}>
+                    {state === 'failing' ? 'Fix' : credentialSpec(id) === undefined ? 'Mark ready' : 'Connect'}
                   </Link>
                 ) : (
-                  <span className="inline-flex shrink-0 items-center gap-1 text-xs text-success" title={`Connected as ${connection.account}`}>
-                    <CheckCircle2 className="size-3.5" aria-hidden /> Connected
-                  </span>
+                  <ConnectionStatus state={state} connection={connections[id]} compact className="shrink-0" />
                 )}
               </li>
             );

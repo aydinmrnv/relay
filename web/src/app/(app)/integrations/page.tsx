@@ -2,20 +2,23 @@
 
 import { Suspense, useCallback, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Globe, Plug, Search, SearchX, X } from 'lucide-react';
+import { Globe, Plug, Search, SearchX, Workflow, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeader } from '@/components/app/page-header';
-import { CategoryRail, CategorySelect, filterLabel, inFilter, JOB_GROUPS, type Filter } from '@/components/integrations/category-rail';
+import { useBrand } from '@/hooks/use-brand';
+import { CategoryRail, CategorySelect, filterLabel, inFilter, JOB_GROUPS, parseFilter, type Filter } from '@/components/integrations/category-rail';
 import { ConnectDialog } from '@/components/integrations/connect-dialog';
 import { ConnectorCard } from '@/components/integrations/connector-card';
 import { ConnectorSheet } from '@/components/integrations/connector-sheet';
 import { matchConnector, SORT_LABELS, sortMatches, tokenize, type ConnectorMatch, type SortKey } from '@/components/integrations/connector-meta';
-import { useStudio } from '@/lib/store';
+import { useStudio, useWorkflows } from '@/lib/store';
 import { CONNECTORS, getConnector } from '@/lib/connectors';
+import { appsInUse, type AppUsage } from '@/lib/connectors/connection-state';
+import { CREDENTIAL_SPECS } from '@/lib/connectors/credentials';
 import type { Connection } from '@/lib/workflow/schema';
 
 export default function IntegrationsPage() {
@@ -43,20 +46,24 @@ function writeParams(patch: Record<string, string | null>) {
 }
 
 const CATALOG_ORDER = new Map(CONNECTORS.map((connector, index) => [connector.id, index]));
+const REAL_APPS = CREDENTIAL_SPECS.map((spec) => getConnector(spec.connectorId)?.name ?? spec.connectorId).join(' and ');
 
 const SORT_ITEMS = (Object.keys(SORT_LABELS) as SortKey[]).map((key) => ({ value: key, label: SORT_LABELS[key] }));
 
 function IntegrationsInner() {
   const params = useSearchParams();
+  const brand = useBrand();
   const appId = params.get('app');
   const [query, setQuery] = useState(() => params.get('q') ?? '');
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<Filter>(() => parseFilter(params.get('filter')));
   const [sort, setSort] = useState<SortKey>('recommended');
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const connections = useStudio((state) => state.connections);
   const connect = useStudio((state) => state.connect);
   const disconnect = useStudio((state) => state.disconnect);
+  const workflows = useWorkflows();
+  const usage = useMemo(() => appsInUse(workflows), [workflows]);
 
   // The sheet follows `?app=`. Remember the last app shown so its content stays
   // on screen while the sheet slides closed after the param is cleared.
@@ -69,18 +76,20 @@ function IntegrationsInner() {
   const matches = useMemo(() => CONNECTORS.map((connector) => matchConnector(connector, tokens)).filter((match): match is ConnectorMatch => match !== null), [tokens]);
 
   const isConnected = useCallback((id: string) => connections[id] !== undefined, [connections]);
+  const is = useMemo(() => ({ connected: isConnected, used: (id: string) => usage.has(id) }), [isConnected, usage]);
 
   const counts = useMemo(() => {
-    const result: Record<string, number> = { all: matches.length, popular: 0, connected: 0 };
+    const result: Record<string, number> = { all: matches.length, popular: 0, 'in-use': 0, connected: 0 };
     for (const { connector } of matches) {
       result[connector.category] = (result[connector.category] ?? 0) + 1;
       if (connector.popular === true) result['popular'] = (result['popular'] ?? 0) + 1;
-      if (isConnected(connector.id)) result['connected'] = (result['connected'] ?? 0) + 1;
+      if (is.used(connector.id)) result['in-use'] = (result['in-use'] ?? 0) + 1;
+      if (is.connected(connector.id)) result['connected'] = (result['connected'] ?? 0) + 1;
     }
     return result;
-  }, [matches, isConnected]);
+  }, [matches, is]);
 
-  const visible = useMemo(() => sortMatches(matches.filter((match) => inFilter(match.connector, filter, isConnected)), sort, isConnected), [matches, filter, sort, isConnected]);
+  const visible = useMemo(() => sortMatches(matches.filter((match) => inFilter(match.connector, filter, is)), sort, isConnected), [matches, filter, sort, is, isConnected]);
 
   const onSearch = (value: string) => {
     setQuery(value);
@@ -92,12 +101,14 @@ function IntegrationsInner() {
     setConnectingId(id);
     setConnectOpen(true);
   }, []);
-  const onDisconnect = useCallback(
+  // Only markers are taken back from a card; a real connection is disconnected from its sheet, with a confirmation.
+  const onUnmark = useCallback(
     (id: string) => {
       const connector = getConnector(id);
-      const account = useStudio.getState().connections[id]?.account;
+      const connection = useStudio.getState().connections[id];
+      if (connection === undefined || connection.credential !== undefined) return;
       disconnect(id);
-      toast(`Disconnected ${connector?.name ?? id}`, account === undefined ? undefined : { action: { label: 'Undo', onClick: () => connect(id, account) } });
+      toast(`Unmarked ${connector?.name ?? id}`, { action: { label: 'Undo', onClick: () => connect(id, connection.account) } });
     },
     [connect, disconnect],
   );
@@ -114,7 +125,8 @@ function IntegrationsInner() {
           <>
             The apps coding work comes from and the places people hear back, grouped by the job they do. A <strong className="font-medium text-foreground">trigger</strong> hands the agents a task when something
             happens: a ticket assigned, main going red, a new crash. An <strong className="font-medium text-foreground">action</strong> closes the loop where the work was asked for. Anything else with a URL works
-            through an Incoming webhook or an HTTP request. For now a connection marks an app as ready rather than signing in to it; an export uses your repository’s secrets.
+            through an Incoming webhook or an HTTP request. {REAL_APPS} connect for real: {brand.name} checks the webhook with the app and keeps it encrypted. The rest can be marked ready while their sign-in is
+            built. You can design and test against every app without connecting any.
           </>
         }
       />
@@ -201,14 +213,14 @@ function IntegrationsInner() {
                       <h2 className="text-sm font-semibold">{group.label}</h2>
                       <p className="mt-0.5 text-[13px] text-muted-foreground">{group.description}</p>
                     </div>
-                    <CardGrid matches={inGroup} connections={connections} onOpen={openApp} onConnect={onConnect} onDisconnect={onDisconnect} />
+                    <CardGrid matches={inGroup} connections={connections} usage={usage} onOpen={openApp} onConnect={onConnect} onDisconnect={onUnmark} />
                   </section>
                 );
               })}
             </div>
           ) : (
             // Keyed by filter so switching category replays the stagger; typing does not.
-            <CardGrid key={filter} matches={visible} connections={connections} onOpen={openApp} onConnect={onConnect} onDisconnect={onDisconnect} />
+            <CardGrid key={filter} matches={visible} connections={connections} usage={usage} onOpen={openApp} onConnect={onConnect} onDisconnect={onUnmark} />
           )}
         </div>
       </div>
@@ -223,12 +235,14 @@ function IntegrationsInner() {
 function CardGrid({
   matches,
   connections,
+  usage,
   onOpen,
   onConnect,
   onDisconnect,
 }: {
   matches: ConnectorMatch[];
   connections: Record<string, Connection>;
+  usage: Map<string, AppUsage>;
   onOpen: (id: string) => void;
   onConnect: (id: string) => void;
   onDisconnect: (id: string) => void;
@@ -237,7 +251,16 @@ function CardGrid({
     <div className="@container">
       <div className="grid gap-3 @[40rem]:grid-cols-2 @[60rem]:grid-cols-3 @[82rem]:grid-cols-4">
         {matches.map((match, index) => (
-          <ConnectorCard key={match.connector.id} match={match} index={index} connection={connections[match.connector.id]} onOpen={onOpen} onConnect={onConnect} onDisconnect={onDisconnect} />
+          <ConnectorCard
+            key={match.connector.id}
+            match={match}
+            index={index}
+            connection={connections[match.connector.id]}
+            usage={usage.get(match.connector.id)}
+            onOpen={onOpen}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+          />
         ))}
       </div>
     </div>
@@ -259,6 +282,24 @@ function NoResults({
   onClear: () => void;
   onOpenHttp: () => void;
 }) {
+  if (filter === 'in-use' && query.length === 0) {
+    return (
+      <Empty className="border py-14">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Workflow />
+          </EmptyMedia>
+          <EmptyTitle>Your workflows use no apps yet</EmptyTitle>
+          <EmptyDescription>Built-in nodes need nothing. Add a trigger or an action from an app and it shows up here, with what it needs before a real run.</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" onClick={onShowAll}>
+            Browse all apps
+          </Button>
+        </EmptyContent>
+      </Empty>
+    );
+  }
   if (filter === 'connected' && query.length === 0) {
     return (
       <Empty className="border py-14">
@@ -267,7 +308,7 @@ function NoResults({
             <Plug />
           </EmptyMedia>
           <EmptyTitle>Nothing connected yet</EmptyTitle>
-          <EmptyDescription>You do not need to connect anything to build or test a workflow. Connect an app when you want its nodes to stop reminding you.</EmptyDescription>
+          <EmptyDescription>You do not need to connect anything to build or test a workflow. Connect Slack or Discord for real, or mark an app ready when you want its nodes to stop asking.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button variant="outline" onClick={onShowAll}>

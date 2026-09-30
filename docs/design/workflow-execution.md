@@ -230,6 +230,13 @@ The README should say this precisely before app connections ship: *Relay
 never holds a model credential or a code credential. It holds the
 notification connections you add, encrypted.*
 
+**Built:** the studio now keeps Slack and Discord webhook connections in a
+`connection` table, sealed with AES-256-GCM under `RELAY_CREDENTIALS_KEY` and
+bound to the owner and the app. Each is checked with the app before it is
+kept (nothing is posted), rechecked from the dashboard when it is more than
+twelve hours old, and can send a test message on request. The browser only
+sees a summary. Nothing uses them in a run yet; that is the suffix above.
+
 ## What the studio stores
 
 | Table or column | Holds |

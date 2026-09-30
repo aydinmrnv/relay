@@ -10,9 +10,11 @@ export interface AuthCapabilities {
   reason: string | null;
   /** The Relay Cloud hub signed-in people can run on, when this deployment has one. */
   cloudHub?: string | null;
+  /** Whether apps can connect for real: the server can check a credential and keep it encrypted. */
+  credentials?: boolean;
 }
 
-export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, reason: null, cloudHub: null };
+export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, reason: null, cloudHub: null, credentials: false };
 
 export interface AccountUser {
   id: string;

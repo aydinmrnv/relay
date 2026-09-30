@@ -9,6 +9,7 @@ import type { ShareSummary, VersionSummary } from '@/lib/cloud/types';
 import type { Run, Workflow } from '@/lib/workflow/schema';
 import { redactForSharing } from '@/lib/workflow/redact';
 import { ApiError } from './api';
+import { deleteConnections, listConnections, mergeConnections } from './connections';
 import { getDb } from './db';
 import { run, share, workflow, workflowVersion, workspace } from './db/schema';
 import type { OnboardingAnswers } from './validate';
@@ -59,13 +60,14 @@ export async function ensureWorkspace(userId: string): Promise<WorkspaceRecord> 
 export async function loadWorkspace(userId: string): Promise<WorkspacePayload> {
   const db = await getDb();
   const record = await ensureWorkspace(userId);
-  const [workflows, runs, shares] = await Promise.all([
+  const [workflows, runs, shares, connections] = await Promise.all([
     db.select({ data: workflow.data, updatedAt: workflow.updatedAt }).from(workflow).where(eq(workflow.userId, userId)),
     db.select({ data: run.data }).from(run).where(eq(run.userId, userId)).orderBy(desc(run.startedAt)).limit(200),
     db.select({ workflowId: share.workflowId, slug: share.slug }).from(share).where(eq(share.userId, userId)),
+    listConnections(userId),
   ]);
   return {
-    workspace: record,
+    workspace: { ...record, connections: mergeConnections(record.connections, connections) },
     workflows: workflows.map((row) => row.data as Workflow),
     revisions: Object.fromEntries(workflows.map((row) => [(row.data as Workflow).id, row.updatedAt.toISOString()])),
     runs: runs.map((row) => row.data as Run),
@@ -76,6 +78,7 @@ export async function loadWorkspace(userId: string): Promise<WorkspacePayload> {
 /** Everything the studio holds for one person, gone: on account deletion. */
 export async function deleteUserData(userId: string): Promise<void> {
   const db = await getDb();
+  await deleteConnections(userId);
   await db.delete(share).where(eq(share.userId, userId));
   await db.delete(workflowVersion).where(eq(workflowVersion.userId, userId));
   await db.delete(run).where(eq(run.userId, userId));
