@@ -4,7 +4,8 @@ import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, Loader2, Plus, ShieldAlert, Trash2, XCircle, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getNodeType, type NodeTypeDef } from '@/lib/connectors';
+import { getNodeType, retiredNodeType, type NodeTypeDef } from '@/lib/connectors';
+import { retiredHint, retiredMessage } from '@/lib/workflow/validate';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { BorderTrail } from '@/components/21st/border-trail';
@@ -40,10 +41,11 @@ function WorkflowNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   const status = data.status;
 
   if (def === undefined) {
+    const retired = retiredNodeType(data.typeId);
     return (
       <div className="wf-node w-68 rounded-xl border border-destructive bg-card p-3 text-sm">
-        <p className="font-medium text-destructive">Unknown node</p>
-        <p className="text-xs text-muted-foreground">{data.typeId}</p>
+        <p className="font-medium text-destructive">{retired === undefined ? 'Unknown node' : retiredMessage(retired)}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{retired === undefined ? data.typeId : retiredHint(retired)}</p>
       </div>
     );
   }

@@ -1,6 +1,8 @@
 import { CORE_CONNECTORS } from './catalog/core';
-import { DEV_CONNECTORS } from './catalog/dev';
-import { BUSINESS_CONNECTORS } from './catalog/business';
+import { WORK_CONNECTORS } from './catalog/work';
+import { SIGNAL_CONNECTORS } from './catalog/signals';
+import { PEOPLE_CONNECTORS } from './catalog/people';
+import { RETIRED_CONNECTORS } from './retired';
 import {
   CATEGORY_LABELS,
   type ActionSpec,
@@ -14,7 +16,7 @@ import {
 export * from './types';
 
 /** Every connector, core first so the palette leads with the pipeline. */
-export const CONNECTORS: Connector[] = dedupe([...CORE_CONNECTORS, ...DEV_CONNECTORS, ...BUSINESS_CONNECTORS]);
+export const CONNECTORS: Connector[] = dedupe([...CORE_CONNECTORS, ...WORK_CONNECTORS, ...SIGNAL_CONNECTORS, ...PEOPLE_CONNECTORS]);
 
 const BY_ID = new Map(CONNECTORS.map((connector) => [connector.id, connector]));
 
@@ -108,6 +110,21 @@ export function getNodeType(id: string): NodeTypeDef | undefined {
   return NODE_TYPE_BY_ID.get(id);
 }
 
+/**
+ * What a saved node whose type is no longer in the catalog used to be, in words:
+ * a whole app that was taken out, or one trigger or action an app no longer
+ * offers. Undefined for an id that never looked like a node type.
+ */
+export function retiredNodeType(id: string): { app: string; step: string; appRetired: boolean } | undefined {
+  const [connectorId, kind, specId] = id.split('.');
+  if (connectorId === undefined || specId === undefined || (kind !== 'trigger' && kind !== 'action')) return undefined;
+  const step = specId.replace(/-/g, ' ');
+  const retiredApp = RETIRED_CONNECTORS[connectorId];
+  if (retiredApp !== undefined) return { app: retiredApp, step, appRetired: true };
+  const connector = BY_ID.get(connectorId);
+  return connector === undefined ? undefined : { app: connector.name, step, appRetired: false };
+}
+
 /** The config a freshly dropped node starts with: every field's default. */
 export function defaultConfig(def: NodeTypeDef): Record<string, unknown> {
   const config: Record<string, unknown> = {};
@@ -146,6 +163,7 @@ export function searchNodeTypes(query: string, limit = 40): NodeTypeDef[] {
       [def.name.toLowerCase(), 4],
       [(def.connector.tags ?? []).join(' ').toLowerCase(), 3],
       [CATEGORY_LABELS[def.connector.category].toLowerCase(), 2],
+      [def.connector.uses.join(' ').toLowerCase(), 1],
       [def.description.toLowerCase(), 1],
       [def.kind, 1],
     ];

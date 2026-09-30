@@ -319,14 +319,14 @@ Each phase ships on its own and can be demoed.
   refusals recorded as runs.
 - Then a **GitHub App**. It delivers `issues.labeled` and `issues.assigned`
   webhooks for every repository it is installed on, and it is also where
-  per-job tokens come from. That makes the "Label-triggered GitHub run" and
+  per-job tokens come from. That makes the "GitHub label to pull request" and
   "Sentry error to fix" templates real on Relay Cloud.
 
 **Phase 3: the user's own machines as runners.**
 - Link a laptop from the studio.
 - The hub keeps several links per user.
 - A runner choice per workflow, with an offline policy.
-- Result: "Xcode nightly build" becomes real on a Mac that is switched on.
+- Result: a failing iOS build (Xcode Cloud, Bitrise) can be fixed on a Mac that is switched on, which a Linux VM cannot build.
 
 **Phase 4: the rest of the graph.**
 - The AI step as one structured turn on the runner. The model list becomes the

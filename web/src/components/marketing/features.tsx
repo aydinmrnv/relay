@@ -2,7 +2,7 @@
 
 import { Blocks, GitCompareArrows, KeyRound, ShieldCheck, SquareTerminal, Workflow } from 'lucide-react';
 import { useBrand } from '@/hooks/use-brand';
-import { CATALOG_STATS } from '@/lib/connectors';
+import { TEMPLATES } from '@/lib/workflow/templates';
 import { Reveal, SectionHeading } from './primitives';
 
 export function Features() {
@@ -30,9 +30,9 @@ export function Features() {
     },
     {
       icon: Blocks,
-      title: 'A node for every app',
-      body: `${CATALOG_STATS.connectors} apps as triggers and actions. Ports are typed, so a ticket cannot be wired into something that expects a pull request.`,
-      proof: `${CATALOG_STATS.triggers} triggers · ${CATALOG_STATS.actions} actions`,
+      title: 'Built for the work you hand over',
+      body: 'A red main, a new Sentry error, a security alert, a finished feature flag, a bug report in Slack: each arrives as a task with its evidence attached, and the answer goes back where it was asked.',
+      proof: `${TEMPLATES.length} ready-made workflows`,
     },
     {
       icon: KeyRound,

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, Bot, CheckCircle2, CircleDashed, CornerDownRight, Plug, TriangleAlert } from 'lucide-react';
+import { ArrowRight, Bot, CheckCircle2, CircleDashed, CornerDownRight, Hand, Plug, TriangleAlert, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -39,7 +39,8 @@ export function TemplatePreview({ entry, open, onOpenChange, onUse }: Props) {
 }
 
 function PreviewBody({ entry, onUse }: { entry: TemplateEntry; onUse: (templateId: string) => void }) {
-  const { meta, workflow, description, connectors } = entry;
+  const { meta, workflow, description, connectors, readiness } = entry;
+  const ReadyIcon = readiness.unattended ? Zap : Hand;
   return (
     <>
       <div className="flex flex-col gap-2 border-b p-5 pr-12">
@@ -52,6 +53,10 @@ function PreviewBody({ entry, onUse }: { entry: TemplateEntry; onUse: (templateI
         </div>
         <DialogTitle className="text-lg font-semibold tracking-tight">{meta.name}</DialogTitle>
         <DialogDescription className="max-w-3xl text-pretty">{meta.description}</DialogDescription>
+        <p className="max-w-3xl text-[13px] text-pretty text-muted-foreground">
+          <span className="font-medium text-foreground">For when </span>
+          {meta.when.charAt(0).toLowerCase() + meta.when.slice(1)}
+        </p>
         <div className="flex flex-wrap gap-1">
           {meta.tags.map((tag) => (
             <Badge key={tag} variant="secondary" className="font-normal">
@@ -89,6 +94,13 @@ function PreviewBody({ entry, onUse }: { entry: TemplateEntry; onUse: (templateI
           </section>
 
           <aside className="flex flex-col gap-5">
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <p className="flex items-center gap-1.5 text-[13px] font-medium">
+                <ReadyIcon className={readiness.unattended ? 'size-3.5 text-success' : 'size-3.5 text-muted-foreground'} aria-hidden />
+                {readiness.headline}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{readiness.detail}</p>
+            </div>
             <h3 className="text-sm font-semibold">What you’ll need</h3>
             <NeededApps apps={description.apps} />
             <NeededAgents agents={description.agents} />

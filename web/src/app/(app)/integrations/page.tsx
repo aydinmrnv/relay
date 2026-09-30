@@ -10,15 +10,16 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeader } from '@/components/app/page-header';
 import { useBrand } from '@/hooks/use-brand';
-import { CategoryRail, CategorySelect, filterLabel, inFilter, parseFilter, type Filter } from '@/components/integrations/category-rail';
+import { CategoryRail, CategorySelect, filterLabel, inFilter, JOB_GROUPS, parseFilter, type Filter } from '@/components/integrations/category-rail';
 import { ConnectDialog } from '@/components/integrations/connect-dialog';
 import { ConnectorCard } from '@/components/integrations/connector-card';
 import { ConnectorSheet } from '@/components/integrations/connector-sheet';
 import { matchConnector, SORT_LABELS, sortMatches, tokenize, type ConnectorMatch, type SortKey } from '@/components/integrations/connector-meta';
 import { useStudio, useWorkflows } from '@/lib/store';
-import { CATALOG_STATS, CONNECTORS, getConnector } from '@/lib/connectors';
-import { appsInUse } from '@/lib/connectors/connection-state';
+import { CONNECTORS, getConnector } from '@/lib/connectors';
+import { appsInUse, type AppUsage } from '@/lib/connectors/connection-state';
 import { CREDENTIAL_SPECS } from '@/lib/connectors/credentials';
+import type { Connection } from '@/lib/workflow/schema';
 
 export default function IntegrationsPage() {
   // useSearchParams needs a Suspense boundary so the page can still prerender.
@@ -44,6 +45,7 @@ function writeParams(patch: Record<string, string | null>) {
   window.history.replaceState(null, '', search.length > 0 ? `?${search}` : window.location.pathname);
 }
 
+const CATALOG_ORDER = new Map(CONNECTORS.map((connector, index) => [connector.id, index]));
 const REAL_APPS = CREDENTIAL_SPECS.map((spec) => getConnector(spec.connectorId)?.name ?? spec.connectorId).join(' and ');
 
 const SORT_ITEMS = (Object.keys(SORT_LABELS) as SortKey[]).map((key) => ({ value: key, label: SORT_LABELS[key] }));
@@ -121,16 +123,11 @@ function IntegrationsInner() {
         term="connection"
         description={
           <>
-            {CATALOG_STATS.connectors} apps your workflows can listen to and act on, built-in nodes included. A <strong className="font-medium text-foreground">trigger</strong> starts a workflow when something happens in an app; an{' '}
-            <strong className="font-medium text-foreground">action</strong> does something there. {REAL_APPS} connect for real: {brand.name} checks the webhook with the app and keeps it encrypted. The rest can be marked ready while their sign-in is built. You can design and test against every app without connecting any.
+            The apps coding work comes from and the places people hear back, grouped by the job they do. A <strong className="font-medium text-foreground">trigger</strong> hands the agents a task when something
+            happens: a ticket assigned, main going red, a new crash. An <strong className="font-medium text-foreground">action</strong> closes the loop where the work was asked for. Anything else with a URL works
+            through an Incoming webhook or an HTTP request. {REAL_APPS} connect for real: {brand.name} checks the webhook with the app and keeps it encrypted. The rest can be marked ready while their sign-in is
+            built. You can design and test against every app without connecting any.
           </>
-        }
-        actions={
-          <dl className="grid grid-cols-3 gap-x-6 text-right max-sm:w-full max-sm:text-left">
-            <Stat label="Apps" value={CATALOG_STATS.connectors} />
-            <Stat label="Triggers" value={CATALOG_STATS.triggers} />
-            <Stat label="Actions" value={CATALOG_STATS.actions} />
-          </dl>
         }
       />
 
@@ -200,26 +197,30 @@ function IntegrationsInner() {
               onClear={() => onSearch('')}
               onOpenHttp={() => openApp('http')}
             />
+          ) : !filtered && sort === 'recommended' ? (
+            // Browsing everything: one section per job, so the page reads as
+            // "where work comes from, what breaks, …" rather than a wall of logos.
+            <div className="flex flex-col gap-9">
+              {JOB_GROUPS.map((group) => {
+                // Catalog order within a job: it is curated (trackers before code hosts, CI before deploys).
+                const inGroup = visible
+                  .filter((match) => group.items.some((item) => item.key === match.connector.category))
+                  .sort((a, b) => CATALOG_ORDER.get(a.connector.id)! - CATALOG_ORDER.get(b.connector.id)!);
+                if (inGroup.length === 0) return null;
+                return (
+                  <section key={group.label} aria-label={group.label} className="flex flex-col gap-3">
+                    <div>
+                      <h2 className="text-sm font-semibold">{group.label}</h2>
+                      <p className="mt-0.5 text-[13px] text-muted-foreground">{group.description}</p>
+                    </div>
+                    <CardGrid matches={inGroup} connections={connections} usage={usage} onOpen={openApp} onConnect={onConnect} onDisconnect={onUnmark} />
+                  </section>
+                );
+              })}
+            </div>
           ) : (
             // Keyed by filter so switching category replays the stagger; typing does not.
-            // Columns follow the space the grid actually has (container queries), not the
-            // window, so the sidebar and the rail never squeeze cards below ~300px.
-            <div key={filter} className="@container">
-              <div className="grid gap-3 @[40rem]:grid-cols-2 @[60rem]:grid-cols-3 @[82rem]:grid-cols-4">
-                {visible.map((match, index) => (
-                  <ConnectorCard
-                    key={match.connector.id}
-                    match={match}
-                    index={index}
-                    connection={connections[match.connector.id]}
-                    usage={usage.get(match.connector.id)}
-                    onOpen={openApp}
-                    onConnect={onConnect}
-                    onDisconnect={onUnmark}
-                  />
-                ))}
-              </div>
-            </div>
+            <CardGrid key={filter} matches={visible} connections={connections} usage={usage} onOpen={openApp} onConnect={onConnect} onDisconnect={onUnmark} />
           )}
         </div>
       </div>
@@ -230,11 +231,38 @@ function IntegrationsInner() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+/** Columns follow the space the grid actually has (container queries), not the window, so the sidebar and the rail never squeeze cards below ~300px. */
+function CardGrid({
+  matches,
+  connections,
+  usage,
+  onOpen,
+  onConnect,
+  onDisconnect,
+}: {
+  matches: ConnectorMatch[];
+  connections: Record<string, Connection>;
+  usage: Map<string, AppUsage>;
+  onOpen: (id: string) => void;
+  onConnect: (id: string) => void;
+  onDisconnect: (id: string) => void;
+}) {
   return (
-    <div>
-      <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
-      <dd className="text-xl font-semibold tracking-tight tabular-nums">{value.toLocaleString('en-US')}</dd>
+    <div className="@container">
+      <div className="grid gap-3 @[40rem]:grid-cols-2 @[60rem]:grid-cols-3 @[82rem]:grid-cols-4">
+        {matches.map((match, index) => (
+          <ConnectorCard
+            key={match.connector.id}
+            match={match}
+            index={index}
+            connection={connections[match.connector.id]}
+            usage={usage.get(match.connector.id)}
+            onOpen={onOpen}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+          />
+        ))}
+      </div>
     </div>
   );
 }

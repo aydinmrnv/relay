@@ -13,7 +13,7 @@ import { credentialSpec } from '@/lib/connectors/credentials';
 import type { Connection } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
 import { ConnectionStatus } from './connection-status';
-import { AUTH_ICON, authLabel, isBuiltIn, type ConnectorMatch } from './connector-meta';
+import { AUTH_ICON, authLabel, isBuiltIn, templatesUsing, type ConnectorMatch } from './connector-meta';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -42,6 +42,7 @@ export const ConnectorCard = memo(function ConnectorCard({ match, connection, us
   const state = connectionState(connector, connection);
   const real = credentialSpec(connector.id) !== undefined;
   const used = usage?.workflows ?? [];
+  const templates = templatesUsing(connector.id).length;
 
   return (
     <motion.div
@@ -68,14 +69,15 @@ export const ConnectorCard = memo(function ConnectorCard({ match, connection, us
               {connector.name}
             </button>
             <p className="truncate text-xs text-muted-foreground">
-              {builtIn ? 'Built in' : CATEGORY_LABELS[connector.category]} · {connector.triggers.length} {connector.triggers.length === 1 ? 'trigger' : 'triggers'} · {connector.actions.length}{' '}
-              {connector.actions.length === 1 ? 'action' : 'actions'}
+              {builtIn ? 'Built in' : CATEGORY_LABELS[connector.category]}
+              {templates === 0 ? '' : ` · in ${templates} ${templates === 1 ? 'template' : 'templates'}`}
             </p>
           </div>
           <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground/0 transition-colors group-hover/card:text-muted-foreground" aria-hidden />
         </div>
 
-        <p className="line-clamp-2 text-[13px] leading-snug text-muted-foreground">{connector.description}</p>
+        {/* What people use it for, not what its API can do: that is what a card is for. */}
+        <p className="line-clamp-2 text-[13px] leading-snug text-muted-foreground">{connector.uses[0] ?? connector.description}</p>
 
         {hits.length > 0 ? (
           <p className="-mt-1 truncate text-xs">

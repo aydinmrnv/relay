@@ -107,12 +107,12 @@ sense, like wiring a ticket into something that expects a pull request.
 
 | Building block | Nodes |
 |---|---|
-| **Triggers** | 740 triggers across 240 apps: an issue labelled on GitHub or assigned in Linear, a new Sentry error, a Zendesk ticket, a schedule, an incoming webhook, a manual start |
+| **Triggers** | What hands the agents a task: a ticket assigned or labelled (GitHub, Linear, Jira, Shortcut), main going red (GitHub Actions, GitLab CI, CircleCI, Buildkite), a new error or crash (Sentry, Datadog, Crashlytics), a security alert (Dependabot, code scanning, Snyk), a flag that finished rolling out, a bug report in Slack or Zendesk, a schedule, a webhook, a manual start |
 | **Guardrails** | Budget gate, author allowlist, human approval, concurrency limit, kill switch. Each refuses by default and says why |
 | **Agent pipeline** | Run the pipeline (choose the planner, plan reviewer, implementer and code reviewer, the review depth and the round limits), a fast run with no reviews, or a cost estimate |
 | **Delivery** | Deliver the change — commit, branch, draft pull request, or merge when a person started the run — and comment the summary on the issue |
 | **Logic** | Condition, filter, transform, an AI step for triage or classification, merge paths, wait, wait for business hours, notes |
-| **Actions** | 1,119 actions: message Slack, Discord or Teams, open a Linear ticket, call any HTTP endpoint, post the run as JSON |
+| **Actions** | What closes the loop where the work was asked for: move the ticket and attach the PR, ask Slack for review, reply in the thread, link the fix on the Sentry issue, leave support an internal note, call any HTTP endpoint |
 
 Select a node and the side panel shows its settings, what it will do with them,
 and what it did in the last test run. Select nothing and the panel reads the
@@ -121,14 +121,22 @@ every check it has not passed.
 
 ### Templates
 
-| Template | What it does |
+Each template is a situation teams actually hand to coding agents, with its
+guardrails already in place. The catalog is kept to the ~45 apps these
+situations involve; anything else is one Incoming webhook or HTTP request away.
+
+| Template | For when |
 |---|---|
-| Ticket to pull request | A Linear issue assigned to the bot is planned, reviewed, implemented, reviewed again and tested, and opens a draft PR. Slack hears about it |
-| Label-triggered GitHub run | A label on a GitHub issue starts an unattended run behind an allowlist and a budget; the summary lands back on the issue |
-| Sentry error to fix | A model triages each new Sentry issue. Regressions get a fast fix and a draft PR; the rest become a Linear ticket |
-| Xcode nightly build | Every weeknight, build and test the iOS app. A failing build becomes a ticket, the pipeline fixes it, and the team wakes up to a PR |
-| YouTube comment to issue | Comments on your videos are classified by a model; bug reports become GitHub issues and a Discord ping |
-| Support ticket to fix, with approval | A Zendesk ticket tagged `bug` waits for a person to approve, then runs the pipeline and replies to the customer with the PR |
+| Linear ticket to pull request | Small, well-written tickets sit in the backlog. Assign one to the bot: it comes back In Review with a draft PR attached, and #eng is asked for review |
+| GitHub label to pull request | A maintainer hands over an issue with one label, behind a kill switch, an allowlist and a budget. Runs unattended today through the exported Action |
+| Price new tickets before anyone picks them up | Every new Linear issue gets an estimate of what an agent run would cost, with no agent called; cheap ones are labelled agent-ready |
+| Fix main when CI goes red | The failing job and its log become the task. One fix at a time, under a budget; #builds gets the PR, or the reason there is none |
+| Sentry error to fix | A model reads the trace first. Fixable errors get a PR linked on the Sentry issue; ones needing a product decision become a Linear ticket |
+| Fix high-severity code scanning alerts | A new CodeQL alert is fixed with a thorough cross-review and opened as a draft PR for the security team |
+| Weekly dependency upgrades that pass CI | Every Monday the agents upgrade what they can, fix what breaks, and open one PR that already builds |
+| Remove feature flags that finished rolling out | A LaunchDarkly flag that has served one variation for 30 days gets a PR deleting it and the dead path |
+| Customer bug report to fix, with approval | A Zendesk ticket tagged `bug` is checked for repro steps, filed in Linear, approved by an engineer, fixed, and support gets an internal note with the PR |
+| Fix it from Slack | React with :robot_face: to a bug report; it becomes a Linear ticket and the draft PR is posted back in the thread |
 
 ## Running a workflow for real
 
@@ -234,7 +242,8 @@ machine per user, signed in with that user's own plans
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
 
 The engine reads issues from GitHub and Linear today. The studio lets you design
-against all 240 apps, and the export says which parts need the bridge.
+against every app in the catalog, each template says how it runs today, and the
+export says which parts need the bridge.
 
 ## The CLI: the studio's companion, and the engine
 

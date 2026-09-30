@@ -33,33 +33,22 @@ export function repairEdges(workflow: Workflow): Workflow {
 }
 
 /**
- * Two starter templates shipped with a real mistake, now fixed in
- * templates.ts, and copies of them live on in browsers that were seeded
- * before. Each repair applies only when the exact broken shape is present,
- * so a workflow somebody has since changed is left as they made it.
+ * A starter template shipped with a real mistake, since fixed in templates.ts,
+ * and copies of it live on in browsers that were seeded before. The repair
+ * applies only when the exact broken shape is present, so a workflow somebody
+ * has since changed is left as they made it.
  */
 export function repairKnownTemplateIssues(workflow: Workflow): Workflow {
-  if (workflow.templateId === 'youtube-triage') {
-    let changed = false;
-    const nodes = workflow.nodes.map((node) => {
-      if (node.data.typeId !== 'youtube.action.post-comment') return node;
-      const videoId = node.data.config['videoId'];
-      if (typeof videoId === 'string' && videoId.trim().length > 0) return node;
-      changed = true;
-      return { ...node, data: { ...node.data, config: { ...node.data.config, videoId: '{{issue.videoId}}' } } };
-    });
-    return changed ? { ...workflow, nodes } : workflow;
-  }
   if (workflow.templateId === 'support-fix') {
-    // The customer reply takes a finished run, but was wired from the delivered change.
+    // The customer reply was wired from the delivered change when it took only a
+    // finished run. It now takes anything, so only the handle needs pointing at
+    // its one input.
     const typeOf = (id: string) => workflow.nodes.find((node) => node.id === id)?.data.typeId;
-    const pipeline = workflow.nodes.find((node) => node.data.typeId === 'pipeline.action.run');
-    if (pipeline === undefined) return workflow;
     let changed = false;
     const edges = workflow.edges.map((edge) => {
-      if (typeOf(edge.source) !== 'delivery.action.deliver' || typeOf(edge.target) !== 'zendesk.action.reply-to-customer') return edge;
+      if (typeOf(edge.target) !== 'zendesk.action.reply-to-customer' || edge.targetHandle === 'in') return edge;
       changed = true;
-      return { ...edge, source: pipeline.id, sourceHandle: 'run', targetHandle: 'run' };
+      return { ...edge, targetHandle: 'in' };
     });
     return changed ? { ...workflow, edges } : workflow;
   }

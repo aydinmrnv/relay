@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, CircleCheck, CircleDashed, ExternalLink, Globe, Play, Plug, RefreshCw, Send, ShieldCheck, Unplug, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
+import { ArrowRight, CircleCheck, CircleDashed, CornerDownRight, ExternalLink, Globe, LayoutTemplate, Play, Plug, RefreshCw, Send, ShieldCheck, Unplug, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
@@ -12,6 +12,7 @@ import { HelpTip } from '@/components/app/help-tip';
 import { PORT_STYLE } from '@/components/builder/ports';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { useBrand } from '@/hooks/use-brand';
+import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { useNow } from '@/hooks/use-now';
 import { useStudio, useWorkflows } from '@/lib/store';
 import { appsInUse, connectionState, nothingToConnect, STATE_LABEL, uncoveredNodes, type AppUsage } from '@/lib/connectors/connection-state';
@@ -24,7 +25,7 @@ import { ConnectDialog, useConnectMode } from './connect-dialog';
 import { ConnectionStatus } from './connection-status';
 import { DisconnectDialog } from './disconnect-dialog';
 import { useConnectionActions } from './use-connection-actions';
-import { AUTH_ICON, authExplainer, authLabel, isBuiltIn } from './connector-meta';
+import { AUTH_ICON, authExplainer, authLabel, isBuiltIn, templatesUsing } from './connector-meta';
 
 interface Props {
   connector: Connector | undefined;
@@ -59,11 +60,13 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
   const [connectOpen, setConnectOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const actions = useConnectionActions();
+  const create = useCreateWorkflow();
 
   const builtIn = isBuiltIn(connector);
   const state = connectionState(connector, connection);
   const spec = credentialSpec(connector.id);
   const mode = useConnectMode(connector.id);
+  const templates = templatesUsing(connector.id);
   const how = authExplainer(connector, brand.name);
   const AuthIcon = AUTH_ICON[connector.auth];
 
@@ -134,6 +137,18 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-7 overflow-y-auto p-5">
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold">What teams use it for</h3>
+          <ul className="flex flex-col gap-1.5">
+            {connector.uses.map((use) => (
+              <li key={use} className="flex gap-2 text-[13px] leading-relaxed">
+                <CornerDownRight className="mt-1 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="text-pretty">{use}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
         {spec !== undefined && connection?.credential !== undefined ? (
           <section className={cn('rounded-lg border p-3.5', state === 'failing' ? 'border-destructive/40 bg-destructive/5' : 'bg-muted/30')}>
             <p className="flex items-center gap-2 text-sm font-medium">
@@ -207,6 +222,32 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
         {spec === undefined ? null : <Coverage connector={connector} actions={spec.actions} caveat={spec.caveat} name={spec.name} />}
 
         {usage === undefined ? null : <UsedBy usage={usage} />}
+
+        {templates.length === 0 ? null : (
+          <section className="flex flex-col gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                Ready-made workflows
+                <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium text-muted-foreground tabular-nums">{templates.length}</span>
+              </h3>
+              <p className="mt-0.5 text-[13px] text-muted-foreground">Complete workflows that use {connector.name}, guardrails included. Start from one and change what you need.</p>
+            </div>
+            {templates.map((template) => (
+              <div key={template.id} className="rounded-lg border p-3.5">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  <LayoutTemplate className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  {template.name}
+                </p>
+                <p className="mt-1 text-[13px] leading-snug text-pretty text-muted-foreground">{template.when}</p>
+                <div className="mt-2.5 flex justify-end">
+                  <Button size="xs" onClick={() => create.fromTemplate(template.id)}>
+                    Use this template <ArrowRight data-icon="inline-end" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
 
         <section className="flex flex-col gap-3">
           <SectionHeading

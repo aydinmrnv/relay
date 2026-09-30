@@ -79,7 +79,7 @@ export const CREDENTIAL_SPECS: CredentialSpec[] = [
     ],
     setup: { label: 'Discord’s guide', href: 'https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks' },
     scope: 'It posts to that one channel under the webhook’s name, and cannot read messages or act as a member. Delete it in the channel’s settings at any time.',
-    actions: ['send-message', 'send-embed', 'share-pr'],
+    actions: ['send-message', 'share-pr'],
     caveat: 'A webhook always posts to the channel it was made for, so the Channel setting on these steps is not used.',
   },
 ];

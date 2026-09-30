@@ -193,24 +193,15 @@ interface Mention {
 }
 
 /** App names that are also everyday words: only the capitalised name counts. */
-const EVERYDAY = new Set([
-  'amplitude', 'apollo', 'axiom', 'box', 'canny', 'chromatic', 'clerk', 'coda', 'confluence', 'contentful', 'crisp', 'fireflies', 'framer', 'front', 'ghost', 'granola', 'height', 'honeycomb',
-  'intercom', 'loom', 'loops', 'mux', 'neon', 'notion', 'obsidian', 'outlook', 'paddle', 'payload', 'percy', 'plain', 'plane', 'plausible', 'postman', 'postmark', 'railway', 'render', 'resend',
-  'sanity', 'segment', 'shortcut', 'sketch', 'snowflake', 'socket', 'storybook', 'stripe', 'tally', 'things', 'threads', 'twist', 'twitch', 'unleash', 'warp', 'zoom',
-]);
-/** Never read as an app: the coding agents are roles in the pipeline, not apps to connect. */
-const NOT_APPS = new Set(['claude-code', 'codex-cli', 'gemini-cli', 'aider', 'anthropic-api', 'openai-api', 'cursor', 'github-copilot', 'ollama', 'x', 'monday', 'terminal']);
+const EVERYDAY = new Set(['intercom', 'notion', 'outlook', 'plain', 'shortcut']);
 const EXTRA_ALIASES: Array<[string, string, string?]> = [
   ['github-issues', 'github issue'],
   ['github-issues', 'gh issue'],
   ['microsoft-teams', 'ms teams'],
   ['microsoft-teams', 'teams', 'Teams'],
-  ['x', 'twitter'],
-  ['monday', 'monday.com'],
-  ['pagerduty', 'pager duty'],
-  ['app-store-connect', 'app store'],
-  ['google-play-console', 'play store'],
   ['github-actions', 'gh actions'],
+  ['codeql', 'code scanning'],
+  ['firebase', 'crashlytics'],
 ];
 const PLURAL_TAILS = new Set(['issues', 'actions', 'docs', 'notes', 'forms', 'tasks', 'reminders', 'teams']);
 
@@ -231,7 +222,7 @@ function aliases(): Alias[] {
     list.push({ connectorId, phrase: lower, ...(exact === undefined ? {} : { exact: exact.trim() }) });
   };
   for (const connector of CONNECTORS) {
-    if (connector.category === 'core' || NOT_APPS.has(connector.id)) continue;
+    if (connector.category === 'core') continue;
     const everyday = EVERYDAY.has(connector.id);
     for (const name of connector.name.replace(/\([^)]*\)/g, ' ').split('/').map((part) => part.trim()).filter(Boolean)) {
       add(connector.id, name, everyday ? name : undefined);

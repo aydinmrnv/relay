@@ -1,7 +1,7 @@
 /**
  * Connector catalog types.
  *
- * A connector is one external app (GitHub, Slack, Xcode, YouTube…). It exposes
+ * A connector is one external app (GitHub, Slack, Sentry…). It exposes
  * triggers (things that can start a workflow) and actions (things a workflow can
  * do). Every trigger and action becomes a draggable node in the builder, so the
  * shape here is deliberately UI-friendly: human names, one-line descriptions,
@@ -9,77 +9,54 @@
  */
 
 export type ConnectorCategory =
-  | 'source-control'
   | 'issues'
-  | 'chat'
-  | 'email'
-  | 'calendar'
-  | 'docs'
+  | 'source-control'
   | 'design'
   | 'ci-cd'
-  | 'apple'
-  | 'android'
   | 'hosting'
-  | 'databases'
   | 'observability'
-  | 'analytics'
-  | 'feature-flags'
-  | 'ai'
-  | 'registries'
-  | 'security'
-  | 'support'
-  | 'crm'
-  | 'payments'
-  | 'social'
-  | 'video'
-  | 'productivity'
-  | 'meetings'
-  | 'forms'
   | 'testing'
-  | 'storage'
-  | 'auth'
-  | 'feedback'
-  | 'cms'
-  | 'devtools'
-  | 'local'
+  | 'security'
+  | 'feature-flags'
+  | 'support'
+  | 'chat'
+  | 'email'
   | 'core';
 
 export const CATEGORY_LABELS: Record<ConnectorCategory, string> = {
-  'source-control': 'Source control',
   issues: 'Issue tracking',
+  'source-control': 'Source control',
+  design: 'Design handoff',
+  'ci-cd': 'CI',
+  hosting: 'Deploys',
+  observability: 'Errors & crashes',
+  testing: 'Tests',
+  security: 'Security',
+  'feature-flags': 'Feature flags',
+  support: 'Support',
   chat: 'Chat',
   email: 'Email',
-  calendar: 'Calendar',
-  docs: 'Docs & wikis',
-  design: 'Design',
-  'ci-cd': 'CI / CD',
-  apple: 'Apple',
-  android: 'Android',
-  hosting: 'Hosting & cloud',
-  databases: 'Databases',
-  observability: 'Observability',
-  analytics: 'Analytics',
-  'feature-flags': 'Feature flags',
-  ai: 'AI & agents',
-  registries: 'Package registries',
-  security: 'Security',
-  support: 'Support',
-  crm: 'CRM & sales',
-  payments: 'Payments & commerce',
-  social: 'Social',
-  video: 'Video & media',
-  productivity: 'Productivity',
-  meetings: 'Meetings',
-  forms: 'Forms',
-  testing: 'Testing',
-  storage: 'Storage',
-  auth: 'Auth & identity',
-  feedback: 'Feedback',
-  cms: 'CMS',
-  devtools: 'Developer tools',
-  local: 'Local machine',
   core: 'Core',
 };
+
+/**
+ * What an app is for in a coding-agent workflow, which is how the Integrations
+ * page groups them. An app is in the catalog because it is one of these, not
+ * because it has an API.
+ */
+export type ConnectorJob = 'work' | 'breaks' | 'upkeep' | 'people' | 'core';
+
+export const JOBS: Array<{ job: ConnectorJob; label: string; description: string; categories: ConnectorCategory[] }> = [
+  { job: 'work', label: 'Where work is asked for', description: 'Tickets and design handoffs that start a run, and where its pull request gets recorded.', categories: ['issues', 'source-control', 'design'] },
+  { job: 'breaks', label: 'When something breaks', description: 'A red build, a failed deploy, a new crash: failures an agent can often fix before anyone looks.', categories: ['ci-cd', 'hosting', 'observability', 'testing'] },
+  { job: 'upkeep', label: 'Security and upkeep', description: 'Chores nobody schedules: vulnerable code, flags that finished rolling out.', categories: ['security', 'feature-flags'] },
+  { job: 'people', label: 'Requests from people', description: 'Customers and teammates asking for a fix, and the places they hear back.', categories: ['support', 'chat', 'email'] },
+  { job: 'core', label: 'Built in', description: 'The pipeline, guardrails, delivery and the glue between them.', categories: ['core'] },
+];
+
+export function jobOf(category: ConnectorCategory): ConnectorJob {
+  return JOBS.find((entry) => entry.categories.includes(category))?.job ?? 'core';
+}
 
 /** How a connection is established. `local` means "runs on the user's machine", `none` means no auth at all. */
 export type AuthKind = 'oauth' | 'api-key' | 'token' | 'app' | 'local' | 'none';
@@ -160,6 +137,12 @@ export interface Connector {
   icon: ConnectorIcon;
   docsUrl?: string;
   tags?: string[];
+  /**
+   * What teams use this app for with coding agents, one situation per line:
+   * "A red build on main gets a fix PR before anyone looks." The reason the
+   * app is in the catalog, in the words a person would search for.
+   */
+  uses: string[];
   triggers: TriggerSpec[];
   actions: ActionSpec[];
   /** Shown first in the palette and on the landing page. */
@@ -237,3 +220,12 @@ export const FIELDS = {
     ...(step === undefined ? {} : { step }),
   }),
 };
+
+/**
+ * A trigger's sample payload: the task the agents would be handed. The body
+ * carries the evidence (the failing log, the stack trace, the advisory), so a
+ * test run shows exactly what a real one would start from.
+ */
+export function taskSample(id: string, title: string, url: string, body: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { id, title, url, body, ...extra };
+}

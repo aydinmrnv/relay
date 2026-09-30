@@ -199,7 +199,7 @@ function StartSteps() {
     {
       key: 'template',
       title: 'Pick a template',
-      body: 'Start from a ready-made workflow such as Ticket to pull request, or a blank canvas. Using a template copies it; the original never changes.',
+      body: 'Start from a ready-made workflow such as Fix main when CI goes red, or a blank canvas. Using a template copies it; the original never changes.',
       href: '/templates',
       cta: 'Browse templates',
     },

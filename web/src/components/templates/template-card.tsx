@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, Eye } from 'lucide-react';
+import { ArrowRight, Eye, Hand, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
@@ -14,7 +14,8 @@ interface Props {
 }
 
 export function TemplateCard({ entry, onPreview, onUse }: Props) {
-  const { meta, workflow, description, connectors } = entry;
+  const { meta, workflow, description, connectors, readiness } = entry;
+  const ReadyIcon = readiness.unattended ? Zap : Hand;
   const steps = description.steps.length;
   const apps = description.apps.length;
   return (
@@ -40,7 +41,8 @@ export function TemplateCard({ entry, onPreview, onUse }: Props) {
           ))}
         </div>
         <h2 className="text-base leading-snug font-semibold tracking-tight">{meta.name}</h2>
-        <p className="text-[13px] leading-relaxed text-pretty text-muted-foreground">{meta.description}</p>
+        {/* The situation first: that is how someone recognises the template they need. */}
+        <p className="text-[13px] leading-relaxed text-pretty text-muted-foreground">{meta.when}</p>
         <div className="mt-auto flex flex-wrap gap-1 pt-1">
           {meta.tags.map((tag) => (
             <Badge key={tag} variant="secondary" className="font-normal">
@@ -51,10 +53,16 @@ export function TemplateCard({ entry, onPreview, onUse }: Props) {
       </div>
 
       <div className="flex flex-col gap-3 border-t border-border/60 pt-3">
-        <p className="text-xs text-muted-foreground">
-          {steps} steps · {apps === 0 ? 'no apps to connect' : `${apps} ${apps === 1 ? 'app' : 'apps'} to connect`}
-          {description.agents.length > 0 ? ` · ${description.agents.length} coding ${description.agents.length === 1 ? 'agent' : 'agents'}` : ''}
-        </p>
+        <div className="flex flex-col gap-1">
+          <p className="text-xs text-muted-foreground">
+            {steps} steps · {apps === 0 ? 'no apps to connect' : `${apps} ${apps === 1 ? 'app' : 'apps'} to connect`}
+            {description.agents.length > 0 ? ` · ${description.agents.length} coding ${description.agents.length === 1 ? 'agent' : 'agents'}` : ''}
+          </p>
+          <p className="flex items-center gap-1.5 text-xs font-medium" title={readiness.detail}>
+            <ReadyIcon className={readiness.unattended ? 'size-3.5 text-success' : 'size-3.5 text-muted-foreground'} aria-hidden />
+            {readiness.headline}
+          </p>
+        </div>
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1" onClick={onPreview}>
             <Eye data-icon="inline-start" /> Preview
