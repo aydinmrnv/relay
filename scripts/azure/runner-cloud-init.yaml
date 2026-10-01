@@ -1,8 +1,16 @@
 #cloud-config
 #
-# A Relay runner: a Linux VM with the coding CLIs installed and nothing signed
-# in. Sign-ins happen afterwards, through each vendor's own login, as the
-# non-root admin user: Relay never puts a credential on this machine.
+# A development runner: a Linux VM with the coding CLIs installed and nothing
+# signed in, for working on Relay itself. Sign-ins happen afterwards, through
+# each vendor's own login, as the non-root admin user: Relay never puts a
+# credential on this machine.
+#
+# This is not what Relay Cloud's machines boot with. Those are made by the hub
+# from src/cloud/hub/cloudInit.ts, run agents as a user with no sudo, and
+# install Relay from the hub at a checked hash. This one builds Relay from the
+# repository's current main and installs whatever Claude Code and Codex are
+# newest, on purpose: it is where new code is tried. Agents on it run as the
+# admin user, who can sudo. Do not put a hub, or anyone else's work, on it.
 #
 # Used by scripts/azure/create-runner.sh as the VM's custom data. Keep it
 # ASCII: az vm create encodes custom data as Latin-1 and rejects anything else.
@@ -49,25 +57,35 @@ write_files:
 
         include if exists <local/bwrap>
       }
+  - path: /etc/apt/preferences.d/nodejs
+    permissions: '0644'
+    content: |
+      Package: nodejs
+      Pin: origin deb.nodesource.com
+      Pin-Priority: 600
 
 runcmd:
-  # Node 22 (Relay needs >= 22.6).
-  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  - apt-get install -y nodejs
-  # GitHub CLI from GitHub's own apt repository: delivery opens pull requests with it.
+  # Every package below comes from an apt repository checked against its
+  # publisher's key. Nothing downloaded is piped to a shell.
   - install -d -m 0755 /etc/apt/keyrings
-  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  # Node 22 (Relay needs >= 22.6), from NodeSource's repository.
+  - curl -fsSL -o /tmp/nodesource.key https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+  - gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource.key
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  # GitHub CLI from GitHub's own repository: delivery opens pull requests with it.
+  - curl -fsSL -o /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg
   - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
   - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
-  - apt-get update
-  - apt-get install -y gh
   # Tailscale: how you reach a runner with no public IP. It dials out; nothing listens.
-  - curl -fsSL https://tailscale.com/install.sh | sh
+  - curl -fsSL -o /usr/share/keyrings/tailscale-archive-keyring.gpg https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg
+  - curl -fsSL -o /etc/apt/sources.list.d/tailscale.list https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list
+  - apt-get update
+  - apt-get install -y nodejs gh tailscale
   - apparmor_parser -r /etc/apparmor.d/bwrap
-  # The coding CLIs, unmodified.
+  # The coding CLIs, unmodified, at whatever version is newest today.
   - npm install -g @anthropic-ai/claude-code @openai/codex
-  # Relay itself, packed from a clone. `npm install -g github:...` leaves the
-  # global package as a symlink into a temporary clone that npm then deletes.
+  # Relay itself, packed from a clone of main. `npm install -g github:...` leaves
+  # the global package as a symlink into a temporary clone that npm then deletes.
   - git clone --depth 1 https://github.com/aydinmrnv/relay /opt/relay-src
   - cd /opt/relay-src && npm ci && npm pack --pack-destination /tmp
   - npm install -g /tmp/relay-orchestrator-*.tgz

@@ -121,7 +121,7 @@ describe('the hub, with a runner dialed in', () => {
     await writeFile(script, FAKE_RUN);
     const launcher: RelayLauncher = { command: process.execPath, args: [script] };
 
-    fleet = new Fleet({ driver: null, regions: [], coresPerRunner: 2, tokenFor: () => '' });
+    fleet = new Fleet({ driver: null, regions: [], coresPerRunner: 2, tokenFor: () => ({ token: '', id: '' }) });
     hub = createHub({ fleet, secret: SECRET, sessions: new StaticVerifier([[STUDIO_TOKEN, USER]]), origins: [ORIGIN], version: 'test', heartbeatMs: 50, resumeWindowMs: 5_000, wakeWaitMs: 500, adminToken: 'admin-token-0123456789' });
     base = `http://127.0.0.1:${await hub.listen(0, '127.0.0.1')}`;
 
@@ -164,7 +164,7 @@ describe('the hub, with a runner dialed in', () => {
   });
 
   it('carries the studio’s requests to the runner once it dials in', async () => {
-    runner = dialOut({ hub: base, token: async () => mintRunnerToken(SECRET, { runner: 'relay-test', userId: USER }), router, runs, minDelayMs: 20, maxDelayMs: 100 });
+    runner = dialOut({ hub: base, token: async () => mintRunnerToken(SECRET, { runner: 'relay-test', userId: USER }).token, router, runs, minDelayMs: 20, maxDelayMs: 100 });
     await runner.ready;
     await waitFor(() => fleet.isReady(USER));
 

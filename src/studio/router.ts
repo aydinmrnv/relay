@@ -15,7 +15,8 @@ import {
   type InstallResponse,
   type RunStreamRecord,
 } from './protocol.ts';
-import { parseStartRequest, TaskError, type StudioRuns } from './runs.ts';
+import { printable } from './confirm.ts';
+import { parseStartRequest, QueueFullError, TaskError, type StudioRuns } from './runs.ts';
 
 /**
  * The companion's routes, apart from how they arrive.
@@ -50,12 +51,30 @@ export interface RouterOptions {
   logout?: (account: AccountId) => Promise<{ ok: boolean; detail: string }>;
   logins?: LoginSessions;
   installFiles?: (root: string, files: unknown) => Promise<InstallResponse>;
+  /**
+   * Asked before a run is started or files are installed, once the request is
+   * known to be well formed. It throws a `RouteError` to refuse. The loopback
+   * companion asks the person at the terminal (`confirm.ts`); a cloud runner
+   * has no terminal and no need, since the hub has already checked who is
+   * signed in.
+   */
+  authorize?: (ask: AuthorizeRequest) => Promise<void>;
+}
+
+export interface AuthorizeRequest {
+  /** The page that asked, as the transport saw it, or null when it was not a browser. */
+  origin: string | null;
+  action: 'run' | 'install';
+  /** One line saying what would happen, safe to print on a terminal. */
+  summary: string;
 }
 
 export interface RouteRequest {
   method: string;
   /** The path and query, e.g. `/v1/runs/sr_x/events?since=12`. */
   url: string;
+  /** The page the request came from, when the transport knows. */
+  origin?: string | null;
   /** The body as JSON. Transports enforce the size and the content type. */
   json(options?: { optional?: boolean }): Promise<unknown>;
 }
@@ -71,6 +90,39 @@ export class RouteError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+const TARGET_BASE = 'http://relay.invalid';
+
+/**
+ * A request's path and query, or null when the request line does not hold a
+ * plain path. `new URL` throws on some of what a client may send (`//`), and
+ * reads others as naming a different host (`//x/y`, `/\x`); both transports
+ * answer those with a 400 instead of routing on a path the client did not
+ * write, or failing where nothing catches it.
+ */
+export function parseRequestTarget(target: string | undefined): URL | null {
+  try {
+    const url = new URL(target ?? '/', TARGET_BASE);
+    return url.origin === TARGET_BASE ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** One path segment, percent-decoded; null when it is not valid percent-encoding. */
+export function decodeSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/** A JSON body that has to be an object: `null`, a list or a bare string is the client's mistake, not a crash. */
+function objectBody(body: unknown): Record<string, unknown> {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new RouteError(400, 'Expected a JSON object.');
+  return body as Record<string, unknown>;
 }
 
 export interface Router {
@@ -117,7 +169,8 @@ export function createRouter(options: RouterOptions): Router {
   }
 
   async function handle(request: RouteRequest): Promise<RouteResult> {
-    const url = new URL(request.url, 'http://companion.invalid');
+    const url = parseRequestTarget(request.url);
+    if (url === null) throw new RouteError(400, 'That is not a path.');
     const parts = url.pathname.split('/').filter(Boolean);
     const route = `${request.method} /${parts.map((part, index) => (index >= 2 ? ':' : part)).join('/')}`;
     const [, , a, b, c] = parts;
@@ -146,7 +199,7 @@ export function createRouter(options: RouterOptions): Router {
         }
         if (action !== 'login') throw new RouteError(404, 'No such route.');
         const body = await request.json({ optional: true });
-        const mode = (body as { mode?: unknown } | undefined)?.mode ?? (account === 'github' ? 'device' : 'browser');
+        const mode = (body === undefined ? undefined : objectBody(body)['mode']) ?? (account === 'github' ? 'device' : 'browser');
         if (!isLoginMode(mode)) throw new RouteError(400, 'Unknown sign-in mode.');
         const started = await logins.start(account, mode);
         if (!started.ok) throw new RouteError(500, started.error);
@@ -165,8 +218,8 @@ export function createRouter(options: RouterOptions): Router {
 
       case 'POST /v1/logins/:/:': {
         if (b !== 'code') throw new RouteError(404, 'No such route.');
-        const body = (await request.json()) as { code?: unknown };
-        const result = logins.submitCode(a ?? '', typeof body.code === 'string' ? body.code : '');
+        const code = objectBody(await request.json())['code'];
+        const result = logins.submitCode(a ?? '', typeof code === 'string' ? code : '');
         return json(result.ok ? 200 : 400, result);
       }
 
@@ -178,8 +231,10 @@ export function createRouter(options: RouterOptions): Router {
         let started: CompanionRunView;
         try {
           const parsed = parseStartRequest(await request.json(), { repositoryPerRun });
+          await options.authorize?.({ origin: request.origin ?? null, action: 'run', summary: describeRequest(parsed.workflow.name, parsed.task, parsed.repository ?? repositoryName(options.repository)) });
           started = await runs.start(parsed);
         } catch (error) {
+          if (error instanceof QueueFullError) throw new RouteError(429, error.message);
           if (error instanceof TaskError) throw new RouteError(400, error.message);
           throw error;
         }
@@ -212,9 +267,11 @@ export function createRouter(options: RouterOptions): Router {
         if (!capabilities.includes('install') || options.repository === null) {
           throw new RouteError(409, 'This companion was started outside a repository, so there is nowhere to install to.');
         }
-        const body = (await request.json()) as { files?: unknown };
+        const files = objectBody(await request.json())['files'];
+        const paths = Array.isArray(files) ? files.map((file: unknown) => printable((file as { path?: unknown } | null)?.path, 80)).filter((path) => path.length > 0) : [];
+        await options.authorize?.({ origin: request.origin ?? null, action: 'install', summary: `${paths.slice(0, 6).join(', ') || 'no files'}${paths.length > 6 ? `, and ${paths.length - 6} more` : ''} in ${printable(options.repository.root, 200)}` });
         try {
-          const result = await install(options.repository.root, body.files);
+          const result = await install(options.repository.root, files);
           const changed = result.files.filter((file) => file.status !== 'unchanged').map((file) => file.path);
           log({ kind: 'installed', message: changed.length === 0 ? 'Installed an export; every file was already up to date.' : `Installed ${changed.join(', ')}.` });
           return json(200, result);
@@ -230,6 +287,17 @@ export function createRouter(options: RouterOptions): Router {
   }
 
   return { hello, handle, capabilities, logins, pendingLogins: () => logins.pending() };
+}
+
+function repositoryName(repository: CompanionRepository | null): string | undefined {
+  if (repository === null) return undefined;
+  return repository.owner !== null && repository.name !== null ? `${repository.owner}/${repository.name}` : repository.root;
+}
+
+/** What a run would do, in one line for the person asked to allow it. Everything in it came from the caller, so all of it is cleaned. */
+function describeRequest(workflow: string, task: CompanionRunView['task'], repository: string | undefined): string {
+  const what = task.kind === 'issue' ? `issue ${printable(task.ref, 80)}` : `"${printable(task.text, 80)}"`;
+  return `"${printable(workflow, 60)}": ${what}${repository === undefined ? '' : ` in ${printable(repository, 200)}`}`;
 }
 
 function describeTask(run: CompanionRunView): string {

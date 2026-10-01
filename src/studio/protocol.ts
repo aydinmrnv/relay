@@ -17,8 +17,53 @@ export const PROTOCOL_VERSION = 1;
 /** The port the studio looks on before it has been told another. */
 export const DEFAULT_COMPANION_PORT = 4477;
 
-/** Where the hosted studio lives, and so where `relay connect` sends you to pair. */
-export const DEFAULT_STUDIO_URL = 'https://relay-olive-omega.vercel.app';
+/**
+ * THE TRUSTED STUDIO ORIGIN. This is the one place it is written.
+ *
+ * Whatever page is served from this origin can drive a paired machine: it is
+ * where `relay connect` sends a person to pair, the only web origin the
+ * companion answers by default, and the origin a Relay Cloud hub accepts
+ * sessions from unless told otherwise. Whoever controls this hostname
+ * controls those machines, so it must be a domain the project owns before
+ * the CLI is shipped to anyone. Today it is a `vercel.app` address, which is
+ * the studio's until the day the deployment is renamed or removed.
+ *
+ * Changing it is this line, and nothing else in the CLI: `relay connect`,
+ * `relay hub serve` and `scripts/azure/deploy-hub.sh` all read it from here.
+ * A person or an operator can point at another studio without a new build by
+ * setting `RELAY_STUDIO_URL` (see `trustedStudioOrigin`).
+ */
+export const TRUSTED_STUDIO_ORIGIN = 'https://relay-olive-omega.vercel.app';
+
+/** The environment variable that names another studio to trust instead of `TRUSTED_STUDIO_ORIGIN`. */
+export const STUDIO_URL_VARIABLE = 'RELAY_STUDIO_URL';
+
+/** Where the hosted studio lives, and so where `relay connect` sends you to pair: the trusted origin, under its older name. */
+export const DEFAULT_STUDIO_URL = TRUSTED_STUDIO_ORIGIN;
+
+/** The studio origin to trust: `RELAY_STUDIO_URL` when it is set, `TRUSTED_STUDIO_ORIGIN` otherwise. Throws on a value that is not an http(s) URL. */
+export function trustedStudioOrigin(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env[STUDIO_URL_VARIABLE]?.trim();
+  if (raw === undefined || raw.length === 0) return TRUSTED_STUDIO_ORIGIN;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${STUDIO_URL_VARIABLE}="${raw}" is not a URL.`);
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(`${STUDIO_URL_VARIABLE}="${raw}" is not an http(s) URL.`);
+  return url.origin;
+}
+
+/** Whether an origin is this machine itself: `localhost`, a `.localhost` name, or a loopback address. A studio there is a development studio. */
+export function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    return host === 'localhost' || host.endsWith('.localhost') || host === '[::1]' || /^127(\.\d{1,3}){3}$/.test(host);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * `agents`: the coding CLIs' sign-ins. `runs`: running a workflow. `install`:

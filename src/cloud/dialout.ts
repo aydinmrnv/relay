@@ -1,7 +1,7 @@
 import { errorMessage } from '../util/errors.ts';
 import type { StudioRuns } from '../studio/runs.ts';
 import { RouteError, type Router } from '../studio/router.ts';
-import { parseFrame, runnerSocketUrl, type HubFrame, type RunnerActivity, type RunnerFrame } from './frames.ts';
+import { parseHubFrame, runnerSocketUrl, type HubFrame, type RunnerActivity, type RunnerFrame } from './frames.ts';
 
 /**
  * `relay connect --hub`: the companion, reached through the hub instead of
@@ -22,7 +22,7 @@ import { parseFrame, runnerSocketUrl, type HubFrame, type RunnerActivity, type R
 
 export interface DialOutOptions {
   hub: string;
-  /** Asked before every attempt, so a token rotated by the hub is picked up without a restart. */
+  /** Asked before every attempt, so a source that can change (a file, a VM's user data) is read again without a restart. */
   token: () => Promise<string>;
   router: Router;
   runs: StudioRuns | null;
@@ -141,7 +141,16 @@ export function dialOut(options: DialOutOptions): DialOut {
   }
 
   function onMessage(text: string): void {
-    const frame = parseFrame<HubFrame>(text);
+    // A throw in a WebSocket listener is an uncaught exception, and this
+    // process is also every run in flight: a frame the runner cannot read is
+    // dropped and said so, and the connection stays.
+    let frame: HubFrame | null;
+    try {
+      frame = parseHubFrame(text);
+    } catch (error) {
+      log(`Ignored a frame from the hub: ${errorMessage(error)}`, 'warn');
+      return;
+    }
     if (frame === null) return;
     switch (frame.t) {
       case 'welcome':

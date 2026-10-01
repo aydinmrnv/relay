@@ -1,50 +1,53 @@
 #!/usr/bin/env bash
 #
-# Create a Relay runner VM on Azure: Ubuntu 24.04 with the coding CLIs installed
-# by runner-cloud-init.yaml, and no inbound port open to the internet.
+# Create a development runner VM on Azure: Ubuntu 24.04 with the coding CLIs
+# installed by runner-cloud-init.yaml, and no inbound port open to the internet.
+# It is a machine for working on Relay, where agents run as a user who can sudo.
+# It is not a Relay Cloud machine (the hub makes those) and not a place for the
+# hub: scripts/azure/deploy-hub.sh refuses a VM like this one.
 #
-#   scripts/azure/create-runner.sh --location northcentralus
-#   scripts/azure/create-runner.sh --location northcentralus --public-ip   # SSH over the internet instead
-#   scripts/azure/create-runner.sh --refresh-ip                             # --public-ip only: your IP changed
+#   scripts/azure/create-runner.sh --group <group> --name <vm> --location northcentralus
+#   scripts/azure/create-runner.sh --group <group> --name <vm> --location northcentralus --public-ip   # SSH over the internet instead
+#   scripts/azure/create-runner.sh --group <group> --name <vm> --refresh-ip                             # --public-ip only: your IP changed
 #
-# By default the VM has no public IP address and you reach it over Tailscale
-# (free for personal use): the VM dials out, your Mac joins the same tailnet,
-# and `ssh relay@<name>` works from anywhere. A Standard public IPv4 address is
-# the one thing the Azure for Students free tier does not cover (about
-# $3.65/month); --public-ip adds one, with SSH open to your current address.
+# By default the VM has no public IP address and you reach it over Tailscale:
+# the VM dials out, the machine you work on joins the same tailnet, and
+# `ssh <admin>@<vm>` works from anywhere. --public-ip gives it a Standard
+# public IPv4 address instead, which Azure bills for, with SSH open to your
+# current address only.
 #
 # Safe to run again: an existing resource group, network or VM is reused.
 #
 # Day to day:
-#   az vm deallocate -g relay-dev -n relay-runner      # stop paying for compute
-#   az vm start      -g relay-dev -n relay-runner
-#   az group delete  -n relay-dev                      # remove everything
+#   az vm deallocate -g <group> -n <vm>      # stop paying for compute
+#   az vm start      -g <group> -n <vm>
+#   az group delete  -n <group>              # remove everything
 #
-# Defaults suit an Azure for Students subscription: Standard_B2ats_v2 with a
-# 64 GiB P6 disk is inside its 750 free hours a month for the first 12 months.
-# Students may deploy to five regions only; run without --location to list them.
+# The default size, Standard_B2ats_v2 with a 64 GiB P6 disk, is the smallest
+# that runs both coding CLIs and a test suite. Some subscriptions may deploy to
+# a few regions only; run without --location to list the ones yours allows.
 
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-group="relay-dev"
-name="relay-runner"
+group=""
+name=""
 location=""
 size="Standard_B2ats_v2"
 admin="relay"
-ssh_key="$HOME/.ssh/relay_azure.pub"
+ssh_key="$HOME/.ssh/id_ed25519.pub"
 public_ip=false
 refresh_ip=false
 
 usage() {
-  sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,29p' "$0" | sed 's/^# \{0,1\}//'
   cat <<EOF
 
 Options:
+  --group <name>        resource group (required)
+  --name <name>         VM name, also its Tailscale name (required)
   --location <region>   Azure region (required when creating)
-  --group <name>        resource group (default: $group)
-  --name <name>         VM name, also its Tailscale name (default: $name)
   --size <sku>          VM size (default: $size)
   --admin <user>        admin user; the companion runs as this user (default: $admin)
   --ssh-key <path>      public key to install (default: $ssh_key)
@@ -67,6 +70,14 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+# No default for either: a resource group and a VM are somebody's, and a name
+# guessed here would make a second, billed machine beside the one they meant.
+if [[ -z "$group" || -z "$name" ]]; then
+  echo "--group and --name are required: the resource group and the VM this is about." >&2
+  usage >&2
+  exit 2
+fi
 
 nsg="${name}-nsg"
 vnet="${name}-vnet"
@@ -189,4 +200,4 @@ else
   echo "Could not get a Tailscale login link. Start it by hand:"
   echo "  az vm run-command invoke -g $group -n $name --command-id RunShellScript --scripts 'tailscale up --hostname=$name'"
 fi
-echo "Then, with Tailscale on on this Mac:  ssh -i ${ssh_key%.pub} ${admin}@${name}"
+echo "Then, with Tailscale on on the machine you work from:  ssh -i ${ssh_key%.pub} ${admin}@${name}"

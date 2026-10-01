@@ -198,7 +198,9 @@ turns on "Let triggered runs use this machine", the studio asks the hub for a
 runner token for that user. It passes the token to the paired `relay connect`
 over the loopback channel, which is already authenticated. The companion saves
 it in `~/.relay` with mode 0600 and dials out to the hub, while still serving
-the studio on loopback. Nothing to paste. The hub currently keeps one link per
+the studio on loopback. Nothing to paste. (Such a token is the hand-minted
+kind, which expires: the studio would ask for a new one before it does.) The
+hub currently keeps one link per
 user (`links` in `src/cloud/hub/server.ts` is keyed by user id), so it needs to
 key them by user and runner.
 
@@ -211,9 +213,10 @@ Later, Actions can also be a runner the studio dispatches to with
 other runner.
 
 **Direct runs stay.** The current "Run on this machine" goes browser →
-loopback, with no Relay server in the path. It is how a guest with no account
-tries a real run, and it stays that way: pipeline only, as today. A signed-in
-user gets the whole graph by running through the control plane.
+loopback, with no Relay server in the path, and it stays that way: pipeline
+only, as today. The pairing is good for one start of `relay connect`, and the
+first run a studio asks for is confirmed in that terminal. A signed-in user
+gets the whole graph by running through the control plane.
 
 ## Who holds which credential
 
@@ -222,7 +225,7 @@ user gets the whole graph by running through the control plane.
 | Claude Code and Codex sign-ins | The runner, in the CLIs' own files | None. Relay never holds a model credential |
 | GitHub, for code | The runner's `gh` today. Later, per-job GitHub App installation tokens minted by the studio, limited to one repository for about an hour, and used only by Relay's own `git` and `gh` | Hardening, as already planned |
 | App connections (Slack, Discord, Linear, HTTP secrets) | **The studio, encrypted at rest** | **New.** Relay already says it never holds a model or code credential. Holding notification credentials is what any automation product does. The first version accepts only webhook URLs (Slack incoming webhooks, Discord webhooks), which can do nothing but post |
-| Runner tokens | HMAC-signed by the hub | None |
+| Runner tokens | HMAC-signed by the hub. A managed machine's is re-issued at every start and refused once it is stale; one minted by hand expires | None |
 | Job callback tokens | HMAC-signed by the studio, per run, with an expiry | New |
 | Studio ↔ hub | One service secret, used in both directions | **New.** The runners design counts "no secret shared with the studio's server" as a feature. Starting a run with nobody signed in needs one. It is limited to claiming jobs, minting runner tokens and nudging |
 

@@ -13,6 +13,12 @@ import type { Duplex } from 'node:stream';
  * `maxPayload` closes the connection before it is buffered, an unmasked
  * client frame is a protocol error, and a connection that stops answering
  * pings is cut.
+ *
+ * So is everything the hub sends to a peer that does not read. Writes to a
+ * socket whose other end has stopped reading pile up in this process's
+ * memory, a message at a time; `send` cuts the connection once more than
+ * `maxBuffered` is waiting, rather than letting one stalled runner grow the
+ * hub until it is killed.
  */
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -29,6 +35,8 @@ export interface WsOptions {
   maxPayload?: number;
   /** How often to ping; a peer silent for two intervals is cut. Default 20 s. */
   pingIntervalMs?: number;
+  /** How many bytes may wait to be written before the peer is taken to have stopped reading, and cut. Default 16 MiB. */
+  maxBuffered?: number;
 }
 
 export function acceptKey(key: string): string {
@@ -60,6 +68,7 @@ export function acceptWebSocket(request: IncomingMessage, socket: Duplex, head: 
 export class WsConnection {
   private readonly socket: Duplex;
   private readonly maxPayload: number;
+  private readonly maxBuffered: number;
   private buffer: Buffer = Buffer.alloc(0);
   private fragments: Buffer[] = [];
   private fragmentBytes = 0;
@@ -74,6 +83,7 @@ export class WsConnection {
   constructor(socket: Duplex, head: Buffer, options: WsOptions) {
     this.socket = socket;
     this.maxPayload = options.maxPayload ?? 4 * 1024 * 1024;
+    this.maxBuffered = options.maxBuffered ?? 16 * 1024 * 1024;
     socket.on('data', (chunk: Buffer) => this.receive(chunk));
     socket.on('close', () => this.finish(1006, 'connection lost'));
     socket.on('error', () => this.finish(1006, 'connection error'));
@@ -105,9 +115,18 @@ export class WsConnection {
     return () => this.closeListeners.delete(listener);
   }
 
-  /** Sends a text message. False once the connection is closing. */
+  /**
+   * Sends a text message. False once the connection is closing, and false,
+   * with the connection cut, when the peer has let more than `maxBuffered`
+   * pile up unread: there is no asking a peer that is not reading to close
+   * politely, so the socket is destroyed and the close listeners hear 1013.
+   */
   send(text: string): boolean {
     if (!this.isOpen) return false;
+    if (this.buffered > this.maxBuffered) {
+      this.terminate(1013, 'peer is not reading');
+      return false;
+    }
     this.frame(OP_TEXT, Buffer.from(text, 'utf8'));
     return true;
   }
@@ -130,16 +149,24 @@ export class WsConnection {
     setTimeout(() => this.terminate(), 2_000).unref();
   }
 
-  terminate(): void {
+  terminate(code = 1006, reason = 'terminated'): void {
     this.socket.destroy();
-    this.finish(1006, 'terminated');
+    this.finish(code, reason);
   }
 
   private finish(code: number, reason: string): void {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.pinger);
-    for (const listener of this.closeListeners) listener(code, reason);
+    for (const listener of this.closeListeners) {
+      // Called from the socket's own events, where a throw is an uncaught
+      // exception: one listener failing must not stop the others hearing the close.
+      try {
+        listener(code, reason);
+      } catch {
+        // The listener's own business; the connection is gone either way.
+      }
+    }
     this.closeListeners.clear();
     this.messageListeners.clear();
   }
@@ -239,7 +266,15 @@ export class WsConnection {
           this.fragmentOpcode = null;
           if (kind !== OP_TEXT) return this.fail(1003, 'text messages only');
           const text = whole.toString('utf8');
-          for (const listener of this.messageListeners) listener(text);
+          // This runs inside the socket's `data` event. A listener that throws
+          // would be an uncaught exception in whoever owns the server, so it
+          // costs this one connection instead. Callers handle their own errors;
+          // this is the backstop for the one they did not think of.
+          try {
+            for (const listener of this.messageListeners) listener(text);
+          } catch {
+            return this.fail(1011, 'internal error');
+          }
           break;
         }
         default:
