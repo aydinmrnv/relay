@@ -43,7 +43,10 @@ import { CloudError, type CloudDriver, type CloudMachine } from './driver.ts';
  *
  * A runner that dials in without a cloud machine behind it — someone's own
  * server, or a development VM with a token minted by hand — is "unmanaged":
- * routed to like any other, never started or stopped.
+ * routed to like any other, never started or stopped. A person has one or
+ * the other: a runner of their own is refused while the hub manages a
+ * machine for them, so it can never take that machine's place and leave the
+ * VM awake outside the allow-list and the limits.
  *
  * The fleet is also what decides whether a runner's token is still good
  * (`admits`). Each managed machine has one current token. It is re-issued
@@ -81,6 +84,14 @@ export interface FleetOptions {
    * it through the hub, whatever its runner reports. Long enough for a queue
    * of runs someone started and walked away from; short enough that a runner
    * claiming to be busy for ever is not believed for ever.
+   *
+   * Said plainly, because it stops real work: a run, or a queue of runs, that
+   * goes on for longer than this with nobody starting, stopping or signing in
+   * to anything is stopped with the machine. Reading does not count, and that
+   * includes following a run's stream: the stream being open says a browser
+   * tab is, and the records in it are the runner's own word, which is the
+   * thing this limit exists not to take. Raise the limit for longer work
+   * (`RELAY_CLOUD_MAX_UNATTENDED_MINUTES`); the daily allowance still applies.
    */
   maxUnattendedMs?: number;
   /** How long one person's machine may be awake in a UTC day. Zero for no limit. Kept in memory: a hub restart starts the day again. */
@@ -136,6 +147,8 @@ interface Machine {
   tokenId: string | null;
   /** Set when the machine is removed: its token stays refused whatever the cloud still lists. */
   tokenRevoked: boolean;
+  /** How many times removal has been asked for. A create or start that was in flight compares it before and after. */
+  removals: number;
 }
 
 /** What `Fleet.admits` needs of a runner token. */
@@ -415,7 +428,11 @@ export class Fleet {
     // deletes it, and its runner would otherwise dial straight back in.
     machine.tokenId = null;
     machine.tokenRevoked = true;
-    if (machine.cloud === null && machine.state === 'none') {
+    // A create or a start may be in flight for this machine right now. It
+    // sees this count change when it lands, and removes what it made.
+    machine.removals += 1;
+    const inFlight = machine.busy;
+    if (machine.cloud === null && machine.state === 'none' && !inFlight) {
       this.forget(machine);
       return this.status(userId);
     }
@@ -430,7 +447,8 @@ export class Fleet {
         this.log({ kind: 'error', userId, runner: machine.name, message: machine.error });
       }
     } finally {
-      machine.busy = false;
+      // Still busy if another call owns the flag: it clears it when it is done.
+      machine.busy = inFlight;
     }
     machine.link?.close(4410, 'machine removed');
     return this.status(userId);
@@ -463,7 +481,17 @@ export class Fleet {
   admits(token: PresentedToken): Admission {
     const managedName = this.options.driver === null ? null : runnerName(this.options.namePrefix, token.userId);
     if (token.kind === 'own') {
+      if (managedName === null) return { ok: true };
       if (token.runner === managedName) return { ok: false, status: 401, reason: 'That name belongs to the machine the hub makes for this person.' };
+      // A person is served by a machine the hub manages or by a runner of
+      // their own, never both. The managed machine is the one that is
+      // admitted, limited and put to sleep; a runner of their own taking its
+      // place would be none of those. Until the hub has read its machines it
+      // cannot tell which this person has, so it says "later".
+      if (!this.listedOnce) return { ok: false, status: 503, reason: 'The hub has not read its machines yet. Try again in a moment.' };
+      if (this.machines.get(token.userId)?.managed === true) {
+        return { ok: false, status: 409, reason: 'This person has a machine the hub manages. Remove it before connecting a runner of their own.' };
+      }
       return { ok: true };
     }
     if (managedName === null || token.runner !== managedName) return { ok: false, status: 401, reason: 'This hub manages no machine by that name.' };
@@ -485,21 +513,21 @@ export class Fleet {
    */
   connected(identity: { runner: string; userId: string }, link: FleetLink, activity: RunnerActivity): boolean {
     let machine = this.machines.get(identity.userId);
-    // The same rule `admits` applied when the socket opened, applied again now
-    // that the runner has said hello: the machine may have been put to sleep
-    // or removed in the seconds between the two.
-    if (machine !== undefined && machine.managed && machine.name === identity.runner) {
-      if (machine.tokenRevoked || (machine.state !== 'creating' && machine.state !== 'starting' && machine.state !== 'ready')) return false;
+    const managedName = this.options.driver === null ? null : runnerName(this.options.namePrefix, identity.userId);
+    // The same rules `admits` applied when the socket opened, applied again
+    // now that the runner has said hello: the machine may have been put to
+    // sleep, removed or forgotten in the seconds between the two.
+    if (identity.runner === managedName) {
+      // The managed machine's own runner: only for a machine the fleet is
+      // tracking, has not removed, and expects to hear from.
+      if (machine === undefined || !machine.managed || machine.name !== identity.runner || machine.tokenRevoked) return false;
+      if (machine.state !== 'creating' && machine.state !== 'starting' && machine.state !== 'ready') return false;
+    } else if (machine !== undefined && machine.managed) {
+      // A runner of the person's own never stands in for their managed machine.
+      return false;
     }
-    if (machine === undefined) {
-      const managedName = this.options.driver === null ? null : runnerName(this.options.namePrefix, identity.userId);
-      machine = this.track(identity.userId, identity.runner, null, identity.runner === managedName);
-    }
+    if (machine === undefined) machine = this.track(identity.userId, identity.runner, null, false);
     if (machine.link !== null && machine.link !== link) machine.link.close(4409, 'replaced by a newer connection');
-    if (machine.name !== identity.runner && machine.managed) {
-      // A hand-started runner for someone whose managed machine is asleep: route to it.
-      machine.managed = false;
-    }
     machine.link = link;
     machine.connectedOnce = true;
     machine.firstBoot = false;
@@ -563,7 +591,15 @@ export class Fleet {
         machine.bootedAt = this.now();
         machine.firstBoot = cloud.createdAt !== null && this.now() - cloud.createdAt < this.options.firstBootTimeoutMs;
       }
-      if (!machine.managed && machine.link !== null) continue;
+      if (!machine.managed) {
+        // The cloud holds a machine for this person, so the hub manages them.
+        // A runner of their own that connected first is let go: it would keep
+        // the managed machine from being admitted, limited or put to sleep.
+        const own = machine.link;
+        machine.link = null;
+        own?.close(4409, 'this person has a machine the hub manages');
+        if (own !== null) this.log({ kind: 'disconnected', userId: machine.userId, runner: machine.name, message: `${machine.name} was disconnected: ${cloud.name} is this person's managed machine.` });
+      }
       machine.managed = true;
       machine.cloud = cloud;
       // What the fleet issued itself is what it knows best; the cloud's record
@@ -893,6 +929,7 @@ export class Fleet {
     const driver = this.options.driver;
     if (driver === null || machine.region === null) return;
     const exists = machine.cloud !== null;
+    const removals = machine.removals;
     machine.busy = true;
     try {
       if (exists && machine.cloud?.provisioning === 'failed') {
@@ -909,6 +946,7 @@ export class Fleet {
       const issued = this.options.tokenFor(machine.name, machine.userId);
       if (!exists) {
         await driver.create({ name: machine.name, userId: machine.userId, region: machine.region, token: issued.token, tokenId: issued.id });
+        if (machine.removals !== removals) return await this.undo(machine, 'it was removed while it was being made');
         machine.tokenId = issued.id;
         machine.tokenRevoked = false;
         machine.firstBoot = true;
@@ -916,15 +954,19 @@ export class Fleet {
         this.log({ kind: 'create', userId: machine.userId, runner: machine.name, region: machine.region, message: `Making ${machine.name} in ${machine.region}.` });
       } else {
         await driver.rotateToken({ name: machine.name, region: machine.region, userId: machine.userId }, issued);
+        if (machine.removals !== removals) return await this.undo(machine, 'it was removed while it was being started');
         machine.tokenId = issued.id;
         machine.tokenRevoked = false;
         await driver.start({ name: machine.name, region: machine.region });
+        if (machine.removals !== removals) return await this.undo(machine, 'it was removed while it was being started');
         this.transition(machine, machine.firstBoot ? 'creating' : 'starting');
         this.log({ kind: 'start', userId: machine.userId, runner: machine.name, region: machine.region, message: `Starting ${machine.name}.` });
       }
       machine.bootedAt = this.now();
       machine.error = null;
     } catch (error) {
+      // Removed while the call was in flight: the failure is the removal's doing, and nothing is tried again.
+      if (machine.removals !== removals) return;
       const kind = error instanceof CloudError ? error.kind : 'transient';
       if (kind === 'quota' || kind === 'capacity') {
         // Someone else took the room, or Azure has none of this size here right now.
@@ -947,6 +989,29 @@ export class Fleet {
       this.log({ kind: 'error', userId: machine.userId, runner: machine.name, region: machine.region, message: `${exists ? 'Starting' : 'Making'} ${machine.name}: ${errorMessage(error)}` });
     } finally {
       machine.busy = false;
+    }
+  }
+
+  /**
+   * The person removed their machine while the cloud was still making or
+   * starting it. The removal's own delete found nothing, or was overtaken, so
+   * what this call made is deleted now: a removal is never undone by a
+   * request that was already on its way.
+   */
+  private async undo(machine: Machine, why: string): Promise<void> {
+    machine.tokenId = null;
+    machine.tokenRevoked = true;
+    machine.wanted = false;
+    this.dequeue(machine);
+    this.transition(machine, 'deleting');
+    try {
+      await this.options.driver?.remove({ name: machine.name, region: machine.region ?? '' });
+      this.log({ kind: 'remove', userId: machine.userId, runner: machine.name, message: `Removing ${machine.name}: ${why}.` });
+    } catch (error) {
+      if (!(error instanceof CloudError && error.kind === 'not-found')) {
+        machine.error = `Could not remove your machine: ${errorMessage(error)}`;
+        this.log({ kind: 'error', userId: machine.userId, runner: machine.name, message: machine.error });
+      }
     }
   }
 
@@ -978,6 +1043,7 @@ export class Fleet {
       retryAt: 0,
       tokenId: null,
       tokenRevoked: false,
+      removals: 0,
     };
     this.machines.set(userId, machine);
     this.byName.set(name, userId);

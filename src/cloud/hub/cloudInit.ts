@@ -49,9 +49,9 @@
  * on the machine. So a firewall rule lets only root reach that address, the
  * start step refuses to go on unless the rule is there, and the token then
  * goes to the runner down a pipe: never in a file, an environment variable
- * or a command line that `relay-run` could read. Core dumps are off and
- * ptrace is restricted to a process's own descendants, so an agent cannot
- * read it out of the runner's memory either. What this does not do is make
+ * or a command line that `relay-run` could read. Core dumps are off, ptrace
+ * is restricted to a process's own descendants, and Node's SIGUSR1 debugger
+ * is disabled, so an agent cannot read it out of the runner's memory either. What this does not do is make
  * an agent unable to act as the runner in other ways: both are `relay-run`.
  *
  * NOT VERIFIED ON AZURE. The user, the firewall rule and the pipe were added
@@ -150,7 +150,7 @@ fi
 headers="$(curl -fsSI -m 20 "$hub/runner/relay.tgz" | tr -d '\\r')"
 header() { printf '%s\\n' "$headers" | awk -F': ' -v name="$1" 'tolower($1)==name{print $2}' | head -n 1; }
 # A version or a tag, and nothing a shell or npm would read as more than that.
-pin() { case "$1" in ''|*[!A-Za-z0-9.+-]*) return 1 ;; *) return 0 ;; esac; }
+pin() { case "$1" in ''|[!A-Za-z0-9]*|*[!A-Za-z0-9.+-]*) return 1 ;; *) return 0 ;; esac; }
 
 if ! command -v node >/dev/null || ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
   log "installing Node 22"
@@ -243,12 +243,17 @@ done
 
 # No core file may hold the runner's memory, and so its token.
 ulimit -c 0
+# Nor may Node's debugger: it opens on SIGUSR1, which any process of this user
+# may send. The runner refuses it from inside as well (refuseInspector); the
+# flag covers everything Node runs on this machine, where this Node has it.
+node_options=""
+NODE_OPTIONS=--disable-sigusr1 node -e 0 >/dev/null 2>&1 && node_options="--disable-sigusr1"
 cd "$home" || exit 1
 # A clean environment, the unprivileged user, and the token on standard input:
 # through a pipe, so it is never in a file, a variable a child inherits, or ps.
 exec env -i HOME="$home" USER="$run_user" LOGNAME="$run_user" SHELL=/bin/bash LANG=C.UTF-8 \\
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
-  DISABLE_AUTOUPDATER=1 RELAY_RUNNER_MAX_RUNS=${maxRuns} \\
+  DISABLE_AUTOUPDATER=1 RELAY_RUNNER_MAX_RUNS=${maxRuns} NODE_OPTIONS="$node_options" \\
   setpriv --reuid "$run_user" --regid "$run_user" --init-groups \\
   relay connect --hub "$hub" --token-from stdin < <(printf '%s' "$token")
 `;

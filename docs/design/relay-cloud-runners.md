@@ -128,7 +128,10 @@ signature alone is not enough:
 - Removing a machine ends its token at once.
 - A token minted by hand (`relay hub token`, or `POST /admin/v1/tokens`) is for
   a runner someone starts themselves. It can never name a managed machine, and
-  it expires: thirty days unless asked otherwise.
+  it expires: thirty days unless asked otherwise. It is refused while the hub
+  manages a machine for the same person: someone is served by a managed machine
+  or by a runner of their own, never both, so a runner of their own cannot take
+  a managed machine out of reach of the allow-list and the limits.
 
 The hub's secret can be replaced on a running fleet: with the old secret in
 `RELAY_HUB_SECRET_PREVIOUS`, tokens it signed are still read while every
@@ -197,6 +200,13 @@ down with it.
   person's machine is awake for at most twelve hours in a UTC day
   (`RELAY_CLOUD_DAILY_HOURS`). The daily count is kept in the hub's memory, so
   a hub restart starts the day again.
+
+  **This stops real work.** A run, or a queue of runs, that goes on for more
+  than six hours with nobody starting, stopping or signing in to anything is
+  stopped with the machine, and the person is told why. Following the run in
+  the studio does not count as asking: an open stream says a tab is open, and
+  the records in it are the runner's own word. Raise the limit for longer
+  work.
 
 What still depends on the hub being up: every one of these. If the hub is down,
 a machine that is awake stays awake until the hub is back. Nothing outside the
@@ -319,8 +329,9 @@ only planned.
   bubblewrap. An agent runs as the same user as the runner, so it can read the
   sign-ins on its own machine, as it can on a laptop, and it can signal or
   stop the runner. What it cannot do is read the runner's token: core dumps
-  are off, ptrace is limited to a process's own descendants, and only root
-  schedules jobs. A separate user for agent turns, and per-run GitHub App
+  are off, ptrace is limited to a process's own descendants, Node's SIGUSR1
+  debugger is refused by the runner and switched off for the machine where the
+  installed Node has the flag, and only root schedules jobs. A separate user for agent turns, and per-run GitHub App
   tokens, are what would close the rest.
 
 ## What changed from the first design

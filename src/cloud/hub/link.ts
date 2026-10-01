@@ -59,8 +59,19 @@ export class RunnerLink implements FleetLink {
     return this.pending.size;
   }
 
+  /**
+   * Called once, the moment this end decides to close the connection. The
+   * socket itself may stay up for a couple of seconds while the close is
+   * exchanged; whoever routes to this link must stop doing so now, not then.
+   */
+  onClosing: (() => void) | null = null;
+  private closing = false;
+
   close(code: number, reason: string): void {
     this.ws.close(code, reason);
+    if (this.closing) return;
+    this.closing = true;
+    this.onClosing?.();
   }
 
   private send(frame: HubFrame): boolean {

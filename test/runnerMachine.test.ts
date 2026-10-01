@@ -149,6 +149,9 @@ describe('what a runner machine installs when it starts', { skip: !POSIX }, () =
       await box.headers({ 'x-relay-version': '0.1.0+abc', 'x-relay-sha256': sha('the relay package'), 'x-relay-claude-code': '2.1.0; rm -rf /', 'x-relay-codex': '$(reboot)' });
       const hostile = await box.run();
       assert.deepEqual(installs(hostile.calls), ['npm install -g --no-audit --no-fund @anthropic-ai/claude-code@2.0.0 @openai/codex@0.40.0'], 'it falls back to the versions it was made with');
+      // Nor one that starts like an option.
+      await box.headers({ 'x-relay-version': '0.1.0+abc', 'x-relay-sha256': sha('the relay package'), 'x-relay-claude-code': '-g', 'x-relay-codex': '--prefix' });
+      assert.deepEqual(installs((await box.run()).calls), [], 'the versions it was made with are already there');
     } finally {
       await box.done();
     }
@@ -208,6 +211,9 @@ describe('how a runner machine hands the runner its token', { skip: !POSIX }, ()
       assert.ok(!run.env?.includes('SECRET_OF_ROOT'), 'nothing of root’s environment comes along');
       assert.match(run.env ?? '', new RegExp(`^HOME=${run.root}/home$`, 'm'));
       assert.match(run.env ?? '', /^RELAY_RUNNER_MAX_RUNS=1$/m);
+      // Node's SIGUSR1 debugger is switched off for everything Node runs there, where this Node has the flag.
+      const supported = spawnSync(process.execPath, ['-e', '0'], { env: { ...process.env, NODE_OPTIONS: '--disable-sigusr1' } }).status === 0;
+      assert.match(run.env ?? '', supported ? /^NODE_OPTIONS=--disable-sigusr1$/m : /^NODE_OPTIONS=$/m);
     } finally {
       await run.done();
     }

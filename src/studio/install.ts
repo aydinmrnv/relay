@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 
 import type { InstallFile, InstallResponse } from './protocol.ts';
@@ -20,8 +20,13 @@ import type { InstallFile, InstallResponse } from './protocol.ts';
  * `*-workflow.json` that is not an exported graph, belongs to the repository
  * and stays as it is.
  *
- * A path is checked segment by segment before it is joined, and the directory
- * it lands in is checked again after symlinks are resolved.
+ * A path is checked segment by segment before it is joined. Nothing on the
+ * way to a file may be a symbolic link, and neither may the file: `.relay` or
+ * `.github` linked somewhere else — inside the repository or out of it —
+ * would have an install write to a place the path does not name. That is
+ * looked at before a single directory is made, so a refused install leaves
+ * nothing behind, and the directory a file lands in is checked once more
+ * after it exists.
  *
  * `.relay/config.json` is merged rather than replaced. The canvas describes
  * the pipeline, the guardrails and delivery; it says nothing about the
@@ -112,6 +117,30 @@ export function mergeInstalledConfig(existing: Record<string, unknown>, incoming
   return deepMerge(existing, over);
 }
 
+/**
+ * Refuses a path any part of which is a symbolic link, or whose directories
+ * are not directories. Parts that do not exist yet are fine: they are made.
+ */
+async function refuseLinks(realRoot: string, path: string, segments: string[]): Promise<void> {
+  let at = realRoot;
+  for (const [index, segment] of segments.entries()) {
+    at = join(at, segment);
+    const last = index === segments.length - 1;
+    let info;
+    try {
+      info = await lstat(at);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    if (info.isSymbolicLink()) {
+      throw new InstallError(`"${path}" goes through a symbolic link (${segments.slice(0, index + 1).join('/')}), so it is not written: an export only writes to real directories and files in the repository.`);
+    }
+    if (!last && !info.isDirectory()) throw new InstallError(`"${path}" cannot be written: ${segments.slice(0, index + 1).join('/')} is not a directory.`);
+    if (last && !info.isFile()) throw new InstallError(`"${path}" is not a file in this repository.`);
+  }
+}
+
 async function readText(path: string): Promise<string | null> {
   try {
     return await readFile(path, 'utf8');
@@ -161,15 +190,13 @@ export async function installFiles(root: string, files: unknown): Promise<Instal
   });
 
   const realRoot = await realpath(root);
+  // Every path, before anything is made: a directory created on the far side
+  // of a link is already a write somewhere the install was not asked to go.
+  for (const file of checked) await refuseLinks(realRoot, file.path, file.segments);
+
   const planned: Array<{ path: string; target: string; before: string | null; content: string }> = [];
   for (const file of checked) {
     const target = join(realRoot, ...file.segments);
-    await mkdir(dirname(target), { recursive: true });
-    const parent = await realpath(dirname(target));
-    if (parent !== realRoot && !parent.startsWith(realRoot + sep)) {
-      throw new InstallError(`"${file.path}" resolves outside the repository through a symlink.`);
-    }
-
     const before = await readText(target);
     if (before !== null && !writtenByAnExport(file.kind, before)) {
       throw new InstallError(`"${file.path}" is already in the repository and was not written by an export, so it is left as it is. Rename the workflow in the studio, or move the file yourself.`);
@@ -177,15 +204,19 @@ export async function installFiles(root: string, files: unknown): Promise<Instal
     let content = file.content;
     if (file.kind === 'config') {
       const incoming = JSON.parse(file.content) as Record<string, unknown>;
-      content = JSON.stringify(exportedSections(incoming), null, 2) + '\n';
+      // A first install is the same merge, over nothing: what an install
+      // never takes from a studio (a notification command, a harness) it does
+      // not take the first time either.
+      let existing: Record<string, unknown> = {};
       if (before !== null) {
         try {
-          const existing: unknown = JSON.parse(before);
-          if (isRecord(existing)) content = JSON.stringify(mergeInstalledConfig(existing, incoming), null, 2) + '\n';
+          const parsed: unknown = JSON.parse(before);
+          if (isRecord(parsed)) existing = parsed;
         } catch {
           // An unreadable config is replaced: the engine would refuse it anyway.
         }
       }
+      content = JSON.stringify(mergeInstalledConfig(existing, incoming), null, 2) + '\n';
     }
     planned.push({ path: file.path, target, before, content });
   }
@@ -196,6 +227,12 @@ export async function installFiles(root: string, files: unknown): Promise<Instal
     if (file.before === file.content) {
       results.push({ path: file.path, status: 'unchanged' });
       continue;
+    }
+    await mkdir(dirname(file.target), { recursive: true });
+    // Once more, now that the directory exists: nothing swapped in a link while the files were being read.
+    const parent = await realpath(dirname(file.target));
+    if (parent !== realRoot && !parent.startsWith(realRoot + sep)) {
+      throw new InstallError(`"${file.path}" resolves outside the repository through a symlink.`);
     }
     const temp = `${file.target}.relay-${process.pid}.tmp`;
     await writeFile(temp, file.content);
