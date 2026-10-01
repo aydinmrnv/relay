@@ -89,6 +89,7 @@ The studio has no server-side access to anyone's machine. `relay connect`, run i
 | `POST /v1/runs`, `GET /v1/runs/:id/events`, `DELETE /v1/runs/:id` | *Run on your computer* in the builder: start, follow (NDJSON, replayed from the first line after a reload), stop |
 | `POST /v1/install` | *Install into the repository* in the export dialog |
 
+- Each start of `relay connect` makes its own token, so a studio pairs again after a restart, and the first run or install it asks for is confirmed in the terminal. A studio on `localhost` is answered only with `RELAY_STUDIO_DEV=1 relay connect --studio http://localhost:3000`.
 - Nothing is probed before pairing, so a browser never asks a visitor who has not run `relay connect` about reaching their machine.
 - The pairing (`port`, `token`) is kept under its own localStorage key, `relay-companion`, outside the studio's data: *Download all my data* never carries it.
 - A machine run is the engine's own `relay run --json` stream folded into the same `Run` record a test run produces (`src/lib/companion/machine-run.ts`), marked `source: 'machine'`, so the canvas, run panel and Runs pages show it the same way — with measured numbers.

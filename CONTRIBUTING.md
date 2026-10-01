@@ -27,6 +27,9 @@ npm run lint && npm run typecheck && npm test && npm run build
 
 The studio runs with nothing configured: without Clerk keys it is the
 browser-only studio with accounts off. `npx clerk env pull` adds accounts.
+To pair a studio you run yourself with the CLI, start it with
+`RELAY_STUDIO_DEV=1 relay connect --studio http://localhost:3000`: outside
+development the companion answers only the hosted studio.
 [`web/README.md`](web/README.md) says where things live; [`docs/cli.md`](docs/cli.md)
 is the CLI reference.
 
