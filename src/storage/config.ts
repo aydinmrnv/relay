@@ -14,6 +14,7 @@ import {
   type ReviewProfile,
 } from '../reviews/level.ts';
 import { RelayError } from '../util/errors.ts';
+import { closestMatch } from '../util/text.ts';
 import { atomicWriteJson } from './atomic.ts';
 
 export { AGENT_PROVIDERS, REVIEW_LEVELS, type ReviewLevel };
@@ -509,6 +510,62 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Every key `.relay/config.json` may carry, by section. `agents`, `models` and
+ * `harnesses` are absent because their keys are names — roles, providers,
+ * harnesses — and each is checked against its own registry below.
+ *
+ * Derived from the defaults rather than written out, so a key added to
+ * `RelayConfig` is known here the moment it has a default, and one that is
+ * removed stops being accepted without anybody remembering this list.
+ */
+const SECTION_KEYS = {
+  workflow: Object.keys(DEFAULT_CONFIG.workflow),
+  unattended: Object.keys(DEFAULT_CONFIG.unattended),
+  github: Object.keys(DEFAULT_CONFIG.github),
+  timeouts: Object.keys(DEFAULT_CONFIG.timeouts),
+  tests: Object.keys(DEFAULT_CONFIG.tests),
+  delivery: Object.keys(DEFAULT_CONFIG.delivery),
+  issues: Object.keys(DEFAULT_CONFIG.issues),
+  notify: Object.keys(DEFAULT_CONFIG.notify),
+  tracking: Object.keys(DEFAULT_CONFIG.tracking),
+  retention: Object.keys(DEFAULT_CONFIG.retention),
+} as const satisfies Partial<Record<keyof RelayConfig, readonly string[]>>;
+
+const TOP_LEVEL_KEYS: readonly string[] = Object.keys(DEFAULT_CONFIG);
+
+/**
+ * Refuses a key Relay does not recognise.
+ *
+ * Every key in this file is a decision somebody made, and several of them are
+ * guardrails: `"maxCostUsd"` is a ceiling and `"maxCostUSD"` used to be nothing
+ * at all — read by nobody, reported by nobody, and the run it was meant to stop
+ * kept spending. A value Relay cannot use is rejected at load time, so a key it
+ * cannot use is too, with the spelling it most likely meant.
+ */
+function assertKnownKeys(section: Record<string, unknown>, known: readonly string[], path: string): void {
+  for (const key of Object.keys(section)) {
+    if (known.includes(key)) continue;
+    const where = path.length === 0 ? 'config' : `config.${path}`;
+    const near = closestMatch(key, known);
+    // `--allow-secret` is the one key with a deliberate reason to be missing.
+    const special =
+      path === 'delivery' && key === 'allowSecrets'
+        ? ' It is set for one run by `--allow-secret`; a standing allowance belongs in .relay/secretsignore.'
+        : '';
+    throw new RelayError(
+      `${where}: unknown key "${key}".${near === undefined ? '' : ` Did you mean "${near}"?`}${special}`,
+      {
+        code: 'BAD_CONFIG',
+        hint:
+          `Valid keys: ${known.join(', ')}.\n` +
+          'A key Relay does not recognise is refused rather than ignored, because a misspelled guardrail is no guardrail. ' +
+          'If a newer Relay or the studio wrote it, `relay --update` brings this copy up to date.',
+      },
+    );
+  }
+}
+
+/**
  * Merges user config over defaults, validating as it goes. Invalid values are
  * rejected loudly: silently ignoring `"planner": "gpt5"` would run the workflow
  * with a role the user never asked for.
@@ -516,6 +573,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
   if (!isRecord(raw)) {
     throw new RelayError('.relay/config.json must contain a JSON object.', { code: 'BAD_CONFIG' });
+  }
+
+  assertKnownKeys(raw, TOP_LEVEL_KEYS, '');
+  for (const [section, known] of Object.entries(SECTION_KEYS)) {
+    // A section that is not an object is reported by its own block below, in
+    // the words that block has always used.
+    if (isRecord(raw[section])) assertKnownKeys(raw[section], known, section);
   }
 
   const config: RelayConfig = structuredClone(base);

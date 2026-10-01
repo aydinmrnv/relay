@@ -45,6 +45,40 @@ export function indent(text: string, prefix = '  '): string {
     .join('\n');
 }
 
+/** Edits (insert, delete, substitute) that turn `a` into `b`. */
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      const substitution = (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1);
+      current[j] = Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, substitution);
+    }
+    previous = current;
+  }
+  return previous[b.length] ?? 0;
+}
+
+/**
+ * The candidate a mistyped word most plausibly meant, or undefined when none
+ * is close enough to be worth suggesting.
+ *
+ * Case is ignored, because `maxCostUSD` for `maxCostUsd` is the commonest
+ * mistake there is. The cut-off scales with the word: two edits in a long key
+ * is a typo, two edits in `run` is a different word — and a suggestion that is
+ * wrong is worse than none, since it reads as an instruction.
+ */
+export function closestMatch(word: string, candidates: readonly string[]): string | undefined {
+  const typed = word.toLowerCase();
+  const limit = Math.max(1, Math.floor(typed.length / 3));
+  let best: { candidate: string; distance: number } | undefined;
+  for (const candidate of candidates) {
+    const distance = editDistance(typed, candidate.toLowerCase());
+    if (distance <= limit && (best === undefined || distance < best.distance)) best = { candidate, distance };
+  }
+  return best?.candidate;
+}
+
 /**
  * `412ms`, `21.0s`, `1m 4s`, `1h 20m`.
  *
