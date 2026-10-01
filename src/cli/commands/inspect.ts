@@ -446,7 +446,13 @@ export async function watchCommand(
   const intervalMs = Math.max(250, Number.parseInt(options.interval ?? '1000', 10) || 1000);
   let seen = 0;
 
-  const renderer = json ? undefined : rendererFor(initial);
+  // Ctrl-C here means "stop watching", and nothing else: the run belongs to
+  // another process and is not this command's to cancel. The display reads
+  // single keys in raw mode, where Ctrl-C is a keystroke rather than a signal,
+  // so it is the display that has to say when to leave — a watch that only
+  // waited for SIGINT could not be exited from the keyboard at all.
+  const leaving = new AbortController();
+  const renderer = json ? undefined : rendererFor(initial, {}, { onInterrupt: () => leaving.abort() });
   renderer?.start();
 
   for (;;) {
@@ -461,6 +467,9 @@ export async function watchCommand(
     seen = events.length;
 
     const state = await store.loadState();
+    // The display was built around the first snapshot. Folding each new one in
+    // keeps the diff, cost and findings it shows as current as its phases.
+    Object.assign(initial, state);
     if (isTerminal(state.phase)) {
       // The same verdict `relay run` would have exited with, so watching a run
       // from another terminal answers the same question the run itself did.
@@ -480,8 +489,28 @@ export async function watchCommand(
       return code;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (await interrupted(leaving.signal, intervalMs)) {
+      renderer?.close();
+      out(dim(`Stopped watching ${state.runId}. The run itself is untouched — \`relay stop ${state.runId}\` cancels it.`));
+      return EXIT.cancelled;
+    }
   }
+}
+
+/** Waits out one poll interval. True when the signal fired first. */
+function interrupted(signal: AbortSignal, ms: number): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(false);
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export async function planCommand(runRef: string, options: { json?: boolean } = {}): Promise<number> {

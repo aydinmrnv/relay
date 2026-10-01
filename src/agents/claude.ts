@@ -389,6 +389,10 @@ export class ClaudeHarness implements AgentHarness {
           stdin: options.prompt,
           timeoutMs: options.timeoutMs ?? this.defaultTimeoutMs,
           signal: controller.signal,
+          // A turn is the CLI and everything it started — shells, test
+          // commands, language servers. Cancelling it has to reach all of them.
+          killTree: true,
+          ...(options.env === undefined ? {} : { env: options.env }),
           onStdoutLine: (line) => {
             const parsed = parseJsonLine(line);
             if (parsed === undefined) return;

@@ -55,6 +55,7 @@ import { runToJson } from '../runJson.ts';
 import { RunJsonStream } from '../runStream.ts';
 import { landingOf } from './inspect.ts';
 import { createTracking } from '../../tracking/index.ts';
+import { killProcessTrees } from '../../process/runner.ts';
 import { runQueue } from '../../workflow/queue.ts';
 import { waitForAdmission } from '../../workflow/admission.ts';
 import { pruneArtifacts } from '../../storage/retention.ts';
@@ -766,6 +767,13 @@ export interface RunSignals {
   signal?: AbortSignal;
 }
 
+/**
+ * The signals that mean "this run is over": Ctrl-C, a supervisor's stop, and
+ * the terminal going away. All three take the same path, so a run ended by any
+ * of them is recorded as cancelled with its work committed to its branch.
+ */
+const INTERRUPT_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
 export async function executeRun(
   cli: CliContext,
   state: RunState,
@@ -792,14 +800,6 @@ export async function executeRun(
     note: (text) => out(`  [${state.shortId}] ${text}`),
     warn: (text) => out(warning(`  [${state.shortId}] ${text}`)),
   };
-  const renderer =
-    stream === undefined && options.compact !== true
-      ? rendererFor(state, options, {
-          onStop: () => store.requestCancel(`stopped by user at ${new Date().toISOString()}`),
-        })
-      : undefined;
-  const display: RunDisplay = stream ?? renderer ?? compact;
-
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight. A run started by
   // something that already owns the signals cancels through that instead.
@@ -809,14 +809,39 @@ export async function executeRun(
     void Promise.all(Object.values(cli.harnesses).map((harness) => harness.cancel()));
   };
   let interrupted = false;
-  const onSigint = (): void => {
-    if (interrupted) process.exit(EXIT.cancelled);
+  const onInterrupt = (): void => {
+    if (interrupted) {
+      // The second one means "now": whatever is still running is abandoned.
+      // The terminal is put back first, and nothing a turn started is left
+      // behind to keep working for a run that no longer exists.
+      renderer?.teardown();
+      killProcessTrees();
+      process.exit(EXIT.cancelled);
+    }
     interrupted = true;
     cancel('Cancelling… (press Ctrl-C again to force quit)');
   };
+
+  // The dashboard reads single keys, which puts the terminal in raw mode — and
+  // in raw mode Ctrl-C arrives as a byte on stdin rather than as SIGINT. So the
+  // display is handed the same function the signal reaches: without that the
+  // handler below is unreachable from the keyboard for as long as a run draws.
+  const renderer =
+    stream === undefined && options.compact !== true
+      ? rendererFor(state, options, {
+          onStop: () => store.requestCancel(`stopped by user at ${new Date().toISOString()}`),
+          ...(signals.signal === undefined ? { onInterrupt } : {}),
+        })
+      : undefined;
+  const display: RunDisplay = stream ?? renderer ?? compact;
+
+  // SIGTERM and SIGHUP end a run the way Ctrl-C does. A supervisor stopping the
+  // process and a terminal window being closed are both somebody deciding the
+  // run is over, and dying on the default action would leave state.json
+  // claiming a phase is still in flight, with the agents still spending.
   const outer = signals.signal;
   const onOuterAbort = (): void => cancel('Cancelling…');
-  if (outer === undefined) process.on('SIGINT', onSigint);
+  if (outer === undefined) for (const signal of INTERRUPT_SIGNALS) process.on(signal, onInterrupt);
   else if (outer.aborted) onOuterAbort();
   else outer.addEventListener('abort', onOuterAbort, { once: true });
 
@@ -841,7 +866,7 @@ export async function executeRun(
   } finally {
     renderer?.teardown();
     tracking.stop();
-    if (outer === undefined) process.off('SIGINT', onSigint);
+    if (outer === undefined) for (const signal of INTERRUPT_SIGNALS) process.off(signal, onInterrupt);
     else outer.removeEventListener('abort', onOuterAbort);
   }
 
@@ -863,15 +888,15 @@ export async function executeRun(
 /**
  * The renderer a run is displayed through, built from the run itself.
  *
- * `relay run` and `relay attach` show the same picture of the same run, so they
+ * `relay run` and `relay watch` show the same picture of the same run, so they
  * build it the same way. Only the live run can stop the engine, which is why
- * `hooks` is separate: attaching to someone else's run gets the display without
- * the controls.
+ * `hooks` is separate: watching someone else's run gets the display without
+ * the controls — and its own meaning for Ctrl-C, which is to stop watching.
  */
 export function rendererFor(
   state: RunState,
   options: Pick<RunOptions, 'verbose'> = {},
-  hooks: { onStop?: () => void | Promise<void> } = {},
+  hooks: { onStop?: () => void | Promise<void>; onInterrupt?: () => void } = {},
 ): RunRenderer {
   return new RunRenderer({
     // The renderer supplies the mark; this is only what the run is about. A

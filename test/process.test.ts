@@ -56,6 +56,44 @@ describe('process runner', () => {
     assert.equal(result.ok, false);
   });
 
+  // `npm test` is npm, a shell, node and its workers; an agent CLI is the CLI
+  // and every command it ran. The grandchild here holds the same output pipes
+  // the parent does, so stopping only the parent would leave this call waiting
+  // on a process nothing is ever going to signal.
+  it(
+    'terminates everything a process started when asked to kill the tree',
+    { skip: process.platform === 'win32' ? 'process groups are POSIX; Windows terminates the direct child only' : false },
+    async () => {
+      const grandchild = 'setInterval(() => {}, 60000)';
+      const parent =
+        `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grandchild)}], { stdio: "inherit" });` +
+        'console.log(child.pid); setInterval(() => {}, 60000);';
+      let pid: number | undefined;
+      const result = await runProcess('node', ['-e', parent], {
+        timeoutMs: 1_000,
+        killTree: true,
+        onStdoutLine: (line) => {
+          pid ??= Number.parseInt(line, 10);
+        },
+      });
+
+      assert.equal(result.timedOut, true);
+      assert.ok(pid !== undefined && Number.isInteger(pid), 'the grandchild never reported its pid');
+      // The signal is delivered asynchronously; give the kernel a moment.
+      const deadline = Date.now() + 5_000;
+      const alive = (): boolean => {
+        try {
+          process.kill(pid!, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      while (alive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(alive(), false, 'the grandchild outlived the timeout that stopped its parent');
+    },
+  );
+
   it('cancels via an abort signal', async () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 150);

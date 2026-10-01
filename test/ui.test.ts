@@ -281,6 +281,86 @@ describe('run renderer — interactive', () => {
     view.finish('COMPLETE');
     assert.deepEqual(input.modes, [true, false]);
   });
+
+  // Raw mode is what lets `v` and `s` be single keys, and it is also what
+  // stops Ctrl-C being a signal: the terminal sends the byte and SIGINT goes
+  // to nobody. So the display has to hand the keystroke to whoever owns the
+  // run, every time it is pressed — the second press is the force quit.
+  it('hands Ctrl-C to the run, because raw mode has stopped it being a signal', () => {
+    const stream = new FakeStream();
+    const input = new FakeInput();
+    let interrupts = 0;
+    let stops = 0;
+    const view = new RunRenderer({
+      title: 'Issue #20', agentNames: {}, stream: stream as unknown as NodeJS.WriteStream, input: input as unknown as NodeJS.ReadStream, theme: INTERACTIVE,
+      onStop: () => { stops += 1; },
+      onInterrupt: () => { interrupts += 1; },
+    });
+    view.start();
+    input.write('\u0003');
+    assert.equal(interrupts, 1);
+    input.write('\u0003');
+    assert.equal(interrupts, 2);
+    assert.equal(stops, 0, 'Ctrl-C is not the same request as `s`');
+    view.finish('COMPLETE');
+  });
+
+  it('restores the terminal and exits 130 on Ctrl-C when nobody claimed it', () => {
+    const stream = new FakeStream();
+    const input = new FakeInput();
+    const view = new RunRenderer({ title: 'Issue #20', agentNames: {}, stream: stream as unknown as NodeJS.WriteStream, input: input as unknown as NodeJS.ReadStream, theme: INTERACTIVE });
+    const exit = process.exit;
+    const codes: Array<number | string | null | undefined> = [];
+    process.exit = ((code?: number | string | null) => { codes.push(code); }) as typeof process.exit;
+    try {
+      view.start();
+      input.write('\u0003');
+    } finally {
+      process.exit = exit;
+    }
+    assert.deepEqual(codes, [130]);
+    // Raw mode came off before the exit, not after it.
+    assert.deepEqual(input.modes, [true, false]);
+    view.finish('COMPLETE');
+  });
+
+  it('names the keys that work, and only those', () => {
+    const live = new FakeStream();
+    const liveInput = new FakeInput();
+    const run = new RunRenderer({
+      title: 'Issue #20', agentNames: {}, stream: live as unknown as NodeJS.WriteStream, input: liveInput as unknown as NodeJS.ReadStream, theme: INTERACTIVE,
+      onStop: () => {}, onInterrupt: () => {},
+    });
+    run.start();
+    assert.match(lastRegion(live), /v verbose {2}· {2}d diff {2}· {2}s stop after this phase {2}· {2}Ctrl-C cancel/);
+    // The last frame stays on screen after the keys stop working.
+    run.finish('COMPLETE');
+    assert.doesNotMatch(lastRegion(live), /Ctrl-C/);
+
+    // `relay watch` looks at somebody else's run: it can leave, not stop it.
+    const watched = new FakeStream();
+    const watchInput = new FakeInput();
+    const watch = new RunRenderer({ title: 'Issue #20', agentNames: {}, stream: watched as unknown as NodeJS.WriteStream, input: watchInput as unknown as NodeJS.ReadStream, theme: INTERACTIVE, onInterrupt: () => {} });
+    watch.start();
+    assert.match(lastRegion(watched), /v verbose {2}· {2}d diff {2}· {2}Ctrl-C exit/);
+    assert.doesNotMatch(lastRegion(watched), /stop after this phase/);
+    watchInput.write('s');
+    watchInput.write('q');
+    assert.doesNotMatch(watched.visible, /Stop requested/);
+    assert.doesNotMatch(watched.visible, /Detach/);
+    watch.close();
+
+    // No terminal to read keys from means no keys, so none are advertised.
+    const piped = new FakeStream();
+    const pipe = new FakeInput();
+    pipe.isTTY = false;
+    const unattended = new RunRenderer({ title: 'Issue #20', agentNames: {}, stream: piped as unknown as NodeJS.WriteStream, input: pipe as unknown as NodeJS.ReadStream, theme: INTERACTIVE });
+    unattended.start();
+    assert.doesNotMatch(piped.visible, /Ctrl-C/);
+    assert.deepEqual(pipe.modes, []);
+    unattended.finish('COMPLETE');
+  });
+
   it('redraws in place and shows a spinner on the active phase', () => {
     const stream = new FakeStream();
     const view = renderer(INTERACTIVE, stream);
