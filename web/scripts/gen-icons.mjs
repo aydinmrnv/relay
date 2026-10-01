@@ -3,7 +3,7 @@
 // three thousand Simple Icons. Run automatically before `dev` and `build`.
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
@@ -27,13 +27,16 @@ const missing = [];
 
 let files = [];
 try {
-  files = readdirSync(catalogDir).filter((name) => name.endsWith('.ts'));
+  files = readdirSync(catalogDir).filter((name) => name.endsWith('.ts')).map((name) => join(catalogDir, name));
 } catch {
   files = [];
 }
+// The coding agents are not in the catalog, but their marks are icons all the same.
+files.push(join(root, 'src', 'lib', 'agents', 'marks.ts'));
 
-for (const file of files) {
-  const source = readFileSync(join(catalogDir, file), 'utf8');
+for (const path of files) {
+  const file = basename(path);
+  const source = readFileSync(path, 'utf8');
   for (const match of source.matchAll(/\bsi:\s*['"]([A-Za-z0-9]+)['"]/g)) {
     if (typeof si[match[1]] === 'function' || typeof si[match[1]] === 'object') siNames.add(match[1]);
     else missing.push(`${file}: react-icons/si has no ${match[1]}`);
@@ -62,7 +65,7 @@ const body =
 mkdirSync(dirname(outFile), { recursive: true });
 writeFileSync(outFile, banner + siImport + lucideImport + '\n' + body);
 
-console.log(`gen-icons: ${siList.length} brand icons, ${lucideList.length} lucide icons from ${files.length} catalog file(s).`);
+console.log(`gen-icons: ${siList.length} brand icons, ${lucideList.length} lucide icons from ${files.length} file(s).`);
 if (missing.length > 0) {
   console.warn(`gen-icons: ${missing.length} icon name(s) did not resolve and will fall back to a monogram:`);
   for (const line of missing) console.warn('  - ' + line);

@@ -104,11 +104,12 @@ function RealForm({ connector, spec, onDone }: { connector: Connector; spec: Cre
     try {
       const connection = await connectForReal(connector.id, value, label);
       toast.success(`${connector.name} connected`, {
-        description: `${connector.name} accepted ${spec.noun.replace(/^an? /, 'the ')}. Workflows post as “${connection.account}”.`,
+        // What the stored webhook is used for today, and what it is not: a run does not post through it yet.
+        description: `${connector.name} accepted ${spec.noun.replace(/^an? /, 'the ')}, and it is stored encrypted as “${connection.account}”. It is used for test messages; an exported workflow still needs it as a secret in its repository.`,
         action: {
           label: 'Send a test message',
           onClick: () => {
-            void sendTestMessage(connector.id, brand.name).then(
+            void sendTestMessage(connector.id).then(
               () => toast.success('Test message sent', { description: `Look for it in ${connection.account}.` }),
               (error: unknown) => toast.error(`${connector.name} did not take the test message`, { description: error instanceof Error ? error.message : undefined }),
             );

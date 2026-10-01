@@ -2,10 +2,10 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
-import { ArrowRight, Bot, Eye, GitFork, Link2, Loader2, Plug, Shuffle } from 'lucide-react';
+import { ArrowRight, Bot, Eye, Flag, GitFork, Link2, Loader2, Plug, Shuffle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { BrandMark } from '@/components/app/brand-mark';
@@ -18,6 +18,7 @@ import { useAccount, useWorkspaceReady } from '@/lib/cloud/account';
 import { getConnector } from '@/lib/connectors';
 import { AGENT_OPTIONS } from '@/lib/connectors/catalog/core';
 import { timeAgo } from '@/lib/format';
+import { SUPPORT_EMAIL } from '@/lib/links';
 import { useStudio } from '@/lib/store';
 import { describeWorkflow } from '@/lib/workflow/describe';
 import type { Workflow } from '@/lib/workflow/schema';
@@ -74,9 +75,26 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
   };
 
   const copyLink = async () => {
-    await navigator.clipboard.writeText(window.location.href);
-    toast.success('Link copied');
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      toast.success('Link copied');
+    } catch {
+      toast.error('Could not copy the link', { description: 'The browser refused access to the clipboard. Copy it from the address bar.' });
+    }
   };
+
+  // Counted here, by a browser that showed the page, once per tab: not on the
+  // server for every fetch, where a crawler or a link preview is a "view".
+  useEffect(() => {
+    const key = `relay:viewed:${share.slug}`;
+    try {
+      if (window.sessionStorage.getItem(key) !== null) return;
+      window.sessionStorage.setItem(key, '1');
+    } catch {
+      // No session storage: count it anyway.
+    }
+    void fetch(`/api/share/${share.slug}/view`, { method: 'POST' }).catch(() => undefined);
+  }, [share.slug]);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -119,7 +137,7 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
             </span>
             <span suppressHydrationWarning>updated {timeAgo(share.updatedAt)}</span>
             <span className="inline-flex items-center gap-1">
-              <Eye className="size-3.5" aria-hidden /> {share.views + 1}
+              <Eye className="size-3.5" aria-hidden /> {share.views} {share.views === 1 ? 'view' : 'views'}
             </span>
             <span className="inline-flex items-center gap-1">
               <Shuffle className="size-3.5" aria-hidden /> {share.remixes} {share.remixes === 1 ? 'remix' : 'remixes'}
@@ -191,6 +209,28 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
           </aside>
         </div>
       </main>
+
+      <footer className="border-t">
+        <div className="container flex flex-wrap items-center gap-x-5 gap-y-2 py-5 text-xs text-muted-foreground">
+          <span>
+            Published by {share.authorName}, not by {brand.name}.
+          </span>
+          <a
+            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(`Report a shared workflow: ${share.slug}`)}`}
+            className="inline-flex items-center gap-1 underline-offset-4 hover:text-foreground hover:underline"
+          >
+            <Flag className="size-3" aria-hidden /> Report this workflow
+          </a>
+          <span className="ml-auto flex gap-4">
+            <Link href="/privacy" className="underline-offset-4 hover:text-foreground hover:underline">
+              Privacy
+            </Link>
+            <Link href="/terms" className="underline-offset-4 hover:text-foreground hover:underline">
+              Terms
+            </Link>
+          </span>
+        </div>
+      </footer>
     </div>
   );
 }

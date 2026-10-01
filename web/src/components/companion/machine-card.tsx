@@ -11,6 +11,7 @@ import { CopyButton } from '@/components/runs/copy-button';
 import { REPO_URL } from '@/components/marketing/primitives';
 import { restartCommand, useCompanion, type CompanionStatus } from '@/lib/companion/client';
 import { repositoryLabel } from '@/lib/companion/types';
+import { CLI_INSTALL_COMMAND } from '@/lib/links';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
@@ -18,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { BlockedAccessHelp } from './browser-access';
 
 /** The prebuilt CLI that CI publishes (`.github/workflows/cli-release.yml`); `github:` installs come out empty on current npm. */
-export const INSTALL_COMMAND = 'npm install -g https://github.com/aydinmrnv/relay/releases/download/cli-latest/relay.tgz';
+export const INSTALL_COMMAND = CLI_INSTALL_COMMAND;
 export const CONNECT_COMMAND = 'relay connect';
 
 /** One line on where the studio's machine stands, for badges and the sidebar. */

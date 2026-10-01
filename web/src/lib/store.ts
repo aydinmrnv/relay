@@ -2,14 +2,40 @@
 
 import { useMemo } from 'react';
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
 import { MotionGlobalConfig } from 'motion/react';
-import { brandFromName, DEFAULT_BRAND, type Brand } from './brand';
+import { toast } from 'sonner';
+import { BRAND } from './brand';
+import { withoutSecrets } from './cloud/secrets';
 import { DEFAULT_SETTINGS, type Connection, type Run, type Settings, type Workflow, type WorkflowEdge, type WorkflowNode } from './workflow/schema';
 import { instantiateTemplate, TEMPLATES } from './workflow/templates';
 import { simulateRun } from './workflow/simulate';
 import { repairEdges, repairKnownTemplateIssues } from './workflow/repair';
+
+/** How many runs a browser keeps. The account keeps its own, on its own limit. */
+export const MAX_RUNS = 200;
+/** How many timeline events a run keeps: enough for an hour-long run, and small enough to store and send. */
+export const MAX_RUN_EVENTS = 4000;
+
+/** What an import would do, worked out before anything changes, so the person can be asked first. */
+export interface ImportPlan {
+  /** A single workflow from Export in the builder, or a whole studio export. */
+  kind: 'workflow' | 'workspace';
+  workflows: Workflow[];
+  runs: Run[];
+  /** Markers only: a real connection belongs to the account that made it. */
+  connections: Record<string, Connection>;
+  /** Ids in `workflows` that are already here. */
+  clashes: string[];
+  /** Runs in the file that are not here yet. */
+  newRuns: number;
+  /** Workflows and runs in the file that were left out because they are not in a shape the studio can draw. */
+  rejected: number;
+}
+
+/** What to do with imported workflows whose id is already here. */
+export type ClashChoice = 'replace' | 'copy' | 'skip';
 
 /** A whole workspace, as the server hands it over after signing in. */
 export interface WorkspaceSnapshot {
@@ -18,13 +44,23 @@ export interface WorkspaceSnapshot {
   runs: Run[];
   connections: Record<string, Connection>;
   settings: Settings;
-  brand: Brand;
   toursSeen: Record<string, boolean>;
   checklistDismissed: boolean;
 }
 
 export interface StudioState {
   hydrated: boolean;
+  /**
+   * Set when what this browser had saved could not be read back in full: how
+   * many workflows and runs were left out, or `unreadable` when none of it
+   * could be used. The studio still starts; a notice offers a reset.
+   */
+  storageProblem: { dropped: number } | 'unreadable' | null;
+  /**
+   * Runs dropped here by the `MAX_RUNS` cap, not by the person. The account
+   * keeps them: sync must not read a trim as a delete.
+   */
+  trimmedRuns: ReadonlySet<string>;
   seeded: boolean;
   /**
    * Whose workspace this is: a user id when it mirrors an account, `null` for
@@ -37,13 +73,11 @@ export interface StudioState {
    * can tell clearing every run apart from deleting the last one.
    */
   runsClearedAt: number;
-  brand: Brand;
   workflows: Record<string, Workflow>;
   runs: Run[];
   connections: Record<string, Connection>;
   settings: Settings;
 
-  setBrand: (name: string, tagline?: string) => void;
   upsertWorkflow: (workflow: Workflow) => void;
   setGraph: (id: string, nodes: WorkflowNode[], edges: WorkflowEdge[]) => void;
   renameWorkflow: (id: string, name: string, description?: string) => void;
@@ -73,21 +107,144 @@ export interface StudioState {
   replaceWorkspace: (snapshot: WorkspaceSnapshot) => void;
   /** Back to an empty guest workspace, e.g. after signing out on a shared computer. */
   resetToGuest: () => void;
-  importAll: (payload: unknown) => { ok: boolean; message: string };
+  /** Carries out an import somebody has seen the plan for. Adds; never removes a run or a workflow. */
+  applyImport: (plan: ImportPlan, clashes: ClashChoice) => string;
   exportAll: () => string;
   markHydrated: () => void;
 }
 
-const STORAGE_KEY = 'agent-workflow-studio';
+export const STORAGE_KEY = 'agent-workflow-studio';
+
+/** What is written to localStorage. */
+type Persisted = Pick<StudioState, 'seeded' | 'owner' | 'workflows' | 'runs' | 'connections' | 'settings' | 'toursSeen' | 'checklistDismissed'>;
+
+/* ------------------------------------------------------------------ */
+/* Saving to this browser                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * localStorage, written at most twice a second.
+ *
+ * The store changes on every keystroke in a field and on every line of a run;
+ * serialising the whole studio each time blocks the page for longer the more
+ * runs there are. So a write waits half a second and takes whatever is newest
+ * then, and a tab that is going away writes at once. A write the browser
+ * refuses (the 5 MB quota) is retried once without run timelines, which are
+ * most of the weight, and the person is told once rather than on every change.
+ */
+function browserStorage(): PersistStorage<Persisted> {
+  let pending: { name: string; value: StorageValue<Persisted> } | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let warned = false;
+
+  const write = (name: string, value: StorageValue<Persisted>) => {
+    try {
+      window.localStorage.setItem(name, JSON.stringify(value));
+      warned = false;
+      return;
+    } catch {
+      // Full, or storage is unavailable (private mode, a blocked site): try the lighter copy.
+    }
+    try {
+      const lighter = { ...value, state: { ...value.state, runs: value.state.runs.map((run) => ({ ...run, events: run.events.slice(-50) })) } };
+      window.localStorage.setItem(name, JSON.stringify(lighter));
+    } catch {
+      // Nothing fits. The tab still has everything; say what that means.
+    }
+    if (!warned) {
+      warned = true;
+      toast.warning('This browser’s storage is full', {
+        description: 'Your work is still here in this tab, but run timelines may not survive a reload. Clear old runs under Runs to make room.',
+        duration: 12_000,
+      });
+    }
+  };
+
+  const flush = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    if (pending === null) return;
+    const { name, value } = pending;
+    pending = null;
+    write(name, value);
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flush();
+    });
+    // Another tab saved. A guest's work lives only here, so take theirs
+    // rather than write an older copy over it later. An account's tabs each
+    // answer to the server instead, which keeps both sides of a conflict.
+    window.addEventListener('storage', (event) => {
+      if (event.key !== STORAGE_KEY || event.newValue === null) return;
+      if (useStudio.getState().owner !== null) return;
+      pending = null;
+      void useStudio.persist.rehydrate();
+    });
+  }
+
+  return {
+    getItem: (name) => {
+      const raw = window.localStorage.getItem(name);
+      if (raw === null) return null;
+      return JSON.parse(raw) as StorageValue<Persisted>;
+    },
+    setItem: (name, value) => {
+      pending = { name, value };
+      if (timer === null) timer = setTimeout(flush, 500);
+    },
+    removeItem: (name) => {
+      pending = null;
+      window.localStorage.removeItem(name);
+    },
+  };
+}
+
+/** Forgets everything this browser saved for the studio and starts it again. The account, if any, is untouched. */
+export function resetLocalData(): void {
+  try {
+    useStudio.persist.clearStorage();
+  } catch {
+    // Nothing to clear.
+  }
+  window.location.reload();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Enough of a workflow for every screen to draw it without throwing. */
+function workflowUsable(value: unknown): value is Workflow {
+  if (!isRecord(value) || typeof value['id'] !== 'string' || typeof value['name'] !== 'string') return false;
+  if (!Array.isArray(value['nodes']) || !Array.isArray(value['edges'])) return false;
+  if (typeof value['createdAt'] !== 'string' || typeof value['updatedAt'] !== 'string') return false;
+  const nodesOk = value['nodes'].every((node) => isRecord(node) && typeof node['id'] === 'string' && isRecord(node['position']) && isRecord(node['data']) && typeof node['data']['typeId'] === 'string' && isRecord(node['data']['config']));
+  const edgesOk = value['edges'].every((edge) => isRecord(edge) && typeof edge['id'] === 'string' && typeof edge['source'] === 'string' && typeof edge['target'] === 'string');
+  return nodesOk && edgesOk;
+}
+
+/** Enough of a run for the runs list, the dashboard and the run page. */
+function runUsable(value: unknown): value is Run {
+  if (!isRecord(value) || typeof value['id'] !== 'string' || typeof value['workflowId'] !== 'string' || typeof value['startedAt'] !== 'string') return false;
+  return Array.isArray(value['events']) && Array.isArray(value['phases']) && isRecord(value['nodeStatus']) && isRecord(value['trigger']) && isRecord(value['trigger']['payload']) && typeof value['costUsd'] === 'number';
+}
+
+function capEvents(run: Run): Run {
+  return run.events.length > MAX_RUN_EVENTS ? { ...run, events: run.events.slice(-MAX_RUN_EVENTS) } : run;
+}
 
 export const useStudio = create<StudioState>()(
   persist(
     (set, get) => ({
       hydrated: false,
+      storageProblem: null,
+      trimmedRuns: new Set<string>(),
       seeded: false,
       owner: null,
       runsClearedAt: 0,
-      brand: DEFAULT_BRAND,
       workflows: {},
       runs: [],
       connections: {},
@@ -96,8 +253,6 @@ export const useStudio = create<StudioState>()(
       checklistDismissed: false,
 
       markHydrated: () => set({ hydrated: true }),
-
-      setBrand: (name, tagline) => set({ brand: brandFromName(name, tagline ?? get().brand.tagline) }),
 
       upsertWorkflow: (workflow) =>
         set((state) => ({ workflows: { ...state.workflows, [workflow.id]: { ...workflow, updatedAt: new Date().toISOString() } } })),
@@ -153,8 +308,17 @@ export const useStudio = create<StudioState>()(
         return copy;
       },
 
-      addRun: (run) => set((state) => ({ runs: [run, ...state.runs].slice(0, 200) })),
-      updateRun: (run) => set((state) => ({ runs: state.runs.map((existing) => (existing.id === run.id ? run : existing)) })),
+      addRun: (run) =>
+        set((state) => {
+          const runs = [capEvents(run), ...state.runs];
+          if (runs.length <= MAX_RUNS) return { runs };
+          return { runs: runs.slice(0, MAX_RUNS), trimmedRuns: new Set([...state.trimmedRuns, ...runs.slice(MAX_RUNS).map((dropped) => dropped.id)]) };
+        }),
+      updateRun: (run) =>
+        set((state) => {
+          const kept = capEvents(run);
+          return { runs: state.runs.map((existing) => (existing.id === run.id ? kept : existing)) };
+        }),
       clearRuns: () => set({ runs: [], runsClearedAt: Date.now() }),
       deleteRun: (id) => set((state) => ({ runs: state.runs.filter((run) => run.id !== id) })),
 
@@ -178,7 +342,7 @@ export const useStudio = create<StudioState>()(
       seedDemo: async () => {
         const state = get();
         if (state.seeded) return;
-        const brand = state.brand;
+        const brand = BRAND;
         const workflows: Record<string, Workflow> = {};
         for (const template of TEMPLATES) {
           const workflow = instantiateTemplate(template.id, brand, state.settings.defaultRepository);
@@ -207,7 +371,7 @@ export const useStudio = create<StudioState>()(
 
       // Signed in, an empty workspace stays empty: seeding is for guests.
       resetAll: () =>
-        set((state) => ({ workflows: {}, runs: [], runsClearedAt: Date.now(), connections: {}, seeded: state.owner !== null, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND, toursSeen: {}, checklistDismissed: false })),
+        set((state) => ({ workflows: {}, runs: [], runsClearedAt: Date.now(), connections: {}, seeded: state.owner !== null, settings: DEFAULT_SETTINGS, toursSeen: {}, checklistDismissed: false })),
 
       replaceWorkspace: (snapshot) =>
         set({
@@ -217,51 +381,69 @@ export const useStudio = create<StudioState>()(
           runs: snapshot.runs,
           connections: snapshot.connections,
           settings: snapshot.settings,
-          brand: snapshot.brand,
           toursSeen: snapshot.toursSeen,
           checklistDismissed: snapshot.checklistDismissed,
         }),
 
-      resetToGuest: () => set({ owner: null, seeded: false, workflows: {}, runs: [], connections: {}, settings: DEFAULT_SETTINGS, brand: DEFAULT_BRAND, toursSeen: {}, checklistDismissed: false }),
+      resetToGuest: () => set({ owner: null, seeded: false, workflows: {}, runs: [], connections: {}, settings: DEFAULT_SETTINGS, toursSeen: {}, checklistDismissed: false }),
 
+      // Secret fields stay in the browser they were typed in: a backup file is something people email and commit.
       exportAll: () => {
-        const { brand, workflows, runs, connections, settings } = get();
-        return JSON.stringify({ exportedAt: new Date().toISOString(), brand, workflows, runs, connections, settings }, null, 2);
+        const { workflows, runs, connections, settings } = get();
+        const safe = Object.fromEntries(Object.entries(workflows).map(([id, workflow]) => [id, withoutSecrets(workflow)]));
+        return JSON.stringify({ exportedAt: new Date().toISOString(), workflows: safe, runs, connections, settings }, null, 2);
       },
 
-      importAll: (payload) => {
-        if (payload === null || typeof payload !== 'object') return { ok: false, message: 'Not a JSON object.' };
-        const data = payload as Record<string, unknown>;
-        // A single exported workflow bundle.
-        if (data['workflow'] !== undefined && typeof data['workflow'] === 'object') {
-          const workflow = data['workflow'] as Workflow;
-          if (typeof workflow.id !== 'string' || !Array.isArray(workflow.nodes)) return { ok: false, message: 'The workflow is missing an id or nodes.' };
-          const id = get().workflows[workflow.id] === undefined ? workflow.id : `wf_${nanoid(10)}`;
-          get().upsertWorkflow({ ...workflow, id, name: id === workflow.id ? workflow.name : `${workflow.name} (imported)` });
-          return { ok: true, message: `Imported "${workflow.name}".` };
+      applyImport: (plan, clashes) => {
+        const state = get();
+        const workflows = { ...state.workflows };
+        let added = 0;
+        let replaced = 0;
+        let copied = 0;
+        for (const workflow of plan.workflows) {
+          const incoming = repairKnownTemplateIssues(repairEdges({ ...workflow, demo: undefined }));
+          if (workflows[incoming.id] === undefined) {
+            workflows[incoming.id] = incoming;
+            added += 1;
+          } else if (clashes === 'replace') {
+            workflows[incoming.id] = { ...incoming, updatedAt: new Date().toISOString() };
+            replaced += 1;
+          } else if (clashes === 'copy') {
+            const id = `wf_${nanoid(10)}`;
+            workflows[id] = { ...incoming, id, name: `${incoming.name} (imported)`, enabled: false, updatedAt: new Date().toISOString() };
+            copied += 1;
+          }
         }
-        if (data['workflows'] !== undefined && typeof data['workflows'] === 'object') {
-          const workflows = data['workflows'] as Record<string, Workflow>;
-          set((state) => ({
-            workflows: { ...state.workflows, ...workflows },
-            runs: Array.isArray(data['runs']) ? (data['runs'] as Run[]) : state.runs,
-            // Markers only: a real connection belongs to the account that made it, and its credential never leaves that server.
-            connections: typeof data['connections'] === 'object' && data['connections'] !== null ? { ...markers(data['connections'] as Record<string, Connection>), ...realConnections(state.connections) } : state.connections,
-            brand: typeof data['brand'] === 'object' && data['brand'] !== null ? (data['brand'] as Brand) : state.brand,
-            seeded: true,
-          }));
-          return { ok: true, message: `Imported ${Object.keys(workflows).length} workflow(s).` };
-        }
-        return { ok: false, message: 'Unrecognised file. Expected a workflow bundle or a full export.' };
+        // Runs are only ever added: the ones already here stay, whatever the file holds.
+        const known = new Set(state.runs.map((run) => run.id));
+        const fresh = plan.runs.filter((run) => !known.has(run.id) && workflows[run.workflowId] !== undefined).map(capEvents);
+        const merged = [...state.runs, ...fresh].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+        const trimmed = merged.slice(MAX_RUNS).map((run) => run.id);
+        set({
+          workflows,
+          runs: merged.slice(0, MAX_RUNS),
+          trimmedRuns: trimmed.length === 0 ? state.trimmedRuns : new Set([...state.trimmedRuns, ...trimmed]),
+          // An app already connected here stays as it is; the file can only add markers for the rest.
+          connections: { ...plan.connections, ...state.connections },
+          seeded: true,
+        });
+        const parts = [
+          added > 0 ? `${added} new` : null,
+          replaced > 0 ? `${replaced} replaced` : null,
+          copied > 0 ? `${copied} added as ${copied === 1 ? 'a copy' : 'copies'}` : null,
+        ].filter(Boolean);
+        const count = added + replaced + copied;
+        if (plan.kind === 'workflow' && count === 1) return `Imported “${plan.workflows[0]!.name}”${copied === 1 ? ' as a copy' : ''}.`;
+        return `Imported ${count} ${count === 1 ? 'workflow' : 'workflows'}${parts.length > 1 || replaced + copied > 0 ? ` (${parts.join(', ')})` : ''}${fresh.length > 0 ? ` and ${fresh.length} ${fresh.length === 1 ? 'run' : 'runs'}` : ''}.`;
       },
     }),
     {
       name: STORAGE_KEY,
-      storage: createJSONStorage(() => (typeof window === 'undefined' ? (undefined as unknown as Storage) : window.localStorage)),
-      partialize: (state) => ({
+      version: 2,
+      storage: typeof window === 'undefined' ? undefined : browserStorage(),
+      partialize: (state): Persisted => ({
         seeded: state.seeded,
         owner: state.owner,
-        brand: state.brand,
         workflows: state.workflows,
         runs: state.runs,
         connections: state.connections,
@@ -269,36 +451,87 @@ export const useStudio = create<StudioState>()(
         toursSeen: state.toursSeen,
         checklistDismissed: state.checklistDismissed,
       }),
-      merge: (persisted, current) => {
-        const saved = (persisted ?? {}) as Partial<StudioState>;
-        // A test run still marked running after a reload was interrupted: the
-        // simulator lived in the tab that went away. Say so instead of
-        // leaving it spinning forever. A run on the paired machine did not
-        // live here, and is picked back up once the machine answers.
-        const runs = (saved.runs ?? current.runs).map((run) =>
-          run.status === 'running' && run.source !== 'machine'
-            ? { ...run, status: 'cancelled' as const, finishedAt: run.finishedAt ?? run.events.at(-1)?.at ?? run.startedAt, summary: run.summary ?? 'Interrupted: the tab was closed or reloaded while this test run was playing.' }
-            : run,
-        );
-        const workflows = Object.fromEntries(Object.entries(saved.workflows ?? current.workflows).map(([id, workflow]) => [id, repairKnownTemplateIssues(repairEdges(workflow))]));
-        return { ...current, ...saved, workflows, runs, settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}), auth: { ...DEFAULT_SETTINGS.auth, ...(saved.settings?.auth ?? {}) } } };
+      // Version 1 (and the unversioned saves before it) kept a product name
+      // people could change, and attached new workflows to a made-up
+      // repository. Neither exists any more.
+      migrate: (persisted, version) => {
+        const saved = (isRecord(persisted) ? { ...persisted } : {}) as Record<string, unknown>;
+        if (version < 2) {
+          delete saved['brand'];
+          if (isRecord(saved['settings']) && saved['settings']['defaultRepository'] === 'acme/api') saved['settings'] = { ...saved['settings'], defaultRepository: '' };
+          if (isRecord(saved['workflows'])) {
+            saved['workflows'] = Object.fromEntries(
+              Object.entries(saved['workflows']).map(([id, workflow]) => [id, isRecord(workflow) && workflow['repository'] === 'acme/api' ? { ...workflow, repository: '' } : workflow]),
+            );
+          }
+        }
+        return saved as Persisted;
       },
-      onRehydrateStorage: () => (state) => {
+      // What was saved is data from another time: an older build, a file
+      // somebody imported, a write cut short by a full disk. One bad workflow
+      // must not take the studio down with it, so each is checked and
+      // repaired on its own and left out if it cannot be drawn.
+      merge: (persisted, current) => {
+        try {
+          const saved = (isRecord(persisted) ? persisted : {}) as Partial<Persisted>;
+          let dropped = 0;
+          const workflows: Record<string, Workflow> = {};
+          for (const [id, workflow] of Object.entries(isRecord(saved.workflows) ? saved.workflows : {})) {
+            try {
+              if (!workflowUsable(workflow)) throw new Error('not a workflow');
+              workflows[id] = repairKnownTemplateIssues(repairEdges(workflow));
+            } catch {
+              dropped += 1;
+            }
+          }
+          const runs: Run[] = [];
+          for (const run of Array.isArray(saved.runs) ? saved.runs : []) {
+            if (!runUsable(run)) {
+              dropped += 1;
+              continue;
+            }
+            // A test run still marked running after a reload was interrupted: the
+            // simulator lived in the tab that went away. Say so instead of
+            // leaving it spinning forever. A run on the paired machine did not
+            // live here, and is picked back up once the machine answers.
+            runs.push(
+              run.status === 'running' && run.source !== 'machine'
+                ? { ...run, status: 'cancelled' as const, finishedAt: run.finishedAt ?? run.events.at(-1)?.at ?? run.startedAt, summary: run.summary ?? 'Interrupted: the tab was closed or reloaded while this test run was playing.' }
+                : run,
+            );
+          }
+          const settings = isRecord(saved.settings) ? (saved.settings as Partial<Settings>) : {};
+          return {
+            ...current,
+            seeded: saved.seeded === true,
+            owner: typeof saved.owner === 'string' ? saved.owner : null,
+            workflows,
+            runs,
+            connections: isRecord(saved.connections) ? (saved.connections as Record<string, Connection>) : {},
+            settings: { ...DEFAULT_SETTINGS, ...settings, auth: { ...DEFAULT_SETTINGS.auth, ...(isRecord(settings.auth) ? settings.auth : {}) } },
+            toursSeen: isRecord(saved.toursSeen) ? (saved.toursSeen as Record<string, boolean>) : {},
+            checklistDismissed: saved.checklistDismissed === true,
+            storageProblem: dropped > 0 ? { dropped } : null,
+          };
+        } catch {
+          return { ...current, storageProblem: 'unreadable' as const };
+        }
+      },
+      onRehydrateStorage: () => (state, error) => {
+        if (state === undefined || error !== undefined) {
+          // The saved copy could not be parsed at all. Start empty rather than
+          // never start: nothing on the page draws until the store says it is
+          // hydrated. The store may not be assigned yet, hence the microtask.
+          queueMicrotask(() => useStudio.setState({ hydrated: true, storageProblem: 'unreadable' }));
+          return;
+        }
         // Before the first animation can start, not after the first effect.
-        MotionGlobalConfig.skipAnimations = state?.settings.motion === 'reduced';
-        state?.markHydrated();
+        MotionGlobalConfig.skipAnimations = state.settings.motion === 'reduced';
+        state.markHydrated();
       },
     },
   ),
 );
-
-function markers(connections: Record<string, Connection>): Record<string, Connection> {
-  return Object.fromEntries(Object.entries(connections).filter(([, connection]) => connection.credential === undefined));
-}
-
-function realConnections(connections: Record<string, Connection>): Record<string, Connection> {
-  return Object.fromEntries(Object.entries(connections).filter(([, connection]) => connection.credential !== undefined));
-}
 
 /** Sorted newest first. Memoised on the map reference, because a selector that
  * returns a fresh array on every call is an infinite loop under useSyncExternalStore. */

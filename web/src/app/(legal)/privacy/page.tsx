@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { DEFAULT_BRAND } from '@/lib/brand';
+import { BRAND } from '@/lib/brand';
 import { REPO_URL } from '@/lib/links';
 
 export const metadata: Metadata = { title: 'Privacy' };
@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: 'Privacy' };
 const UPDATED = 'September 24, 2026';
 
 export default function PrivacyPage() {
-  const name = DEFAULT_BRAND.name;
+  const name = BRAND.name;
   return (
     <>
       <h1>Privacy</h1>

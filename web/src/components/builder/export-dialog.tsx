@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CircleAlert, Download, FileArchive, FileCode2, FolderInput, KeyRound } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -40,8 +41,15 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
   const brand = useBrand();
   const auth = useStudio((state) => state.settings.auth);
   const markExported = useStudio((state) => state.markExported);
+  const updateWorkflowMeta = useStudio((state) => state.updateWorkflowMeta);
   const compiled = useMemo(() => (workflow === null ? null : compileWorkflow(workflow, brand, { auth })), [workflow, brand, auth]);
-  const errors = useMemo(() => (workflow === null ? [] : validateWorkflow(workflow).issues.filter((issue) => issue.level === 'error')), [workflow]);
+  // What stands between this workflow and files worth committing: the
+  // validator's errors, and what only the export can know (a repository, an
+  // allowlist of real logins). While there is any, nothing is handed over.
+  const errors = useMemo(
+    () => (workflow === null || compiled === null ? [] : [...validateWorkflow(workflow).issues.filter((issue) => issue.level === 'error').map((issue) => issue.message), ...compiled.blockers]),
+    [workflow, compiled],
+  );
   const canInstall = useCompanionCan('install');
   const machine = useCompanion((state) => state.hello);
   const [installing, setInstalling] = useState(false);
@@ -49,7 +57,8 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
   if (workflow === null || compiled === null) return null;
 
   const secrets = [...new Map(compiled.secrets.map((secret) => [secret.name, secret])).values()];
-  const triggerLabel = readTriggerLabel(compiled.files[0]?.content);
+  const blocked = errors.length > 0;
+  const needsRepository = !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test((workflow.repository ?? '').trim());
 
   const downloadOne = (path: string, content: string) => {
     saveBlob(new Blob([content], { type: 'text/plain' }), path.split('/').pop() ?? path);
@@ -101,13 +110,26 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
         {errors.length > 0 ? (
           <div className="rounded-lg border border-destructive/40 bg-destructive/8 p-3 text-xs text-destructive">
             <p className="flex items-center gap-1.5 font-medium">
-              <CircleAlert className="size-3.5" /> Fix {errors.length === 1 ? 'this' : `these ${errors.length}`} first — the CLI would refuse this config:
+              <CircleAlert className="size-3.5" /> Fix {errors.length === 1 ? 'this' : `these ${errors.length}`} first. The files below are a preview; they cannot be downloaded, copied or installed until then.
             </p>
             <ul className="mt-1 list-disc pl-6">
-              {errors.map((issue, index) => (
-                <li key={index}>{issue.message}</li>
+              {errors.map((message, index) => (
+                <li key={index}>{message}</li>
               ))}
             </ul>
+            {needsRepository ? (
+              <label className="mt-2 flex flex-wrap items-center gap-2 text-foreground">
+                <span className="font-medium">Repository</span>
+                <Input
+                  className="h-7 w-56 bg-background font-mono text-xs"
+                  placeholder="owner/name"
+                  autoComplete="off"
+                  spellCheck={false}
+                  defaultValue={workflow.repository ?? ''}
+                  onChange={(event) => updateWorkflowMeta(workflow.id, { repository: event.target.value.trim() })}
+                />
+              </label>
+            ) : null}
           </div>
         ) : null}
 
@@ -116,12 +138,12 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
             <Step n={1} title={canInstall ? 'Put it in the repository' : 'Download'}>
               {canInstall ? (
                 <>
-                  <Button size="sm" className="mt-1.5 w-full" onClick={() => void install()} disabled={installing || errors.length > 0}>
+                  <Button size="sm" className="mt-1.5 w-full" onClick={() => void install()} disabled={installing || blocked}>
                     {installing ? <Spinner data-icon="inline-start" /> : <FolderInput data-icon="inline-start" />} Install into {machineRepo ?? 'the repository'}
                   </Button>
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     Written by relay connect on {machine?.machine ?? 'your machine'}; an existing config is merged, not replaced.{' '}
-                    <button type="button" className="underline underline-offset-2" onClick={downloadZip}>
+                    <button type="button" className="underline underline-offset-2 disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60" onClick={downloadZip} disabled={blocked}>
                       Download the .zip
                     </button>{' '}
                     instead.
@@ -129,7 +151,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
                 </>
               ) : (
                 <>
-                  <Button size="sm" className="mt-1.5 w-full" onClick={downloadZip}>
+                  <Button size="sm" className="mt-1.5 w-full" onClick={downloadZip} disabled={blocked}>
                     <FileArchive data-icon="inline-start" /> Download .zip
                   </Button>
                   <p className="mt-1.5 text-xs text-muted-foreground">
@@ -163,11 +185,17 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
             </Step>
             <Step n={4} title="Start it">
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {triggerLabel === null ? (
-                  'Trigger it the way its first node describes.'
+                {compiled.start.by === 'label' ? (
+                  <>
+                    Add the label <Mono>{compiled.start.label}</Mono> to an issue. Whoever adds it must be on the allowlist.
+                  </>
+                ) : compiled.start.by === 'event' ? (
+                  <>
+                    The Action fires when {compiled.start.event}. Relay works on that issue only if it also carries <Mono>{compiled.start.label}</Mono>, added by someone on the allowlist.
+                  </>
                 ) : (
                   <>
-                    Add the label <span className="rounded bg-muted px-1 font-mono">{triggerLabel}</span> to an issue, or run the workflow by hand from the Actions tab.
+                    Nothing starts this one by itself: its trigger is not a GitHub issue event. Label an issue <Mono>{compiled.start.label}</Mono>, then run the workflow from the Actions tab with that issue’s number.
                   </>
                 )}
               </p>
@@ -185,20 +213,23 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
               </ul>
             ) : null}
             <Tabs defaultValue={compiled.files[0]?.path} className="min-h-0 flex-1">
-              <TabsList variant="line" className="h-auto! w-full flex-wrap justify-start gap-x-1 gap-y-0">
+              {/* One row that scrolls sideways: the paths are long, and wrapped tabs spilled onto the line below. */}
+              <TabsList variant="line" className="w-full justify-start gap-x-1 overflow-x-auto overflow-y-hidden">
                 {compiled.files.map((file) => (
-                  <TabsTrigger key={file.path} value={file.path} className="flex-none px-2 font-mono text-[11px]">
-                    {file.path}
+                  <TabsTrigger key={file.path} value={file.path} title={file.path} className="flex-none px-2 font-mono text-[11px]">
+                    {file.path.split('/').pop()}
                   </TabsTrigger>
                 ))}
               </TabsList>
               {compiled.files.map((file) => (
                 <TabsContent key={file.path} value={file.path} className="flex min-h-0 flex-col gap-2">
-                  <p className="text-xs text-muted-foreground">{file.description}</p>
+                  <p className="text-xs text-pretty text-muted-foreground">
+                    <span className="font-mono text-[11px] text-foreground">{file.path}</span> · {file.description}
+                  </p>
                   <div className="relative min-h-0 rounded-lg border bg-muted/40">
                     <div className="absolute top-2 right-2 z-10 flex gap-1">
-                      <CopyConfirmButton value={file.content} onCopied={() => markExported(workflow.id)} />
-                      <Button size="icon-xs" variant="outline" className="bg-card" aria-label={`Download ${file.path}`} onClick={() => downloadOne(file.path, file.content)}>
+                      <CopyConfirmButton value={file.content} onCopied={() => markExported(workflow.id)} disabled={blocked} />
+                      <Button size="icon-xs" variant="outline" className="bg-card" aria-label={`Download ${file.path}`} onClick={() => downloadOne(file.path, file.content)} disabled={blocked}>
                         <Download />
                       </Button>
                     </div>
@@ -228,12 +259,6 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   );
 }
 
-function readTriggerLabel(configJson: string | undefined): string | null {
-  if (configJson === undefined) return null;
-  try {
-    const parsed = JSON.parse(configJson) as { workflow?: { triggerLabel?: unknown } };
-    return typeof parsed.workflow?.triggerLabel === 'string' && parsed.workflow.triggerLabel.length > 0 ? parsed.workflow.triggerLabel : null;
-  } catch {
-    return null;
-  }
+function Mono({ children }: { children: React.ReactNode }) {
+  return <span className="rounded bg-muted px-1 font-mono">{children}</span>;
 }

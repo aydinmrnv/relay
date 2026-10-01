@@ -1,10 +1,13 @@
 /**
  * A run that costs nothing.
  *
- * The prototype cannot spawn Claude Code or Codex from a browser, so a "test
- * run" walks the graph and plays back what each node would do, with the same
- * phases, rounds, budgets and refusals the real pipeline has. Everything is
- * seeded, so the same workflow replays the same run until you change it.
+ * A browser cannot spawn Claude Code or Codex, so a "test run" walks the
+ * graph and plays back what each node would do, with the same phases, rounds,
+ * budgets and refusals the real pipeline has. Everything is seeded, so the
+ * same workflow replays the same run until you change it. Timings and costs
+ * are drawn from typical ranges per phase: the review level changes how many
+ * rounds are played, but which agent or model fills a role does not change
+ * the numbers, because nothing here knows what a given model would cost.
  */
 import { getNodeType, type NodeTypeDef } from '../connectors';
 import type { Brand } from '../brand';
@@ -36,11 +39,15 @@ const PHASES: Array<{ phase: string; label: string; agent?: 'planner' | 'planRev
 
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', aider: 'Aider' };
 
+/** Where a test run pretends to work when the workflow names no repository. */
+export const SAMPLE_REPOSITORY = 'acme/api';
+
 export async function simulateRun(workflow: Workflow, options: SimulateOptions): Promise<Run> {
   const rng = mulberry32(options.seed ?? hash(workflow.id + workflow.updatedAt));
   const startedAt = new Date();
   const runId = `run_${startedAt.getTime().toString(36)}${Math.floor(rng() * 1e6).toString(36)}`;
-  const repository = options.repository ?? workflow.repository ?? 'acme/api';
+  // A test run needs somewhere to pretend to work; a workflow with no repository yet plays against a sample one.
+  const repository = options.repository || workflow.repository || SAMPLE_REPOSITORY;
   const nodesById = new Map(workflow.nodes.map((node) => [node.id, node]));
   const outgoing = new Map<string, WorkflowEdge[]>();
   for (const edge of workflow.edges) {
@@ -110,9 +117,13 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
 
   let refused = false;
   let failed = false;
-  let waited = false;
   const visited = new Set<string>();
-  const pendingJoins = new Map<string, number>();
+  // A "Merge paths" node waits for every incoming connection. A branch a
+  // Condition or a gate did not take never arrives, so it is counted as it is
+  // skipped: the join continues once every path has either arrived or been
+  // ruled out, and is itself skipped when none arrived.
+  const joins = new Map<string, { arrived: number; ruledOut: number }>();
+  const isJoin = (nodeId: string) => getNodeType(nodesById.get(nodeId)?.data.typeId ?? '')?.id === 'logic.action.merge-paths';
 
   // Execution is a queue of (node, via-handle). Each node runs once; join nodes wait for all inputs.
   const queue: Array<{ nodeId: string }> = [{ nodeId: triggerNode.id }];
@@ -127,15 +138,6 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       const def = node === undefined ? undefined : getNodeType(node.data.typeId);
       if (node === undefined || def === undefined) continue;
 
-      if (def.id === 'logic.action.merge-paths') {
-        const seen = (pendingJoins.get(nodeId) ?? 0) + 1;
-        pendingJoins.set(nodeId, seen);
-        if (seen < (incomingCount.get(nodeId) ?? 1)) {
-          setStatus(nodeId, 'waiting');
-          emit({ nodeId, kind: 'log', status: 'waiting', message: `${def.name}: waiting for ${(incomingCount.get(nodeId) ?? 1) - seen} more path(s).` });
-          continue;
-        }
-      }
       visited.add(nodeId);
 
       setStatus(nodeId, 'running');
@@ -149,7 +151,6 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       emit({ nodeId, kind: 'node-finished', status: result.status, message: result.message, durationMs: duration, ...(result.detail === undefined ? {} : { detail: result.detail }) });
       if (result.status === 'refused') refused = true;
       if (result.status === 'failed') failed = true;
-      if (result.status === 'waiting') waited = true;
 
       const handles = result.nextHandles;
       const edges = outgoing.get(nodeId) ?? [];
@@ -159,7 +160,8 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
           markSkipped(edge.target);
           continue;
         }
-        queue.push({ nodeId: edge.target });
+        if (isJoin(edge.target)) arriveAtJoin(edge.target, true);
+        else queue.push({ nodeId: edge.target });
       }
     }
   } catch (error) {
@@ -168,15 +170,41 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
   }
 
   for (const node of workflow.nodes) if (run.nodeStatus[node.id] === 'pending') run.nodeStatus[node.id] = 'skipped';
-  return finish(failed ? 'failed' : refused && run.phases.length === 0 ? 'refused' : waited && run.phases.length === 0 ? 'waiting' : 'succeeded');
+  return finish(failed ? 'failed' : refused && run.phases.length === 0 ? 'refused' : 'succeeded');
 
   /* ---------------------------------------------------------------- */
 
   function markSkipped(nodeId: string) {
+    if (isJoin(nodeId)) {
+      arriveAtJoin(nodeId, false);
+      return;
+    }
     if (run.nodeStatus[nodeId] === 'pending') {
       run.nodeStatus[nodeId] = 'skipped';
       for (const edge of outgoing.get(nodeId) ?? []) markSkipped(edge.target);
     }
+  }
+
+  function arriveAtJoin(nodeId: string, arrived: boolean) {
+    if (visited.has(nodeId) || run.nodeStatus[nodeId] === 'skipped') return;
+    const state = joins.get(nodeId) ?? { arrived: 0, ruledOut: 0 };
+    if (arrived) state.arrived += 1;
+    else state.ruledOut += 1;
+    joins.set(nodeId, state);
+    const expected = incomingCount.get(nodeId) ?? 1;
+    if (state.arrived + state.ruledOut < expected) {
+      if (arrived) {
+        setStatus(nodeId, 'waiting');
+        emit({ nodeId, kind: 'log', status: 'waiting', message: `Merge paths: waiting for ${expected - state.arrived - state.ruledOut} more path(s).` });
+      }
+      return;
+    }
+    if (state.arrived > 0) {
+      queue.push({ nodeId });
+      return;
+    }
+    run.nodeStatus[nodeId] = 'skipped';
+    for (const edge of outgoing.get(nodeId) ?? []) markSkipped(edge.target);
   }
 
   function finish(status: RunStatus): Run {
@@ -204,23 +232,29 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       case 'pipeline.action.estimate': {
         const estimate = 0.8 + rng() * 4;
         tick(4000);
+        // Under both names: the templates write `estimateUsd`, and the Filter's own example says `issue.estimate`.
         (context.issue as Record<string, unknown>).estimateUsd = round(estimate);
+        (context.issue as Record<string, unknown>).estimate = round(estimate);
         emit({ nodeId, kind: 'cost', message: `Estimated ${usd(estimate)} from the issue and repository size.`, costUsd: round(estimate) });
         return { status: 'done', message: `Estimated ${usd(estimate)}.`, nextHandles: 'all' };
       }
       case 'gates.action.budget': {
-        const maxRun = Number(config['maxRunCostUsd'] ?? 5);
-        const maxDaily = Number(config['maxDailyCostUsd'] ?? 25);
+        // An emptied field is no ceiling, as it is in the exported config: not $0, which would refuse everything.
+        const maxRun = numberOrNull(config['maxRunCostUsd']);
+        const maxDaily = numberOrNull(config['maxDailyCostUsd']);
         const estimate = Number((context.issue as Record<string, unknown>)['estimateUsd'] ?? round(0.8 + rng() * 4));
-        const spentToday = round(rng() * maxDaily * 0.6);
+        const spentToday = round(rng() * (maxDaily ?? 25) * 0.6);
         tick(200);
-        if (estimate > maxRun) {
+        if (maxRun === null && maxDaily === null) {
+          return { status: 'done', message: `No ceiling is set, so nothing is refused: estimate ${usd(estimate)}.`, detail: 'Fill in a per-run or daily cost, or this gate lets everything through.', nextHandles: ['pass'] };
+        }
+        if (maxRun !== null && estimate > maxRun) {
           return { status: 'refused', message: `Refused: estimate ${usd(estimate)} exceeds the per-run ceiling ${usd(maxRun)}.`, detail: 'The label stays where the person who applied it can see it.', nextHandles: ['refused'] };
         }
-        if (spentToday + estimate > maxDaily) {
+        if (maxDaily !== null && spentToday + estimate > maxDaily) {
           return { status: 'refused', message: `Refused: ${usd(spentToday)} spent today, ${usd(estimate)} more would pass ${usd(maxDaily)}.`, detail: 'Never queued for tomorrow: that is the same spend with a delay in front of it.', nextHandles: ['refused'] };
         }
-        return { status: 'done', message: `Within budget: estimate ${usd(estimate)}, ${usd(spentToday)} of ${usd(maxDaily)} spent today.`, nextHandles: ['pass'] };
+        return { status: 'done', message: maxDaily === null ? `Within budget: estimate ${usd(estimate)} is under the per-run ceiling.` : `Within budget: estimate ${usd(estimate)}, ${usd(spentToday)} of ${usd(maxDaily)} spent today.`, nextHandles: ['pass'] };
       }
       case 'gates.action.allowlist': {
         const authors = lines(config['authors']);
@@ -267,7 +301,7 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
         const op = String(config['op'] ?? 'contains');
         const outcome = evaluate(left, op, right);
         tick(50);
-        return { status: 'done', message: `"${left}" ${op} "${right}" → ${outcome}`, nextHandles: [outcome ? 'true' : 'false'] };
+        return { status: 'done', message: left.trim().length === 0 ? `${String(config['left'] ?? 'The field')} has no value in this run, so the condition is false.` : `"${left}" ${op} "${right}" → ${outcome}`, nextHandles: [outcome ? 'true' : 'false'] };
       }
       case 'logic.action.filter':
         tick(50);
@@ -323,9 +357,14 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       implementer: String(config['implementer'] ?? 'codex'),
       codeReviewer: String(config['codeReviewer'] ?? 'claude'),
     };
-    const maxPlan = Number(config['maxPlanReviewRounds'] ?? 2);
-    const maxCode = Number(config['maxCodeReviewRounds'] ?? 2);
-    const maxCost = config['maxCostUsd'] === undefined || config['maxCostUsd'] === '' || config['maxCostUsd'] === null ? null : Number(config['maxCostUsd']);
+    // The review level sets how many rounds can happen, as it does in the
+    // engine: light plans inline and reviews the code once, thorough allows a
+    // third round of each and sends more work back.
+    const review = fast ? 'light' : String(config['review'] ?? 'standard');
+    const maxPlan = review === 'light' ? 0 : Math.min(numberOrNull(config['maxPlanReviewRounds']) ?? 2, review === 'thorough' ? 3 : 2);
+    const maxCode = review === 'light' ? 1 : Math.min(numberOrNull(config['maxCodeReviewRounds']) ?? 2, review === 'thorough' ? 3 : 2);
+    const again = review === 'thorough' ? 0.6 : 0.4;
+    const maxCost = numberOrNull(config['maxCostUsd']);
     const runTests = config['runTests'] !== false;
     const ticket = context.issue as Record<string, unknown>;
     const key = String(ticket['id'] ?? 'task');
@@ -334,8 +373,11 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
     (context.run as Record<string, unknown>).branch = branch;
     (context.run as Record<string, unknown>).codeReviewer = AGENT_NAMES[agents.codeReviewer] ?? agents.codeReviewer;
 
-    const planRounds = fast ? 0 : 1 + (rng() < 0.45 ? 1 : 0);
-    const codeRounds = 1 + (rng() < 0.35 ? 1 : 0);
+    // One draw each, whatever the level, so the same seed gives the same ticket and timings at every level.
+    const planDraw = rng();
+    const codeDraw = rng();
+    const planRounds = review === 'light' ? 0 : 1 + (planDraw < again ? 1 : 0) + (review === 'thorough' && planDraw < again / 3 ? 1 : 0);
+    const codeRounds = 1 + (codeDraw < again ? 1 : 0) + (review === 'thorough' && codeDraw < again / 3 ? 1 : 0);
     const sequence: string[] = ['FETCHING_ISSUE', 'CREATING_WORKSPACE'];
     if (!fast) {
       sequence.push('PLANNING');
@@ -400,7 +442,9 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
     return {
       status: 'done' as NodeRunStatus,
       message: `${fast ? 'Fast run' : 'Pipeline'} finished · ${usd(pipelineCost)} · ${run.tests === undefined ? 'tests skipped' : run.tests.passed ? 'tests passed' : 'tests failed'}`,
-      detail: `Planned by ${AGENT_NAMES[agents.planner]}, reviewed by ${AGENT_NAMES[agents.planReviewer]}, implemented by ${AGENT_NAMES[agents.implementer]}, diff reviewed by ${AGENT_NAMES[agents.codeReviewer]}.`,
+      detail: fast
+        ? `Planned and implemented by ${AGENT_NAMES[agents.implementer] ?? agents.implementer} in one session; nothing reviewed it.`
+        : `Planned by ${AGENT_NAMES[agents.planner] ?? agents.planner}${maxPlan === 0 ? '' : `, reviewed by ${AGENT_NAMES[agents.planReviewer] ?? agents.planReviewer}`}, implemented by ${AGENT_NAMES[agents.implementer] ?? agents.implementer}, diff reviewed by ${AGENT_NAMES[agents.codeReviewer] ?? agents.codeReviewer}.`,
       nextHandles: 'all' as const,
     };
   }
@@ -527,6 +571,8 @@ function defaults(def: NodeTypeDef): Record<string, unknown> {
 }
 
 function evaluate(left: string, op: string, right: string): boolean {
+  // A field with no value satisfies nothing: `Number('')` is 0, which would make "under 3" true of every ticket.
+  if (left.trim().length === 0) return op === 'not-equals' && right.trim().length > 0;
   const l = left.toLowerCase();
   const r = right.toLowerCase();
   switch (op) {
@@ -605,10 +651,19 @@ export function usd(value: number): string {
 
 export function formatMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
+  // Round to whole seconds first, so 59.6s reads "1m", not "60s", and 119.7s "2m", not "1m 60s".
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
   return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+}
+
+/** A number somebody typed, or null when the field is empty or not a number: "unset", never zero. */
+export function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function round(value: number): number {

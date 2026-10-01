@@ -132,7 +132,7 @@ interface Builder {
 const COL = 320;
 const ROW = 190;
 
-export function instantiateTemplate(templateId: string, brand: Brand, repository = 'acme/api'): Workflow | undefined {
+export function instantiateTemplate(templateId: string, brand: Brand, repository = ''): Workflow | undefined {
   const meta = TEMPLATES.find((template) => template.id === templateId);
   if (meta === undefined) return undefined;
   const nodes: WorkflowNode[] = [];
@@ -363,7 +363,7 @@ const BUILDERS: Record<string, (b: Builder, brand: Brand) => void> = {
 };
 
 /** A blank workflow with one manual trigger, for "New workflow". */
-export function blankWorkflow(brand: Brand, repository = 'acme/api'): Workflow {
+export function blankWorkflow(brand: Brand, repository = ''): Workflow {
   const now = new Date().toISOString();
   const typeId = 'logic.trigger.manual';
   const def = getNodeType(typeId);
@@ -380,17 +380,12 @@ export function blankWorkflow(brand: Brand, repository = 'acme/api'): Workflow {
   };
 }
 
-export { brandSlugFor };
-function brandSlugFor(brand: Brand): string {
-  return brand.slug;
-}
-
 /**
  * A new workflow that starts from one specific trigger instead of the manual
  * one, for "Start a workflow with this" on the Integrations page. Disabled,
  * like a blank workflow, until somebody wires up what should happen next.
  */
-export function workflowFromTrigger(triggerTypeId: string, brand: Brand, repository = 'acme/api'): Workflow | undefined {
+export function workflowFromTrigger(triggerTypeId: string, brand: Brand, repository = ''): Workflow | undefined {
   const def = getNodeType(triggerTypeId);
   if (def === undefined || def.kind !== 'trigger') return undefined;
   const base = blankWorkflow(brand, repository);

@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { useBrand } from '@/hooks/use-brand';
 import { checkConnection, disconnectForReal, sendTestMessage } from '@/lib/cloud/connections';
 import type { Connector } from '@/lib/connectors';
 import { useStudio } from '@/lib/store';
@@ -18,7 +17,6 @@ function message(error: unknown): string {
  * toast, and `busy` tells the buttons which one is still waiting.
  */
 export function useConnectionActions() {
-  const brand = useBrand();
   const [busy, setBusy] = useState<ConnectionAction | null>(null);
 
   const guard = async (action: ConnectionAction, work: () => Promise<void>) => {
@@ -45,7 +43,7 @@ export function useConnectionActions() {
   const test = (connector: Connector) =>
     guard('test', async () => {
       try {
-        const connection = await sendTestMessage(connector.id, brand.name);
+        const connection = await sendTestMessage(connector.id);
         toast.success('Test message sent', { description: `Look for it in ${connection.account}.` });
       } catch (error) {
         toast.error(`${connector.name} did not take the test message`, { description: message(error) });

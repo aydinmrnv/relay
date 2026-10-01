@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { ApiError, json, readJson, withUser } from '@/server/api';
 import { assertCredentials, connectApp, disconnectApp } from '@/server/connections';
+import { LIMITS } from '@/server/rate-limit';
 import { describeZodError } from '@/server/validate';
 
 const body = z.object({
@@ -16,7 +17,7 @@ export async function PUT(request: Request, context: RouteContext<'/api/connecti
     const parsed = body.safeParse(await readJson(request, 2_000));
     if (!parsed.success) throw new ApiError(400, 'INVALID', describeZodError(parsed.error as z.ZodError));
     return json({ connection: await connectApp(user.id, connectorId, parsed.data.secret, parsed.data.label) });
-  });
+  }, { limit: LIMITS.connect });
 }
 
 /** Forgets the credential. It stays valid in the app until revoked there. */

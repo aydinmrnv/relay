@@ -140,7 +140,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton
               isActive={pathname.startsWith('/settings')}
-              tooltip="Settings: product name, sign-ins, execution, your data"
+              tooltip="Settings: your account, sign-ins, execution, your data"
               render={<Link href="/settings" />}
             >
               <Settings />

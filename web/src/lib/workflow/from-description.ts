@@ -1351,7 +1351,7 @@ function article(word: string): string {
 
 const POLICY_LABELS: Record<Policy, string> = { none: 'leave the diff', branch: 'commit to a branch', push: 'push the branch', pr: 'pull request', merge: 'merge when checks pass' };
 
-export function workflowFromDescription(text: string, brand: Brand, repository = 'acme/api'): DescriptionResult {
+export function workflowFromDescription(text: string, brand: Brand, repository = ''): DescriptionResult {
   const original = text.trim();
   const reader = new Reader(normalize(original));
   const notes: string[] = [];

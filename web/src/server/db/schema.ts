@@ -10,7 +10,7 @@
  *
  * The SQL that creates all of this is in `migrations.ts`; keep them in step.
  */
-import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
@@ -23,7 +23,6 @@ const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull(
 export const workspace = pgTable('workspace', {
   userId: text('user_id').primaryKey(),
   settings: jsonb('settings'),
-  brand: jsonb('brand'),
   connections: jsonb('connections'),
   toursSeen: jsonb('tours_seen'),
   checklistDismissed: boolean('checklist_dismissed').notNull().default(false),
@@ -119,4 +118,25 @@ export const connection = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.connectorId] })],
 );
 
-export const schema = { workspace, workflow, run, workflowVersion, share, connection };
+/** One counter per limited thing per window: `write:user_…`, `remix:203.0.113.7`. See `server/rate-limit.ts`. */
+export const rateLimit = pgTable(
+  'relay_rate_limit',
+  {
+    key: text('key').primaryKey(),
+    windowStart: bigint('window_start', { mode: 'number' }).notNull(),
+    count: integer('count').notNull(),
+  },
+  (table) => [index('relay_rate_limit_window_idx').on(table.windowStart)],
+);
+
+/**
+ * Accounts that were deleted. A session token outlives the account by up to
+ * a minute, and a tab holding one would otherwise sync its copy straight
+ * back; a write from an id listed here is refused instead.
+ */
+export const deletedUser = pgTable('relay_deleted_user', {
+  userId: text('user_id').primaryKey(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const schema = { workspace, workflow, run, workflowVersion, share, connection, rateLimit, deletedUser };

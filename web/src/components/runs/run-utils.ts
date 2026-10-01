@@ -82,7 +82,9 @@ export function outcomeReason(run: Run): string {
     case 'refused':
       return stoppingEvent(run)?.message ?? run.summary ?? 'No reason was recorded.';
     case 'cancelled':
-      return run.summary?.startsWith('Interrupted') === true ? run.summary : 'Stopped before it finished; nothing after that point ran.';
+      // A machine run says in its own words how it ended: stopped by the person, or lost track of while it may well have carried on.
+      if (run.summary !== undefined && (run.source === 'machine' || run.summary.startsWith('Interrupted'))) return run.summary;
+      return 'Stopped before it finished; nothing after that point ran.';
     case 'succeeded': {
       if (run.prUrl !== undefined) return `Opened pull request #${prNumber(run.prUrl)} from ${run.branch ?? 'its branch'}.`;
       if (run.branch !== undefined) return `The change is on ${run.branch}.`;
@@ -105,5 +107,6 @@ export function downloadJson(filename: string, value: unknown): void {
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  // Not at once: some browsers start the download after this task, and a revoked URL saves nothing.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

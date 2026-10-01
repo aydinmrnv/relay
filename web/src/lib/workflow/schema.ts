@@ -41,7 +41,7 @@ export interface Workflow {
   createdAt: string;
   updatedAt: string;
   templateId?: string;
-  /** Repository this workflow is attached to, e.g. `acme/api`. Free text in the prototype. */
+  /** Repository this workflow is attached to, as `owner/name`. Empty until somebody says which. */
   repository?: string;
   /** When the export dialog last produced files for this workflow. */
   exportedAt?: string;
@@ -99,8 +99,6 @@ export interface Run {
   diff?: { files: number; additions: number; deletions: number };
   tests?: { passed: boolean; command: string; durationMs: number };
   summary?: string;
-  /** Set when a real GitHub Actions run is behind this record (not in the prototype). */
-  externalUrl?: string;
   /** Where the run happened. Absent on runs recorded before there was a choice: those were simulated. */
   source?: 'simulated' | 'machine';
   /** For a run on the paired machine: which machine, which repository, and the engine's own run id. */
@@ -178,7 +176,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   executionTier: 'actions',
   auth: { claude: 'subscription', codex: 'subscription' },
-  defaultRepository: 'acme/api',
+  defaultRepository: '',
   simulationSpeed: 'fast',
   motion: 'system',
 };

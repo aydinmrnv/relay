@@ -20,7 +20,6 @@ import { useAgentsStore, useSignedIn } from '@/hooks/use-agent-accounts';
 import { useBrand } from '@/hooks/use-brand';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { useNow } from '@/hooks/use-now';
-import { DEFAULT_BRAND } from '@/lib/brand';
 import { CONNECTORS, getConnector } from '@/lib/connectors';
 import { connectionState } from '@/lib/connectors/connection-state';
 import { CREDENTIAL_SPECS } from '@/lib/connectors/credentials';
@@ -165,15 +164,6 @@ export default function DashboardPage() {
       done: exported !== undefined,
       doneNote: exported === undefined ? '' : `${exported.name} was exported.`,
       action: exportTarget === undefined ? null : { label: 'Open in the builder', href: `/workflows/${exportTarget.id}` },
-    },
-    {
-      id: 'rename',
-      title: 'Name the product',
-      why: `“${DEFAULT_BRAND.name}” is a working title. Rename it once in Settings and every screen, branch prefix and exported file follows.`,
-      done: brand.name !== DEFAULT_BRAND.name,
-      doneNote: `It is called ${brand.name} now.`,
-      optional: true,
-      action: { label: 'Rename', href: '/settings#general' },
     },
   ];
   const setupComplete = steps.every((step) => step.done || step.optional === true);

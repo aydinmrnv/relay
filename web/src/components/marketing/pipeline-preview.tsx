@@ -41,7 +41,7 @@ const STAGES = [
     id: 'plan',
     label: 'Plan',
     agent: 'Claude Code',
-    connector: 'claude-code',
+    connector: 'claude',
     heading: 'A plan, with a second opinion.',
     description:
       'Claude reads the repository and proposes a change. Codex checks the plan against the code before implementation begins.',
@@ -61,7 +61,7 @@ const STAGES = [
     id: 'build',
     label: 'Build',
     agent: 'Codex',
-    connector: 'codex-cli',
+    connector: 'codex',
     heading: 'The change gets its own worktree.',
     description:
       'Codex implements the reviewed plan in an isolated git worktree. Your working directory stays available while the agent works.',
@@ -83,7 +83,7 @@ const STAGES = [
     id: 'review',
     label: 'Review',
     agent: 'Claude Code',
-    connector: 'claude-code',
+    connector: 'claude',
     heading: 'Fresh eyes on the actual diff.',
     description:
       'Claude reviews the implementation against the plan and the repository. Blocking findings go back for a fix, with a cap on review rounds.',

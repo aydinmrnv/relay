@@ -17,6 +17,8 @@ export interface AuthCapabilities {
   cloudHub?: string | null;
   /** Whether apps can connect for real: the server can check a credential and keep it encrypted. */
   credentials?: boolean;
+  /** The Clerk JWT template the hub's token comes from, when the deployment has made one for it. */
+  cloudTokenTemplate?: string | null;
 }
 
 export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, guests: false, reason: null, cloudHub: null, credentials: false };

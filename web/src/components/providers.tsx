@@ -6,11 +6,12 @@ import { useAuth, useUser } from '@clerk/nextjs';
 import { MotionConfig, MotionGlobalConfig } from 'motion/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
-import { useStudio } from '@/lib/store';
+import { toast } from 'sonner';
+import { resetLocalData, useStudio } from '@/lib/store';
 import { useAgentsPoller } from '@/hooks/use-agent-accounts';
 import { useCompanion } from '@/lib/companion/client';
 import { attachMachineRun } from '@/lib/run-launcher';
-import { CapabilitiesContext, useAccount } from '@/lib/cloud/account';
+import { CapabilitiesContext, useAccount, useCapabilities } from '@/lib/cloud/account';
 import { accountChanged, setTokenGetter, startAccount } from '@/lib/cloud/sync';
 import type { AccountUser, AuthCapabilities } from '@/lib/cloud/types';
 
@@ -35,7 +36,7 @@ export function Providers({ capabilities: rendered, clerk, children }: { capabil
           <AccountBoot capabilities={built} onRuntime={(runtime) => setCapabilities(clerk ? runtime : { ...runtime, enabled: false })} />
           {clerk && capabilities.enabled ? <ClerkBridge /> : null}
           <SeedOnce />
-          <BrandTitle />
+          <StorageNotice />
           <AgentsPoller />
           <MachineRunsFollower />
           {children}
@@ -61,18 +62,6 @@ function MotionPreference({ children }: { children: React.ReactNode }) {
     if (hydrated) MotionGlobalConfig.skipAnimations = preference === 'reduced';
   }, [hydrated, preference]);
   return <MotionConfig reducedMotion={preference === 'full' ? 'never' : preference === 'reduced' ? 'always' : 'user'}>{children}</MotionConfig>;
-}
-
-/** Keeps the tab title in step with whatever the product is called today. */
-function BrandTitle() {
-  const hydrated = useStudio((state) => state.hydrated);
-  const name = useStudio((state) => state.brand.name);
-  useEffect(() => {
-    if (!hydrated) return;
-    const base = document.title.includes(' · ') ? document.title.split(' · ').slice(0, -1).join(' · ') : '';
-    document.title = base.length > 0 ? `${base} · ${name}` : name;
-  }, [hydrated, name]);
-  return null;
 }
 
 /**
@@ -117,7 +106,7 @@ function ClerkBridge() {
   const hydrated = useStudio((state) => state.hydrated);
 
   useEffect(() => {
-    setTokenGetter(() => getToken());
+    setTokenGetter((options) => getToken(options));
     return () => setTokenGetter(null);
   }, [getToken]);
 
@@ -152,11 +141,29 @@ function SeedOnce() {
   const hydrated = useStudio((state) => state.hydrated);
   const seeded = useStudio((state) => state.seeded);
   const owner = useStudio((state) => state.owner);
+  // Only where the studio opens without an account. Anywhere else a signed-out
+  // visitor is reading the site, and has no use for demo workflows and runs
+  // written into their browser's storage.
+  const guests = useCapabilities().guests;
   const guest = useAccount((state) => state.status === 'guest' || state.status === 'disabled');
   const seedDemo = useStudio((state) => state.seedDemo);
   useEffect(() => {
-    if (hydrated && guest && owner === null && !seeded) void seedDemo();
-  }, [hydrated, guest, owner, seeded, seedDemo]);
+    if (hydrated && guests && guest && owner === null && !seeded) void seedDemo();
+  }, [hydrated, guests, guest, owner, seeded, seedDemo]);
+  return null;
+}
+
+/** Says so, once, when some of what this browser had saved could not be read back. */
+function StorageNotice() {
+  const problem = useStudio((state) => state.storageProblem);
+  useEffect(() => {
+    if (problem === null) return;
+    toast.warning(problem === 'unreadable' ? 'This browser’s saved studio data could not be read' : `${problem.dropped} saved ${problem.dropped === 1 ? 'item' : 'items'} could not be read and ${problem.dropped === 1 ? 'was' : 'were'} left out`, {
+      description: problem === 'unreadable' ? 'The studio started empty. Anything in your account loads when you sign in.' : 'The rest of your work is here. If something looks wrong, a reset clears what this browser kept; your account is not touched.',
+      duration: 20_000,
+      action: { label: 'Reset local data', onClick: resetLocalData },
+    });
+  }, [problem]);
   return null;
 }
 

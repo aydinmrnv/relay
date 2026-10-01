@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Bot, Database, Laptop, Palette, Rocket, Tag, UserRound } from 'lucide-react';
+import { ArrowRight, Bot, Database, Laptop, Palette, Rocket, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/page-header';
 import { AgentAccountsCard } from '@/components/agents/agent-accounts-card';
@@ -17,14 +17,12 @@ import { FadeIn } from '@/components/motion/fade-in';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStudio } from '@/lib/store';
 import { SettingsSection } from './settings-section';
-import { GeneralSettings } from './general-settings';
 import { RunningSettings } from './running-settings';
 import { AppearanceSettings } from './appearance-settings';
 import { DataSettings } from './data-settings';
 
 const SECTIONS: SectionLink[] = [
   { id: 'account', label: 'Account', icon: UserRound },
-  { id: 'general', label: 'General', icon: Tag },
   { id: 'machine', label: 'Where agents run', icon: Laptop },
   { id: 'agents', label: 'Coding agents', icon: Bot },
   { id: 'running', label: 'Running & exporting', icon: Rocket },
@@ -81,15 +79,6 @@ export function SettingsView() {
               <FadeIn className="grid grid-cols-1 gap-12" key={generation}>
                 <SettingsSection id="account" icon={UserRound} title="Account" description={signedIn ? 'Your profile, how you sign in, and where.' : 'Keep your work in any browser, share it, and keep its history.'}>
                   <AccountSettings />
-                </SettingsSection>
-
-                <SettingsSection
-                  id="general"
-                  icon={Tag}
-                  title="General"
-                  description="What the product is called. The name is still undecided, so it is a setting: change it and everything follows."
-                >
-                  <GeneralSettings />
                 </SettingsSection>
 
                 <SettingsSection

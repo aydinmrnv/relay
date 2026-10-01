@@ -11,7 +11,8 @@
     "gen:brand": "node scripts/gen-brand.mjs",
     "predev": "node scripts/gen-icons.mjs",
     "prebuild": "node scripts/gen-icons.mjs",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./test/register.mjs --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -47,12 +48,14 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
+    "js-yaml": "^4.3.2",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

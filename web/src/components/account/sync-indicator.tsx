@@ -36,16 +36,19 @@ export function SyncIndicator({ className }: { className?: string }) {
         render={
           <span
             className={cn(
-              'hidden h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground sm:inline-flex',
+              // On a phone the icon alone: whether work is saved matters most where a connection is least certain.
+              'inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground sm:px-2',
               (state === 'offline' || state === 'error') && 'text-warning',
               className,
             )}
             aria-live="polite"
+            aria-label={`${label}. ${detail}`}
+            tabIndex={0}
           />
         }
       >
         {saving ? <Loader2 className="size-3.5 animate-spin" /> : state === 'offline' ? <CloudOff className="size-3.5" /> : state === 'error' ? <TriangleAlert className="size-3.5" /> : <Check className="size-3.5 text-success" />}
-        {label}
+        <span className="hidden sm:inline">{label}</span>
       </TooltipTrigger>
       <TooltipContent className="max-w-64">{detail}</TooltipContent>
     </Tooltip>

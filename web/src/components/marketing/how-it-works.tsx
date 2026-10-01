@@ -136,7 +136,7 @@ function ReviewVisual() {
   return (
     <Panel>
       <Row className="items-start">
-        <AppTile connector="codex-cli" size={14} />
+        <AppTile connector="codex" size={14} />
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Codex</span> reviews the plan
@@ -148,7 +148,7 @@ function ReviewVisual() {
         </div>
       </Row>
       <Row className="items-start">
-        <AppTile connector="claude-code" size={14} />
+        <AppTile connector="claude" size={14} />
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Claude Code</span> answers

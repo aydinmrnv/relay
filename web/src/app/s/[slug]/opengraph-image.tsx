@@ -1,7 +1,9 @@
+import { headers } from 'next/headers';
 import { ImageResponse } from 'next/og';
-import { DEFAULT_BRAND } from '@/lib/brand';
+import { BRAND } from '@/lib/brand';
 import { describeWorkflow } from '@/lib/workflow/describe';
 import { databaseConfigured } from '@/server/db';
+import { LIMITS, rateLimit } from '@/server/rate-limit';
 import { getPublicShare } from '@/server/studio';
 
 export const alt = 'A shared workflow';
@@ -11,22 +13,31 @@ export const contentType = 'image/png';
 /** The card a shared link unfurls into: what the workflow is called, who made it, and its steps in order. */
 export default async function Image({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
+  // Rendering an image costs real time, and anyone can ask: a limit by address, then a cache in front.
+  const forwarded = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim();
+  try {
+    await rateLimit(LIMITS.image, forwarded !== undefined && forwarded.length > 0 ? forwarded : 'unknown');
+  } catch {
+    return new Response('Too many requests', { status: 429 });
+  }
   const share = databaseConfigured() ? await getPublicShare(slug).catch(() => null) : null;
-  const name = share?.workflow.name ?? 'Workflow not found';
-  const steps = share === null ? [] : describeWorkflow(share.workflow).steps.filter((step) => step.depth === 0).slice(0, 6);
+  // No card for a link that leads nowhere: a 404, so nothing caches or unfurls a picture of an error.
+  if (share === null) return new Response('Not found', { status: 404 });
+  const name = share.workflow.name;
+  const steps = describeWorkflow(share.workflow).steps.filter((step) => step.depth === 0).slice(0, 6);
   return new ImageResponse(
     (
       <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: 64, background: '#0f0e0c', color: '#fafaf9', fontFamily: 'sans-serif' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div style={{ width: 52, height: 52, borderRadius: 12, background: '#fafaf9', color: '#1a1815', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, fontWeight: 700 }}>
-            {DEFAULT_BRAND.name.charAt(0)}
+            {BRAND.name.charAt(0)}
           </div>
-          <div style={{ display: 'flex', fontSize: 30, fontWeight: 700 }}>{DEFAULT_BRAND.name}</div>
+          <div style={{ display: 'flex', fontSize: 30, fontWeight: 700 }}>{BRAND.name}</div>
           <div style={{ display: 'flex', marginLeft: 12, padding: '6px 16px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.18)', color: '#b5b1aa', fontSize: 22 }}>Shared workflow</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <div style={{ display: 'flex', fontSize: name.length > 42 ? 56 : 68, fontWeight: 700, lineHeight: 1.08, letterSpacing: -1.5 }}>{name}</div>
-          {share === null ? null : <div style={{ display: 'flex', fontSize: 28, color: '#b5b1aa' }}>by {share.authorName} · open it, test it, remix it</div>}
+          <div style={{ display: 'flex', fontSize: 28, color: '#b5b1aa' }}>by {share.authorName} · open it, test it, remix it</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {steps.map((step, index) => (
@@ -40,6 +51,6 @@ export default async function Image({ params }: { params: Promise<{ slug: string
         </div>
       </div>
     ),
-    size,
+    { ...size, headers: { 'cache-control': 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400' } },
   );
 }

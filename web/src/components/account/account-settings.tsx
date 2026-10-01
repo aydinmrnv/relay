@@ -25,7 +25,9 @@ import {
 import { SettingBlock } from '@/components/settings/settings-section';
 import { useAccount } from '@/lib/cloud/account';
 import { api, forgetAccount, importableGuestWorkflows, importGuestWorkflows, readGuestBackup, type GuestBackup } from '@/lib/cloud/sync';
+import { useCompanion } from '@/lib/companion/client';
 import { timeAgo } from '@/lib/format';
+import { SUPPORT_EMAIL } from '@/lib/links';
 import { useStudio } from '@/lib/store';
 import { UserAvatar } from './user-avatar';
 
@@ -184,10 +186,29 @@ function DeleteAccount() {
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasCloud = useCompanion((state) => state.cloudHub !== null);
+  // Set once the machine could not be removed, so the person can choose to go on without that.
+  const [machineLeft, setMachineLeft] = useState(false);
 
-  const remove = async () => {
+  const remove = async (leaveMachine = false) => {
     setBusy(true);
     setError(null);
+    // The Relay Cloud machine first. It holds this person's Claude, ChatGPT
+    // and GitHub sign-ins, and only they can ask the hub to remove it: once
+    // the account is gone, nobody can. So if it cannot be removed, stop and
+    // say so, rather than delete the account and leave it running.
+    if (hasCloud && !leaveMachine) {
+      try {
+        await useCompanion.getState().cloudAction('remove');
+      } catch (failure) {
+        setBusy(false);
+        setMachineLeft(true);
+        setError(
+          `Your Relay Cloud machine could not be removed${failure instanceof Error ? ` (${failure.message.replace(/\.$/, '')})` : ''}, so nothing was deleted. It holds your coding agents’ sign-ins. Try again, or delete the account anyway and write to ${SUPPORT_EMAIL} to have the machine removed.`,
+        );
+        return;
+      }
+    }
     try {
       await api('/api/account', { method: 'DELETE', body: { confirm: confirm.trim().toLowerCase() } });
     } catch (failure) {
@@ -198,7 +219,7 @@ function DeleteAccount() {
     setOpen(false);
     forgetAccount();
     await clerk.signOut().catch(() => undefined);
-    toast.success('Your account and everything in it was deleted.');
+    toast.success(leaveMachine ? 'Your account was deleted. Your Relay Cloud machine was not.' : 'Your account and everything in it was deleted.', leaveMachine ? { description: `Write to ${SUPPORT_EMAIL} to have the machine removed.`, duration: 30_000 } : undefined);
     router.push('/');
   };
 
@@ -206,7 +227,7 @@ function DeleteAccount() {
     <div className="p-5">
       <SettingBlock
         title="Delete your account"
-        description="Deletes your account and every workflow, run, saved version and share link in it, immediately and for good. Download your data first if you want a copy."
+description={`Deletes your account and every workflow, run, saved version, share link and stored app credential in it, immediately and for good${hasCloud ? ', and removes your Relay Cloud machine with the sign-ins on it' : ''}. Download your data first if you want a copy.`}
         aside={
           <Button variant="destructive" size="sm" onClick={() => setOpen(true)}>
             <Trash2 data-icon="inline-start" /> Delete account
@@ -222,7 +243,10 @@ function DeleteAccount() {
               <ShieldAlert />
             </AlertDialogMedia>
             <AlertDialogTitle>Delete {user.email || 'your account'}?</AlertDialogTitle>
-            <AlertDialogDescription>This cannot be undone. Workflows exported to a repository keep running there; everything stored here is gone.</AlertDialogDescription>
+            <AlertDialogDescription>
+              This cannot be undone. Workflows exported to a repository keep running there, and a webhook you connected stays valid in Slack or Discord until you remove it there; everything stored here is gone
+              {hasCloud ? ', and your Relay Cloud machine is removed first' : ''}.
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="delete-confirm">
@@ -233,9 +257,14 @@ function DeleteAccount() {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep my account</AlertDialogCancel>
+            {machineLeft ? (
+              <Button variant="outline" onClick={() => void remove(true)} disabled={busy || confirm.trim().toLowerCase() !== 'delete'}>
+                Delete anyway
+              </Button>
+            ) : null}
             <Button variant="destructive" onClick={() => void remove()} disabled={busy || confirm.trim().toLowerCase() !== 'delete'}>
               {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}
-              Delete for good
+              {machineLeft ? 'Try again' : 'Delete for good'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

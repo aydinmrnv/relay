@@ -142,7 +142,7 @@ export function GuideView() {
           </GuideSection>
 
           <GuideSection id="faq" eyebrow="Questions" title="Frequently asked" description="Costs, privacy, where things run, and what you get out of it.">
-            <Faq productName={brand.name} slug={brand.slug} />
+            <Faq slug={brand.slug} />
           </GuideSection>
         </div>
 
@@ -409,7 +409,7 @@ function Shortcuts() {
 
 /* ------------------------------------------------------------------ */
 
-function Faq({ productName, slug }: { productName: string; slug: string }) {
+function Faq({ slug }: { slug: string }) {
   const link = 'font-medium text-foreground underline underline-offset-4';
   const items: Array<{ id: string; question: string; answer: React.ReactNode }> = [
     {
@@ -519,19 +519,6 @@ function Faq({ productName, slug }: { productName: string; slug: string }) {
             Settings → Running &amp; exporting
           </Link>
           .
-        </p>
-      ),
-    },
-    {
-      id: 'name',
-      question: `Why is it called ${productName}?`,
-      answer: (
-        <p>
-          It might not be. The name is one field under{' '}
-          <Link href="/settings#general" className={link}>
-            Settings → General
-          </Link>
-          ; every screen, slug, trigger label and export follows it.
         </p>
       ),
     },

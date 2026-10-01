@@ -11,7 +11,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { HelpTip } from '@/components/app/help-tip';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { useBrand } from '@/hooks/use-brand';
-import { getConnector } from '@/lib/connectors';
+import { AGENT_MARKS } from '@/lib/agents/marks';
 import { useStudio } from '@/lib/store';
 import type { AuthPreference, ExecutionTier } from '@/lib/workflow/schema';
 import { ChoiceCards, SettingBlock, type Choice } from './settings-section';
@@ -27,10 +27,9 @@ interface Credential {
 }
 
 /** What each agent needs in GitHub Actions for each choice. Mirrors the secrets compileWorkflow asks for. */
-const CREDENTIALS: Record<AgentKey, { name: string; connectorId: string } & Record<AuthPreference, Credential>> = {
+const CREDENTIALS: Record<AgentKey, { name: string } & Record<AuthPreference, Credential>> = {
   claude: {
     name: 'Claude Code',
-    connectorId: 'claude-code',
     subscription: {
       secret: 'CLAUDE_CODE_OAUTH_TOKEN',
       what: 'A one-year token from claude setup-token, tied to the Claude Pro, Max, Team or Enterprise plan of whoever creates it. Runs count against that plan’s usage.',
@@ -44,7 +43,6 @@ const CREDENTIALS: Record<AgentKey, { name: string; connectorId: string } & Reco
   },
   codex: {
     name: 'Codex',
-    connectorId: 'codex-cli',
     subscription: {
       secret: 'CODEX_AUTH_JSON',
       what: 'The sign-in file Codex keeps at ~/.codex/auth.json after codex login with a ChatGPT plan. OpenAI documents this for CI but asks that it not be used on public repositories. The file rotates: if runs stop signing in, log in again and re-seed the secret.',
@@ -189,11 +187,10 @@ function Credentials() {
           const agent = CREDENTIALS[key];
           const choice = auth[key];
           const credential = agent[choice];
-          const connector = getConnector(agent.connectorId);
           return (
             <div key={key} className="grid grid-cols-1 gap-3 rounded-lg border p-3">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                {connector === undefined ? null : <ConnectorIcon connector={connector} size={14} />}
+                <ConnectorIcon icon={AGENT_MARKS[key].icon} name={agent.name} size={14} />
                 <p className="text-sm font-medium">{agent.name}</p>
                 <ToggleGroup
                   aria-label={`How ${agent.name} signs in on GitHub Actions`}

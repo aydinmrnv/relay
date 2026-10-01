@@ -112,7 +112,25 @@ export const CLOUD_HUB_URL: string | null = (() => {
   }
 })();
 
+/**
+ * A Clerk JWT template made for the hub (Clerk dashboard → JWT templates),
+ * by name. With it the browser hands the hub a token of that template, not
+ * the session token the studio's own API accepts. Unset: the session token.
+ */
+const CLOUD_TOKEN_TEMPLATE: string | null = (() => {
+  const raw = (process.env.RELAY_CLOUD_JWT_TEMPLATE ?? '').trim();
+  return /^[A-Za-z0-9_-]{1,60}$/.test(raw) ? raw : null;
+})();
+
 /** What the browser is told about accounts: whether they exist here, nothing secret. */
 export function authCapabilities(): AuthCapabilities {
-  return { enabled: ACCOUNTS_ENABLED, guests: GUEST_STUDIO, reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON, cloudHub: ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null, credentials: CREDENTIALS_ENABLED };
+  const cloudHub = ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null;
+  return {
+    enabled: ACCOUNTS_ENABLED,
+    guests: GUEST_STUDIO,
+    reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON,
+    cloudHub,
+    credentials: CREDENTIALS_ENABLED,
+    cloudTokenTemplate: cloudHub === null ? null : CLOUD_TOKEN_TEMPLATE,
+  };
 }

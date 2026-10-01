@@ -75,9 +75,9 @@ const DESTINATIONS: Array<{ id: string; app: string; label: string; phrase: stri
 ];
 
 const AGENTS: Array<{ id: AgentChoice; title: string; body: string; badge?: string; marks: string[] }> = [
-  { id: 'both', title: 'Claude Code and Codex', body: 'Each reviews the other’s plan and diff. Nothing grades its own homework.', badge: 'Recommended', marks: ['claude-code', 'codex-cli'] },
-  { id: 'claude', title: 'Claude Code only', body: 'One Claude plan does everything. Reviews are by a fresh, read-only session.', marks: ['claude-code'] },
-  { id: 'codex', title: 'Codex only', body: 'One ChatGPT plan does everything. Reviews are by a fresh, read-only session.', marks: ['codex-cli'] },
+  { id: 'both', title: 'Claude Code and Codex', body: 'Each reviews the other’s plan and diff. Nothing grades its own homework.', badge: 'Recommended', marks: ['claude', 'codex'] },
+  { id: 'claude', title: 'Claude Code only', body: 'One Claude plan does everything. Reviews are by a fresh, read-only session.', marks: ['claude'] },
+  { id: 'codex', title: 'Codex only', body: 'One ChatGPT plan does everything. Reviews are by a fresh, read-only session.', marks: ['codex'] },
 ];
 
 const REVIEWS: Array<{ id: Review; title: string; body: string }> = [

@@ -17,10 +17,10 @@ const POINTS = [
 ];
 
 const RECEIPT = [
-  { agent: 'claude-code', label: 'Plan', meta: 'plan.md' },
-  { agent: 'codex-cli', label: 'Plan review', meta: '3 findings' },
-  { agent: 'codex-cli', label: 'Implement', meta: '+84 −12' },
-  { agent: 'claude-code', label: 'Code review', meta: 'approved' },
+  { agent: 'claude', label: 'Plan', meta: 'plan.md' },
+  { agent: 'codex', label: 'Plan review', meta: '3 findings' },
+  { agent: 'codex', label: 'Implement', meta: '+84 −12' },
+  { agent: 'claude', label: 'Code review', meta: 'approved' },
   { agent: null, label: 'Tests', meta: 'exit 0' },
 ] as const;
 

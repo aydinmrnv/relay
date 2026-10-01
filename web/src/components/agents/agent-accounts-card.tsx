@@ -17,12 +17,11 @@ import { getConnector } from '@/lib/connectors';
 import { useAgentsStore, type BridgeState } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
+import { AGENT_MARKS } from '@/lib/agents/marks';
 import { ACCOUNT_META, AGENT_IDS, AGENT_META, type AccountId, type AgentAccount, type AgentId, type GithubAccount, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
 import { useCompanion } from '@/lib/companion/client';
 import { machineStatusText } from '@/components/companion/machine-card';
 import { cloudStatusText } from '@/components/companion/cloud-card';
-
-const CONNECTOR_FOR: Record<AgentId, string> = { claude: 'claude-code', codex: 'codex-cli' };
 
 /**
  * Sign-in state of the coding CLIs on the runner — the paired machine, or the
@@ -93,7 +92,6 @@ export function AgentAccountsCard() {
 
 function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; account: AgentAccount | null; bridge: BridgeState; cloud: boolean; onSignIn: (mode: LoginMode) => void }) {
   const meta = AGENT_META[id];
-  const connector = getConnector(CONNECTOR_FOR[id]);
   const logout = useAgentsStore((state) => state.logout);
   const [busy, setBusy] = useState(false);
 
@@ -112,7 +110,7 @@ function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; accou
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
-      {connector === undefined ? null : <ConnectorIcon connector={connector} size={18} />}
+      <ConnectorIcon icon={AGENT_MARKS[id].icon} name={meta.name} size={18} />
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
           {meta.name}

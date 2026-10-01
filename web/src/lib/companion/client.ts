@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { sessionToken } from '../cloud/sync';
+import { hubToken, onAccountForgotten } from '../cloud/sync';
 import { DEFAULT_COMPANION_PORT, type CloudRunnerStatus, type CompanionRepository, type HelloResponse } from './types';
 
 /**
@@ -177,7 +177,7 @@ async function endpoint(runner: RunnerTarget): Promise<{ base: string; headers: 
   const state = useCompanion.getState();
   if (runner === 'cloud') {
     if (state.cloudHub === null) throw new CompanionError('This studio has no Relay Cloud.');
-    const token = await sessionToken();
+    const token = await hubToken();
     if (token === null) throw new CompanionError('Sign in to use Relay Cloud.');
     return { base: state.cloudHub, headers: { authorization: `Bearer ${token}` } };
   }
@@ -287,7 +287,7 @@ export const useCompanion = create<CompanionStore>()(
       refresh: async () => {
         if (get().target === 'cloud') {
           const hub = get().cloudHub;
-          const token = hub === null ? null : await sessionToken();
+          const token = hub === null ? null : await hubToken();
           if (hub === null || token === null) {
             set({ status: 'unpaired', hello: null, cloud: null, checkedAt: new Date().toISOString() });
             return;
@@ -341,6 +341,12 @@ export const useCompanion = create<CompanionStore>()(
     },
   ),
 );
+
+// The pairing is this browser's key to somebody's machine. It goes when the
+// account does: signing out on a shared computer must not leave it behind.
+onAccountForgotten(() => {
+  useCompanion.setState({ pairing: null, target: 'machine', status: 'unpaired', hello: null, cloud: null, checkedAt: null, attempt: { state: 'idle' } });
+});
 
 export interface CompanionRequestInit {
   method?: string;

@@ -8,7 +8,6 @@ import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -19,9 +18,10 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { useBrand } from '@/hooks/use-brand';
-import { DEFAULT_BRAND } from '@/lib/brand';
 import { useStudio } from '@/lib/store';
+import { useImportFlow } from '@/components/workflows/import-flow';
 import { useAccount } from '@/lib/cloud/account';
+import { api } from '@/lib/cloud/sync';
 import { SettingBlock } from './settings-section';
 
 function plural(count: number, one: string, many = `${one}s`): string {
@@ -38,8 +38,9 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
   const workflowCount = useStudio((state) => Object.keys(state.workflows).length);
   const runCount = useStudio((state) => state.runs.length);
   const connectionCount = useStudio((state) => Object.keys(state.connections).length);
+  const realConnectionCount = useStudio((state) => Object.values(state.connections).filter((connection) => connection.credential !== undefined).length);
+  const owner = useStudio((state) => state.owner);
   const exportAll = useStudio((state) => state.exportAll);
-  const importAll = useStudio((state) => state.importAll);
   const resetAll = useStudio((state) => state.resetAll);
   const signedIn = useAccount((state) => state.status === 'signed-in');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -53,32 +54,36 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
     anchor.href = url;
     anchor.download = fileName;
     anchor.click();
-    URL.revokeObjectURL(url);
+    // Not at once: some browsers start the download after this task, and a revoked URL saves nothing.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
     toast.success(`Downloaded ${fileName}`, { description: `${plural(workflowCount, 'workflow')}, ${plural(runCount, 'run')} and ${plural(connectionCount, 'connection')}.` });
   };
+
+  const { importFile, dialog: importDialog } = useImportFlow(onReplaced);
 
   const onImport = async (input: HTMLInputElement) => {
     const file = input.files?.[0];
     // Clear the input so choosing the same file again still fires a change.
     input.value = '';
-    if (file === undefined) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(await file.text());
-    } catch {
-      toast.error(`${file.name} is not valid JSON.`, { description: 'Choose a file exported from this studio or from Export in the builder.' });
-      return;
-    }
-    const result = importAll(parsed);
-    if (result.ok) {
-      toast.success(result.message, { description: `From ${file.name}.` });
-      onReplaced();
-    } else {
-      toast.error(result.message, { description: `Nothing was changed. ${file.name} was not imported.` });
-    }
+    await importFile(file);
   };
 
-  const reset = () => {
+  const [clearing, setClearing] = useState(false);
+
+  const reset = async () => {
+    if (signedIn && realConnectionCount > 0) {
+      // The credentials themselves are on the server, not in this browser:
+      // unless they are deleted there first, they come back on the next load.
+      setClearing(true);
+      try {
+        await api('/api/connections', { method: 'DELETE', headers: owner === null ? {} : { 'x-relay-user': owner } });
+      } catch (error) {
+        setClearing(false);
+        toast.error('Nothing was cleared', { description: `The stored app credentials could not be deleted${error instanceof Error ? `: ${error.message}` : '.'} Try again when the server is reachable.` });
+        return;
+      }
+      setClearing(false);
+    }
     setConfirming(false);
     resetAll();
     onReplaced();
@@ -89,7 +94,7 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
     <Card className="gap-0 py-0">
       <SettingBlock
         title="Export everything"
-        description={`One JSON file with your ${plural(workflowCount, 'workflow')}, ${plural(runCount, 'run')}, ${plural(connectionCount, 'connection')}, the product name and your settings. Keep it as a backup, or import it in another browser.`}
+        description={`One JSON file with your ${plural(workflowCount, 'workflow')}, ${plural(runCount, 'run')}, ${plural(connectionCount, 'connection')}, and your settings. Secret fields are left out: they stay in the browser they were typed in. Keep it as a backup, or import it in another browser.`}
       >
         <div>
           <Button variant="outline" onClick={download}>
@@ -100,7 +105,7 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
       <Separator />
       <SettingBlock
         title="Import"
-        description="Takes a full export from here, or a single workflow file from Export in the builder. A full export adds its workflows (replacing any with the same id) and brings its runs, connections and name with it. A single workflow is added next to yours. Your settings stay as they are."
+        description="Takes a full export from here, or a single workflow file from Export in the builder. A full export adds the workflows and runs you do not have, and asks before replacing a workflow that is already here. A single workflow is added next to yours. Nothing of yours is removed, and your settings stay as they are."
       >
         <div>
           <Button variant="outline" onClick={() => fileInput.current?.click()}>
@@ -115,6 +120,7 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
             aria-label="Import a studio export or a workflow file"
             onChange={(event) => void onImport(event.currentTarget)}
           />
+          {importDialog}
         </div>
       </SettingBlock>
       <Separator />
@@ -143,9 +149,12 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
                   <ul className="grid gap-1 pl-4 [&>li]:list-disc">
                     <li>{plural(workflowCount, 'workflow')}, including any you built or changed</li>
                     <li>{plural(runCount, 'run')} and their timelines</li>
-                    <li>{plural(connectionCount, 'app connection')}</li>
                     <li>
-                      {brand.name === DEFAULT_BRAND.name ? 'your settings' : `the name “${brand.name}” (back to “${DEFAULT_BRAND.name}”) and your settings`}: credentials, default repository, playback speed and
+                      {plural(connectionCount, 'app connection')}
+                      {realConnectionCount > 0 ? `, including the ${realConnectionCount === 1 ? 'webhook' : `${realConnectionCount} webhooks`} stored encrypted for ${realConnectionCount === 1 ? 'it' : 'them'} (still valid in the app until you remove ${realConnectionCount === 1 ? 'it' : 'them'} there)` : ''}
+                    </li>
+                    <li>
+                      your settings: credentials, default repository, playback speed and
                       animations
                     </li>
                     <li>which tours and checklist steps you have dismissed</li>
@@ -158,9 +167,9 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
                 <Button variant="outline" onClick={download}>
                   <Download data-icon="inline-start" /> Export first
                 </Button>
-                <AlertDialogAction variant="destructive" onClick={reset}>
+                <Button variant="destructive" onClick={() => void reset()} disabled={clearing}>
                   {signedIn ? 'Clear everything' : 'Reset everything'}
-                </AlertDialogAction>
+                </Button>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { useAccount } from '@/lib/cloud/account';
-import { signOut } from '@/lib/cloud/sync';
+import { signOut, unsentChanges } from '@/lib/cloud/sync';
 import { UserAvatar } from './user-avatar';
 import { PROFILE_APPEARANCE } from './account-settings';
 
@@ -53,11 +53,23 @@ export function AccountMenu() {
 export function useSignOut(): () => Promise<void> {
   const router = useRouter();
   const clerk = useClerk();
-  return async () => {
-    if (!(await signOut(() => clerk.signOut()))) return;
-    toast.success('Signed out', { description: 'Your workflows are safe in your account.' });
+  const leave = async (discardUnsent: boolean) => {
+    const result = await signOut(() => clerk.signOut(), { discardUnsent });
+    if (result === 'failed') return;
+    if (result === 'unsent') {
+      // Signing out clears this browser. Say what would be lost, and let the person decide.
+      const count = unsentChanges();
+      toast.warning(`${count === 1 ? 'One change has' : `${count} changes have`} not been saved to your account yet`, {
+        description: 'Stay signed in and it is sent as soon as the server can be reached. Signing out now discards it.',
+        duration: 20_000,
+        action: { label: 'Sign out anyway', onClick: () => void leave(true) },
+      });
+      return;
+    }
+    toast.success('Signed out', { description: discardUnsent ? 'What was not saved has been discarded.' : 'Everything you made is saved in your account.' });
     router.push('/');
   };
+  return () => leave(false);
 }
 
 /** Only ever rendered signed in, which means inside Clerk's provider. */

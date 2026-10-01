@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { DEFAULT_BRAND } from '@/lib/brand';
+import { BRAND } from '@/lib/brand';
 import { REPO_URL } from '@/lib/links';
 
 export const metadata: Metadata = { title: 'Terms' };
@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: 'Terms' };
 const UPDATED = 'September 24, 2026';
 
 export default function TermsPage() {
-  const name = DEFAULT_BRAND.name;
+  const name = BRAND.name;
   return (
     <>
       <h1>Terms</h1>

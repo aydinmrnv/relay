@@ -62,7 +62,7 @@ async function openPostgres(url: string): Promise<Handle> {
   const { Pool } = await import('pg');
   const { drizzle } = await import('drizzle-orm/node-postgres');
   // Small: on serverless every instance has its own pool, and they add up.
-  const pool = new Pool({ connectionString: url, max: 5, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 10_000 });
+  const pool = new Pool({ connectionString: url, max: poolSize(), idleTimeoutMillis: 10_000, connectionTimeoutMillis: 10_000, ...(needsTls(url) ? { ssl: true } : {}) });
   pool.on('error', (error) => console.error('[db] idle client error', error));
   const db = drizzle({ client: pool, schema }) as unknown as Db;
   return {
@@ -78,6 +78,29 @@ async function openPostgres(url: string): Promise<Handle> {
       };
     },
   };
+}
+
+/** Connections per server instance. Small by default; raise it on a long-lived server with `DATABASE_POOL_MAX`. */
+function poolSize(): number {
+  const configured = Number(process.env.DATABASE_POOL_MAX ?? '');
+  return Number.isInteger(configured) && configured >= 1 && configured <= 100 ? configured : 5;
+}
+
+/**
+ * Whether to insist on TLS. A connection string that says how (`sslmode=…`,
+ * `ssl=…`) is taken at its word. One that says nothing, to a database that
+ * is not on this machine, in production, would otherwise send every workflow
+ * in the clear: hosted Postgres all speaks TLS, so it is switched on.
+ */
+function needsTls(url: string): boolean {
+  if (process.env.NODE_ENV !== 'production') return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.searchParams.has('sslmode') || parsed.searchParams.has('ssl')) return false;
+    return !['localhost', '127.0.0.1', '::1', '[::1]', ''].includes(parsed.hostname) && !parsed.hostname.endsWith('.internal');
+  } catch {
+    return false;
+  }
 }
 
 async function openPglite(dir: string): Promise<Handle> {
@@ -110,14 +133,23 @@ async function openPglite(dir: string): Promise<Handle> {
 async function migrate(handle: Handle): Promise<void> {
   const session = await handle.session();
   try {
+    // Nearly every cold start finds nothing to do. One read says so, without
+    // a transaction or a lock for the first request to wait behind.
+    try {
+      const done = new Set((await session.rows<{ id: string }>('SELECT id FROM _relay_migrations')).map((row) => row.id));
+      if (MIGRATIONS.every((migration) => done.has(migration.id))) return;
+    } catch {
+      // No such table yet: a new database. Fall through and make it.
+    }
     await session.exec('BEGIN');
     try {
       await session.rows('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK]);
       await session.exec('CREATE TABLE IF NOT EXISTS _relay_migrations (id text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
       const applied = new Set((await session.rows<{ id: string }>('SELECT id FROM _relay_migrations')).map((row) => row.id));
+      const appliedBefore: ReadonlySet<string> = new Set(applied);
       for (const migration of MIGRATIONS) {
         if (applied.has(migration.id)) continue;
-        await session.exec(migration.sql);
+        await session.exec(typeof migration.sql === 'string' ? migration.sql : migration.sql(appliedBefore));
         await session.rows('INSERT INTO _relay_migrations (id) VALUES ($1)', [migration.id]);
         console.info(`[db] applied ${migration.id}`);
       }
