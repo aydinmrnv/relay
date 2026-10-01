@@ -347,7 +347,7 @@ function Outcome({ run, speed }: { run: Run; speed: string }) {
         <p className="font-medium text-pretty">
           {run.status === 'running' && real ? 'Running now' : style.title}.{' '}
           <span className="font-normal text-muted-foreground">
-            {run.status === 'running' ? 'The timeline, phases and cost below fill in as each step finishes.' : STATUS_MEANING[run.status]}
+            {run.status === 'running' ? 'The timeline, phases and cost below fill in as each node finishes.' : STATUS_MEANING[run.status]}
           </span>
         </p>
         {live ? (

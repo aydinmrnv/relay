@@ -4,8 +4,8 @@ import { defineConnector, FIELDS, PORTS, type Connector } from '../types';
 export const AGENT_OPTIONS = [
   { value: 'claude', label: 'Claude Code', description: 'Anthropic’s CLI. Reads a codebase well; the default planner and code reviewer.' },
   { value: 'codex', label: 'Codex CLI', description: 'OpenAI’s CLI. Implements inside its own sandbox; the default implementer and plan reviewer.' },
-  { value: 'gemini', label: 'Gemini CLI', description: 'Google’s CLI, added as a config harness.' },
-  { value: 'aider', label: 'Aider', description: 'Open-source pair programmer, added as a config harness. Implementation only.' },
+  { value: 'gemini', label: 'Gemini CLI', description: 'Google’s CLI. Not built in: a real run needs a harness named gemini that you add to .relay/config.json.' },
+  { value: 'aider', label: 'Aider', description: 'Open-source pair programmer. Not built in: a real run needs a harness named aider that you add to .relay/config.json. Implementation only.' },
 ];
 
 export const REVIEW_LEVEL_OPTIONS = [
@@ -114,8 +114,8 @@ export const CORE_CONNECTORS: Connector[] = [
           { id: 'refused', label: 'Refused', type: 'event' },
         ],
         fields: [
-          FIELDS.number('maxRunCostUsd', 'Max cost per run (USD)', 5, 0, 500, 0.5),
-          FIELDS.number('maxDailyCostUsd', 'Max cost per day (USD)', 25, 0, 5000, 1),
+          FIELDS.number('maxRunCostUsd', 'Stop a run above (USD)', 5, 0, 500, 0.5),
+          FIELDS.number('maxDailyCostUsd', 'Refuse new runs above, per day (USD)', 25, 0, 5000, 1),
           FIELDS.number('confirmAboveUsd', 'Ask before starting above (USD)', 10, 0, 500, 0.5),
         ],
       },

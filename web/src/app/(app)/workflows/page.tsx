@@ -235,13 +235,13 @@ export default function WorkflowsPage() {
               .
             </div>
           ) : (
-            <Stagger key={`${filter}-${sort}`} className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <Stagger key={`${filter}-${sort}`} className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {shown.map((workflow) => {
                 const run = lastRun.get(workflow.id);
                 const problems = errors.get(workflow.id) ?? 0;
                 const trigger = workflow.nodes.map((node) => getNodeType(node.data.typeId)).find((def) => def?.kind === 'trigger');
                 return (
-                  <StaggerItem key={workflow.id}>
+                  <StaggerItem key={workflow.id} className="min-w-0">
                     <article className="group relative flex h-full flex-col overflow-hidden rounded-xl border bg-card shadow-xs transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
                       <Link href={`/workflows/${workflow.id}`} className="absolute inset-0 z-0" aria-label={`Open ${workflow.name}`} />
                       <GraphThumbnail workflow={workflow} className="pointer-events-none h-28 rounded-none border-0 border-b" />
@@ -351,7 +351,7 @@ export default function WorkflowsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deleting?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              The workflow and its {runs.filter((run) => run.workflowId === deleting?.id).length} recorded test run(s) are removed from this browser. Files you already exported to a repository are not affected. Download it as JSON first if you might want it back.
+              The workflow and its {runs.filter((run) => run.workflowId === deleting?.id).length} recorded run(s) are deleted. Files you already exported to a repository are not affected. Download it as JSON first if you might want it back.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

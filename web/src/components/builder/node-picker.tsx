@@ -52,7 +52,7 @@ export function NodePicker({ open, onOpenChange, source, needsTrigger, onPick }:
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="top-[18%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl" showCloseButton={false}>
         <DialogHeader className="border-b px-4 pt-4 pb-3">
-          <DialogTitle className="text-base">{source === null ? 'Add a node' : `Add a step after “${source.label}”`}</DialogTitle>
+          <DialogTitle className="text-base">{source === null ? 'Add a node' : `Add a node after “${source.label}”`}</DialogTitle>
           <DialogDescription className="text-xs">
             {source === null
               ? 'Pick a trigger to start the workflow, or an action to do something. It lands in the middle of the canvas.'

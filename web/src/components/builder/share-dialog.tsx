@@ -154,7 +154,7 @@ function ShareBody({ workflow, open }: { workflow: Workflow; open: boolean }) {
       <div className="flex flex-col gap-1.5">
         <p className="text-xs font-medium text-muted-foreground">Public link</p>
         <div className="flex gap-2">
-          <Input readOnly value={url} onFocus={(event) => event.currentTarget.select()} className="font-mono text-xs" />
+          <Input readOnly aria-label="Public link" value={url} onFocus={(event) => event.currentTarget.select()} className="font-mono text-xs" />
           <CopyButton value={url} />
         </div>
         <p className="flex items-center gap-3 text-xs text-muted-foreground" suppressHydrationWarning>
@@ -175,7 +175,7 @@ function ShareBody({ workflow, open }: { workflow: Workflow; open: boolean }) {
         {/* eslint-disable-next-line @next/next/no-img-element -- an SVG badge from our own API, exactly as GitHub will show it */}
         <img src={`/api/badge/${share.slug}`} alt="" className="h-5 w-fit" />
         <div className="flex gap-2">
-          <Input readOnly value={badge} onFocus={(event) => event.currentTarget.select()} className="font-mono text-xs" />
+          <Input readOnly aria-label="README badge, as Markdown" value={badge} onFocus={(event) => event.currentTarget.select()} className="font-mono text-xs" />
           <CopyButton value={badge} />
         </div>
       </div>

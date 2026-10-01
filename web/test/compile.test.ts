@@ -177,3 +177,13 @@ test('a real run is held to the Budget gate’s per-run cap', () => {
   assert.equal(config.workflow.maxCostUsd, config.unattended.maxRunCostUsd);
   assert.ok(config.workflow.maxCostUsd !== null);
 });
+
+test('a template starts paused, and a paused export says its trigger is off', () => {
+  const paused = template('label-run');
+  assert.equal(paused.enabled, false);
+  const compiled = compileWorkflow(paused);
+  const config = JSON.parse(compiled.files[0]!.content) as { unattended: { enabled: boolean } };
+  assert.equal(config.unattended.enabled, false);
+  assert.ok(compiled.warnings.some((warning) => warning.includes('paused')));
+  assert.ok(!compileWorkflow({ ...paused, enabled: true }).warnings.some((warning) => warning.includes('paused')));
+});

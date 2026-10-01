@@ -180,7 +180,8 @@ export function instantiateTemplate(templateId: string, brand: Brand, repository
     description: meta.description,
     nodes,
     edges,
-    enabled: true,
+    // Paused, like a blank or a described workflow: nothing made here is switched on until its owner says so.
+    enabled: false,
     createdAt: now,
     updatedAt: now,
     templateId,

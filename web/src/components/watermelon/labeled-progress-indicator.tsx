@@ -6,9 +6,8 @@ import { useState, useEffect, type FC } from 'react';
 
 export interface LabeledProgressIndicatorProps {
   labels: string[];
-  progress?: string;
+  progress: string;
   intervalMs?: number;
-  showThemeToggle?: boolean;
   /**
    * Adapted for the studio: when set, the label follows this value instead of
    * cycling on a timer, so the indicator can report real progress.
@@ -20,7 +19,7 @@ export interface LabeledProgressIndicatorProps {
 
 export const LabeledProgressIndicator: FC<LabeledProgressIndicatorProps> = ({
   labels,
-  progress = '55%',
+  progress,
   intervalMs = 2000,
   label,
   size = 'default',

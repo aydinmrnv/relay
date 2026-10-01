@@ -21,6 +21,12 @@ export interface ValidationResult {
 /** Agents that cannot be confined to read-only, so they may never review. Mirrors `assertReviewRolesEnforceable`. */
 const UNCONFINABLE_REVIEWERS = new Set(['aider']);
 
+/** Agents the CLI ships no harness for: it runs them only when the repository's config describes one under the same name. */
+const UNPACKAGED_AGENTS = new Map([
+  ['gemini', 'Gemini CLI'],
+  ['aider', 'Aider'],
+]);
+
 export function portsCompatible(a: PortType, b: PortType): boolean {
   return a === 'any' || b === 'any' || a === b;
 }
@@ -170,6 +176,15 @@ export function validateWorkflow(workflow: Workflow, context: ValidationContext 
         });
       }
     }
+    const unpackaged = [...new Set(['planner', 'planReviewer', 'implementer', 'codeReviewer'].map((role) => String(config[role] ?? '')).filter((agent) => UNPACKAGED_AGENTS.has(agent)))];
+    for (const agent of unpackaged) {
+      issues.push({
+        level: 'warning',
+        nodeId: node.id,
+        message: `${UNPACKAGED_AGENTS.get(agent)} is not built into the Relay CLI.`,
+        hint: `Test runs play it. A real run stops unless .relay/config.json defines a harness named ${agent}; the export does not write one. Claude Code and Codex need nothing.`,
+      });
+    }
     if (config['planner'] !== undefined && config['planner'] === config['planReviewer']) {
       issues.push({ level: 'warning', nodeId: node.id, message: 'The same model plans and reviews the plan.', hint: 'Cross-model review is the point: give the review to the other CLI.' });
     }
@@ -284,6 +299,6 @@ export function retiredMessage(retired: { app: string; step: string; appRetired:
 
 export function retiredHint(retired: { app: string; step: string; appRetired: boolean }): string {
   return retired.appRetired
-    ? 'Start from it with an Incoming webhook, or call it with an HTTP request, then delete this step.'
+    ? 'Start from it with an Incoming webhook, or call it with an HTTP request, then delete this node.'
     : `Pick one of ${retired.app}'s current steps from the palette, or use an HTTP request, then delete this one.`;
 }

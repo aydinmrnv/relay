@@ -2,8 +2,6 @@
 
 import { useState, type ReactNode, type FC } from 'react';
 import { motion } from 'motion/react';
-import { BiSolidPieChartAlt2 } from 'react-icons/bi';
-import { FaInbox, FaLandmark } from 'react-icons/fa';
 
 export interface TabItem {
   id: string;
@@ -12,7 +10,7 @@ export interface TabItem {
 }
 
 interface FluidTabsProps {
-  tabs?: TabItem[];
+  tabs: TabItem[];
   defaultActive?: string;
   onChange?: (id: string) => void;
   /** Adapted for the studio: controlled selection, a compact size and a unique pill per instance. */
@@ -23,14 +21,8 @@ interface FluidTabsProps {
   'aria-label'?: string;
 }
 
-const DEFAULT_TABS: TabItem[] = [
-  { id: 'accounts', label: 'Accounts', icon: <FaLandmark size={22} /> },
-  { id: 'deposits', label: 'Deposits', icon: <FaInbox size={22} /> },
-  { id: 'funds', label: 'Funds', icon: <BiSolidPieChartAlt2 size={22} /> },
-];
-
 export const FluidTabs: FC<FluidTabsProps> = ({
-  tabs = DEFAULT_TABS,
+  tabs,
   defaultActive = tabs[0]?.id,
   onChange,
   value,

@@ -59,7 +59,11 @@ function MotionPreference({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // The hydrating render still sees the default setting; acting on it would
     // switch skipping off again just after the store switched it on.
-    if (hydrated) MotionGlobalConfig.skipAnimations = preference === 'reduced';
+    if (!hydrated) return;
+    MotionGlobalConfig.skipAnimations = preference === 'reduced';
+    // Sheets, dialogs and menus animate in CSS, which Motion's setting never
+    // reaches: the stylesheet reads this attribute, so one switch covers both.
+    document.documentElement.dataset.motion = preference;
   }, [hydrated, preference]);
   return <MotionConfig reducedMotion={preference === 'full' ? 'never' : preference === 'reduced' ? 'always' : 'user'}>{children}</MotionConfig>;
 }

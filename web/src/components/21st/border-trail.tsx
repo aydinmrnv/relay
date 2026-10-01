@@ -1,6 +1,6 @@
 'use client';
 import { cn } from '@/lib/utils';
-import { motion, Transition } from 'motion/react';
+import { motion, Transition, useReducedMotionConfig } from 'motion/react';
 
 export type BorderTrailProps = {
   className?: string;
@@ -17,16 +17,20 @@ export function BorderTrail({
   onAnimationComplete,
   style,
 }: BorderTrailProps) {
+  // A light circling a border for ever is decoration: with reduced motion it is left out.
+  const still = useReducedMotionConfig();
   const defaultTransition: Transition = {
     repeat: Infinity,
     duration: 5,
     ease: 'linear',
   };
 
+  if (still) return null;
+
   return (
     <div className='pointer-events-none absolute inset-0 rounded-[inherit] border border-transparent [mask-clip:padding-box,border-box] [mask-composite:intersect] [mask-image:linear-gradient(transparent,transparent),linear-gradient(#000,#000)]'>
       <motion.div
-        className={cn('absolute aspect-square bg-zinc-500', className)}
+        className={cn('absolute aspect-square bg-muted-foreground', className)}
         style={{
           width: size,
           offsetPath: `rect(0 auto auto 0 round ${size}px)`,

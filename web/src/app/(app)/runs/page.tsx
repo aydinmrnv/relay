@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { use, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { useCalmMotion } from '@/components/motion/use-calm-motion';
 import { ChevronDown, FlaskConical, Play, Search, SearchX, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react';
@@ -53,7 +53,16 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
 
   const [status, setStatus] = useState<StatusFilter>(isStatusFilter(query['status']) ? query['status'] : 'all');
   const [workflowId, setWorkflowId] = useState<string>(typeof query['workflow'] === 'string' ? query['workflow'] : ALL);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(typeof query['q'] === 'string' ? query['q'] : '');
+  // The filters live in the address, so a reload, Back from a run, or a link sent to someone shows the same list.
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (status !== 'all') params.set('status', status);
+    if (workflowId !== ALL) params.set('workflow', workflowId);
+    if (search.trim().length > 0) params.set('q', search.trim());
+    const next = params.size === 0 ? window.location.pathname : `${window.location.pathname}?${params}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, '', next);
+  }, [status, workflowId, search]);
   const [deleting, setDeleting] = useState<Run | undefined>(undefined);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
@@ -131,7 +140,7 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
       <PageHeader
         title="Runs"
         term="run"
-        description="Every run this browser has seen, newest first: test runs, played back for free, and runs on your runner, performed for real on your computer or in Relay Cloud and marked with its name. They are stored only here. Open one for its step-by-step timeline."
+        description="Every run in your account, newest first: test runs, played back for free, and runs on your runner, performed for real on your computer or in Relay Cloud and marked with its name. Open one for its timeline, node by node."
         actions={
           <>
             {runs.length > 0 ? (

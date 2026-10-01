@@ -14,7 +14,7 @@ import { getConnector, getNodeType, type NodeTypeDef } from '../connectors';
 import { ACTION_REF, CLI_INSTALL_COMMAND } from '../links';
 import { SIMULATED_ONLY } from './readiness';
 import { isSecretField } from './redact';
-import type { AuthPreference, Workflow, WorkflowEdge, WorkflowNode } from './schema';
+import { isRepository, type AuthPreference, type Workflow, type WorkflowEdge, type WorkflowNode } from './schema';
 import { isPlaceholderLogin, isUnattendedTrigger } from './validate';
 
 export interface CompileOptions {
@@ -115,7 +115,7 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
   if (examples.length > 0) {
     blockers.push(`The Author allowlist still has the example names ${list(examples)}. Replace them with the GitHub logins (or org/team) of the people who may start runs.`);
   }
-  if (workflow.repository === undefined || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(workflow.repository.trim())) {
+  if (!isRepository(workflow.repository)) {
     blockers.push('This workflow is not attached to a repository yet. Say which one, as owner/name.');
   }
 
@@ -178,6 +178,9 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
     },
   };
 
+  if (workflow.enabled === false && unattended) {
+    warnings.push('This workflow is paused, so the export has unattended.enabled set to false and a label starts nothing. Switch it to Active in the builder and export again when it should run by itself.');
+  }
   if (unattended && (relayConfig.unattended as { authors: string[] }).authors.length === 0 && (relayConfig.unattended as { teams: string[] }).teams.length === 0) {
     // True whatever the trigger is: the Action starts from an issue, and the
     // engine asks who put the trigger label on it before it spends anything.

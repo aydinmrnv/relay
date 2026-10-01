@@ -60,9 +60,11 @@ export function RunTimeline({ run, workflow, compact = false, className }: Props
 
   // A phase's "started" line is replaced by its "finished" line; only the one still open stays.
   const lastPhaseIndex = run.events.findLastIndex((event) => event.kind === 'phase');
+  // Each event's place in the run, looked up once: asking the array per line made a long run quadratic.
+  const position = new Map(run.events.map((event, index) => [event, index]));
   const visible = (event: RunEvent): boolean => {
     if (event.kind === 'node-started') return false;
-    if (event.kind === 'phase' && event.status === 'running') return run.events.indexOf(event) === lastPhaseIndex;
+    if (event.kind === 'phase' && event.status === 'running') return position.get(event) === lastPhaseIndex;
     return true;
   };
 
@@ -135,7 +137,7 @@ export function RunTimeline({ run, workflow, compact = false, className }: Props
                 {lines.length > 0 || endSummary !== undefined ? (
                   <ul className={cn('flex flex-col', compact ? 'gap-0.5' : 'mt-0.5 gap-1')}>
                     {lines.map((event) => (
-                      <EventLine key={`${event.at}-${event.kind}-${run.events.indexOf(event)}`} event={event} compact={compact} reduce={reduce === true} open={live && event.kind === 'phase' && event.status === 'running'} />
+                      <EventLine key={`${event.kind}-${position.get(event)}`} event={event} compact={compact} reduce={reduce === true} open={live && event.kind === 'phase' && event.status === 'running'} />
                     ))}
                     {endSummary !== undefined && !compact ? <li className="text-xs text-pretty text-muted-foreground">{endSummary}</li> : null}
                   </ul>
