@@ -46,7 +46,7 @@ const GITHUB_NATIVE = new Set(['github-issues']);
 export function readiness(workflow: Workflow): Readiness {
   const trigger = workflow.nodes.map((node) => getNodeType(node.data.typeId)).find((def) => def?.kind === 'trigger');
   if (trigger === undefined || trigger.id === 'logic.trigger.manual') {
-    return { unattended: false, headline: 'Started by hand', detail: 'Run it on your machine or Relay Cloud with an issue or a description.' };
+    return { unattended: false, headline: 'Started by hand', detail: 'Run it on your computer or Relay Cloud with an issue or a description.' };
   }
   if (GITHUB_NATIVE.has(trigger.connectorId)) {
     return { unattended: true, headline: 'Runs unattended today', detail: 'Export it: the GitHub Action starts on the issue event, behind the same guardrails.' };
@@ -54,6 +54,6 @@ export function readiness(workflow: Workflow): Readiness {
   return {
     unattended: false,
     headline: 'Test it here, run it by hand',
-    detail: `Starting it from ${trigger.connector.name} events is not wired up yet. Test runs play every step; a real run on your machine or Relay Cloud does the pipeline and delivery.`,
+    detail: `Starting it from ${trigger.connector.name} events is not wired up yet. Test runs play every node; a real run on your computer or Relay Cloud does the pipeline and delivery.`,
   };
 }

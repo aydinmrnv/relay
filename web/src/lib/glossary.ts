@@ -4,7 +4,9 @@
  * Help popovers, the guide page, empty states and the builder's tour all read
  * from here, so an explanation cannot drift between two screens. Entries are
  * plain strings on purpose: the product name is substituted at render time with
- * `explain(term, brand.name)`, which keeps this file free of React.
+ * `explain(term, brand.name)`, which keeps this file free of React. They may
+ * use `**bold**`, backticks and a blank line between paragraphs; `RichText`
+ * draws those.
  */
 
 export type Term =
@@ -57,14 +59,14 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'workflow',
     title: 'Workflow',
     short: 'A graph that says what starts a run, what checks it, what the agents do, and where the result goes.',
-    long: `A workflow is a diagram you drag together: one trigger on the left, then gates, the agent pipeline and delivery, then whoever should hear about it. ${PRODUCT} saves it in this browser, can play it back as a test run, and compiles it into files a repository runs on its own GitHub Actions minutes.`,
+    long: `A workflow is a diagram you drag together: one trigger on the left, then gates, the agent pipeline and delivery, then whoever should hear about it. ${PRODUCT} saves it to your account, can play it back as a test run, and compiles it into files a repository runs on its own GitHub Actions minutes.`,
     href: '/workflows',
   },
   trigger: {
     term: 'trigger',
     title: 'Trigger',
     short: 'The event that starts a workflow: an issue assigned, a label added, a schedule, a webhook.',
-    long: 'Every workflow starts with exactly one thing that happened. Triggers come from connected apps (Linear, GitHub, Sentry, Zendesk…), from a schedule, from an incoming webhook, or from a Manual start button. A trigger has only outputs; it hands its payload — usually a ticket — to whatever it is wired to.',
+    long: 'Every workflow starts with exactly one thing that happened. Triggers come from apps (Linear, GitHub, Sentry, Zendesk…), from a schedule, from an incoming webhook, or from a Manual start button. A trigger has only outputs; it hands its payload — usually a ticket — to whatever it is wired to. In a test run every trigger fires with a sample. For real, a label on a GitHub issue is the one that starts an exported workflow by itself today; the others are started by a person, with a ticket.',
   },
   action: {
     term: 'action',
@@ -76,7 +78,7 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'port',
     title: 'Ports and colours',
     short: 'The dots on each node. Colours are types: a ticket only plugs into something that accepts a ticket.',
-    long: 'Sky-blue ports carry a ticket: an issue with a title and a body. Violet carries a finished pipeline run. Indigo carries a change: a branch or a pull request. Grey is a plain "this happened" event, and light grey accepts anything. Inputs are on the left of a node, outputs on the right. The canvas refuses a connection whose colours do not fit, so a nonsense graph cannot be drawn in the first place.',
+    long: 'Each colour is a type. One carries a ticket: an issue with a title and a body. One carries a finished pipeline run. One carries a change: a branch or a pull request. One is a plain “this happened” event, and the faintest accepts anything. Hover a dot to read which it is. Inputs are on the left of a node, outputs on the right. The canvas refuses a connection whose colours do not fit, so a nonsense graph cannot be drawn in the first place.',
   },
   gate: {
     term: 'gate',
@@ -99,8 +101,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
   approval: {
     term: 'approval',
     title: 'Human approval',
-    short: 'Pauses the workflow until a named person approves in chat, on the issue, or in the dashboard.',
-    long: 'Use it where a run should not start just because a ticket arrived — customer-reported bugs, anything expensive, anything touching production code. In a test run it is approved automatically after a short pause.',
+    short: 'Holds a run for a named person’s yes or no. Played in test runs; real runs do not wait for one yet.',
+    long: 'Use it where a run should not start just because a ticket arrived — customer-reported bugs, anything expensive, anything touching production code. In a test run the answer is played: approved most of the time and rejected now and then, so both branches get exercised. Nothing waits for a real person yet: a real run and the exported workflow do not perform this step, and Export says so.',
   },
   'kill-switch': {
     term: 'kill-switch',
@@ -124,7 +126,7 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'roles',
     title: 'Agent roles',
     short: 'Who plans, who reviews the plan, who implements and who reviews the code.',
-    long: 'Cross-model review is the point: the planner and the plan reviewer should be different agents, and so should the implementer and the code reviewer. Reviewers always run read-only, which is why an agent with no read-only mode (Aider) can implement but never review.',
+    long: 'Cross-model review is the point: the planner and the plan reviewer should be different agents, and so should the implementer and the code reviewer. Reviewers always run read-only, which is why an agent with no read-only mode can implement but never review.',
   },
   delivery: {
     term: 'delivery',
@@ -135,8 +137,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
   'test-run': {
     term: 'test-run',
     title: 'Test run',
-    short: 'Plays the workflow back in your browser with a sample ticket. Free, instant, and nothing leaves this machine.',
-    long: 'A test run walks your graph node by node with the same phases, review rounds, budgets and refusals the real pipeline has, using a sample payload from the trigger (or one you type). It is seeded, so the same workflow replays the same run until you change it. Nothing is called and nothing is billed; the costs shown are realistic estimates of what the CLIs would report. How fast it plays back is a setting.',
+    short: 'Plays the workflow back in your browser with a sample ticket. Free: nothing is run and no agent is called.',
+    long: 'A test run walks your graph node by node with the same phases, review rounds, budgets and refusals the real pipeline has, using a sample payload from the trigger (or one you type). It is seeded, so the same workflow replays the same run until you change it. Nothing is called and nothing is billed; the costs and times shown are drawn from typical ranges per phase, not measured. Its record is saved to your account like any other run. How fast it plays back is a setting.',
     href: '/workflows',
   },
   run: {
@@ -163,7 +165,7 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'export',
     title: 'Export',
     short: 'Compiles the workflow into files a repository needs to run it on its own GitHub Actions minutes.',
-    long: `You get .relay/config.json (what the ${PRODUCT} CLI reads), a GitHub Actions workflow under .github/workflows/, a SETUP.md listing the secrets to add, and the graph as JSON so it can be imported again. Commit them, add the secrets, and the workflow runs on your repository with your own subscriptions. Nothing is hosted or billed by ${PRODUCT}. Anything the canvas can express but those files cannot is listed as a warning, never silently dropped.`,
+    long: `You get .relay/config.json (what the ${PRODUCT} CLI reads), a GitHub Actions workflow under .github/workflows/, a SETUP.md listing the secrets to add, and the graph as JSON so it can be imported again. Commit them, add the secrets, and the workflow runs on your repository with your own subscriptions. Nothing is hosted or billed by ${PRODUCT}. The Action is narrower than the canvas: it works on one GitHub issue per run and cannot evaluate a Condition or wait for an approval. So each step is placed by where it sits in the graph, a step the Action cannot decide is left out, and every such difference is listed as a warning in the export.`,
     href: '/workflows',
   },
   connection: {
@@ -177,7 +179,7 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'subscription',
     title: 'Bring your own subscription',
     short: 'Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. No API keys to paste.',
-    long: `The studio asks the CLIs on this machine whether they are signed in, and can start their own sign-in flow from Settings → Coding agents. It never sees or stores a token: the credential lands in the CLI, exactly as if you had signed in from a terminal. For GitHub Actions, the export uses each vendor's supported way to carry a personal plan into CI (CLAUDE_CODE_OAUTH_TOKEN, CODEX_AUTH_JSON), or API keys if you prefer.`,
+    long: `The studio asks the CLIs on your runner whether they are signed in, and can start their own sign-in flow from Settings → Coding agents. It never sees or stores a token: the credential lands in the CLI, exactly as if you had signed in from a terminal. For GitHub Actions, the export uses each vendor's supported way to carry a personal plan into CI (CLAUDE_CODE_OAUTH_TOKEN, CODEX_AUTH_JSON), or API keys if you prefer.`,
     href: '/settings#agents',
   },
   template: {
@@ -210,7 +212,7 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'coding-agent',
     title: 'Coding agents',
     short: 'The command-line tools that do the work, such as Claude Code and Codex, each signed in with its own account.',
-    long: `${PRODUCT} does not bring its own model. The pipeline drives coding CLIs you already use: Claude Code and Codex by default, with Gemini CLI and Aider as options for some roles. Each runs inside the run's worktree on its own account, so the plan you already pay for does the work. Two different agents checking each other is what makes the reviews worth having.`,
+    long: `${PRODUCT} does not bring its own model. The pipeline drives coding CLIs you already use: Claude Code and Codex. Another CLI can be plugged in as a harness in the repository’s config, but those two are the ones built in and tested. Each runs inside the run's worktree on its own account, so the plan you already pay for does the work. Two different agents checking each other is what makes the reviews worth having.`,
     href: '/settings#agents',
   },
   worktree: {
@@ -228,25 +230,25 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
   },
   companion: {
     term: 'companion',
-    title: 'Your machine (relay connect)',
+    title: 'Your computer (relay connect)',
     short: 'The Relay CLI on your computer, paired with the studio: it signs in your coding agents, runs workflows for real and installs exports.',
-    long: `The studio draws, checks and compiles workflows in your browser; your coding agents, their sign-ins and your repository are on your computer. \`relay connect\`, run inside a repository, starts a small server on 127.0.0.1 that only a paired studio may use, and prints a link that pairs this browser with it. From then on the studio can start Claude Code’s and Codex’s own sign-ins, run a workflow’s pipeline for real in that repository — streaming every phase back to the canvas — and install an export straight into it. Test runs stay free and in the browser either way. The pairing token never leaves the browser and your machine, and the companion never sees an agent credential. Relay Cloud is the same job on a machine Relay runs for you instead; /runners compares the two.`,
+    long: `The studio draws, checks and compiles workflows in your browser; your coding agents, their sign-ins and your repository are on your computer. \`relay connect\`, run inside a repository, starts a small server on 127.0.0.1 that only a paired studio may use, and prints a link that pairs this browser with it. From then on the studio can start Claude Code’s and Codex’s own sign-ins, run a workflow’s pipeline for real in that repository — streaming every phase back to the canvas — and install an export straight into it. Test runs stay free and in the browser either way. The pairing token never leaves the browser and your computer, and relay connect never reads an agent credential. Relay Cloud, where it is offered, is the same job on a machine Relay runs for you instead; /runners compares the two.`,
     href: '/connect',
   },
   runner: {
     term: 'runner',
     title: 'Runner: your computer, or Relay Cloud',
     short: 'The place a run actually executes and your coding agents are signed in: your own computer through relay connect, or a machine Relay runs for you.',
-    long: `Two runners, one protocol, the same result either way. **Your computer**: \`relay connect\` inside a repository, reachable only on 127.0.0.1, with your sign-ins in the CLIs’ own files where they already are. Free, but only while that process is running. **Relay Cloud**: a Linux machine of yours that Relay makes and deallocates when idle. Nothing to install, no terminal, and it wakes in about a minute when you press Run, so it works from any browser even with your laptop shut. It needs an account, because the hub knows your machine by your sign-in, and it has no public address: it dials out, and only your own signed-in studio reaches it.
+    long: `Two runners, one protocol, the same result either way. **Your computer**: \`relay connect\` inside a repository, reachable only on 127.0.0.1, with your sign-ins in the CLIs’ own files where they already are. Free, but only while that process is running. **Relay Cloud** (invite-only beta, where a deployment offers it): a Linux machine of yours that Relay makes, and puts to sleep after ten idle minutes. Nothing to install, no terminal, and it wakes in about a minute when you press Run, so it works from any browser even with your laptop shut. It runs one run at a time. It needs an account, because Relay Cloud knows your machine by your sign-in, and it has no public address: it dials out, and only your own signed-in studio reaches it.
 
-Whichever you pick, the agents run with your own Claude and ChatGPT plans, Relay never asks you for a model credential and has no route that reads one, the code lands in your repository as a branch and a pull request, and test runs stay free in the browser. What does differ is where things sit: on your computer, your checkout and sign-ins never leave it; on Relay Cloud they live on your own cloud machine’s disk, which Relay operates and which goes away when you remove the machine. You choose which runner sign-ins and runs go to, and every run remembers the machine it started on, so switching never orphans one.`,
+Whichever you pick, the agents run with your own Claude and ChatGPT plans, the studio never asks you for a model credential and has no route that reads one, the code lands in your repository as a branch and a pull request, and test runs stay free in the browser. What does differ is where things sit: on your computer, your checkout and sign-ins never leave it; on Relay Cloud they live on your own cloud machine’s disk, which Relay operates and which goes away when you remove the machine. You choose which runner sign-ins and runs go to, and every run remembers the machine it started on, so switching never orphans one.`,
     href: '/runners',
   },
   execution: {
     term: 'execution',
     title: 'Where runs execute',
     short: 'A real run executes on the runner you picked — your computer or Relay Cloud — and an exported workflow runs unattended on your repository’s own GitHub Actions minutes.',
-    long: `There are three places work happens, and they answer different questions. **The runner you picked** (/runners): "Run in Relay Cloud" or "Run on this machine" sends the Agent pipeline there — the pipeline and delivery only, started by a person — with your own sign-ins, streaming every phase back to the canvas. **Your repository’s GitHub Actions**: Export compiles the whole graph into plain files you commit; GitHub events and schedules are real triggers there, on your own Actions minutes, free on public repositories. That is the only way a workflow starts by itself today. **Your browser**: a test run never executes anything; it is played back node by node with simulated agents, costs and refusals. Hosted microVMs for exported runs and a self-hosted runner in your own network are planned, not built.`,
+    long: `There are three places work happens, and they answer different questions. **The runner you picked** (/runners): "Run on your computer" or "Run in Relay Cloud" sends the Agent pipeline there — the pipeline and delivery only, started by a person — with your own sign-ins, streaming every phase back to the canvas. **Your repository’s GitHub Actions**: Export compiles the graph into plain files you commit; a label on a GitHub issue is a real trigger there, on your own Actions minutes, free on public repositories. That is the only way a workflow starts by itself today. **Your browser**: a test run never executes anything; it is played back node by node with simulated agents, costs and refusals. Hosted microVMs for exported runs and a self-hosted runner in your own network are planned, not built.`,
     href: '/settings#running',
   },
 };

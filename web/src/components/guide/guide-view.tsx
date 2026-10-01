@@ -23,6 +23,7 @@ import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { PageHeader } from '@/components/app/page-header';
+import { RichText } from '@/components/app/rich-text';
 import { Stagger, StaggerItem } from '@/components/motion/fade-in';
 import { useBrand } from '@/hooks/use-brand';
 import { useSignedIn } from '@/hooks/use-agent-accounts';
@@ -76,9 +77,9 @@ export function GuideView() {
 
         <Stagger className="grid gap-3 sm:grid-cols-3">
           {[
-            { icon: MousePointerClick, title: 'Design it here', body: 'A workflow is a diagram you drag together here. It is saved to your account, or in this browser if you are a guest.' },
+            { icon: MousePointerClick, title: 'Design it here', body: 'A workflow is a diagram you drag together here. It is saved to your account, so it is there in any browser you sign in to.' },
             { icon: FlaskConical, title: 'Test it for free', body: 'A test run plays it back with simulated agents, costs and refusals. Nothing is called and nothing is billed.' },
-            { icon: GitPullRequest, title: 'Run it in your repository', body: 'Export writes the config and a GitHub Actions workflow. It runs on your own minutes, with your own subscriptions.' },
+            { icon: GitPullRequest, title: 'Run it for real', body: 'On your own computer through relay connect, or exported as a GitHub Actions workflow that a label on an issue starts. Either way, your own subscriptions do the work.' },
           ].map((fact) => (
             <StaggerItem key={fact.title} className="border-t pt-4">
               <fact.icon className="size-4 text-muted-foreground" aria-hidden />
@@ -309,8 +310,8 @@ function Concepts({ productName }: { productName: string }) {
                 <Hash className="size-3.5" aria-hidden />
               </a>
             </h3>
-            <p className="text-sm text-pretty">{entry.short}</p>
-            <p className="text-sm text-pretty text-muted-foreground">{entry.long}</p>
+            <RichText text={entry.short} className="text-sm text-pretty" />
+            <RichText text={entry.long} className="text-sm text-pretty text-muted-foreground" />
             {entry.href === undefined ? null : (
               <Link href={entry.href} className="mt-auto inline-flex items-center gap-1 pt-1 text-xs font-medium text-signal underline-offset-4 hover:underline">
                 Show me <ArrowRight className="size-3" aria-hidden />
@@ -329,18 +330,19 @@ type Reality = 'real' | 'simulated' | 'later';
 
 const REALITY: Array<{ what: string; status: Reality; detail: string }> = [
   { what: 'The catalog, the canvas and validation', status: 'real', detail: 'Every node and rule you see is the one the export and the CLI use.' },
-  { what: 'The compiler and its files', status: 'real', detail: 'Export produces a config, an Actions workflow and a SETUP.md you can commit today.' },
+  { what: 'The compiler and its files', status: 'real', detail: 'Export produces a config, an Actions workflow and a SETUP.md you can commit today. Steps the Action cannot decide are left out, and the export lists them.' },
   { what: 'Signing in to Claude Code and Codex', status: 'real', detail: 'Through the runner: runs the vendors’ own CLI logins on your computer, or on your machine in Relay Cloud, and reads their status.' },
   { what: 'Running a workflow for real', status: 'real', detail: 'On the runner you picked: your computer through relay connect, or Relay Cloud. The pipeline runs in the repository with your own sign-ins and streams back to the canvas.' },
   { what: 'Installing an export into your repository', status: 'real', detail: 'Through relay connect on your computer, or by unzipping the download yourself.' },
-  { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions. This is the only way a workflow starts by itself today.' },
-  { what: 'Accounts, sync, share links and version history', status: 'real', detail: 'Kept in the studio’s database. As a guest, everything stays in this browser instead.' },
+  { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions, started by a label on an issue. This is the only way a workflow starts by itself today.' },
+  { what: 'Accounts, sync, share links and version history', status: 'real', detail: 'Kept in the studio’s database, under your account.' },
   { what: 'Describe-to-workflow and the spend forecast', status: 'real', detail: 'The sentence parser runs in your browser with no model call. The forecast is built from simulated runs, so it is an estimate.' },
-  { what: 'Renaming the product, importing and exporting your data', status: 'real', detail: 'Stored in your account or this browser; the export is a plain JSON file.' },
+  { what: 'Importing and exporting your data', status: 'real', detail: 'Everything in your account as one plain JSON file, and back again.' },
+  { what: 'Slack and Discord connections', status: 'real', detail: 'A webhook you paste is checked with the app and kept encrypted. The studio posts test messages through it; an exported workflow posts with the same URL held as a secret in its repository.' },
   { what: 'Test runs', status: 'simulated', detail: 'Phases, review rounds, costs, refusals and pull request numbers are played back, seeded per workflow.' },
-  { what: 'Connections to apps', status: 'simulated', detail: '“Connect” marks an app as ready so you can design against the whole catalog. No app is signed in to; an export uses your repository’s secrets.' },
-  { what: 'Human approvals', status: 'simulated', detail: 'In a test run, an approval gate approves itself after a short pause.' },
-  { what: 'A run started by a ticket, a label or a schedule', status: 'later', detail: 'A real run is started by a person pressing Run. Unattended starts are real through the GitHub Actions export only.' },
+  { what: 'Connections to every other app', status: 'simulated', detail: '“Mark ready” records a label so you can design against the whole catalog. Nothing is signed in to; in an export those steps go to an endpoint of your own.' },
+  { what: 'Approvals, Conditions, Filters, AI steps, waits and the cost estimate', status: 'simulated', detail: 'Played in test runs, where an approval is usually granted and sometimes refused. A real run and the exported workflow do not perform them yet.' },
+  { what: 'A run started by Linear, Sentry, a schedule or a webhook', status: 'later', detail: 'A real run is started by a person, or by a label on a GitHub issue through the Actions export. Nothing listens to the other triggers yet.' },
   { what: 'A runner in your own network, or one isolated VM per exported run', status: 'later', detail: 'A machine of your own can join Relay Cloud by hand; the studio does not offer it. Exporting to GitHub Actions is what runs unattended today.' },
 ];
 
@@ -417,8 +419,8 @@ function Faq({ slug }: { slug: string }) {
       question: 'Does any of this cost money?',
       answer: (
         <p>
-          The studio does not: it runs in your browser and test runs call nothing. Exported workflows run on your repository’s own GitHub Actions minutes, which are free on public repositories and come out of your
-          plan’s included minutes on private ones (3,000 a month with GitHub Pro). Model usage counts against the Claude and ChatGPT subscriptions you already pay for, or against your API keys if you choose those.
+          The studio is free while in beta, and test runs call nothing. Exported workflows run on your repository’s own GitHub Actions minutes, which are free on public repositories and come out of your plan’s
+          included minutes on private ones. Model usage counts against the Claude and ChatGPT subscriptions you already pay for, or against your API keys if you choose those.
         </p>
       ),
     },
@@ -427,7 +429,7 @@ function Faq({ slug }: { slug: string }) {
       question: 'Where is my data kept?',
       answer: (
         <p>
-          With an account, in the studio’s database: workflows, runs, connections, the product name and your settings, so they follow you to any browser. Values typed into secret fields stay in the browser they were typed in. The studio itself never stores your code: the agents work in a checkout on the runner you picked — your own computer, your cloud machine, or a GitHub runner — and only the workflow and the run’s summary come back. As a guest, all of it stays in this browser’s local storage. Download everything, import it elsewhere or start over under{' '}
+          In the studio’s database, under your account: workflows and their saved versions, runs, connections, your settings and your onboarding answers, so they follow you to any browser. A Slack or Discord webhook you connect is kept encrypted. Values typed into a node’s secret fields stay in the browser they were typed in, and are left out of exports. The studio’s servers never receive your code: the agents work in a checkout on the runner you picked — your own computer, your Relay Cloud machine, or a GitHub runner — and only the workflow and the run’s record come back. Download everything, import it elsewhere or start over under{' '}
           <Link href="/settings#data" className={link}>
             Settings → Your data
           </Link>
@@ -444,7 +446,7 @@ function Faq({ slug }: { slug: string }) {
       question: 'Does the studio see my Claude or ChatGPT credentials?',
       answer: (
         <p>
-          No. Signing in runs the vendor’s own CLI login on your machine, through relay connect, and the credential lands in the CLI exactly as if you had signed in from a terminal. The studio only asks the CLI
+          No. Signing in runs the vendor’s own CLI login on your runner — your computer through relay connect, or your Relay Cloud machine — and the credential lands in the CLI there, exactly as if you had signed in from a terminal. The studio only asks the CLI
           whether it is signed in and gets back the method, plan and account label. An authorization code you paste is handed straight to the CLI and not kept.
         </p>
       ),
@@ -455,12 +457,12 @@ function Faq({ slug }: { slug: string }) {
       answer: (
         <p>
           In one of three places. <strong>Your computer</strong>, through relay connect: the pipeline works in your repository with your own sign-ins and streams back here.{' '}
-          <strong>Relay Cloud</strong>, if you would rather install nothing: the same run, on a machine of yours that Relay makes and puts to sleep, reached with your account instead of a loopback pairing.{' '}
+          <strong>Relay Cloud</strong>, where it is offered (an invite-only beta): the same run, on a machine of yours that Relay makes and puts to sleep, reached with your account instead of a loopback pairing.{' '}
           <strong>Your repository’s GitHub Actions</strong>, once you export a workflow and commit its files: the Action installs Claude Code and Codex on a GitHub runner and runs the pipeline there, unattended, on your own minutes (free on public repositories). The first two are{' '}
           <Link href="/runners" className={link}>
             runners
           </Link>
-          , and you pick one; the third is what a label, a ticket or a schedule triggers today. Test runs execute nowhere: they are played back in this tab.
+          , and you pick one; the third is what a label on a GitHub issue starts today. Test runs execute nowhere: they are played back in this tab.
         </p>
       ),
     },
@@ -484,7 +486,10 @@ function Faq({ slug }: { slug: string }) {
               <span className="font-mono text-xs">{slug}-workflow.json</span>: the graph itself, which you can import again.
             </li>
           </ul>
-          <p>Anything the canvas can express but those files cannot is listed as a warning in the export, never dropped silently.</p>
+          <p>
+            The Action is narrower than the canvas: it works on one GitHub issue per run, and cannot evaluate a Condition or wait for an approval. A step it cannot decide is left out of the workflow file, and the
+            export names every one in its warnings.
+          </p>
         </>
       ),
     },
@@ -503,8 +508,8 @@ function Faq({ slug }: { slug: string }) {
       question: 'Can a workflow merge on its own?',
       answer: (
         <p>
-          Only when a person started the run. A ticket assignment, a label, a schedule or a webhook is an unattended start, and unattended runs stop at a pull request. The validator will not let you export anything
-          else, and the export caps delivery at a pull request as well.
+          No. A run started from the studio, and a run a label starts in GitHub Actions, both go as far as a pull request and stop: the validator will not let you export anything else, and the export caps delivery
+          at a pull request as well. The CLI can merge only when you run it yourself in a terminal and ask for it.
         </p>
       ),
     },

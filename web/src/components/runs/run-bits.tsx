@@ -82,7 +82,7 @@ export function PullRequestLink({ run, link = true, className }: { run: Run; /**
       target="_blank"
       rel="noreferrer"
       onClick={(event) => event.stopPropagation()}
-      title={`Opened by the run on ${run.machine?.host ?? 'your machine'}`}
+      title={`Opened by the run on ${run.machine?.host ?? 'your runner'}`}
       className={cn('inline-flex items-center gap-1.5 font-medium text-signal underline-offset-4 hover:underline', className)}
     >
       {label}
@@ -104,7 +104,7 @@ export function StartedAt({ iso, now, className }: { iso: string; now: number; c
 export function RunSourceBadge({ run, className }: { run: Run; className?: string }) {
   if (run.source !== 'machine') return null;
   return (
-    <Badge variant="outline" className={cn('h-5 gap-1 text-[10px] font-medium', className)} title={`Ran for real on ${run.machine?.host ?? 'your machine'}${run.machine?.repository ? `, in ${run.machine.repository}` : ''}`}>
+    <Badge variant="outline" className={cn('h-5 gap-1 text-[10px] font-medium', className)} title={`Ran for real on ${run.machine?.host ?? 'your runner'}${run.machine?.repository ? `, in ${run.machine.repository}` : ''}`}>
       <Laptop className="size-3" aria-hidden /> {run.machine?.host ?? 'Your machine'}
     </Badge>
   );

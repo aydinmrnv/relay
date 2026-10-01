@@ -14,7 +14,7 @@ import { CopyConfirmButton } from '@/components/watermelon/copy-confirm';
 import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import { slugify } from '@/lib/brand';
-import type { Workflow } from '@/lib/workflow/schema';
+import { isRepository, type Workflow } from '@/lib/workflow/schema';
 import { createZip, saveBlob } from '@/lib/zip';
 import { useBrand } from '@/hooks/use-brand';
 import { useStudio } from '@/lib/store';
@@ -58,7 +58,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
 
   const secrets = [...new Map(compiled.secrets.map((secret) => [secret.name, secret])).values()];
   const blocked = errors.length > 0;
-  const needsRepository = !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test((workflow.repository ?? '').trim());
+  const needsRepository = !isRepository(workflow.repository);
 
   const downloadOne = (path: string, content: string) => {
     saveBlob(new Blob([content], { type: 'text/plain' }), path.split('/').pop() ?? path);
@@ -142,7 +142,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
                     {installing ? <Spinner data-icon="inline-start" /> : <FolderInput data-icon="inline-start" />} Install into {machineRepo ?? 'the repository'}
                   </Button>
                   <p className="mt-1.5 text-xs text-muted-foreground">
-                    Written by relay connect on {machine?.machine ?? 'your machine'}; an existing config is merged, not replaced.{' '}
+                    Written by relay connect on {machine?.machine ?? 'your computer'}; an existing config is merged, not replaced.{' '}
                     <button type="button" className="underline underline-offset-2 disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60" onClick={downloadZip} disabled={blocked}>
                       Download the .zip
                     </button>{' '}

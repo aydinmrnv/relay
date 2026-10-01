@@ -19,6 +19,7 @@ import { machineRunNodes } from '@/lib/companion/machine-run';
 import { repositoryLabel, type RunTask } from '@/lib/companion/types';
 import { compiledConfig } from '@/lib/run-launcher';
 import type { Workflow } from '@/lib/workflow/schema';
+import { isRepository } from '@/lib/workflow/schema';
 
 interface Props {
   workflow: Workflow;
@@ -28,7 +29,6 @@ interface Props {
   onRun: (task: RunTask, repository?: string) => void;
 }
 
-const REPOSITORY = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', aider: 'Aider' };
 
@@ -61,7 +61,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
   const [waking, setWaking] = useState(false);
 
   const host = cloudMode ? 'Relay Cloud' : (hello?.machine ?? 'your computer');
-  const repo = cloudMode ? (REPOSITORY.test(repository.trim()) ? repository.trim() : null) : repositoryLabel(hello?.repository);
+  const repo = cloudMode ? (isRepository(repository) ? repository.trim() : null) : repositoryLabel(hello?.repository);
   const nodes = machineRunNodes(workflow);
   const config = useMemo(() => {
     try {
@@ -118,7 +118,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
             className="font-mono"
             aria-invalid={repository.trim().length > 0 && repo === null ? true : undefined}
           />
-          <p className="text-xs text-muted-foreground">Checked out on your machine the first time, fetched every time after. The pull request opens here.</p>
+          <p className="text-xs text-muted-foreground">Checked out on your runner the first time, fetched every time after. The pull request opens here.</p>
         </div>
       ) : null}
       {cloudMode && !cloudReady ? (
@@ -218,8 +218,8 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
           </li>
           <li>
             {cap === null
-              ? 'No per-run cap: set “Stop this run above” on the pipeline node, or a cost per run on a Budget gate, to have the run stop itself.'
-              : `Stops itself once it has cost more than $${cap.toFixed(2)}: the lower of the pipeline node’s limit and the Budget gate’s cost per run.`}
+              ? 'No per-run cap: set “Stop this run above” on the pipeline node, or “Stop a run above” on a Budget gate, to have the run stop itself.'
+              : `Stops itself once it has cost more than $${cap.toFixed(2)}: the lower of the pipeline node’s limit and the Budget gate’s.`}
           </li>
           <li>
             The allowlist and the daily budget decide whether an event may start a run, so a person pressing this passes over them. The app steps before and after the pipeline are not performed by this run; they are in test runs

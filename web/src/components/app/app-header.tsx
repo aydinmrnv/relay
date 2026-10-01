@@ -20,6 +20,7 @@ import { CONNECTORS } from '@/lib/connectors';
 import { TEMPLATES } from '@/lib/workflow/templates';
 import { isTypingTarget } from '@/lib/shortcuts';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
+import { useCombo } from '@/hooks/use-key-label';
 import { SwitchMode } from '@/components/watermelon/switch-mode';
 import { ShortcutsDialog } from './shortcuts-dialog';
 import { SyncIndicator } from '@/components/account/sync-indicator';
@@ -34,10 +35,10 @@ const TITLES: Record<string, string> = {
   settings: 'Settings',
   guide: 'Guide',
   runners: 'Where agents run',
-  connect: 'Your machine',
+  connect: 'Connect your computer',
 };
 
-const PAGES = ['dashboard', 'workflows', 'templates', 'runs', 'integrations', 'guide', 'settings'] as const;
+const PAGES = ['dashboard', 'workflows', 'templates', 'runs', 'integrations', 'runners', 'connect', 'guide', 'settings'] as const;
 
 export function AppHeader() {
   const pathname = usePathname();
@@ -50,6 +51,7 @@ export function AppHeader() {
   const runs = useStudio((state) => state.runs);
   const markTourSeen = useStudio((state) => state.markTourSeen);
   const create = useCreateWorkflow();
+  const combo = useCombo();
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -119,7 +121,7 @@ export function AppHeader() {
         <Button variant="outline" size="sm" className="hidden w-52 justify-start gap-2 text-muted-foreground md:inline-flex" onClick={() => setSearchOpen(true)}>
           <Search className="size-3.5" />
           <span className="flex-1 text-left">Search…</span>
-          <Kbd>⌘K</Kbd>
+          <Kbd>{combo('mod', 'K')}</Kbd>
         </Button>
         <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Search" onClick={() => setSearchOpen(true)}>
           <Search />
@@ -221,8 +223,8 @@ export function AppHeader() {
           </CommandGroup>
           <CommandGroup heading="Pages">
             {PAGES.map((page) => (
-              <CommandItem key={page} value={`page ${TITLES[page]}`} onSelect={() => go(`/${page}`)}>
-                Go to {TITLES[page]}
+              <CommandItem key={page} value={`page ${TITLES[page]} ${page}`} onSelect={() => go(`/${page}`)}>
+                {page === 'connect' ? TITLES[page] : `Go to ${TITLES[page]}`}
               </CommandItem>
             ))}
           </CommandGroup>

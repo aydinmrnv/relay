@@ -54,7 +54,7 @@ export function DeleteRunDialog({
           <AlertDialogTitle>Delete run {run?.shortId}?</AlertDialogTitle>
           <AlertDialogDescription>
             {stopsReal
-              ? `This run is still going on ${run.machine?.host ?? 'your machine'}, for real. Deleting it stops it there first, the way Stop does: work so far stays on its branch. Then its timeline, phases and cost are removed.`
+              ? `This run is still going on ${run.machine?.host ?? 'your runner'}, for real. Deleting it stops it there first, the way Stop does: work so far stays on its branch. Then its timeline, phases and cost are removed.`
               : 'Its timeline, phases and cost are removed. The workflow stays as it is, and you can play it again any time.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -93,7 +93,7 @@ export function ClearRunsDialog({ open, onOpenChange }: { open: boolean; onOpenC
           </AlertDialogTitle>
           <AlertDialogDescription>
             Every run recorded here is removed, including the dashboard&rsquo;s history and spend. Workflows, connections and settings are not touched.
-            {real > 0 ? ` ${real === 1 ? 'One run is' : `${real} runs are`} still going for real on a machine, and ${real === 1 ? 'is' : 'are'} stopped first: work so far stays on ${real === 1 ? 'its branch' : 'their branches'}.` : ''}
+            {real > 0 ? ` ${real === 1 ? 'One run is' : `${real} runs are`} still going for real on a runner, and ${real === 1 ? 'is' : 'are'} stopped first: work so far stays on ${real === 1 ? 'its branch' : 'their branches'}.` : ''}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

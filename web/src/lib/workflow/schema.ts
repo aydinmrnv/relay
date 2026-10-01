@@ -31,6 +31,13 @@ export interface WorkflowEdge {
   label?: string;
 }
 
+/** A GitHub repository as `owner/name`: the one shape every screen that asks for one accepts. */
+export const REPOSITORY_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+
+export function isRepository(value: string | undefined | null): value is string {
+  return typeof value === 'string' && REPOSITORY_PATTERN.test(value.trim());
+}
+
 export interface Workflow {
   id: string;
   name: string;

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
-import { readPairingFragment, takeStashedPairing, useCompanion, type PairingFailure } from '@/lib/companion/client';
+import { loopbackBlockedBy, readPairingFragment, takeStashedPairing, useCompanion, type PairingFailure } from '@/lib/companion/client';
 import { DEFAULT_COMPANION_PORT } from '@/lib/companion/types';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
@@ -31,6 +31,7 @@ export function ConnectView() {
   const refreshAgents = useAgentsStore((state) => state.refresh);
   const pairing = useCompanion((state) => state.attempt);
   const asking = useCompanion((state) => state.access === 'prompt');
+  const hub = useCompanion((state) => state.cloudHub);
   const handled = useRef(false);
 
   useEffect(() => {
@@ -55,8 +56,8 @@ export function ConnectView() {
     <div className="flex flex-1 flex-col gap-6 p-4 pb-16 md:p-6">
       <div className="mx-auto grid w-full max-w-3xl gap-6">
         <PageHeader
-          title={connected ? 'Your machine is connected' : 'Connect your machine'}
-          description={`${brand.name} draws, checks and compiles workflows here in the browser. The coding agents, their sign-ins and your repository are on your computer, and relay connect is the door between the two. Relay Cloud does the same job on a machine Relay runs for you; the card at the bottom compares them.`}
+          title={connected ? 'Your computer is connected' : 'Connect your computer'}
+          description={`${brand.name} draws, checks and compiles workflows here in the browser. The coding agents, their sign-ins and your repository are on your computer, and relay connect is the door between the two.${hub === null ? '' : ' Relay Cloud does the same job on a machine Relay runs for you; the card at the bottom compares them.'}`}
         />
 
         {pairing.state === 'pairing' ? (
@@ -89,7 +90,7 @@ export function ConnectView() {
 
         {pairing.state !== 'pairing' ? <MachineCard /> : null}
 
-        {pairing.state !== 'pairing' ? <NotThisComputer /> : null}
+        {pairing.state !== 'pairing' && hub !== null ? <NotThisComputer /> : null}
 
         {connected ? (
           <Card>
@@ -98,7 +99,7 @@ export function ConnectView() {
             </CardHeader>
             <CardContent className="grid gap-2 sm:grid-cols-3">
               <Next icon={KeyRound} title="Sign in your agents" body="Claude Code and Codex sign in with your own plans, from the browser." href="/settings#agents" />
-              <Next icon={Play} title="Run a workflow for real" body="In the builder, open the menu next to Test run and pick Run on this machine." href="/workflows" />
+              <Next icon={Play} title="Run a workflow for real" body="In the builder, open the menu next to Test run and pick Run on your computer." href="/workflows" />
               <Next icon={FileCode2} title="Install an export" body="Export writes the config and the Action straight into your repository." href="/workflows" />
             </CardContent>
           </Card>
@@ -146,10 +147,10 @@ function NotThisComputer() {
         </CardTitle>
         <CardDescription className="text-pretty">
           {!offered
-            ? 'Relay Cloud is the same thing on a machine Relay runs for you, with nothing to install. This deployment has no hub behind it, so your own computer is the runner here.'
+            ? 'Relay Cloud is the same thing on a machine Relay runs for you, with nothing to install. This studio does not offer it, so your own computer is the runner here.'
             : inUse
               ? 'Your cloud machine is awake, and it is where sign-ins and runs currently go. Pairing your computer as well does no harm: you can switch between the two at any time.'
-              : 'Relay Cloud is a Linux machine of your own that Relay makes for you, wakes when you run something and sleeps when it is idle. Nothing to install and no terminal: you name the repository on each run instead.'}
+              : 'Relay Cloud, an invite-only beta, is a Linux machine of your own that Relay makes for you, wakes when you run something and puts to sleep when it is idle. Nothing to install and no terminal: you name the repository on each run instead.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap items-center gap-2">
@@ -183,6 +184,15 @@ function FailureHelp({ reason, port }: { reason: PairingFailure; port: number })
   }
   const command = port === DEFAULT_COMPANION_PORT ? CONNECT_COMMAND : `${CONNECT_COMMAND} --port ${port}`;
   const here = typeof window === 'undefined' ? null : window.location.origin;
+  // Nothing below helps in a browser that never lets the request leave: say that, and what does.
+  if (loopbackBlockedBy() !== null) {
+    return (
+      <p className="text-pretty">
+        relay connect may well be running: {loopbackBlockedBy()} will not let a secure site reach it on 127.0.0.1, and there is no setting that changes that. Copy this page’s link from its terminal into Chrome, Edge or Firefox
+        and pair there.
+      </p>
+    );
+  }
   return (
     <ul className="grid list-disc gap-1.5 pl-4 text-pretty">
       <li>

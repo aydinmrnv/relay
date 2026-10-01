@@ -89,7 +89,7 @@ export function SettingsView() {
                   description={
                     hasCloud
                       ? 'The runner: where your coding agents are signed in and where a run happens. Your own computer, paired by relay connect, or a machine Relay runs for you in Relay Cloud — same plans, same sign-ins either way.'
-                      : 'The Relay CLI on your computer, paired with this studio by relay connect. It is how sign-ins, real runs and installing an export reach your machine; the pairing is kept in this browser only, apart from your other data.'
+                      : 'The Relay CLI on your computer, paired with this studio by relay connect. It is how sign-ins, real runs and installing an export reach your computer; the pairing is kept in this browser only, apart from your other data.'
                   }
                 >
                   <div className="grid gap-4">

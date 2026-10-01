@@ -27,7 +27,11 @@ export function RunnersView() {
         <PageHeader
           title="Where your agents run"
           term="runner"
-          description={`A real run happens wherever your coding agents are signed in. ${brand.name} has two: your own computer, and Relay Cloud, a machine Relay makes for you. Same plans, same sign-ins, same pull request either way — what changes is which machine has to be awake.`}
+          description={
+            hub === null
+              ? `A real run happens wherever your coding agents are signed in: on your own computer, through relay connect. ${brand.name} Cloud, a machine Relay makes for you, is an invite-only beta that this studio does not offer; it is described below so you know what it is.`
+              : `A real run happens wherever your coding agents are signed in. ${brand.name} has two places for that: your own computer, and Relay Cloud, a machine Relay makes for you, in invite-only beta. Same plans, same pull request either way — what changes is which machine has to be awake, and where your code and sign-ins sit.`
+          }
           actions={
             <Button variant="outline" nativeButton={false} render={<Link href="/settings#machine" />}>
               <Settings data-icon="inline-start" /> Settings
@@ -42,7 +46,7 @@ export function RunnersView() {
             {target === 'cloud' ? (
               hub === null ? (
                 <p className="text-sm text-pretty text-muted-foreground">
-                  You are pointed at Relay Cloud, which this deployment does not have — pairing a machine with relay connect puts you back on your own computer, and nothing else about your work changes.
+                  Relay Cloud is selected, and this studio does not offer it. Pairing your computer with relay connect puts you back on it, and nothing else about your work changes.
                 </p>
               ) : (
                 <CloudCard />

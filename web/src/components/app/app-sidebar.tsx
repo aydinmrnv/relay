@@ -48,7 +48,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'Operate',
     items: [
-      { href: '/runs', label: 'Runs', icon: Play, hint: 'Every test run, with its timeline and cost' },
+      { href: '/runs', label: 'Runs', icon: Play, hint: 'Every run, test or real, with its timeline and cost' },
       { href: '/integrations', label: 'Integrations', icon: Cable, hint: 'Apps your workflows can listen to and act on' },
     ],
   },
@@ -105,7 +105,8 @@ export function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => {
-                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  // Connecting a computer is part of "Where agents run", so that item is lit there too: no page should leave the sidebar with nothing selected.
+                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`) || (item.href === '/runners' && pathname === '/connect');
                   const badge = badgeFor(item.href);
                   return (
                     <SidebarMenuItem key={item.href}>

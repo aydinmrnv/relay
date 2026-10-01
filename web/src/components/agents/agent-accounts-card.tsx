@@ -51,8 +51,8 @@ export function AgentAccountsCard() {
           {bridge === 'unavailable'
             ? `${cloud ? cloudStatusText(companion, cloudStatus) : machineStatusText(companion, host)}, so the studio cannot ask the CLIs.`
             : status === null
-              ? `Asking the CLIs on ${host ?? 'your machine'}…`
-              : `Read live from the CLIs on ${host ?? 'your machine'}, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
+              ? `Asking the CLIs on ${host ?? 'your runner'}…`
+              : `Read live from the CLIs on ${host ?? 'your runner'}, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
         </CardDescription>
         <CardAction>
           <Tooltip>
@@ -80,7 +80,7 @@ export function AgentAccountsCard() {
         {withGithub ? <GithubRow account={github} bridge={bridge} onSignIn={() => setSigning({ agent: 'github', mode: 'device' })} /> : null}
       </CardContent>
       <CardFooter className="flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-        <span>{cloud ? 'These sign-ins live in the CLIs on your own cloud machine, which nobody else’s runs touch.' : 'These sign-ins live in the CLIs on your machine.'} GitHub Actions needs its own secrets.</span>
+        <span>{cloud ? 'These sign-ins live in the CLIs on your own cloud machine, which nobody else’s runs touch.' : 'These sign-ins live in the CLIs on your runner.'} GitHub Actions needs its own secrets.</span>
         <Link href="/settings#credentials" className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline">
           Credentials for exported workflows <ArrowRight className="size-3" aria-hidden />
         </Link>

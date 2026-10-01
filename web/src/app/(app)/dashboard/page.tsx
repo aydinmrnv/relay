@@ -53,7 +53,7 @@ export default function DashboardPage() {
   // ten idle minutes, and a checklist that un-ticks itself every night would be
   // telling the truth about the wrong thing.
   const cloudChosen = cloud !== null && cloud.state !== 'none' && cloud.state !== 'failed';
-  const runnerLabel = machine !== null ? (machine.machine ?? 'your machine') : target === 'cloud' ? 'Relay Cloud' : 'your machine';
+  const runnerLabel = machine !== null ? (machine.machine ?? 'your computer') : target === 'cloud' ? 'Relay Cloud' : 'your machine';
   const signedIn = useSignedIn();
   const accounts = useCapabilities().enabled;
   const account = useAccount((state) => (state.status === 'signed-in' ? state.user : null));
@@ -118,7 +118,7 @@ export default function DashboardPage() {
       done: machine !== null || cloudChosen,
       doneNote:
         machine !== null
-          ? `Connected to ${machine.machine ?? 'your machine'}${repositoryLabel(machine.repository) === null ? '' : `, in ${repositoryLabel(machine.repository)}`}.`
+          ? `Connected to ${machine.machine ?? 'your computer'}${repositoryLabel(machine.repository) === null ? '' : `, in ${repositoryLabel(machine.repository)}`}.`
           : 'Sign-ins and runs go to Relay Cloud, which wakes when you need it and sleeps when it is idle.',
       action: { label: 'Compare the two runners', href: '/runners' },
       extra: { label: 'Connect your computer', href: '/connect' },
