@@ -234,13 +234,22 @@ function printEvent(event: ServeEvent, options: ServeOptions): void {
         { label: 'Trigger', value: `issues labelled ${event.label}` },
         {
           label: 'Budget',
-          value: `${formatCost(event.maxRunCostUsd)} per run  ·  ${formatCost(event.maxDailyCostUsd)} per day`,
+          value: event.dailyBudgetEnforced
+            ? `${formatCost(event.maxRunCostUsd)} per run  ·  ${formatCost(event.maxDailyCostUsd)} per day`
+            : `${formatCost(event.maxRunCostUsd)} per run`,
         },
         { label: 'Concurrency', value: `${event.maxConcurrentRuns} run(s) at once` },
         !event.once && { label: 'Polling', value: `every ${event.pollSeconds}s` },
         { label: 'Delivery', value: 'capped at a draft pull request — nothing merges without a person' },
       ]);
       if (options.dryRun === true) out(dim('  Dry run: deciding everything, starting nothing, moving no labels.'));
+      // Said where the budget is printed, because the line above it reads as
+      // a promise: on a runner that keeps no run history the day's total is
+      // always zero, and only the per-run figure limits anything.
+      if (!event.dailyBudgetEnforced) {
+        out(warning('  The daily budget is not enforced here: a CI job starts with no record of earlier runs.'));
+        out(dim('  The per-run budget still is. See docs/cli.md, "The GitHub Action".'));
+      }
       out();
       hint('To stop it:');
       command(`touch .relay/${STOP_FILE}`);
