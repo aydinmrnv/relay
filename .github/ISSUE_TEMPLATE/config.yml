@@ -1,0 +1,9 @@
+# A blank issue is still allowed: not everything is a bug or a feature.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/aydinmrnv/relay/security/policy
+    about: Please report a vulnerability privately — support@nullstack.one — and not in a public issue.
+  - name: How a run works, and every command and config key
+    url: https://github.com/aydinmrnv/relay/blob/main/docs/cli.md
+    about: The CLI reference. Most "how do I" questions are answered here.

@@ -1,0 +1,61 @@
+name: Bug report
+description: Something Relay did that it should not have, or did not do that it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time. Two things first:
+
+        - **A security problem is not a bug report.** Please do not describe it here — write to support@nullstack.one instead.
+        - **Take secrets out of anything you paste.** Relay redacts what it logs, but a terminal scrollback is yours.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead. The exact command helps most.
+      placeholder: |
+        I ran `relay run 142 --pr` and …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: relay --version
+      description: It names the build as well as the version, e.g. `0.1.0+8cb9739`.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it happened
+      multiple: true
+      options:
+        - The CLI, in a terminal
+        - relay serve
+        - The GitHub Action
+        - relay connect and the studio
+        - Relay Cloud
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Node version
+      placeholder: macOS 15.5, Node 22.20
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: relay doctor
+      description: The output of `relay doctor`, which says what is installed and signed in without printing a credential.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything else
+      description: >-
+        For a run that went wrong, `relay logs <run>` and `relay status <run>` are the most useful things to
+        attach. Read them before pasting: they contain what the agents said about your code.
+      render: text

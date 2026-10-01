@@ -1,5 +1,6 @@
 import type { Command, Option } from 'commander';
 import { repositoryRoot } from '../../git/repository.ts';
+import { visibleCommands } from '../help/commandDoc.ts';
 import { agentNames, deliveryPolicies, localBranches, mergeMethods, reviewLevels, runRefs } from './candidates.ts';
 import { withDeadline } from './deadline.ts';
 
@@ -36,25 +37,62 @@ async function beforeDeadline<T>(promise: Promise<T>, signal: AbortSignal): Prom
  */
 export const EMPTY_WORD = '--relay-empty-word';
 
+/** The flags a command answers to, minus the ones it deliberately does not advertise. */
+export function commandFlags(command: Command): string[] {
+  return [
+    ...command.options.filter((option) => !option.hidden).flatMap((option) => [option.short, option.long]),
+    // Commander answers `--help` on every command without listing it as an option.
+    '-h',
+    '--help',
+  ].filter((flag): flag is string => flag !== undefined);
+}
+
+/**
+ * The commands that may follow `command`, by every name they answer to.
+ *
+ * A hidden command is left out of the list it would be discovered from and is
+ * still walked into when somebody types it: `relay <TAB>` does not offer `hub`,
+ * and `relay hub <TAB>` completes its subcommands.
+ */
+export function subcommandNames(command: Command): string[] {
+  return visibleCommands(command).flatMap((child) => [child.name(), ...child.aliases()]);
+}
+
 export async function completionCandidates(
   program: Command,
   rawWords: readonly string[],
 ): Promise<string[]> {
   const words = rawWords.map((word) => (word === EMPTY_WORD ? '' : word));
+  // No words at all is the cursor on a fresh first word, from a shell that
+  // drops an empty argument on its way here.
+  if (words.length === 0) words.push('');
   const deadline = withDeadline();
   try {
-    const commandToken = words[0] ?? '';
-    const command = program.commands.find(
-      (item) => item.name() === commandToken || item.aliases().includes(commandToken),
-    );
-    if (command === undefined) return program.commands.filter((item) => !item.name().startsWith('__')).flatMap((item) => [item.name(), ...item.aliases()]).filter((x) => x.startsWith(commandToken));
-
     let current = words.at(-1) ?? '';
-    if (current.startsWith('-') && !current.includes('=')) {
-      return command.options
-        .flatMap((item) => [item.short, item.long])
-        .filter((item): item is string => item !== undefined && item.startsWith(current));
+
+    // Walk down through every command already typed. The last word is the one
+    // being completed, so it is never consumed as a command name: `relay hub`
+    // with the cursor still on `hub` is asking for commands that start "hub".
+    let command = program;
+    let depth = 0;
+    for (; depth < words.length - 1; depth += 1) {
+      const token = words[depth];
+      const next = command.commands.find((item) => item.name() === token || item.aliases().includes(token ?? ''));
+      if (next === undefined) break;
+      command = next;
     }
+
+    if (current.startsWith('-') && !current.includes('=')) {
+      return commandFlags(command).filter((flag) => flag.startsWith(current));
+    }
+
+    // Every word before the cursor named a command, and the one reached
+    // dispatches to others: the candidates are those commands. This is what
+    // answers `relay <TAB>` and `relay hub <TAB>` alike.
+    if (depth === words.length - 1 && command.commands.length > 0) {
+      return subcommandNames(command).filter((name) => name.startsWith(current));
+    }
+
     let optionToken: string | undefined;
     if (current.startsWith('--') && current.includes('=')) {
       optionToken = current;

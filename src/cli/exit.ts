@@ -37,6 +37,21 @@ export const EXIT = {
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 
 /**
+ * The same table in words, for the places that print it: the man page lists a
+ * status next to what it means, and `checksFailed` is a name for the code that
+ * reads this file, not for the person reading `man relay`.
+ */
+export const EXIT_MEANINGS: Readonly<Record<keyof typeof EXIT, string>> = {
+  success: 'The command did what it was asked.',
+  error: 'A Relay error; the message on standard error says which.',
+  usage: 'Usage error: an unknown command, a missing argument, a bad flag.',
+  preconditions: 'Preconditions unmet: a missing CLI, a signed-out tool, not a repository.',
+  unlanded: 'The run finished, and its work is committed nowhere.',
+  checksFailed: 'The run failed on its own terms: blocking findings unresolved, or tests failed.',
+  cancelled: 'Cancelled: Ctrl-C, relay stop, or an abandoned prompt.',
+};
+
+/**
  * The failures that mean "this machine is not ready", rather than "this went
  * wrong". Each one is something `relay doctor` reports and a person fixes once,
  * which is exactly the distinction a caller needs to make before deciding
@@ -53,6 +68,15 @@ const PRECONDITION_CODES: ReadonlySet<string> = new Set([
   'LINEAR_AUTH',
 ]);
 
+/**
+ * The failures that are about how the command was typed. Commander reports the
+ * ones it can see — an unknown flag, a missing argument — and these are the
+ * ones only Relay can: a flag whose value it had to read to reject, and a run
+ * with nothing named to work on. They are the same kind of mistake, so they
+ * exit the same way.
+ */
+const USAGE_CODES: ReadonlySet<string> = new Set(['BAD_FLAG', 'NO_ISSUE_REF']);
+
 export function isCommanderError(error: unknown): error is CommanderError {
   return error instanceof CommanderError;
 }
@@ -68,6 +92,7 @@ export function exitCodeFor(error: unknown): ExitCode {
   if (isCommanderError(error)) return error.exitCode === 0 ? EXIT.success : EXIT.usage;
   if (isRelayError(error)) {
     if (error.code === 'PROMPT_CANCELLED') return EXIT.cancelled;
+    if (USAGE_CODES.has(error.code)) return EXIT.usage;
     if (PRECONDITION_CODES.has(error.code)) return EXIT.preconditions;
   }
   return EXIT.error;

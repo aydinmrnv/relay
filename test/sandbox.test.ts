@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   buildBubblewrapArgs,
   buildSandboxExecProfile,
+  describeSandboxFailure,
   detectOsSandbox,
   wrapWithOsSandbox,
 } from '../src/agents/sandbox.ts';
@@ -84,6 +85,29 @@ describe('sandbox detection', () => {
     } finally {
       delete process.env['RELAY_NO_OS_SANDBOX'];
     }
+  });
+});
+
+// A sandbox that is installed and cannot start fails the turn before the CLI
+// runs. It is not run without the sandbox — somebody installed it on purpose —
+// but the failure has to name the wrapper and the way out, not blame the CLI.
+describe('a sandbox that cannot start', () => {
+  it('is reported as the sandbox failing, with the escape hatch', () => {
+    const bwrap = describeSandboxFailure('bubblewrap', 'bwrap: setting up uid map: Permission denied\n');
+    assert.match(bwrap ?? '', /OS sandbox around this read-only turn could not start \(bwrap: setting up uid map: Permission denied\)/);
+    assert.match(bwrap ?? '', /unprivileged user namespaces/);
+    assert.match(bwrap ?? '', /RELAY_NO_OS_SANDBOX=1/);
+
+    const seatbelt = describeSandboxFailure('sandbox-exec', 'warning: x\nsandbox-exec: sandbox_apply: Operation not permitted\n');
+    assert.match(seatbelt ?? '', /sandbox-exec: sandbox_apply: Operation not permitted/);
+    assert.doesNotMatch(seatbelt ?? '', /user namespaces/);
+  });
+
+  it('leaves a failure of the CLI itself to be reported as one', () => {
+    assert.equal(describeSandboxFailure('bubblewrap', 'Error: not logged in\n'), undefined);
+    assert.equal(describeSandboxFailure('sandbox-exec', ''), undefined);
+    // The CLI mentioning the wrapper mid-sentence is not the wrapper speaking.
+    assert.equal(describeSandboxFailure('bubblewrap', 'claude: could not exec bwrap: no\n'), undefined);
   });
 });
 

@@ -52,10 +52,25 @@ export interface RunRendererOptions {
   /** Injectable clock, so elapsed times are assertable in tests. */
   now?: () => number;
   state?: RunState;
+  /** `s`: stop the run at its next phase boundary. Only the live run can. */
   onStop?: () => void | Promise<void>;
-  onDetach?: () => void;
+  /**
+   * Ctrl-C. The renderer puts the terminal in raw mode to read single keys, and
+   * in raw mode Ctrl-C is no longer a signal: the terminal delivers the byte
+   * 0x03 on stdin and sends SIGINT to nobody. Whoever opened the display owns
+   * what an interrupt means — cancel the run, stop watching it — so the
+   * keystroke is handed back here, to the same function the signal would have
+   * reached. Without one the display restores the terminal and exits 130.
+   */
+  onInterrupt?: () => void;
   input?: TerminalInput;
 }
+
+/** Ctrl-C as raw mode delivers it: a byte, not a signal. */
+const CTRL_C = '\u0003';
+
+/** The conventional exit status of a process ended by Ctrl-C: 128 + SIGINT. */
+const EXIT_INTERRUPTED = 130;
 
 /**
  * Progress display for `relay run`.
@@ -98,6 +113,8 @@ export class RunRenderer implements RunObserver {
   private resizeHandler: (() => void) | undefined;
   private exitHandler: (() => void) | undefined;
   private priorRaw: boolean | undefined;
+  /** True while single keys are being read, which is when naming them is honest. */
+  private legendShown = false;
 
   constructor(options: RunRendererOptions) {
     this.options = options;
@@ -126,6 +143,10 @@ export class RunRenderer implements RunObserver {
     this.write('\n');
 
     if (!this.theme.interactive) return;
+    // Before the first frame, so the legend under it is there from the start:
+    // whether the keys work is decided here, and a frame drawn first would be
+    // one row shorter than every frame after it.
+    this.installTerminalHandlers();
     this.draw();
     // unref'd: a spinner must never be the reason the process stays alive.
     this.spinnerTimer = setInterval(() => {
@@ -133,7 +154,6 @@ export class RunRenderer implements RunObserver {
       this.render();
     }, SPINNER_INTERVAL_MS);
     this.spinnerTimer.unref?.();
-    this.installTerminalHandlers();
   }
 
   phaseChanged(phase: Phase, detail?: string): void {
@@ -239,6 +259,21 @@ export class RunRenderer implements RunObserver {
     }
 
     this.activity = undefined;
+    this.close();
+  }
+
+  /**
+   * Stops drawing and gives the terminal back, without settling anything.
+   *
+   * `finish` is this plus a verdict on the run. A `relay watch` that is leaving
+   * a run still in flight has no verdict to give, so it calls this directly and
+   * the phases stay as they were last seen.
+   */
+  close(): void {
+    if (this.stopped) return;
+    // The last frame stays on screen, so it is drawn without the key legend:
+    // none of those keys does anything once the display has let go.
+    this.legendShown = false;
     this.render();
     this.stopped = true;
     if (this.spinnerTimer !== undefined) {
@@ -373,7 +408,23 @@ export class RunRenderer implements RunObserver {
       footer,
     });
     const work = this.buildWorkLines(width);
-    return work.length === 0 ? pipeline : [...pipeline, ...work];
+    const legend = this.legendShown ? [paint(this.theme, 'gray', `  ${this.keyLegend()}`)] : [];
+    return [...pipeline, ...work, ...legend];
+  }
+
+  /**
+   * What the keyboard does while the display is live. Raw mode makes every key
+   * a silent one, Ctrl-C included, so the keys that work are named — and only
+   * those: `s` is offered by the run that can be stopped, not by a `relay
+   * watch` looking at somebody else's.
+   */
+  private keyLegend(): string {
+    return [
+      'v verbose',
+      'd diff',
+      ...(this.options.onStop === undefined ? [] : ['s stop after this phase']),
+      this.options.onStop === undefined ? 'Ctrl-C exit' : 'Ctrl-C cancel',
+    ].join('  ·  ');
   }
 
   private buildWorkLines(width: number): string[] {
@@ -437,15 +488,34 @@ export class RunRenderer implements RunObserver {
     this.priorRaw = input.isRaw;
     input.setRawMode(true);
     input.resume();
+    this.legendShown = true;
     this.inputHandler = (chunk) => {
       for (const key of chunk.toString()) {
-        if (key === 'v') { this.verbose = !this.verbose; this.render(); }
+        if (key === CTRL_C) this.interrupt();
+        else if (key === 'v') { this.verbose = !this.verbose; this.render(); }
         else if (key === 'd') this.log(this.options.state?.diff === undefined ? 'Diff: not available yet' : `Diff: +${this.options.state.diff.additions} −${this.options.state.diff.deletions} · ${this.options.state.diff.fileCount} files`);
-        else if (key === 's') { void this.options.onStop?.(); this.note('Stop requested.'); }
-        else if (key === 'q') { if (this.options.onDetach !== undefined) this.options.onDetach(); else this.note('Detach is not available yet.'); }
+        else if (key === 's' && this.options.onStop !== undefined) { void this.options.onStop(); this.note('Stop requested: the run ends at its next phase boundary.'); }
       }
     };
     input.on('data', this.inputHandler);
+  }
+
+  /**
+   * Ctrl-C, read as a key because raw mode stopped it being a signal.
+   *
+   * The fallback is what the signal would have done by default — end the
+   * process with the interrupted status — after putting the terminal back. A
+   * display left in raw mode with no handler is a terminal that cannot be
+   * interrupted at all, which is the one thing a progress display must never
+   * do to the shell it runs in.
+   */
+  private interrupt(): void {
+    if (this.options.onInterrupt !== undefined) {
+      this.options.onInterrupt();
+      return;
+    }
+    this.teardown();
+    process.exit(EXIT_INTERRUPTED);
   }
 
   /** `████░░░░  3/9 phases · 4m 2s` — how far in, and how long it has taken. */

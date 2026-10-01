@@ -3,7 +3,8 @@ import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildProgram } from '../src/cli/program.ts';
 import { completionCandidates, EMPTY_WORD } from '../src/cli/completion/complete.ts';
 import { COMPLETION_SHELLS, generateCompletion } from '../src/cli/completion/generate.ts';
@@ -130,4 +131,110 @@ test('registered __complete preserves option/value order', { concurrency: false 
     process.chdir(previous);
     await repo.cleanup();
   }
+});
+
+// The first word is the only one the scripts answer without starting Relay,
+// so what they offer there is asserted on its own: every command a person is
+// shown, the root's flags, and nothing that is hidden.
+test('offers commands and root flags for the first word, and nothing hidden', async () => {
+  const program = buildProgram('test');
+  const first = await completionCandidates(program, ['']);
+  for (const name of ['connect', 'start', 'run', 'status', 'watch', 'serve', 'completion']) assert.ok(first.includes(name), name);
+  for (const hidden of ['hub', 'help', '__complete', '__run-detached']) assert.ok(!first.includes(hidden), hidden);
+  assert.deepEqual(await completionCandidates(program, []), first, 'no words at all is a fresh first word');
+  assert.deepEqual(await completionCandidates(program, ['sta']), ['start', 'status', 'stats']);
+
+  assert.deepEqual(await completionCandidates(program, ['--']), ['--version', '--update', '--json', '--help']);
+  assert.deepEqual(await completionCandidates(program, ['--j']), ['--json']);
+
+  for (const shell of ['bash', 'zsh', 'powershell'] as const) {
+    const script = generateCompletion(program, shell);
+    assert.match(script, /\bstatus\b.* --update --json --help/, `${shell} offers the root flags for the first word`);
+    assert.doesNotMatch(script, /\bhub\b/, `${shell} does not advertise a hidden command`);
+  }
+});
+
+// `relay hub` dispatches to commands of its own, and a hidden command is still
+// one that can be completed into by somebody who typed its name.
+test('completes the subcommands of a command that has them', async () => {
+  const program = buildProgram('test');
+  assert.deepEqual(await completionCandidates(program, ['hub', '']), ['serve', 'token']);
+  assert.deepEqual(await completionCandidates(program, ['hub', 'to']), ['token']);
+  assert.deepEqual(await completionCandidates(program, ['hub', 'token', '--']), ['--user', '--runner', '-h', '--help'].filter((flag) => flag.startsWith('--')));
+  // A leaf command has none, so it is still asked for its own arguments.
+  assert.deepEqual(await completionCandidates(program, ['run', '--planner', '']), [...AGENT_PROVIDERS]);
+});
+
+test('does not offer a flag that is hidden from the help', async () => {
+  const program = buildProgram('test');
+  assert.deepEqual(await completionCandidates(program, ['run', '--tu']), []);
+  assert.ok((await completionCandidates(program, ['run', '--'])).includes('--prompt'));
+  assert.ok((await completionCandidates(program, ['run', '--'])).includes('--help'));
+});
+
+/**
+ * Runs the generated zsh function the way the shell would, against a `relay`
+ * of the test's choosing, and returns what it handed to `compadd`.
+ *
+ * `compdef` and `compadd` only exist inside zsh's completion system, which a
+ * non-interactive shell has not loaded. Standing in for the two of them is
+ * all it takes to call `_relay` directly — with `words` and `CURRENT` set by
+ * hand, exactly as the completion system sets them.
+ */
+function zshCompletes(relayStub: string, words: readonly string[]): { status: number | null; offered: string[]; stderr: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'relay-zsh-'));
+  try {
+    writeFileSync(join(dir, 'relay'), relayStub, { mode: 0o755 });
+    const script = [
+      'compdef() { : }',
+      'compadd() { [[ "$1" == "--" ]] && shift; print -rl -- "$@" }',
+      generateCompletion(buildProgram('test'), 'zsh'),
+      `words=(${words.map((word) => `'${word}'`).join(' ')})`,
+      `CURRENT=${words.length}`,
+      '_relay',
+    ].join('\n');
+    const result = spawnSync('zsh', ['-f', '-c', script], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${dir}${delimiter}${process.env['PATH'] ?? ''}`, NODE_TEST_CONTEXT: undefined },
+    });
+    return { status: result.status, offered: result.stdout.split('\n').filter((line) => line.length > 0), stderr: result.stderr };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function zshMissing(): string | false {
+  return spawnSync('zsh', ['--version'], { encoding: 'utf8' }).error === undefined
+    ? false
+    : 'zsh is not installed; its completion was not exercised';
+}
+
+// The word under the cursor is empty whenever it is a fresh one, and unquoted
+// zsh drops an empty word on its way to a command. Dropped, `relay status
+// <TAB>` asked for runs named "status" and was offered nothing — so this
+// checks the argument list Relay actually receives, not the script's text.
+test('zsh hands relay the empty word a fresh completion is asking about', { skip: zshMissing() }, () => {
+  const echo = '#!/bin/sh\nfor word in "$@"; do printf "<%s>\\n" "$word"; done\n';
+  const fresh = zshCompletes(echo, ['relay', 'status', '']);
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.deepEqual(fresh.offered, ['<__complete>', '<status>', '<>']);
+
+  const partial = zshCompletes(echo, ['relay', 'run', '--planner', 'cl']);
+  assert.deepEqual(partial.offered, ['<__complete>', '<run>', '<--planner>', '<cl>']);
+});
+
+test('zsh completes a fresh word against the real command tree', { skip: zshMissing() }, () => {
+  const entry = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'index.ts');
+  const relay = `#!/bin/sh\nexec "${process.execPath}" --experimental-strip-types "${entry}" "$@"\n`;
+
+  const subcommands = zshCompletes(relay, ['relay', 'hub', '']);
+  assert.equal(subcommands.status, 0, subcommands.stderr);
+  assert.deepEqual(subcommands.offered, ['serve', 'token']);
+
+  assert.deepEqual(zshCompletes(relay, ['relay', 'run', '--planner', '']).offered, [...AGENT_PROVIDERS]);
+
+  // The first word never reaches relay: the script answers it by itself.
+  const first = zshCompletes('#!/bin/sh\nexit 1\n', ['relay', '']);
+  assert.ok(first.offered.includes('run') && first.offered.includes('--json'), first.offered.join(' '));
+  assert.ok(!first.offered.includes('hub'));
 });

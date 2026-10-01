@@ -20,6 +20,12 @@ export interface RunTestsOptions {
   signal?: AbortSignal;
   onLine?: (line: string) => void;
   maxOutputChars?: number;
+  /**
+   * Changes to the environment the suite inherits; `undefined` removes a
+   * variable. Used by a run nobody is watching to withhold secret-looking
+   * variables from code an agent has just written.
+   */
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -45,10 +51,14 @@ export async function runTests(test: TestCommand, options: RunTestsOptions): Pro
     cwd: options.cwd,
     timeoutMs: options.timeoutMs ?? 15 * 60_000,
     ...(options.signal ? { signal: options.signal } : {}),
+    // A suite is a tree — a package manager, a shell, a runner, its workers —
+    // and a timeout that stopped only the first of them would leave the rest
+    // holding the output pipes this call is waiting on.
+    killTree: true,
     // `NODE_TEST_CONTEXT` is shed rather than passed on: a project whose suite
     // is `node --test` would otherwise report as a subtest of whatever ran
     // Relay, and exit 0 however many of its tests failed.
-    env: { CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', NODE_TEST_CONTEXT: undefined },
+    env: { ...options.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', NODE_TEST_CONTEXT: undefined },
     ...(options.onLine ? { onStdoutLine: options.onLine, onStderrLine: options.onLine } : {}),
   });
 

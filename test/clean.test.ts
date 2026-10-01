@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { join } from 'node:path';
 
-import { cleanRepository } from '../src/cli/commands/clean.ts';
+import { cleanCommand, cleanRepository } from '../src/cli/commands/clean.ts';
 import { discoverRepository } from '../src/git/repository.ts';
 import { createWorktree, worktreeExists } from '../src/git/worktree.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
@@ -54,6 +54,42 @@ describe('clean', () => {
     assert.equal(await worktreeExists(state.workspace!.path), false);
     const again = await cleanRepository(repo.root, { yes: true });
     assert.equal(again.find((entry) => entry.runId === state.runId)?.reason, 'already removed or no longer registered');
+  });
+
+  // `relay clean` without `--yes` is a preview. It used to prune old run
+  // artifacts on its way to printing one, which is a preview that deleted.
+  it('deletes no artifacts on a dry run, and says so when there is nothing to do', async () => {
+    const state = await finished({ changedFiles: 0, merged: true });
+    const store = new RunStore(repo.root, state.runId);
+    await store.writeArtifact('patches/x.patch', 'diff --git a/x b/x\n');
+
+    const cwd = process.cwd();
+    const write = process.stdout.write;
+    let printed = '';
+    process.chdir(repo.root);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      printed += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      // The run finished at the epoch, so it is far past any retention window.
+      assert.equal(await cleanCommand({}), 0);
+      assert.match(printed, /Would remove/);
+      assert.match(printed, /This was a dry run\. `relay clean --yes` removes them\./);
+      assert.notEqual(await store.readArtifact('patches/x.patch'), undefined, 'a dry run pruned artifacts');
+
+      printed = '';
+      assert.equal(await cleanCommand({ yes: true }), 0);
+      assert.equal(await store.readArtifact('patches/x.patch'), undefined);
+
+      printed = '';
+      assert.equal(await cleanCommand({ olderThan: '100000' }), 0);
+      assert.match(printed, /Nothing to clean: no merged run has a worktree left\./);
+      assert.match(printed, /relay clean --all/);
+    } finally {
+      process.stdout.write = write;
+      process.chdir(cwd);
+    }
   });
 
   it('protects unlanded work unless --force is explicit', async () => {
