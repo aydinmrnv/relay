@@ -3,10 +3,10 @@ import { packageVersion } from '../../update/installation.ts';
 import { isRelayError, RelayError } from '../../util/errors.ts';
 import { loadPairingToken, pairingPath, pairingUrl } from '../../studio/pairing.ts';
 import { openInBrowser } from '../../studio/open.ts';
-import { DEFAULT_COMPANION_PORT, DEFAULT_STUDIO_URL, type CompanionRepository, type CompanionRunView, type HelloResponse } from '../../studio/protocol.ts';
+import { DEFAULT_COMPANION_PORT, DEFAULT_STUDIO_URL, isLoopbackOrigin, type CompanionRepository, type CompanionRunView, type HelloResponse } from '../../studio/protocol.ts';
 import { selfLauncher, StudioRuns } from '../../studio/runs.ts';
 import { parseTokenSource, startRunner } from '../../cloud/runner.ts';
-import { createCompanion, normalizeOrigin, type CompanionEvent } from '../../studio/server.ts';
+import { createCompanion, normalizeOrigin, STUDIO_DEV_VARIABLE, type CompanionEvent } from '../../studio/server.ts';
 import { EXIT } from '../exit.ts';
 import { emitJsonLine } from '../json.ts';
 import { banner, dim, failure, hint, out, rows, success, theme, warning } from '../output.ts';
@@ -14,26 +14,19 @@ import { banner, dim, failure, hint, out, rows, success, theme, warning } from '
 export interface ConnectOptions {
   /** Dial out to a Relay Cloud hub instead of listening on 127.0.0.1. */
   hub?: string;
-  /** Where the runner token comes from with `--hub`: env, azure or file:<path>. */
+  /** Where the runner token comes from with `--hub`: env, stdin, file:<path> or azure. */
   tokenFrom?: string;
   port?: string;
   studio?: string;
   allowOrigin?: string[];
-  /** `--open` forces the pairing page open, `--no-open` never opens it; unset opens it on a new token. */
+  /** `--open` forces the pairing page open, `--no-open` never opens it; unset opens it for a person at a terminal. */
   open?: boolean;
   newToken?: boolean;
   json?: boolean;
 }
 
-/** A studio running from a checkout (`cd web && npm run dev`) is always allowed. */
+/** A studio running from a checkout (`cd web && npm run dev`). Allowed only in development, with `RELAY_STUDIO_DEV=1`. */
 const LOCAL_STUDIO_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
-
-/**
- * How long an already-paired studio gets to find a restarted companion before
- * the studio is opened anyway. An open studio tab checks every few seconds
- * while its machine is away, so one that is there answers well inside this.
- */
-const RECONNECT_GRACE_MS = 8_000;
 
 /** How long to wait for any studio before explaining what usually went wrong. */
 const PAIRING_HINT_MS = 30_000;
@@ -51,8 +44,9 @@ const PAIRING_HINT_MS = 30_000;
  *   - install a workflow's export into this repository.
  *
  * Pairing is one link: it opens the studio with the port and a token in the
- * URL fragment, which the browser keeps to itself. After that the studio
- * finds this companion on its own whenever it is running.
+ * URL fragment, which the browser keeps to itself. The token is made for this
+ * start, so every start pairs afresh, and the first run or install a studio
+ * asks for is confirmed in this terminal.
  */
 export async function connectCommand(options: ConnectOptions = {}): Promise<number> {
   const hub = options.hub ?? process.env['RELAY_HUB_URL'];
@@ -60,9 +54,14 @@ export async function connectCommand(options: ConnectOptions = {}): Promise<numb
   const json = options.json === true;
   const studio = studioUrl(options.studio);
   const port = parsePort(options.port ?? process.env['RELAY_COMPANION_PORT'] ?? String(DEFAULT_COMPANION_PORT));
-  const origins = [...new Set([normalizeOrigin(studio), ...LOCAL_STUDIO_ORIGINS, ...(options.allowOrigin ?? []).map(checkedOrigin)])];
+  // The companion refuses a studio on this machine outside development, so
+  // listing one it will not answer would be a lie about who may reach it.
+  const dev = process.env[STUDIO_DEV_VARIABLE] === '1';
+  const asked = [normalizeOrigin(studio), ...(options.allowOrigin ?? []).map(checkedOrigin)];
+  const origins = [...new Set([...asked, ...(dev ? LOCAL_STUDIO_ORIGINS : [])])].filter((origin) => dev || !isLoopbackOrigin(origin));
+  const refusedLocal = asked.filter((origin) => !dev && isLoopbackOrigin(origin));
   const repository = await findRepository();
-  const { token, created } = await loadPairingToken({ rotate: options.newToken === true });
+  const { token, written } = await loadPairingToken({ rotate: options.newToken === true });
   const version = await packageVersion().catch(() => 'unknown');
 
   let paired = false;
@@ -93,11 +92,10 @@ export async function connectCommand(options: ConnectOptions = {}): Promise<numb
 
   const link = pairingUrl(studio, bound, token);
   // Opening the studio is the next step for a person at a terminal, so it
-  // happens unless asked not to: at once for a new pairing, and otherwise
-  // only if no paired studio tab picks the restarted companion up by itself.
+  // happens unless asked not to. Every start needs it: the token a studio
+  // holds is this start's, and no earlier pairing carries over.
   const interactive = theme().interactive && !json;
-  const openNow = options.open === true || (options.open === undefined && created && interactive);
-  const openLater = options.open === undefined && !created && interactive;
+  const openNow = options.open === true || (options.open === undefined && interactive);
   const opened = openNow ? await openInBrowser(link) : false;
 
   if (json) {
@@ -108,31 +106,28 @@ export async function connectCommand(options: ConnectOptions = {}): Promise<numb
       port: bound,
       studio,
       origins,
-      pairUrl: link,
-      newToken: created,
+      // Not the pairing link: it holds this start's token, and this line goes
+      // to whatever is reading stdout, and its logs. `--open` pairs a browser.
+      opened,
+      newSecret: written,
       repository,
     });
   } else {
-    printHeader({ bound, studio, repository, link, opened, created, openLater });
+    printHeader({ bound, studio, repository, link, opened });
+    for (const origin of refusedLocal) {
+      out(warning(`  ${origin} is on this machine, and a studio here is only allowed in development.`));
+      hint(`Set ${STUDIO_DEV_VARIABLE}=1 and start \`relay connect\` again to pair a studio you run yourself.`);
+      out();
+    }
   }
 
   // A studio can say hello while the browser is still being opened above, so
-  // each timer checks again when it fires.
-  if (openLater) {
-    waiting.push(
-      setTimeout(() => {
-        if (paired) return;
-        void openInBrowser(link).then((ok) => {
-          if (ok && !paired) out(`  ${dim(time())}  Opened the studio.`);
-        });
-      }, RECONNECT_GRACE_MS),
-    );
-  }
+  // the timer checks again when it fires.
   if (!json) {
     waiting.push(
       setTimeout(() => {
         if (!paired) printPairingHelp(link);
-      }, (openLater ? RECONNECT_GRACE_MS : 0) + PAIRING_HINT_MS),
+      }, PAIRING_HINT_MS),
     );
   }
   for (const timer of waiting) timer.unref();
@@ -219,8 +214,8 @@ async function findRepository(): Promise<CompanionRepository | null> {
   }
 }
 
-function printHeader(input: { bound: number; studio: string; repository: CompanionRepository | null; link: string; opened: boolean; created: boolean; openLater: boolean }): void {
-  const { bound, studio, repository, link, opened, created, openLater } = input;
+function printHeader(input: { bound: number; studio: string; repository: CompanionRepository | null; link: string; opened: boolean }): void {
+  const { bound, studio, repository, link, opened } = input;
   banner('the studio’s companion on this machine');
   rows([
     { label: 'Studio', value: studio },
@@ -235,11 +230,11 @@ function printHeader(input: { bound: number; studio: string; repository: Compani
   ]);
   out();
   if (opened) out(`  ${success('Opened the studio to pair it.')} If it did not open, use this link:`);
-  else if (openLater) out('  A studio you paired before reconnects by itself; if none has in a few seconds, this opens:');
-  else out(created ? '  Pair the studio by opening this link:' : '  To pair a studio, open:');
+  else out('  Pair the studio by opening this link:');
   out(`  ${link}`);
   hint('Your browser may ask whether the studio may reach apps on this device. Choose Allow: that is this companion.');
-  hint(`The link holds this machine's pairing token (${pairingPath()}); treat it like a password. \`relay connect --new-token\` unpairs every studio that has it.`);
+  hint('The link holds a token for this start only: treat it like a password until this stops. The first run or install a studio asks for is confirmed here.');
+  hint(`\`relay connect --new-token\` replaces this machine's own secret (${pairingPath()}), which never leaves it.`);
   out();
   hint('Leave this running while you use the studio. Ctrl-C stops it.');
   out();
@@ -311,12 +306,15 @@ function finishedMessage(view: CompanionRunView): string {
  * are somebody's work in progress, started from a browser that may not be
  * looking. The second stops them the way `relay stop` does — the work so far
  * stays committed on their branches — and then the companion leaves.
+ *
+ * A closed terminal (SIGHUP) or a `kill` (SIGTERM) is not a question: the runs
+ * are stopped and the companion leaves, instead of dying with them still going.
  */
 function untilStopped(runs: StudioRuns | null, json: boolean): Promise<void> {
   return new Promise((resolve) => {
     let warned = false;
     let stopping = false;
-    const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+    const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     const finish = () => {
       for (const signal of signals) process.off(signal, onSignal);
       resolve();
