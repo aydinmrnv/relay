@@ -96,11 +96,12 @@ describe('runner tokens', () => {
   const secret = 's'.repeat(40);
 
   it('carry the machine and its owner, and nothing but the hub’s secret makes one', () => {
-    const token = mintRunnerToken(secret, { runner: 'relay-abc', userId: 'user_1' });
-    assert.deepEqual(verifyRunnerToken(secret, token), { runner: 'relay-abc', userId: 'user_1' });
+    const { token } = mintRunnerToken(secret, { runner: 'relay-abc', userId: 'user_1' });
+    const read = verifyRunnerToken(secret, token);
+    assert.deepEqual([read?.runner, read?.userId, read?.kind], ['relay-abc', 'user_1', 'own']);
     assert.equal(verifyRunnerToken('t'.repeat(40), token), null);
     const [version, payload, signature] = token.split('.');
-    const forged = Buffer.from(JSON.stringify({ r: 'relay-abc', u: 'user_2' })).toString('base64url');
+    const forged = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload!, 'base64url').toString()), u: 'user_2' })).toString('base64url');
     assert.equal(verifyRunnerToken(secret, `${version}.${forged}.${signature}`), null);
     assert.equal(verifyRunnerToken(secret, `${version}.${payload}`), null);
     assert.equal(verifyRunnerToken(secret, null), null);
@@ -193,7 +194,11 @@ class FakeCloud implements CloudDriver {
     this.calls.push(`create ${spec.name} ${spec.region}`);
     if (this.failCreate !== null) throw this.failCreate;
     this.room(spec.region);
-    this.machines.set(spec.name, { name: spec.name, userId: spec.userId, region: spec.region, power: 'running', provisioning: 'succeeded', createdAt: this.now() });
+    this.machines.set(spec.name, { name: spec.name, userId: spec.userId, region: spec.region, power: 'running', provisioning: 'succeeded', createdAt: this.now(), tokenId: spec.tokenId });
+  }
+  async rotateToken(machine: Pick<CloudMachine, 'name'>, token: { token: string; id: string }): Promise<void> {
+    const found = this.machines.get(machine.name);
+    if (found !== undefined) found.tokenId = token.id;
   }
   async start(machine: Pick<CloudMachine, 'name' | 'region'>): Promise<void> {
     this.calls.push(`start ${machine.name}`);
@@ -224,13 +229,14 @@ function fakeLink(): FleetLink & { closed: Array<[number, string]> } {
 
 function setup(options: { regions?: string[]; idleMs?: number; admit?: (userId: string) => string | null } = {}) {
   let time = 1_000_000;
+  let issued = 0;
   const clock = { now: () => time, advance: (ms: number) => (time += ms) };
   const cloud = new FakeCloud(clock.now);
   const fleet = new Fleet({
     driver: cloud,
     regions: options.regions ?? ['northcentralus', 'spaincentral'],
     coresPerRunner: 2,
-    tokenFor: (runner, userId) => `token:${runner}:${userId}`,
+    tokenFor: (runner, userId) => ({ token: `token:${runner}:${userId}`, id: `id:${runner}:${(issued += 1)}` }),
     idleMs: options.idleMs ?? 10 * 60_000,
     pressureIdleMs: 2 * 60_000,
     bootTimeoutMs: 6 * 60_000,
@@ -399,7 +405,7 @@ describe('the fleet', () => {
     const bName = runnerName('relay', 'user_b');
     first.cloud.machines.get(bName)!.power = 'deallocated';
 
-    const fresh = new Fleet({ driver: first.cloud, regions: ['northcentralus', 'spaincentral'], coresPerRunner: 2, tokenFor: () => 't', now: first.clock.now });
+    const fresh = new Fleet({ driver: first.cloud, regions: ['northcentralus', 'spaincentral'], coresPerRunner: 2, tokenFor: () => ({ token: 't', id: 't-id' }), now: first.clock.now });
     await fresh.reconcile();
     assert.equal(fresh.status('user_a').state, 'creating');
     assert.equal(fresh.status('user_b').state, 'asleep');
@@ -456,7 +462,7 @@ describe('the Azure driver', () => {
       { id, name: 'relay-abc', location: 'spaincentral', tags: { 'relay-role': 'runner', 'relay-user': 'user_1' }, properties: { provisioningState: 'Succeeded', timeCreated: '2026-09-25T10:00:00Z' } },
       { id: id.toUpperCase(), name: 'relay-abc', location: 'SpainCentral', tags: null, properties: { provisioningState: 'Succeeded', instanceView: { statuses: [{ code: 'ProvisioningState/succeeded' }, { code: 'PowerState/deallocated' }] } } },
     );
-    assert.deepEqual(machine, { name: 'relay-abc', userId: 'user_1', region: 'spaincentral', power: 'deallocated', provisioning: 'succeeded', createdAt: Date.parse('2026-09-25T10:00:00Z') });
+    assert.deepEqual(machine, { name: 'relay-abc', userId: 'user_1', region: 'spaincentral', power: 'deallocated', provisioning: 'succeeded', createdAt: Date.parse('2026-09-25T10:00:00Z'), tokenId: null });
     assert.equal(machineFromArm({ name: 'hub', location: 'x', tags: { 'relay-role': 'hub' } }), null);
     assert.equal(machineFromArm({ name: 'relay-abc', location: 'SpainCentral', tags: { 'relay-role': 'runner', 'relay-user': 'u' } })?.power, 'unknown');
   });
@@ -520,7 +526,7 @@ describe('the Azure driver', () => {
       customData: () => '#cloud-config\n',
       fetchImpl,
     });
-    await driver.create({ name: 'relay-abc', userId: 'user_1', region: 'spaincentral', token: 'rr1.x.y' });
+    await driver.create({ name: 'relay-abc', userId: 'user_1', region: 'spaincentral', token: 'rr2.x.y', tokenId: 'token-id-1' });
     const [nic, vm] = requests;
     assert.equal(nic?.method, 'PUT');
     assert.match(nic?.url ?? '', /networkInterfaces\/relay-abc-nic/);
@@ -528,8 +534,8 @@ describe('the Azure driver', () => {
     assert.equal(ipConfig.properties['publicIPAddress'], undefined);
     assert.match(String((ipConfig.properties['subnet'] as { id: string }).id), /virtualNetworks\/relay-runners-spaincentral\/subnets\/runners$/);
     const props = vm?.body?.['properties'] as Record<string, Record<string, unknown>>;
-    assert.deepEqual(vm?.body?.['tags'], { 'relay-role': 'runner', 'relay-user': 'user_1' });
-    assert.equal(Buffer.from(String(props['userData']), 'base64').toString(), 'rr1.x.y');
+    assert.deepEqual(vm?.body?.['tags'], { 'relay-role': 'runner', 'relay-user': 'user_1', 'relay-token': 'token-id-1' });
+    assert.equal(Buffer.from(String(props['userData']), 'base64').toString(), 'rr2.x.y');
     assert.equal((props['storageProfile']!['osDisk'] as Record<string, unknown>)['deleteOption'], 'Delete');
 
     assert.deepEqual(await driver.capacity('spaincentral'), { usedCores: 2, limitCores: 6 });
@@ -541,8 +547,9 @@ describe('a runner machine’s cloud-init', () => {
     const text = runnerCloudInit({ hubUrl: 'https://hub.example.com/', maxRuns: 1, adminUser: 'relay' });
     assert.ok(/^[\x00-\x7f]*$/.test(text), 'Azure custom data is Latin-1');
     assert.ok(text.startsWith('#cloud-config\n'));
-    assert.match(text, /relay connect --hub https:\/\/hub\.example\.com --token-from azure/);
-    assert.match(text, /User=relay/);
+    assert.match(text, /relay connect --hub "\$hub" --token-from stdin/);
+    assert.match(text, /setpriv --reuid "\$run_user" --regid "\$run_user" --init-groups/);
+    assert.match(text, /run_user="relay-run"/);
     assert.match(text, /hub="https:\/\/hub\.example\.com"/);
     assert.throws(() => runnerCloudInit({ hubUrl: 'https://hub.example.com/$(reboot)', maxRuns: 1, adminUser: 'relay' }));
   });

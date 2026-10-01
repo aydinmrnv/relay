@@ -61,7 +61,7 @@ describe('the hub, sent things it cannot read', () => {
   };
 
   const runnerSocket = (): WebSocket =>
-    new WebSocket(`${base.replace('http:', 'ws:')}/v1/runner/connect`, { headers: { authorization: `Bearer ${mintRunnerToken(SECRET, { runner: 'relay-test', userId: USER })}` } } as unknown as string[]);
+    new WebSocket(`${base.replace('http:', 'ws:')}/v1/runner/connect`, { headers: { authorization: `Bearer ${mintRunnerToken(SECRET, { runner: 'relay-test', userId: USER }).token}` } } as unknown as string[]);
 
   /** Opens a runner connection, sends the frames, and resolves with the close code. */
   async function closeCodeAfter(frames: string[]): Promise<number> {
@@ -83,7 +83,7 @@ describe('the hub, sent things it cannot read', () => {
   const HELLO = JSON.stringify({ t: 'hello', hello: { product: 'relay', protocol: 1, authorized: true, capabilities: ['agents'] }, activity: { runs: 0, queued: 0, logins: 0 } });
 
   before(async () => {
-    const fleet = new Fleet({ driver: null, regions: [], coresPerRunner: 2, tokenFor: () => '' });
+    const fleet = new Fleet({ driver: null, regions: [], coresPerRunner: 2, tokenFor: () => ({ token: '', id: '' }) });
     hub = createHub({
       fleet,
       secret: SECRET,

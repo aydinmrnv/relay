@@ -10,7 +10,7 @@ import { decodeSegment, parseRequestTarget } from '../../studio/router.ts';
 import { errorMessage } from '../../util/errors.ts';
 import { FrameError, parseRunnerFrame } from '../frames.ts';
 import { acceptWebSocket, isWebSocketUpgrade, refuseUpgrade } from '../ws.ts';
-import { AuthError, bearer, mintRunnerToken, verifyRunnerToken, type RunnerIdentity, type SessionClaims } from './auth.ts';
+import { AuthError, bearer, DEFAULT_OWN_TOKEN_TTL_MS, mintRunnerToken, verifyRunnerToken, type RunnerToken, type SessionClaims } from './auth.ts';
 import type { Fleet } from './fleet.ts';
 import { LinkLost, RunnerLink } from './link.ts';
 
@@ -55,7 +55,10 @@ export interface HubLogEntry {
 
 export interface HubOptions {
   fleet: Fleet;
+  /** Signs runner tokens. */
   secret: string;
+  /** Earlier secrets, whose tokens are still read while the machines holding them are re-keyed. */
+  previousSecrets?: readonly string[];
   sessions: SessionVerifier;
   /** Studio origins allowed to call from a browser. */
   origins: readonly string[];
@@ -107,6 +110,7 @@ export function createHub(options: HubOptions): Hub {
   const resumeWindow = options.resumeWindowMs ?? 180_000;
   const heartbeatMs = options.heartbeatMs ?? 15_000;
   const maxInflight = options.maxInflightPerUser ?? 16;
+  const secrets = [options.secret, ...(options.previousSecrets ?? [])];
   const links = new Map<string, RunnerLink>();
   const inflight = new Map<string, number>();
   const openResponses = new Set<ServerResponse>();
@@ -158,12 +162,19 @@ export function createHub(options: HubOptions): Hub {
     if (path === null) return refuseUpgrade(socket, 400, 'That is not a path.');
     if (path !== '/v1/runner/connect') return refuseUpgrade(socket, 404, 'No such endpoint.');
     if (!isWebSocketUpgrade(request)) return refuseUpgrade(socket, 426, 'Connect with a WebSocket.');
-    const verified = verifyRunnerToken(options.secret, bearer(request.headers.authorization));
+    const verified = verifyRunnerToken(secrets, bearer(request.headers.authorization));
     if (verified === null) {
       log({ level: 'warn', msg: 'refused a runner: bad token', ip: request.socket.remoteAddress });
-      return refuseUpgrade(socket, 401, 'That runner token is not one this hub made.');
+      return refuseUpgrade(socket, 401, 'That runner token is not one this hub made, or it has expired.');
     }
-    const identity: RunnerIdentity = verified;
+    // Signed by the hub is not the same as still good: the fleet knows which
+    // token each machine holds now (see `Fleet.admits`).
+    const admission = fleet.admits(verified);
+    if (!admission.ok) {
+      log({ level: 'warn', msg: 'refused a runner: its token is not current', runner: verified.runner, reason: admission.reason, ip: request.socket.remoteAddress });
+      return refuseUpgrade(socket, admission.status, admission.reason);
+    }
+    const identity: RunnerToken = verified;
     const ws = acceptWebSocket(request, socket, head, { maxPayload: MAX_FRAME, pingIntervalMs: 20_000 });
     const link = new RunnerLink(ws, identity);
     let greeted = false;
@@ -201,7 +212,13 @@ export function createHub(options: HubOptions): Hub {
           link.close(4000, 'going to sleep');
           return;
         }
-        if (previous !== undefined && previous !== link) previous.close(4409, 'replaced by a newer connection');
+        if (previous !== undefined && previous !== link) {
+          // Normal when a runner's network blinked and its old socket has not
+          // noticed. Two live holders of one token is also what a copied token
+          // looks like, so it is said, at a level someone reads.
+          if (previous.open) log({ level: 'warn', msg: 'a runner connected while its earlier connection was still open; the earlier one is closed', runner: identity.runner });
+          previous.close(4409, 'replaced by a newer connection');
+        }
         ws.send(JSON.stringify({ t: 'welcome', runner: identity.runner }));
         log({ level: 'info', msg: 'runner connected', runner: identity.runner, version: frame.hello.version ?? null });
         return;
@@ -523,11 +540,18 @@ export function createHub(options: HubOptions): Hub {
         // A token for a runner the operator starts by hand: someone's own server, or a development VM.
         const sent = await readJson(request);
         // `null`, a list or nothing at all is still something an operator may send by mistake.
-        const body = (sent !== null && typeof sent === 'object' ? sent : {}) as { userId?: unknown; runner?: unknown };
+        const body = (sent !== null && typeof sent === 'object' ? sent : {}) as { userId?: unknown; runner?: unknown; ttlDays?: unknown };
         if (typeof body.userId !== 'string' || typeof body.runner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.runner)) {
-          throw new HttpError(400, 'Send {"userId": "user_…", "runner": "a-name"}.');
+          throw new HttpError(400, 'Send {"userId": "user_…", "runner": "a-name"}, and "ttlDays" from 1 to 365 if thirty is not right.');
         }
-        send(response, 200, { token: mintRunnerToken(options.secret, { runner: body.runner, userId: body.userId }) });
+        if (body.ttlDays !== undefined && (typeof body.ttlDays !== 'number' || !Number.isFinite(body.ttlDays) || body.ttlDays < 1 || body.ttlDays > 365)) {
+          throw new HttpError(400, '"ttlDays" is a number from 1 to 365.');
+        }
+        const minted = mintRunnerToken(options.secret, { runner: body.runner, userId: body.userId }, { kind: 'own', ttlMs: body.ttlDays === undefined ? DEFAULT_OWN_TOKEN_TTL_MS : body.ttlDays * 24 * 60 * 60_000 });
+        // The fleet would refuse it at the door; better said here, where the operator is looking.
+        const admission = fleet.admits(minted);
+        if (!admission.ok) throw new HttpError(400, admission.reason);
+        send(response, 200, { token: minted.token, expiresAt: new Date(minted.expiresAt).toISOString() });
         return;
       }
       default:

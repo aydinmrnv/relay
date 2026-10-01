@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 
 import { AzureDriver, type AzureCredential } from '../../cloud/hub/azure.ts';
-import { ClerkVerifier, clerkIssuerFromPublishableKey, mintRunnerToken } from '../../cloud/hub/auth.ts';
-import { runnerCloudInit } from '../../cloud/hub/cloudInit.ts';
+import { ClerkVerifier, clerkIssuerFromPublishableKey, DEFAULT_OWN_TOKEN_TTL_MS, mintRunnerToken } from '../../cloud/hub/auth.ts';
+import { RUN_USER, runnerCloudInit } from '../../cloud/hub/cloudInit.ts';
 import { Fleet, type FleetEvent } from '../../cloud/hub/fleet.ts';
 import { createHub, StaticVerifier, type HubLogEntry, type SessionVerifier } from '../../cloud/hub/server.ts';
 import { DEFAULT_STUDIO_URL } from '../../studio/protocol.ts';
@@ -25,6 +25,8 @@ export interface HubConfig {
   host: string;
   publicUrl: string | null;
   secret: string;
+  /** Secrets the hub used before this one. Tokens they signed are still read; new tokens are signed with `secret`. */
+  previousSecrets: string[];
   origins: string[];
   adminToken: string | null;
   tarball: string | null;
@@ -71,6 +73,40 @@ async function secretFrom(env: NodeJS.ProcessEnv, name: string): Promise<string 
   return null;
 }
 
+/**
+ * The secrets the hub used before its current one: `RELAY_HUB_SECRET_PREVIOUS`
+ * (comma-separated), or one per line in `RELAY_HUB_SECRET_PREVIOUS_FILE`. A
+ * file that is not there is no previous secret, so the same environment file
+ * serves a hub that has never rotated.
+ *
+ * This is what makes rotating the hub's secret something an operator can do
+ * on a running fleet. With the old secret listed here, a restarted hub still
+ * reads the token every awake machine holds, and signs new ones with the new
+ * secret. Every machine gets a new token at its next start, so once each has
+ * slept and woken the old secret signs nothing in use and can be dropped;
+ * dropping it at once instead is how every token the old secret signed is
+ * revoked together. Hand-minted tokens are re-minted by hand.
+ */
+async function previousSecrets(env: NodeJS.ProcessEnv): Promise<string[]> {
+  const name = 'RELAY_HUB_SECRET_PREVIOUS';
+  let raw = env[name] ?? '';
+  const file = env[`${name}_FILE`]?.trim();
+  if (raw.trim().length === 0 && file !== undefined && file.length > 0) {
+    raw = await readFile(file, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return '';
+      throw error;
+    });
+  }
+  const secrets = raw
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  for (const secret of secrets) {
+    if (secret.length < 32) throw new RelayError(`${name} holds a secret shorter than 32 characters.`, { code: 'BAD_CONFIG' });
+  }
+  return secrets;
+}
+
 export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promise<HubConfig> {
   const secret = await secretFrom(env, 'RELAY_HUB_SECRET');
   if (secret === null || secret.length < 32) {
@@ -111,6 +147,9 @@ export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promi
     const disk = env['RELAY_CLOUD_DISK']?.trim() || 'StandardSSD_LRS';
     if (disk !== 'Standard_LRS' && disk !== 'StandardSSD_LRS' && disk !== 'Premium_LRS') throw new RelayError('RELAY_CLOUD_DISK is Standard_LRS, StandardSSD_LRS or Premium_LRS.', { code: 'BAD_CONFIG' });
     const allowed = env['RELAY_CLOUD_ALLOWED_USERS']?.trim() ?? '';
+    const adminUser = env['RELAY_CLOUD_ADMIN_USER']?.trim() || 'relay';
+    // Azure gives the admin user sudo without a password; the runner and its agents run as RUN_USER, which has none.
+    if (adminUser === RUN_USER) throw new RelayError(`RELAY_CLOUD_ADMIN_USER cannot be "${RUN_USER}": that is the unprivileged user the runner runs as.`, { code: 'BAD_CONFIG' });
     cloud = {
       subscriptionId,
       resourceGroup: env['RELAY_CLOUD_RESOURCE_GROUP']?.trim() || 'relay-cloud',
@@ -122,7 +161,7 @@ export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promi
       osDiskType: disk,
       osDiskGb: number(env, 'RELAY_CLOUD_DISK_GB', 32, 30, 1024),
       sshPublicKey,
-      adminUser: env['RELAY_CLOUD_ADMIN_USER']?.trim() || 'relay',
+      adminUser,
       maxRuns: number(env, 'RELAY_CLOUD_RUNNER_MAX_RUNS', 1, 1, 8),
       idleMinutes: number(env, 'RELAY_CLOUD_IDLE_MINUTES', 10, 1, 24 * 60),
       maxMachines: number(env, 'RELAY_CLOUD_MAX_MACHINES', 20, 0, 10_000),
@@ -135,6 +174,7 @@ export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promi
     host: env['RELAY_HUB_HOST']?.trim() || '127.0.0.1',
     publicUrl,
     secret,
+    previousSecrets: (await previousSecrets(env)).filter((previous) => previous !== secret),
     origins: origins.length > 0 ? origins : [DEFAULT_STUDIO_URL, 'http://localhost:3000'],
     adminToken: await secretFrom(env, 'RELAY_HUB_ADMIN_TOKEN'),
     tarball: env['RELAY_HUB_TARBALL']?.trim() || null,
@@ -222,7 +262,7 @@ async function serveHub(config: HubConfig, version: string, logLine: (entry: Hub
     driver,
     regions: cloud?.regions ?? [],
     coresPerRunner: cloud?.cores ?? 2,
-    tokenFor: (runner, userId) => mintRunnerToken(config.secret, { runner, userId }),
+    tokenFor: (runner, userId) => mintRunnerToken(config.secret, { runner, userId }, { kind: 'managed' }),
     admit: (userId) => {
       if (cloud === null || cloud.allowedUsers === '*' || cloud.allowedUsers.includes(userId)) return null;
       return 'Relay Cloud is invite-only for now. Ask to be let in, or run on your own machine with `relay connect`.';
@@ -242,7 +282,10 @@ async function serveHub(config: HubConfig, version: string, logLine: (entry: Hub
     sessions = verifier;
   }
 
-  const hub = createHub({ fleet, secret: config.secret, sessions, origins: config.origins, version, adminToken: config.adminToken, tarballPath: config.tarball, log: logLine });
+  if (config.previousSecrets.length > 0) {
+    logLine({ level: 'info', msg: `still reading runner tokens signed by ${config.previousSecrets.length} earlier secret${config.previousSecrets.length === 1 ? '' : 's'}; drop RELAY_HUB_SECRET_PREVIOUS once every machine has been started again` });
+  }
+  const hub = createHub({ fleet, secret: config.secret, previousSecrets: config.previousSecrets, sessions, origins: config.origins, version, adminToken: config.adminToken, tarballPath: config.tarball, log: logLine });
   const port = await hub.listen(config.port, config.host);
   logLine({ level: 'info', msg: `hub listening on ${config.host}:${port}`, version, machines: driver === null ? 'none (runners dial in on their own)' : `${cloud?.vmSize} in ${cloud?.regions.join(', ')}` });
 
@@ -282,6 +325,12 @@ export async function hubTokenCommand(options: { user: string; runner: string })
   const secret = await secretFrom(process.env, 'RELAY_HUB_SECRET');
   if (secret === null || secret.length < 32) throw new RelayError('RELAY_HUB_SECRET must be set to the hub\'s secret.', { code: 'BAD_CONFIG' });
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(options.runner)) throw new RelayError('A runner name is lower-case letters, digits and dashes.', { code: 'BAD_FLAG' });
-  process.stdout.write(`${mintRunnerToken(secret, { runner: options.runner, userId: options.user })}\n`);
+  // A token for a runner someone starts themselves is good for a while, not
+  // for ever: thirty days unless RELAY_HUB_TOKEN_TTL_DAYS says otherwise.
+  const days = number(process.env, 'RELAY_HUB_TOKEN_TTL_DAYS', DEFAULT_OWN_TOKEN_TTL_MS / (24 * 60 * 60_000), 1, 365);
+  const minted = mintRunnerToken(secret, { runner: options.runner, userId: options.user }, { kind: 'own', ttlMs: days * 24 * 60 * 60_000 });
+  process.stdout.write(`${minted.token}\n`);
+  // On stderr, so `RELAY_RUNNER_TOKEN=$(relay hub token …)` still captures only the token.
+  process.stderr.write(`Expires ${new Date(minted.expiresAt).toISOString()}. Mint another before then; the hub refuses this one after.\n`);
   return EXIT.success;
 }

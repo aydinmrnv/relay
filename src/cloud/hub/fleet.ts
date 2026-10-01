@@ -33,6 +33,13 @@ import { CloudError, type CloudDriver, type CloudMachine } from './driver.ts';
  * A runner that dials in without a cloud machine behind it — someone's own
  * server, or a development VM with a token minted by hand — is "unmanaged":
  * routed to like any other, never started or stopped.
+ *
+ * The fleet is also what decides whether a runner's token is still good
+ * (`admits`). Each managed machine has one current token. It is re-issued
+ * whenever the machine is made or started, and its id is kept on the machine
+ * in the cloud, so the rule survives a hub restart: a token from an earlier
+ * start, or for a machine that has been removed, or presented while the hub
+ * has the machine asleep, is refused however good its signature is.
  */
 
 export type RunnerState = CloudRunnerState;
@@ -50,7 +57,8 @@ export interface FleetOptions {
   coresPerRunner: number;
   /** Machine names are `<prefix>-<hash of the user id>`. */
   namePrefix?: string;
-  tokenFor: (runner: string, userId: string) => string;
+  /** A new runner token for a machine, and that token's id. Called for every create and every start. */
+  tokenFor: (runner: string, userId: string) => { token: string; id: string };
   /** Null to admit, or the reason a person may not have a machine. */
   admit?: (userId: string) => string | null;
   maxMachines?: number;
@@ -99,7 +107,21 @@ interface Machine {
   busy: boolean;
   /** Not before this time: a create or start the cloud refused. */
   retryAt: number;
+  /** The id of the one runner token this machine may present, or null when it has none the hub will take. */
+  tokenId: string | null;
+  /** Set when the machine is removed: its token stays refused whatever the cloud still lists. */
+  tokenRevoked: boolean;
 }
+
+/** What `Fleet.admits` needs of a runner token. */
+export interface PresentedToken {
+  runner: string;
+  userId: string;
+  kind: 'managed' | 'own';
+  id: string;
+}
+
+export type Admission = { ok: true } | { ok: false; status: 401 | 409 | 503; reason: string };
 
 const IDLE_ACTIVITY: RunnerActivity = { runs: 0, queued: 0, logins: 0 };
 /** How long the fleet trusts its own last step over a listing that contradicts it. */
@@ -299,6 +321,11 @@ export class Fleet {
     if (machine === undefined || !machine.managed || this.options.driver === null) return this.status(userId);
     machine.wanted = false;
     this.dequeue(machine);
+    // First, and whatever the cloud then says: the machine's token is no
+    // longer one the hub takes. The VM lives on for some seconds while Azure
+    // deletes it, and its runner would otherwise dial straight back in.
+    machine.tokenId = null;
+    machine.tokenRevoked = true;
     if (machine.cloud === null && machine.state === 'none') {
       this.forget(machine);
       return this.status(userId);
@@ -325,13 +352,56 @@ export class Fleet {
   /* -------------------------------------------------------------- */
 
   /**
+   * Whether a runner token that carries a good signature may connect.
+   *
+   * A signature only says the hub made the token at some point. What the
+   * hub has to know is whether it is the token the machine holds *now*:
+   *
+   *   - **A managed machine's token** must be the one the fleet last issued
+   *     for that machine. Every create and every start issues a new one, so a
+   *     token copied off a machine is good until that machine next sleeps and
+   *     wakes, and no longer; and removing a machine ends its token at once.
+   *   - **The machine must be one the hub expects to hear from**: being made,
+   *     starting, or already connected. A copied token presented while the
+   *     machine sleeps would otherwise turn "asleep" into "ready", and the
+   *     person's requests would go to whoever presented it.
+   *   - **A hand-minted token** (`own`) cannot name a managed machine, so it is
+   *     never a way around the first two rules. It is good until it expires.
+   *
+   * 503 is for a hub that has not read its machines from the cloud yet: the
+   * runner is told to come back, not that its token is bad.
+   */
+  admits(token: PresentedToken): Admission {
+    const managedName = this.options.driver === null ? null : runnerName(this.options.namePrefix, token.userId);
+    if (token.kind === 'own') {
+      if (token.runner === managedName) return { ok: false, status: 401, reason: 'That name belongs to the machine the hub makes for this person.' };
+      return { ok: true };
+    }
+    if (managedName === null || token.runner !== managedName) return { ok: false, status: 401, reason: 'This hub manages no machine by that name.' };
+    if (!this.listedOnce) return { ok: false, status: 503, reason: 'The hub has not read its machines yet. Try again in a moment.' };
+    const machine = this.machines.get(token.userId);
+    if (machine === undefined || machine.tokenId === null) return { ok: false, status: 401, reason: 'That machine has no token this hub takes: it was removed, or made by an earlier hub.' };
+    // Ids are not secret, so there is nothing for timing to give away here.
+    if (machine.tokenId !== token.id) return { ok: false, status: 401, reason: 'That runner token is from an earlier start of this machine.' };
+    if (machine.state !== 'creating' && machine.state !== 'starting' && machine.state !== 'ready' && machine.state !== 'stopping') {
+      return { ok: false, status: 409, reason: 'The hub has not asked this machine to be awake.' };
+    }
+    return { ok: true };
+  }
+
+  /**
    * A runner dialed in. False when the fleet is putting that machine to sleep:
    * its runner reconnects in the seconds before the power goes, and must not
    * be mistaken for a machine that is awake.
    */
   connected(identity: { runner: string; userId: string }, link: FleetLink, activity: RunnerActivity): boolean {
     let machine = this.machines.get(identity.userId);
-    if (machine !== undefined && machine.managed && machine.name === identity.runner && machine.state === 'stopping') return false;
+    // The same rule `admits` applied when the socket opened, applied again now
+    // that the runner has said hello: the machine may have been put to sleep
+    // or removed in the seconds between the two.
+    if (machine !== undefined && machine.managed && machine.name === identity.runner) {
+      if (machine.tokenRevoked || (machine.state !== 'creating' && machine.state !== 'starting' && machine.state !== 'ready')) return false;
+    }
     if (machine === undefined) {
       const managedName = this.options.driver === null ? null : runnerName(this.options.namePrefix, identity.userId);
       machine = this.track(identity.userId, identity.runner, null, identity.runner === managedName);
@@ -407,6 +477,9 @@ export class Fleet {
       if (!machine.managed && machine.link !== null) continue;
       machine.managed = true;
       machine.cloud = cloud;
+      // What the fleet issued itself is what it knows best; the cloud's record
+      // is for a hub that has just started and remembers nothing.
+      if (machine.tokenId === null && !machine.tokenRevoked) machine.tokenId = cloud.tokenId;
       machine.region = cloud.region;
       if (machine.name !== cloud.name) {
         this.byName.delete(machine.name);
@@ -703,12 +776,21 @@ export class Fleet {
         this.log({ kind: 'remove', userId: machine.userId, runner: machine.name, message: `Removing ${machine.name}, which Azure failed to make, to make it again.` });
         return;
       }
+      // A new token for every create and every start. If the cloud does not
+      // take it, the machine is not started: starting it on the token it had
+      // would leave an old token good for another stretch of being awake.
+      const issued = this.options.tokenFor(machine.name, machine.userId);
       if (!exists) {
-        await driver.create({ name: machine.name, userId: machine.userId, region: machine.region, token: this.options.tokenFor(machine.name, machine.userId) });
+        await driver.create({ name: machine.name, userId: machine.userId, region: machine.region, token: issued.token, tokenId: issued.id });
+        machine.tokenId = issued.id;
+        machine.tokenRevoked = false;
         machine.firstBoot = true;
         this.transition(machine, 'creating');
         this.log({ kind: 'create', userId: machine.userId, runner: machine.name, region: machine.region, message: `Making ${machine.name} in ${machine.region}.` });
       } else {
+        await driver.rotateToken({ name: machine.name, region: machine.region, userId: machine.userId }, issued);
+        machine.tokenId = issued.id;
+        machine.tokenRevoked = false;
         await driver.start({ name: machine.name, region: machine.region });
         this.transition(machine, machine.firstBoot ? 'creating' : 'starting');
         this.log({ kind: 'start', userId: machine.userId, runner: machine.name, region: machine.region, message: `Starting ${machine.name}.` });
@@ -765,6 +847,8 @@ export class Fleet {
       error: null,
       busy: false,
       retryAt: 0,
+      tokenId: null,
+      tokenRevoked: false,
     };
     this.machines.set(userId, machine);
     this.byName.set(name, userId);

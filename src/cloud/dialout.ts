@@ -22,7 +22,7 @@ import { parseHubFrame, runnerSocketUrl, type HubFrame, type RunnerActivity, typ
 
 export interface DialOutOptions {
   hub: string;
-  /** Asked before every attempt, so a token rotated by the hub is picked up without a restart. */
+  /** Asked before every attempt, so a source that can change (a file, a VM's user data) is read again without a restart. */
   token: () => Promise<string>;
   router: Router;
   runs: StudioRuns | null;
