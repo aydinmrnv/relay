@@ -227,6 +227,14 @@ export interface RelayConfig {
      * merges without a person, whatever `workflow.deliver` says.
      */
     deliver: UnattendedPolicy;
+    /**
+     * Environment variables an unattended run's agents and test suite may see
+     * even though their names look like secrets. Everything else that looks
+     * like one is withheld from them, apart from each CLI's own sign-in
+     * (`src/unattended/environment.ts`). Empty by default: a secret reaches an
+     * agent nobody is watching only when the repository names it here.
+     */
+    allowEnv: string[];
   };
   github: {
     autoPush: boolean;
@@ -336,6 +344,7 @@ export const DEFAULT_CONFIG: RelayConfig = {
     maxRunCostUsd: null,
     pollSeconds: 60,
     deliver: 'pr',
+    allowEnv: [],
   },
   github: {
     autoPush: false,
@@ -781,6 +790,20 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
         );
       }
       config.unattended.deliver = unattended['deliver'];
+    }
+    if (unattended['allowEnv'] !== undefined) {
+      const names = readLogins(unattended['allowEnv'], 'unattended.allowEnv');
+      for (const name of names) {
+        // A name, not a pattern: `*_TOKEN` would let through exactly what this
+        // list exists to make somebody spell out.
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+          throw new RelayError(
+            `config.unattended.allowEnv: "${name}" is not an environment variable name. List each variable by name, e.g. "STRIPE_TEST_KEY".`,
+            { code: 'BAD_CONFIG' },
+          );
+        }
+      }
+      config.unattended.allowEnv = names;
     }
   }
 

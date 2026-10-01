@@ -1,5 +1,5 @@
 import { RelayError } from '../util/errors.ts';
-import type { Issue } from '../github/types.ts';
+import type { Issue, IssueComment } from '../github/types.ts';
 import type { RelayConfig, UnattendedPolicy } from '../storage/config.ts';
 import { DEFAULT_CONFIG } from '../storage/config.ts';
 
@@ -127,6 +127,67 @@ export function applyUnattendedPolicy(config: RelayConfig): RelayConfig {
   merged.delivery = { ...merged.delivery, comment: true };
 
   return merged;
+}
+
+/**
+ * The relationships to a repository that are worth a commenter's word: people
+ * who can already write to it, or who belong to the organisation that owns
+ * it. `CONTRIBUTOR` is deliberately not here — one merged typo fix makes a
+ * contributor of anybody.
+ */
+const TRUSTED_ASSOCIATIONS: ReadonlySet<string> = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+export interface TrustedComments {
+  /** The comments the agents will read, in their original order. */
+  kept: IssueComment[];
+  /** Who wrote the ones they will not, each named once. */
+  droppedAuthors: string[];
+  dropped: number;
+}
+
+/**
+ * The comments an unattended run reads, out of everything on the issue.
+ *
+ * The allowlist decides who may *start* a run, and until this existed it
+ * decided nothing about what the run then read: the label came from a
+ * maintainer, and every comment under the issue — from anyone with a GitHub
+ * account, on a public repository — went into the prompt beside it. A comment
+ * is the cheapest place there is to write "ignore the above and…", and the
+ * agent reading it has a shell.
+ *
+ * So a comment reaches the agents only when there is a reason to trust its
+ * author: they are on `unattended.authors`, they are the person who applied
+ * the label, or the tracker itself says they can already write to the
+ * repository or belong to the organisation that owns it. Everything else is
+ * left out, counted, and said — in the run's notes and in `issue.md` — because
+ * a discussion the agents silently did not see is a different problem.
+ *
+ * The issue's own title and description are not filtered. Applying the label
+ * is the act of vouching for them: it says "do this", about that text.
+ */
+export function trustedComments(
+  settings: UnattendedSettings,
+  issue: Pick<Issue, 'comments'>,
+  actor: string | null,
+): TrustedComments {
+  const named = new Set(settings.authors.map((login) => login.toLowerCase()));
+  if (actor !== null) named.add(actor.toLowerCase());
+
+  const kept: IssueComment[] = [];
+  const droppedAuthors: string[] = [];
+  let dropped = 0;
+  for (const comment of issue.comments) {
+    const trusted =
+      named.has(comment.author.toLowerCase()) ||
+      (comment.association !== undefined && TRUSTED_ASSOCIATIONS.has(comment.association.toUpperCase()));
+    if (trusted) {
+      kept.push(comment);
+      continue;
+    }
+    dropped += 1;
+    if (!droppedAuthors.includes(comment.author)) droppedAuthors.push(comment.author);
+  }
+  return { kept, droppedAuthors, dropped };
 }
 
 const RANK: Record<string, number> = { none: 0, branch: 1, push: 2, pr: 3, merge: 4 };
