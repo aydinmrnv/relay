@@ -1,8 +1,11 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Compass } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SiteFooter } from '@/components/marketing/closing';
 import { SiteHeader } from '@/components/marketing/site-header';
+
+export const metadata: Metadata = { title: 'Page not found' };
 
 /**
  * Anyone can land here: a mistyped address, an old link, a shared workflow

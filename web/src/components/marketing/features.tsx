@@ -3,10 +3,11 @@
 import { Blocks, GitCompareArrows, KeyRound, ShieldCheck, SquareTerminal, Workflow } from 'lucide-react';
 import { useBrand } from '@/hooks/use-brand';
 import { TEMPLATES } from '@/lib/workflow/templates';
-import { Reveal, SectionHeading } from './primitives';
+import { Reveal, SectionHeading, useCloudOffered } from './primitives';
 
 export function Features() {
   const brand = useBrand();
+  const cloud = useCloudOffered();
 
   // Each card ends in the concrete mechanism behind the claim, in the CLI's own terms.
   const features = [
@@ -37,7 +38,7 @@ export function Features() {
     {
       icon: KeyRound,
       title: 'Bring your own subscription',
-      body: `Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. There are no API keys to paste. On your own computer and in CI no token ever reaches ${brand.name}; a ${brand.name} Cloud machine holds the sign-ins you make on it, and nothing else does.`,
+      body: `Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. There are no API keys to paste. On your own computer and in CI no token ever reaches ${brand.name}${cloud ? `; a ${brand.name} Cloud machine holds the sign-ins you make on it, and nothing else does` : ''}.`,
       proof: 'claude auth login · codex login',
     },
     {

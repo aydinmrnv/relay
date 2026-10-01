@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useState } from 'react';
+import { usePageTitle } from '@/hooks/use-page-title';
 import {
   ArrowLeft,
   Ban,
@@ -65,6 +66,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
   const runAgain = useRunAgain();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  usePageTitle(run === undefined ? undefined : `Run of ${run.workflowName}`);
 
   if (!hydrated || leaving) return null;
   if (run === undefined) return <RunNotFound />;

@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/sidebar';
 import { useBrand } from '@/hooks/use-brand';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
+import { useCapabilities } from '@/lib/cloud/account';
 import { useCompanion } from '@/lib/companion/client';
 import { cloudStatusText } from '@/components/companion/cloud-card';
 import { useStudio } from '@/lib/store';
@@ -55,7 +56,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'Learn',
     items: [
-      { href: '/runners', label: 'Where agents run', icon: Laptop, hint: 'Your computer through relay connect, or Relay Cloud — the two places a run happens' },
+      { href: '/runners', label: 'Where agents run', icon: Laptop, hint: 'Where a run happens: your computer, through relay connect, or Relay Cloud where it is offered' },
       { href: '/guide', label: 'Guide', icon: BookOpen, hint: 'How the studio works, and what every part does' },
     ],
   },
@@ -164,6 +165,7 @@ function AgentsFooter() {
   const host = useCompanion((state) => state.hello?.machine);
   const target = useCompanion((state) => state.target);
   const cloud = useCompanion((state) => (state.target === 'cloud' ? state.cloud : undefined));
+  const cloudOffered = useCapabilities().cloudHub != null;
   return (
     <div className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs group-data-[collapsible=icon]:hidden">
       <Link
@@ -171,7 +173,7 @@ function AgentsFooter() {
         className="grid gap-1.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <span className="flex items-center gap-1.5 font-medium text-foreground">
-          <span className="truncate">{companion === 'connected' ? (host ?? 'Your machine') : cloud !== undefined ? 'Relay Cloud' : 'No runner yet'}</span>
+          <span className="truncate">{companion === 'connected' ? (host ?? 'Your computer') : cloud !== undefined ? 'Relay Cloud' : 'No runner yet'}</span>
         </span>
         {bridge === 'unavailable' ? (
           <span className="text-muted-foreground">
@@ -199,7 +201,7 @@ function AgentsFooter() {
       </Link>
       {/* The local-or-cloud question, wherever the studio is looking right now. */}
       <Link href="/runners" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-        {target === 'cloud' ? 'Relay Cloud, or your computer' : 'Your computer, or Relay Cloud'} →
+        {!cloudOffered ? 'Where your agents run' : target === 'cloud' ? 'Relay Cloud, or your computer' : 'Your computer, or Relay Cloud'} →
       </Link>
     </div>
   );

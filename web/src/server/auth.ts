@@ -16,9 +16,10 @@ export async function getUserId(): Promise<string | null> {
 /** A name to show next to things a person publishes, like a shared workflow. One Clerk API call. */
 export async function displayName(): Promise<string> {
   const user = await currentUser();
-  if (user === null) return 'Someone';
+  if (user === null) return 'a Relay user';
   const full = [user.firstName, user.lastName].filter((part) => typeof part === 'string' && part.trim().length > 0).join(' ');
-  return full.length > 0 ? full : (user.username ?? user.primaryEmailAddress?.emailAddress.split('@')[0] ?? 'Someone');
+  // Never the start of an email address: this is printed on a public page, and for most people that is their address.
+  return full.length > 0 ? full : (user.username ?? 'a Relay user');
 }
 
 /** Removes the person from Clerk. Their studio data is deleted by the caller first. */

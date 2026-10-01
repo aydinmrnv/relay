@@ -4,7 +4,7 @@ import { ChartColumn, Check, History, Minus, Share2, Sparkles, X } from 'lucide-
 import { BrandMark } from '@/components/app/brand-mark';
 import { useBrand } from '@/hooks/use-brand';
 import { cn } from '@/lib/utils';
-import { Reveal, SectionHeading } from './primitives';
+import { Reveal, SectionHeading, useCloudOffered } from './primitives';
 
 type Mark = 'yes' | 'no' | 'partial';
 
@@ -15,6 +15,7 @@ type Mark = 'yes' | 'no' | 'partial';
  */
 export function Different() {
   const brand = useBrand();
+  const cloud = useCloudOffered();
 
   const highlights = [
     {
@@ -42,7 +43,7 @@ export function Different() {
   const rows: Array<{ label: string; ours: Mark; agents: Mark; canvases: Mark; note?: string }> = [
     { label: 'Two vendors’ agents review each other’s plan and diff', ours: 'yes', agents: 'no', canvases: 'no' },
     { label: 'Runs on the Claude and ChatGPT plans you already pay for', ours: 'yes', agents: 'partial', canvases: 'no', note: 'Hosted agents usually bill seats or credits of their own; canvases call APIs per key.' },
-    { label: 'Your code stays on your computer, on a machine of yours in Relay Cloud, or on your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
+    { label: cloud ? 'Your code stays on your computer, on a machine of yours in Relay Cloud, or on your own CI runner' : 'Your code stays on your computer or on your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'A rough spend forecast before the first real run', ours: 'yes', agents: 'no', canvases: 'no' },
     { label: 'Build a workflow from a sentence without spending AI credits', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'Guardrails that refuse by default: budgets, allowlists, approval', ours: 'yes', agents: 'partial', canvases: 'partial' },

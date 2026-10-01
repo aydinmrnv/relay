@@ -157,7 +157,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     Unzip at the root of {workflow.repository === undefined || workflow.repository === '' ? 'your repository' : <span className="font-mono">{workflow.repository}</span>}, or{' '}
                     <Link href="/connect" className="underline underline-offset-2">
-                      connect your machine
+                      connect your computer
                     </Link>{' '}
                     to install it there directly.
                   </p>

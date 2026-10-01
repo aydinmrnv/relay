@@ -475,7 +475,8 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       tick(90_000);
       steps.push(`Merged (${String(config['mergeMethod'] ?? 'squash')})`);
     }
-    return { status: 'done' as NodeRunStatus, message: steps.join(' · '), detail: prUrl, nextHandles: 'all' as const };
+    // The address is kept on the run for the variables that read it; what a person reads is that nothing was opened.
+    return { status: 'done' as NodeRunStatus, message: steps.join(' · '), detail: `Pull request #${number} is simulated: nothing was opened on GitHub.`, nextHandles: 'all' as const };
   }
 
   async function genericAction(nodeId: string, def: NodeTypeDef, config: Record<string, unknown>) {
@@ -634,7 +635,8 @@ function summarize(run: Run, context: Record<string, unknown>): string {
   if (run.diff !== undefined) parts.push(`+${run.diff.additions} −${run.diff.deletions} across ${run.diff.files} files`);
   if (run.tests !== undefined) parts.push(`tests ${run.tests.passed ? 'passed' : 'failed'}`);
   if (run.costUsd > 0) parts.push(usd(run.costUsd));
-  if (run.prUrl !== undefined) parts.push(run.prUrl);
+  // Not the address: a test run opens nothing, and a link-shaped line gets pasted into a browser.
+  if (run.prUrl !== undefined) parts.push(`pull request #${run.prUrl.split('/').pop() ?? ''}, simulated`);
   return parts.join(' · ');
 }
 

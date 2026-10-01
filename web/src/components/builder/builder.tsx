@@ -1,5 +1,6 @@
 'use client';
 
+import { usePageTitle } from '@/hooks/use-page-title';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -78,6 +79,7 @@ function clean(node: CanvasNode): CanvasNode {
 
 function BuilderInner({ workflowId }: { workflowId: string }) {
   const saved = useStudio((state) => state.workflows[workflowId]);
+  usePageTitle(saved?.name);
   const setGraph = useStudio((state) => state.setGraph);
   const renameWorkflow = useStudio((state) => state.renameWorkflow);
   const toggleWorkflow = useStudio((state) => state.toggleWorkflow);

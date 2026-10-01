@@ -53,9 +53,10 @@ export default function DashboardPage() {
   // ten idle minutes, and a checklist that un-ticks itself every night would be
   // telling the truth about the wrong thing.
   const cloudChosen = cloud !== null && cloud.state !== 'none' && cloud.state !== 'failed';
-  const runnerLabel = machine !== null ? (machine.machine ?? 'your computer') : target === 'cloud' ? 'Relay Cloud' : 'your machine';
+  const runnerLabel = machine !== null ? (machine.machine ?? 'your computer') : target === 'cloud' ? 'Relay Cloud' : 'your runner';
   const signedIn = useSignedIn();
   const accounts = useCapabilities().enabled;
+  const cloudOffered = useCapabilities().cloudHub != null;
   const account = useAccount((state) => (state.status === 'signed-in' ? state.user : null));
   const onboarded = useAccount((state) => state.onboardedAt !== null);
 
@@ -114,13 +115,15 @@ export default function DashboardPage() {
     {
       id: 'machine',
       title: 'Choose where your agents run',
-      why: 'Your coding agents run somewhere: on your own computer through relay connect, or on a machine Relay runs for you in Relay Cloud. Both use your Claude and ChatGPT plans, and test runs stay free either way.',
+      why: cloudOffered
+        ? 'Your coding agents run somewhere: on your own computer through relay connect, or on a machine Relay runs for you in Relay Cloud. Both use your Claude and ChatGPT plans, and test runs stay free either way.'
+        : 'Your coding agents run on your own computer, through relay connect, with your Claude and ChatGPT plans. Test runs stay free either way.',
       done: machine !== null || cloudChosen,
       doneNote:
         machine !== null
           ? `Connected to ${machine.machine ?? 'your computer'}${repositoryLabel(machine.repository) === null ? '' : `, in ${repositoryLabel(machine.repository)}`}.`
           : 'Sign-ins and runs go to Relay Cloud, which wakes when you need it and sleeps when it is idle.',
-      action: { label: 'Compare the two runners', href: '/runners' },
+      action: { label: cloudOffered ? 'Compare the two runners' : 'Where your agents run', href: '/runners' },
       extra: { label: 'Connect your computer', href: '/connect' },
     },
     {

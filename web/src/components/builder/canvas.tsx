@@ -48,7 +48,7 @@ interface Props {
 }
 
 export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onSelect, onDrop, onDropConnection, onBeforeChange, readOnly = false, children, empty }: Props) {
-  const { screenToFlowPosition, fitView } = useReactFlow();
+  const { screenToFlowPosition, fitView, getNodes, getNodesBounds, setViewport } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
   // Too narrow for an overview map: it would sit on top of the nodes it is a map of.
   const [roomy, setRoomy] = useState(true);
@@ -56,6 +56,32 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
   // Opening or closing a side panel changes how much room the graph has.
   // Fit it again when that happens, never smaller than can be read: a graph
   // shrunk until its labels are specks is fitted, and useless.
+  //
+  // A graph too wide to fit at that size (any real one, on a phone) is shown
+  // from where it starts, the trigger at the left edge, and read by panning
+  // right. Centring it instead opens on the middle of the workflow with its
+  // start off screen.
+  const fit = useCallback(
+    (duration = 0) => {
+      const element = wrapper.current;
+      const all = getNodes();
+      if (element === null || all.length === 0) return;
+      const bounds = getNodesBounds(all);
+      const pad = 24;
+      const wide = (element.clientWidth - pad * 2) / Math.max(1, bounds.width);
+      const tall = (element.clientHeight - pad * 2) / Math.max(1, bounds.height);
+      if (Math.min(wide, tall) >= FIT_MIN_ZOOM) {
+        void fitView({ padding: 0.14, maxZoom: 1, minZoom: FIT_MIN_ZOOM, duration });
+        return;
+      }
+      const zoom = FIT_MIN_ZOOM;
+      const x = wide >= zoom ? (element.clientWidth - bounds.width * zoom) / 2 - bounds.x * zoom : pad - bounds.x * zoom;
+      const y = tall >= zoom ? (element.clientHeight - bounds.height * zoom) / 2 - bounds.y * zoom : pad + 40 - bounds.y * zoom;
+      void setViewport({ x, y, zoom }, { duration });
+    },
+    [fitView, getNodes, getNodesBounds, setViewport],
+  );
+
   useEffect(() => {
     const element = wrapper.current;
     if (element === null) return;
@@ -69,14 +95,14 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
       if (Math.abs(next - width) < 80) return;
       width = next;
       if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => void fitView({ padding: 0.14, maxZoom: 1, minZoom: FIT_MIN_ZOOM, duration: 250 }), 120);
+      timer = setTimeout(() => fit(250), 120);
     });
     observer.observe(element);
     return () => {
       observer.disconnect();
       if (timer !== null) clearTimeout(timer);
     };
-  }, [fitView]);
+  }, [fit]);
 
   const isValidConnection: IsValidConnection<CanvasEdge> = useCallback(
     (connection) => {
@@ -152,6 +178,8 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
         deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
         fitView
         fitViewOptions={{ padding: 0.14, maxZoom: 1, minZoom: FIT_MIN_ZOOM }}
+        // After the first fit, which centres: a graph that cannot fit starts at its trigger instead.
+        onInit={() => setTimeout(() => fit(), 0)}
         minZoom={0.35}
         maxZoom={1.75}
         defaultEdgeOptions={{ type: 'wf' }}
