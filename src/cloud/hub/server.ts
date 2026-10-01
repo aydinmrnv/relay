@@ -350,6 +350,13 @@ export function createHub(options: HubOptions): Hub {
     // The body is read first, so a request that waits for the machine to wake
     // is not also holding an unread upload open.
     const body = method === 'POST' ? await readJson(request) : (await drain(request), undefined);
+    // A request that starts something is refused for someone who is no longer
+    // admitted, or whose machine has had its day: stopping a run and reading
+    // are still allowed, so work in flight can be watched to its end.
+    if (method === 'POST') {
+      const refusal = fleet.refusal(userId);
+      if (refusal !== null) throw new HttpError(403, refusal, { cloud: fleet.status(userId) });
+    }
     const link = await runnerFor(userId, method === 'POST');
     const release = fleet.use(userId, { touch: method !== 'GET' });
     try {
@@ -516,7 +523,12 @@ export function createHub(options: HubOptions): Hub {
     if (target === null) throw new HttpError(400, 'That is not a user id.');
     switch (route) {
       case 'GET /admin/v1/fleet':
-        send(response, 200, { summary: fleet.summary(), links: [...links.values()].map((link) => ({ runner: link.identity.runner, userId: link.identity.userId, since: new Date(link.connectedAt).toISOString(), activity: link.activity })) });
+        send(response, 200, {
+          summary: fleet.summary(),
+          // Machines of people who are no longer admitted: asleep, still on disk, and the operator's to remove.
+          revoked: fleet.revoked(),
+          links: [...links.values()].map((link) => ({ runner: link.identity.runner, userId: link.identity.userId, since: new Date(link.connectedAt).toISOString(), activity: link.activity })),
+        });
         return;
       case 'GET /admin/v1/runners/:':
         send(response, 200, fleet.status(target));

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { AzureDriver, type AzureCredential } from '../../cloud/hub/azure.ts';
 import { ClerkVerifier, clerkIssuerFromPublishableKey, DEFAULT_OWN_TOKEN_TTL_MS, mintRunnerToken } from '../../cloud/hub/auth.ts';
 import { RUN_USER, runnerCloudInit } from '../../cloud/hub/cloudInit.ts';
-import { Fleet, type FleetEvent } from '../../cloud/hub/fleet.ts';
+import { DEFAULT_MAX_MACHINES, Fleet, type FleetEvent } from '../../cloud/hub/fleet.ts';
 import { createHub, StaticVerifier, type HubLogEntry, type SessionVerifier } from '../../cloud/hub/server.ts';
 import { DEFAULT_STUDIO_URL } from '../../studio/protocol.ts';
 import { packageVersion } from '../../update/installation.ts';
@@ -45,6 +45,10 @@ export interface HubConfig {
     adminUser: string;
     maxRuns: number;
     idleMinutes: number;
+    /** How long a machine stays awake with nobody asking it anything, whatever its runner reports. */
+    maxUnattendedMinutes: number;
+    /** Hours one person's machine may be awake in a UTC day; 0 for no limit. */
+    dailyHours: number;
     maxMachines: number;
     allowedUsers: '*' | string[];
   } | null;
@@ -164,7 +168,9 @@ export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promi
       adminUser,
       maxRuns: number(env, 'RELAY_CLOUD_RUNNER_MAX_RUNS', 1, 1, 8),
       idleMinutes: number(env, 'RELAY_CLOUD_IDLE_MINUTES', 10, 1, 24 * 60),
-      maxMachines: number(env, 'RELAY_CLOUD_MAX_MACHINES', 20, 0, 10_000),
+      maxUnattendedMinutes: number(env, 'RELAY_CLOUD_MAX_UNATTENDED_MINUTES', 6 * 60, 10, 7 * 24 * 60),
+      dailyHours: number(env, 'RELAY_CLOUD_DAILY_HOURS', 12, 0, 24),
+      maxMachines: number(env, 'RELAY_CLOUD_MAX_MACHINES', DEFAULT_MAX_MACHINES, 0, 10_000),
       allowedUsers: allowed === '*' ? '*' : list(allowed),
     };
   }
@@ -269,6 +275,7 @@ async function serveHub(config: HubConfig, version: string, logLine: (entry: Hub
     },
     maxMachines: cloud?.maxMachines ?? 0,
     idleMs: (cloud?.idleMinutes ?? 10) * 60_000,
+    ...(cloud === null ? {} : { maxUnattendedMs: cloud.maxUnattendedMinutes * 60_000, dailyAwakeMs: cloud.dailyHours * 3_600_000 }),
     log: (event: FleetEvent) => logLine({ level: event.kind === 'error' ? 'warn' : 'info', msg: event.message, event: event.kind, ...(event.region === undefined ? {} : { region: event.region }) }),
   });
 
