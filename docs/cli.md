@@ -40,8 +40,12 @@ when a CLI breaks later.
 because a plan reviewed by a different model is the point. On a machine with
 only one of them, `relay init` seats every role on the one that is there and
 says that the review is no longer crossed; `relay start` and `relay doctor`
-then report the missing CLI as a warning, not as something to fix. Install the
-second one and run `relay init --force` to cross the roles.
+then report the missing CLI as a warning, not as something to fix. To cross the
+roles later, install the second one and give it the review roles: `relay init
+--force` on a terminal asks which agent takes each role, with the current ones
+as the defaults, or set `agents.planReviewer` and `agents.codeReviewer` in
+`.relay/config.json`. `relay init --force --yes` keeps the roles a config
+already has, so it does not cross them.
 
 **It never handles a model or GitHub credential.** Relay has no API keys and
 never sees one of those tokens: `start` only ever spawns `claude auth login`,
@@ -380,7 +384,7 @@ README — not a defended one.
    | **Claude Code**, Windows | the tool deny list only: the edit tools and the commands in item 2 are refused, a shell command that writes a file is not | **no sandbox.** The deny list only |
    | a [config-defined harness](#design) | the `readOnly` flags its config declares; Relay passes them and takes the config's word for what they do | nothing from Relay |
 
-   So a Claude Code implementer can do what your account can do: read any file you can read, run any command, use the network. The deny list stops it publishing by name; it is not containment. If that is more than you want to hand an implementer, seat Codex in that role — `relay init --force`, or `"agents": { "implementer": "codex" }`. A read-only turn that is not OS-sandboxed says so in its event stream, `relay doctor` reports the enforcement each harness actually gets on this machine, and `RELAY_NO_OS_SANDBOX=1` turns Relay's own wrapper off for an environment where it breaks the CLI underneath.
+   So a Claude Code implementer can do what your account can do: read any file you can read, run any command, use the network. The deny list stops it publishing by name; it is not containment. If that is more than you want to hand an implementer, seat Codex in that role — `relay init --force` on a terminal asks, or set `"agents": { "implementer": "codex" }`. A read-only turn that is not OS-sandboxed says so in its event stream, `relay doctor` reports the enforcement each harness actually gets on this machine, and `RELAY_NO_OS_SANDBOX=1` turns Relay's own wrapper off for an environment where it breaks the CLI underneath.
 2. `git push`, `git merge`, `gh pr create` and `gh pr merge` are denied to every agent in every role — asserted by a test against the argv each harness actually builds, parameterized over the harness registry so a newly added CLI cannot ship without proving how it denies them. Codex is denied them by its sandbox, which gives a turn no network and no write access outside the worktree. Claude Code is denied them by name (`--disallowed-tools`), together with `gh release` and `npm publish`: a guard against a model deciding to publish mid-turn, matched on how the command starts, and not a guarantee about a command that reaches the same end another way. Publishing is the delivery phase's job, under a policy you set.
 3. Publishing is off by default. Push, pull request creation, and merge require their own explicit flag/config opt-in or a TTY confirmation that defaults to no. These commands remain forbidden to every agent; only Relay's delivery code can execute them. Merge additionally requires passing tests, resolved blocking findings, an approved reviewed plan, an unprotected base branch, and a pull request created by this run. Every skipped step is recorded with its reason.
 4. Nothing leaves the machine unscanned. Between commit and push, delivery runs the change through a secret scan: the high-signal credential patterns Relay already redacts logs with, an entropy heuristic for keys with no recognizable prefix, and filenames that should never be committed (`.env`, `id_rsa`, `*.pem`, credential JSON). A hit stops delivery at `branch` — committed locally, published nowhere — and reports the rule, the file and the line, never the secret itself. `--allow-secret <path>` is the deliberate one-off override; `.relay/secretsignore` is the repeatable one. A scan that cannot run blocks the same way.
@@ -803,8 +807,8 @@ reach:
 
 | | |
 |---|---|
-| **It reads only trusted comments.** | A comment reaches the agents only when its author is on `unattended.authors`, is the person who applied the trigger label, or is reported by GitHub as an owner, member or collaborator of the repository — somebody who can already write to it. Every other comment is left out. The run says how many and whose, in its notes and at the foot of `issue.md`, because a discussion the agents silently did not see is its own problem. |
-| **It withholds secrets from the agents.** | Environment variables whose *names* say they are secrets — anything containing `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL` or `WEBHOOK`, any `…_KEY`, `…_AUTH…`, a database or cache URL — are removed from the environment of every agent turn and of the test suite, which runs code an agent has just written. Each coding CLI keeps its own sign-in and nothing else's: Claude Code keeps `ANTHROPIC_*` and `CLAUDE_*` (and `AWS_*` or `GOOGLE_*` only when it has been pointed at Bedrock or Vertex), Codex keeps `OPENAI_*`, `CODEX_*` and `AZURE_OPENAI_*`. `GH_TOKEN` goes to `gh`, which Relay runs itself, and not to the model. `unattended.allowEnv` names any other variable the agents and the suite are allowed to see. The run lists what it withheld, by name, when it starts. |
+| **It reads only trusted comments.** | A comment reaches the agents only when its author is on `unattended.authors`, is the person who applied the trigger label, or is reported by GitHub as an owner, a member of the owning organisation, or a collaborator on the repository — people who were invited to it, at whatever level, including read-only. Every other comment is left out. The run says how many and whose, in its notes and at the foot of `issue.md`, because a discussion the agents silently did not see is its own problem. |
+| **It withholds secrets from the agents.** | Environment variables whose *names* say they are secrets — `…_TOKEN`, `…_KEY`, `…_AUTH…`, `…_PWD`, `…_PEM`, `…_JWT`, anything containing `SECRET`, `PASSWORD`, `CREDENTIAL` or `WEBHOOK`, a database or cache URL, a connection string, a service account — are removed from the environment of every agent turn and of the test suite, which runs code an agent has just written. A name that only describes a secret is left alone: `PASSWORD_STORE_DIR`, `MAX_THINKING_TOKENS`, a `…_TOKEN_…_URL`, and git's own `GIT_CONFIG_KEY_<n>`. Claude Code and Codex each keep their own sign-in and nothing else's: Claude Code keeps `ANTHROPIC_*` and `CLAUDE_*` (and `AWS_*` or `GOOGLE_*` only when it has been pointed at Bedrock or Vertex), Codex keeps `OPENAI_*`, `CODEX_*` and `AZURE_OPENAI_*`. A [harness defined in config](#design) keeps nothing by this rule, because Relay does not know which variable it signs in with. `GH_TOKEN` goes to `gh`, which Relay runs itself, and not to the model. `unattended.allowEnv` names any other variable the agents and the suite are allowed to see — a config harness's key, a key the tests need — and whatever it names is shown to all of them, not to one. The run lists what it withheld, by name, when it starts. |
 | **It cannot publish beyond a draft.** | The ceiling above: no merge, and a draft pull request that a person reads before anything lands. |
 
 That narrows what a hostile issue can do. It does not make one safe, and these
@@ -816,7 +820,11 @@ are the gaps:
   comment is invisible. Someone who can edit the issue can also change it
   between your label and the run picking it up.
 - **Only names are examined.** A secret in a variable called `CONFIG` is not
-  withheld, and Relay does not read values to find out.
+  withheld, and Relay does not read values to find out. The rule is a guess
+  about names: `KUBE_CONFIG_DATA`, `BROKER_URL` and `SONAR_LOGIN` are secrets
+  it does not recognise, and `AZURE_CLIENT_SECRET` is one it withholds even
+  from a Claude Code that signs in with it. Look at the list the run prints
+  and at your job's `env:`, and use `unattended.allowEnv` for the second kind.
 - **Files are not environment variables.** An implementer that is not
   sandboxed ([Safety](#safety), item 1) can read what your account can read:
   `~/.aws`, a `.env` in the repository, the token `actions/checkout` leaves in
@@ -938,8 +946,8 @@ precisely** — CI is where somebody will otherwise assume it is fine to give
 Relay a token. What the block above does is put each vendor's own environment
 variable into that vendor's own process: `GH_TOKEN` is read by `gh`,
 `ANTHROPIC_API_KEY` by Claude Code, `OPENAI_API_KEY` by Codex. Relay spawns
-those CLIs and they inherit the environment — each coding CLI its own key and
-not the others', as [Untrusted input](#untrusted-input) describes. Relay itself
+those CLIs and they inherit the environment — Claude Code and Codex each their
+own key and not the other's, as [Untrusted input](#untrusted-input) describes. Relay itself
 never reads, logs, forwards or persists any of those values, and it has no
 input, flag or config key that accepts one. If you go looking for where to give
 Relay a model or GitHub credential, the answer is that there is nowhere — on a
@@ -1086,7 +1094,21 @@ exit code. `relay watch` shows the same display for a run another process is
 driving, so it offers `v` and `d` and no `s`, and Ctrl-C there stops watching
 and leaves the run alone. SIGTERM and SIGHUP cancel a run the way the first
 Ctrl-C does, so a run stopped by a supervisor or a closed terminal is recorded
-as cancelled rather than left looking as though it is still going.
+as cancelled rather than left looking as though it is still going. Only Ctrl-C
+is counted: a second SIGTERM or a second hangup does not cut the cancellation
+short.
+
+On macOS and Linux every agent turn and the test suite run in a session of
+their own, which is what lets Relay stop a whole tree of processes — the CLI
+and everything it started — as one thing. Two consequences are worth knowing.
+They have **no controlling terminal**, so anything inside a turn or a test that
+opens the terminal to ask a question — an ssh key's passphrase, `sudo`, a `git`
+credential prompt — fails at once instead of waiting for an answer; make
+whatever they need available without a prompt. And they do not hear the
+terminal's Ctrl-C or its hangup themselves: Relay stops them, including when
+Relay itself is killed by a signal it does not handle (`kill` on a `relay
+eval`, a terminal closed under it), in which case it takes its turns down with
+it. `kill -9` gives it no chance to, and leaves them running.
 
 Every column starts in the same place from the first row to the last: mark,
 phase, clock, then who is doing what. A duration sits directly beside the phase
@@ -1614,7 +1636,9 @@ was built from as build metadata: `0.1.0+8cb9739`. Every build of `main` that
 passes CI is published under the same version number until the number is
 bumped, so the commit is what tells two installs apart — and what `--update`
 reports before and after, so an update that moved no version number still
-shows that something changed. A checkout prints the version alone.
+shows that something changed. A checkout prints the version alone, whatever an
+earlier `npm pack` left in its `dist/`: the stamp names the commit that was
+packed, and a working tree has moved on from it.
 
 ## The workflow studio
 
