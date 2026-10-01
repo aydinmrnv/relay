@@ -186,7 +186,19 @@ function reportReseating(config: RelayConfig, reseated: readonly string[]): void
   if (reseated.length === 0) return;
   for (const line of reseated) out(dim(`  ${line}`));
   if (config.agents.planner === config.agents.planReviewer || config.agents.implementer === config.agents.codeReviewer) {
-    out(warning('  One agent is reviewing its own work. Install a second CLI and run `relay init --force` to cross them.'));
+    // What to do about it has to be something that works. `relay init --force`
+    // keeps the roles a config already has — that is what "never loses a
+    // deliberate choice" means — so on its own, or with `--yes`, it changes
+    // nothing here. What crosses the roles is choosing: at the prompts, which
+    // need a terminal, or in the file.
+    out(warning('  One agent is reviewing its own work.'));
+    out(
+      dim(
+        '  To cross them, install a second CLI and give it the review roles: `relay init --force` asks\n' +
+          '  which agent takes each role when run on a terminal, or set agents.planReviewer and\n' +
+          '  agents.codeReviewer in .relay/config.json.',
+      ),
+    );
   }
 }
 

@@ -150,6 +150,10 @@ describe('relay init — non-interactive', () => {
     });
     assert.match(output, /implementer: Claude Code — codex is not installed/);
     assert.match(output, /One agent is reviewing its own work/);
+    // The way out it names has to be one that works: `--force` alone keeps the
+    // roles a config already has (the test below), so the advice is to choose.
+    assert.match(output, /`relay init --force` asks\s+which agent takes each role when run on a terminal/);
+    assert.match(output, /agents\.planReviewer and\s+agents\.codeReviewer in \.relay\/config\.json/);
     // Nothing a role is seated on is missing, so this machine is ready.
     assert.match(output, /Ready\. Run/);
     assert.ok(!output.includes('Some agents are unavailable'), output);
