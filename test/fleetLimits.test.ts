@@ -143,10 +143,18 @@ describe('a machine whose runner says it is busy', () => {
     await awake('user_a', BUSY);
 
     // Reporting a run every few minutes used to keep a machine awake for ever.
-    await pass(HOUR + 50 * MINUTE, () => fleet.reportActivity('user_a', BUSY));
+    // Reading does not move the limit either: a status check, or a run's stream
+    // being followed, is not a person asking the machine for something, and the
+    // records in a stream are the runner's own word. So a run that goes on past
+    // the limit with nobody asking anything is stopped, and the person is told.
+    const busy = () => {
+      fleet.reportActivity('user_a', BUSY);
+      fleet.use('user_a', { touch: false })();
+    };
+    await pass(HOUR + 50 * MINUTE, busy);
     assert.equal(fleet.status('user_a').state, 'ready', 'a run is a reason to stay awake');
 
-    await pass(20 * MINUTE, () => fleet.reportActivity('user_a', BUSY));
+    await pass(20 * MINUTE, busy);
     assert.equal(fleet.status('user_a').state, 'stopping');
     assert.ok(cloud.calls.includes(`deallocate ${name}`));
     assert.match(fleet.status('user_a').error ?? '', /nobody had asked it for anything in 2 hours/);

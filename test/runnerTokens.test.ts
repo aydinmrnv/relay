@@ -223,9 +223,12 @@ describe('which runner tokens the fleet takes', () => {
     assert.equal(restarted.admits(first).ok, false);
   });
 
-  it('never lets a hand-minted token name a managed machine, and takes one for a runner of someone’s own', () => {
+  it('never lets a hand-minted token name a managed machine, and takes one for a runner of someone’s own', async () => {
     const { fleet } = setup();
     const own = mintRunnerToken(SECRET, { runner: 'my-server', userId: USER });
+    const early = fleet.admits(own);
+    assert.equal(early.ok === false && early.status, 503, 'not before the hub knows whether this person has a managed machine');
+    await fleet.reconcile();
     assert.deepEqual(fleet.admits(own), { ok: true });
     const impostor = mintRunnerToken(SECRET, { runner: NAME, userId: USER });
     assert.equal(fleet.admits(impostor).ok, false);

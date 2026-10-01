@@ -297,7 +297,7 @@ describe('installing an export', () => {
         // A directory an export writes into, swapped for a link out of the repository.
         await rm(join(root, '.github'), { recursive: true, force: true });
         await symlink(outside, join(root, '.github'));
-        await assert.rejects(installFiles(root, [files[1]!]), /outside the repository/);
+        await assert.rejects(installFiles(root, [files[1]!]), /goes through a symbolic link/);
       }
       await assert.rejects(installFiles(root, [{ path: '.relay/config.json', content: '[1]' }]), /not a JSON object/);
     } finally {

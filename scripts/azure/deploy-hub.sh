@@ -44,16 +44,21 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 
-group="relay-cloud"
+default_group="relay-cloud"
+default_regions="northcentralus,spaincentral,mexicocentral,belgiumcentral"
+default_expose="funnel"
+default_runner_size="Standard_B2ats_v2"
 vm=""
 location="northcentralus"
-regions="northcentralus,spaincentral,mexicocentral,belgiumcentral"
-expose="funnel"
 hub_name="relay-hub"
 hub_size="Standard_B2pts_v2"
-runner_size="Standard_B2ats_v2"
 clerk_key="${CLERK_PUBLISHABLE_KEY:-}"
 # Settings a re-run keeps unless it is given them. Empty here means "not given".
+group=""
+regions=""
+expose=""
+runner_size=""
+change_exposure=false
 studios=""
 allow=""
 allow_given=no
@@ -83,17 +88,18 @@ usage() {
 Options:
   --vm <group>/<name>          install on this existing Linux VM instead of making one
   --location <region>          where a new hub VM goes (default: $location)
-  --regions <a,b,...>          regions runners are made in (default: $regions)
-  --group <name>               the runners' resource group (default: $group)
-  --expose funnel|public-ip    how the hub is reached (default: $expose)
+  --regions <a,b,...>          regions runners are made in (first deploy: $default_regions)
+  --group <name>               the runners' resource group, and the hub's unless --vm (first deploy: $default_group)
+  --expose funnel|public-ip    how the hub is reached (first deploy: $default_expose)
+  --change-exposure            let --expose differ from how this hub is reached today
   --studio <origins>           comma-separated studio origins (first deploy: $(default_studio))
-  --clerk-publishable-key <pk> the studio's Clerk key (default: \$CLERK_PUBLISHABLE_KEY)
+  --clerk-publishable-key <pk> the studio's Clerk key (first deploy: \$CLERK_PUBLISHABLE_KEY)
   --allow <'*'|ids>            who may have a machine: '*' or Clerk user ids (first deploy: nobody)
   --max-machines <n>           machines the hub will ever make (first deploy: the hub's own default)
   --idle-minutes <n>           minutes idle before a machine is put to sleep (first deploy: the hub's own default)
   --claude-code-version <v>    the Claude Code version runner machines install (first deploy: latest)
   --codex-version <v>          the Codex version runner machines install (first deploy: latest)
-  --runner-size <sku>          runner VM size (default: $runner_size)
+  --runner-size <sku>          runner VM size (first deploy: $default_runner_size)
   --upgrade                    only ship this checkout's Relay to the hub and restart it
   --rotate-secret              replace the hub's secret; the old one is still read until you remove it
   --print-admin-token          print the token for the hub's /admin routes, and stop
@@ -118,6 +124,7 @@ while [[ $# -gt 0 ]]; do
     --claude-code-version) claude_code_version="$2"; shift 2 ;;
     --codex-version) codex_version="$2"; shift 2 ;;
     --runner-size) runner_size="$2"; shift 2 ;;
+    --change-exposure) change_exposure=true; shift ;;
     --upgrade) upgrade=true; shift ;;
     --rotate-secret) rotate_secret=true; shift ;;
     --print-admin-token) print_admin=true; shift ;;
@@ -127,7 +134,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$expose" in funnel|public-ip) ;; *) echo "--expose is funnel or public-ip." >&2; exit 2 ;; esac
+case "$expose" in ''|funnel|public-ip) ;; *) echo "--expose is funnel or public-ip." >&2; exit 2 ;; esac
 
 # Everything below is written into a script that runs as root on the hub, between
 # single quotes. Each value is checked to be made only of characters that cannot end one.
@@ -155,8 +162,11 @@ if [[ -n "$vm" ]]; then
   hub_group="${vm%%/*}"
   hub_vm="${vm#*/}"
   [[ "$hub_group" != "$vm" && -n "$hub_vm" ]] || { echo "--vm is <resource group>/<vm name>." >&2; exit 2; }
+  safe --vm "$vm" '^[A-Za-z0-9._()-]+/[A-Za-z0-9._-]+$'
 else
-  hub_group="$group"
+  # Without --vm the hub is looked for, and made, in the runners' resource group.
+  # --group is how a re-run finds a hub that was first deployed with one.
+  hub_group="${group:-$default_group}"
   hub_vm="$hub_name"
 fi
 
@@ -172,8 +182,26 @@ on_hub() {
 # What a script printed on the hub, without the agent's framing.
 hub_stdout() { sed -n '/\[stdout\]/,/\[stderr\]/p' | sed '1d;$d'; }
 
+# Azure reports a run-command as succeeded whatever the script inside it did. So a
+# script that has to work is run under `set -e` and ends by saying it got there, and
+# this checks that it said so: without the last line, a step failed, and what the hub
+# printed is shown instead of "done".
+on_hub_ok() {
+  local out printed
+  out="$(on_hub "set -e
+$1
+echo __relay_remote_ok__")"
+  printed="$(hub_stdout <<<"$out")"
+  if ! grep -q '^__relay_remote_ok__$' <<<"$printed"; then
+    echo "A step failed on $hub_vm. Nothing after it was done. What it printed:" >&2
+    { grep -v '^__relay_remote_ok__$' <<<"$printed" || true; sed -n '/\[stderr\]/,$p' <<<"$out" | sed '1d'; } | sed 's/^/  /' >&2
+    exit 1
+  fi
+  grep -v '^__relay_remote_ok__$' <<<"$printed" || true
+}
+
 if $print_admin; then
-  on_hub "cat /etc/relay/admin-token" | hub_stdout | tr -d '[:space:]'
+  on_hub_ok "cat /etc/relay/admin-token" | tr -d '[:space:]'
   echo
   exit 0
 fi
@@ -229,7 +257,7 @@ systemctl is-active relay-hub
 echo "earlier secrets still read: $(wc -l < /etc/relay/hub-secret.previous | tr -d ' ')"
 SCRIPT
 )
-  on_hub "$rotate" | hub_stdout
+  on_hub_ok "$rotate"
   cat <<EOF
 
 The hub now signs runner tokens with a new secret and still reads the old one.
@@ -243,13 +271,53 @@ EOF
 fi
 
 subscription="$(az account show --query id -o tsv)"
-group_id="/subscriptions/$subscription/resourceGroups/$group"
 
 # An existing VM is checked before anything is packed or shipped. A VM this script makes
 # is new and empty, and is checked again on every later run, because it is found by name.
+existing=""
 if [[ -n "$vm" ]] || az vm show -g "$hub_group" -n "$hub_vm" --only-show-errors -o none 2>/dev/null; then
   refuse_shared_vm
+  # What the last deploy wrote. It holds no secret: the secrets are in files of their own.
+  existing="$(on_hub "cat /etc/relay/hub.env 2>/dev/null || true" | hub_stdout)"
 fi
+kept() { sed -n "s/^$1=//p" <<<"$existing" | tail -n 1; }
+
+# The settings this script itself acts on are kept across runs the same way the ones
+# it only writes down are: a run that was not given one uses what the hub already has.
+# Two of them decide where things are, and a different value would not change the hub
+# but strand what it has made, so a different value is refused rather than obeyed.
+kept_group="$(kept RELAY_CLOUD_RESOURCE_GROUP)"
+if [[ -n "$kept_group" && -n "$group" && "$group" != "$kept_group" ]]; then
+  echo "This hub's machines are in the resource group $kept_group. --group $group would make new ones somewhere else and leave those behind; remove the machines first, or leave --group out." >&2
+  exit 2
+fi
+group="${group:-${kept_group:-$default_group}}"
+regions="${regions:-$(kept RELAY_CLOUD_REGIONS)}"
+regions="${regions:-$default_regions}"
+runner_size="${runner_size:-$(kept RELAY_CLOUD_VM_SIZE)}"
+runner_size="${runner_size:-$default_runner_size}"
+clerk_key="${clerk_key:-$(kept CLERK_PUBLISHABLE_KEY)}"
+kept_url="$(kept RELAY_HUB_PUBLIC_URL)"
+kept_expose=""
+if [[ -n "$kept_url" ]]; then
+  if [[ "$kept_url" == *.ts.net ]]; then kept_expose=funnel; else kept_expose=public-ip; fi
+fi
+if [[ -n "$kept_expose" && -n "$expose" && "$expose" != "$kept_expose" ]] && ! $change_exposure; then
+  cat >&2 <<EOF
+This hub is reached at $kept_url ($kept_expose). --expose $expose would give it another
+address, and the studio's RELAY_CLOUD_HUB_URL and every runner machine already made point
+at this one: those machines would never connect again. To do it anyway, pass
+--change-exposure, then update the studio and remove and re-make the machines.
+EOF
+  exit 2
+fi
+expose="${expose:-${kept_expose:-$default_expose}}"
+# What came back from the hub is checked like what came from the command line.
+safe "the hub's resource group" "$group" '^[A-Za-z0-9._()-]+$'
+safe "the hub's regions" "$regions" '^[a-z0-9]+(,[a-z0-9]+)*$'
+safe "the hub's runner size" "$runner_size" '^[A-Za-z0-9_]+$'
+safe "the hub's Clerk key" "$clerk_key" '^pk_[A-Za-z0-9_=+/-]+$'
+group_id="/subscriptions/$subscription/resourceGroups/$group"
 
 # ---------------------------------------------------------------------
 step "Packing Relay from this checkout"
@@ -321,7 +389,7 @@ part=0
 for piece in "$pack_dir"/part-*; do
   redirect=">>"
   (( part == 0 )) && redirect=">"
-  on_hub "install -d -m 0755 /opt/relay; printf '%s' '$(cat "$piece")' $redirect /opt/relay/relay.b64" >/dev/null
+  on_hub_ok "install -d -m 0755 /opt/relay; printf '%s' '$(cat "$piece")' $redirect /opt/relay/relay.b64" >/dev/null
   part=$((part + 1))
   printf '.'
 done
@@ -333,13 +401,13 @@ if [[ "$remote_sum" != "$local_sum" ]]; then
   on_hub "rm -f /opt/relay/relay.tgz.new" >/dev/null
   exit 1
 fi
-on_hub "mv /opt/relay/relay.tgz.new /opt/relay/relay.tgz" >/dev/null
+on_hub_ok "mv /opt/relay/relay.tgz.new /opt/relay/relay.tgz" >/dev/null
 echo "arrived intact, sha256 ${local_sum:0:12}"
 
 # ---------------------------------------------------------------------
 if $upgrade; then
   step "Installing and restarting"
-  on_hub "set -e; npm install -g --no-audit --no-fund /opt/relay/relay.tgz 2>&1 | tail -3; systemctl restart relay-hub; sleep 3; systemctl is-active relay-hub; curl -fsS http://127.0.0.1:8080/healthz" | hub_stdout
+  on_hub_ok "npm install -g --no-audit --no-fund /opt/relay/relay.tgz >/dev/null 2>&1; systemctl restart relay-hub; sleep 3; systemctl is-active relay-hub; curl -fsS http://127.0.0.1:8080/healthz"
   echo "Runners pick the new version up the next time they start."
   exit 0
 fi
@@ -473,10 +541,10 @@ systemctl is-active relay-hub
 curl -fsS http://127.0.0.1:8080/healthz
 SCRIPT
 )
-on_hub "$setup" | hub_stdout
+on_hub_ok "$setup"
 
 if [[ "$expose" == funnel ]]; then
-  on_hub "tailscale funnel --bg --https=443 http://127.0.0.1:8080 >/dev/null 2>&1 || tailscale funnel --bg 8080 >/dev/null; tailscale funnel status" | hub_stdout
+  on_hub_ok "tailscale funnel --bg --https=443 http://127.0.0.1:8080 >/dev/null 2>&1 || tailscale funnel --bg 8080 >/dev/null; tailscale funnel status"
 else
   caddy=$(cat <<SCRIPT
 set -e
@@ -491,7 +559,7 @@ CADDY
 systemctl reload caddy || systemctl restart caddy
 SCRIPT
 )
-  on_hub "$caddy" >/dev/null
+  on_hub_ok "$caddy" >/dev/null
 fi
 
 # ---------------------------------------------------------------------

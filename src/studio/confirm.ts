@@ -43,7 +43,15 @@ export interface TerminalIo {
   env: NodeJS.ProcessEnv;
   /** How long the question waits for an answer. */
   timeoutMs?: number;
+  /** How long after the question is printed a line is taken to have been typed before it, and ignored. */
+  guardMs?: number;
 }
+
+/**
+ * Nobody reads a three-line question and answers it in under this. A line
+ * that arrives sooner was typed before the question was on the screen.
+ */
+const GUARD_MS = 750;
 
 /**
  * Text from a studio, made safe to print: a request body is whatever the
@@ -65,6 +73,7 @@ export function printable(value: unknown, max = 120): string {
  */
 export function terminalConfirm(io: TerminalIo = { input: process.stdin, output: process.stderr, env: process.env }): Confirm {
   const timeoutMs = io.timeoutMs ?? 120_000;
+  const guardMs = io.guardMs ?? GUARD_MS;
   // One question on the terminal at a time: the next waits for the answer to this one.
   let last: Promise<unknown> = Promise.resolve();
 
@@ -72,7 +81,19 @@ export function terminalConfirm(io: TerminalIo = { input: process.stdin, output:
     new Promise((resolve) => {
       const who = request.origin === null ? 'A program on this machine' : `The studio at ${printable(request.origin)}`;
       const what = request.action === 'run' ? 'start a run here' : 'write these files into this repository';
-      io.output.write(`\n  ${who} is asking to ${what}:\n    ${request.summary}\n  If that was you, allow it. It is not asked again until this \`relay connect\` stops.\n  Allow? [y/N] `);
+      // Only an answer to this question counts. `relay connect` reads nothing
+      // from its terminal the rest of the time, so whatever was typed there
+      // earlier — an Enter, a stray `y` — is still waiting to be read, and
+      // would otherwise answer the question before anyone had seen it: a `y`
+      // would allow a run nobody was asked about. What is already buffered is
+      // thrown away here, and what arrives in the first moments after the
+      // question is printed is thrown away below.
+      while (io.input.read() !== null) {
+        // Discarded.
+      }
+      const prompt = '  Allow? [y/N] ';
+      io.output.write(`\n  ${who} is asking to ${what}:\n    ${request.summary}\n  If that was you, allow it. It is not asked again until this \`relay connect\` stops.\n${prompt}`);
+      const askedAt = Date.now();
       const reader = createInterface({ input: io.input, terminal: false });
       let settled = false;
       const done = (answer: ConfirmAnswer): void => {
@@ -86,7 +107,13 @@ export function terminalConfirm(io: TerminalIo = { input: process.stdin, output:
         io.output.write('\n  No answer; not allowed.\n');
         done({ allowed: false, asked: true, reason: 'Nobody answered in the terminal where `relay connect` is running. It asks there before a studio may start anything: answer it, then try again.' });
       }, timeoutMs);
-      reader.once('line', (line) => {
+      reader.on('line', (line) => {
+        if (settled) return;
+        if (Date.now() - askedAt < guardMs) {
+          // Typed before the question could have been read. Asked again, on a fresh line.
+          io.output.write(`\n  (Ignored what was typed before the question.)\n${prompt}`);
+          return;
+        }
         if (/^\s*y(es)?\s*$/i.test(line)) done({ allowed: true });
         else done({ allowed: false, asked: true, reason: 'That was not allowed in the terminal where `relay connect` is running.' });
       });
