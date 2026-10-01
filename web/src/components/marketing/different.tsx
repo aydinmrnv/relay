@@ -25,12 +25,12 @@ export function Different() {
     {
       icon: ChartColumn,
       title: 'A spend forecast before the first run',
-      body: 'Hundreds of simulated runs of your exact graph give a typical cost, a bad-day cost, a monthly bill at your ticket volume, and how often your budget gate will say no.',
+      body: 'Hundreds of simulated runs of your graph give a rough typical cost, a bad-day cost, a monthly range at your ticket volume, and how often your budget gate will say no.',
     },
     {
       icon: Share2,
       title: 'Share it, remix it, badge it',
-      body: 'Publish a workflow at a public link with secrets stripped. Anyone can remix it into their own studio, and a README badge points people to it.',
+      body: 'Publish a workflow at a public link with secrets, links, addresses and logins removed. Anyone can remix it into their own studio, and a README badge points people to it.',
     },
     {
       icon: History,
@@ -43,7 +43,7 @@ export function Different() {
     { label: 'Two vendors’ agents review each other’s plan and diff', ours: 'yes', agents: 'no', canvases: 'no' },
     { label: 'Runs on the Claude and ChatGPT plans you already pay for', ours: 'yes', agents: 'partial', canvases: 'no', note: 'Hosted agents usually bill seats or credits of their own; canvases call APIs per key.' },
     { label: 'Your code stays on your computer, on a machine of yours in Relay Cloud, or on your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
-    { label: 'Forecast what a workflow will cost before it runs', ours: 'yes', agents: 'no', canvases: 'no' },
+    { label: 'A rough spend forecast before the first real run', ours: 'yes', agents: 'no', canvases: 'no' },
     { label: 'Build a workflow from a sentence without spending AI credits', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'Guardrails that refuse by default: budgets, allowlists, approval', ours: 'yes', agents: 'partial', canvases: 'partial' },
     { label: 'Unattended runs can never merge on their own', ours: 'yes', agents: 'partial', canvases: 'no' },
@@ -73,8 +73,33 @@ export function Different() {
         </div>
 
         <Reveal className="mt-16">
-          {/* Relative, so the sr-only labels in the cells are clipped by the scroller instead of widening the page on phones. */}
-          <div className="relative overflow-x-auto">
+          {/* On a phone a four-column table shows one column and hides the comparison. There, each row is a short list instead. */}
+          <ul className="flex flex-col divide-y border-y sm:hidden">
+            {rows.map((row) => (
+              <li key={row.label} className="py-4">
+                <p className="text-sm text-pretty">{row.label}</p>
+                {row.note === undefined ? null : <p className="mt-0.5 text-xs text-muted-foreground">{row.note}</p>}
+                <dl className="mt-2.5 grid grid-cols-3 gap-2 text-xs">
+                  {(
+                    [
+                      [brand.name, row.ours],
+                      ['Hosted agents', row.agents],
+                      ['Canvases', row.canvases],
+                    ] as const
+                  ).map(([name, mark], index) => (
+                    <div key={name} className={cn('flex flex-col items-start gap-1 rounded-md p-2', index === 0 ? 'bg-muted/70' : '')}>
+                      <dt className={cn(index === 0 ? 'font-medium' : 'text-muted-foreground')}>{name}</dt>
+                      <dd className="flex items-center gap-1 text-muted-foreground">
+                        <MarkIcon mark={mark} visible />
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </li>
+            ))}
+          </ul>
+          {/* Relative, so the sr-only labels in the cells are clipped by the scroller instead of widening the page. */}
+          <div className="relative hidden overflow-x-auto sm:block" tabIndex={0} role="region" aria-label="Comparison table">
             <table className="w-full min-w-[40rem] text-sm">
               <caption className="sr-only">How {brand.name} compares with hosted coding agents and general automation canvases</caption>
               <thead>
@@ -117,20 +142,31 @@ export function Different() {
               </tbody>
             </table>
           </div>
-          <p className="mt-4 text-xs text-muted-foreground">“Partial” means some tools in the category do it, or it takes setup. Categories, not products: individual tools change often.</p>
+          <p className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <Check className="size-3.5 text-foreground" strokeWidth={2.5} aria-hidden /> Yes
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <Minus className="size-3.5" aria-hidden /> Partly
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <X className="size-3 text-muted-foreground/60" aria-hidden /> No
+            </span>
+            <span>“Partly” means some tools in the category do it, or it takes setup. Categories, not products: individual tools change often.</span>
+          </p>
         </Reveal>
       </div>
     </section>
   );
 }
 
-/** Weight, not colour: a firm tick, a quiet dash, a faint cross. */
-function MarkIcon({ mark }: { mark: Mark }) {
+/** Weight, not colour: a firm tick, a quiet dash, a faint cross. `visible` writes the word beside it, where there is no header row to read it against. */
+function MarkIcon({ mark, visible = false }: { mark: Mark; visible?: boolean }) {
   const label = mark === 'yes' ? 'Yes' : mark === 'no' ? 'No' : 'Partly';
   return (
-    <span className={cn('inline-flex items-center justify-center', mark === 'yes' ? 'text-foreground' : mark === 'no' ? 'text-muted-foreground/60' : 'text-muted-foreground')} title={label}>
-      {mark === 'yes' ? <Check className="size-4" strokeWidth={2.5} /> : mark === 'no' ? <X className="size-3.5" /> : <Minus className="size-4" />}
-      <span className="sr-only">{label}</span>
+    <span className={cn('inline-flex items-center justify-center gap-1', mark === 'yes' ? 'text-foreground' : mark === 'no' ? 'text-muted-foreground/60' : 'text-muted-foreground')} title={label}>
+      {mark === 'yes' ? <Check className="size-4" strokeWidth={2.5} aria-hidden /> : mark === 'no' ? <X className="size-3.5" aria-hidden /> : <Minus className="size-4" aria-hidden />}
+      <span className={visible ? '' : 'sr-only'}>{label}</span>
     </span>
   );
 }

@@ -1,33 +1,44 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { BRAND } from '@/lib/brand';
-import { REPO_URL } from '@/lib/links';
+import { OPERATOR, REPO_URL, SUPPORT_EMAIL } from '@/lib/links';
 
-export const metadata: Metadata = { title: 'Terms' };
+export const metadata: Metadata = {
+  title: 'Terms',
+  description: `The terms for using ${BRAND.name}.`,
+  alternates: { canonical: '/terms' },
+};
 
-const UPDATED = 'September 24, 2026';
+const UPDATED = 'October 1, 2026';
 
 export default function TermsPage() {
   const name = BRAND.name;
   return (
     <>
       <h1>Terms</h1>
-      <p>Last updated {UPDATED}. Short, because the product is simple: you design workflows here; the agents do their work on computers you control.</p>
+      <p>
+        Last updated {UPDATED}. Short, because the product is simple: you design workflows here; the agents do their work on computers you control. {name} is run by {OPERATOR}; “we” below means {OPERATOR}, and you can
+        reach us at <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
+      </p>
 
       <h2>The service</h2>
       <p>
-        {name} is in beta and free. It may change, have outages, or lose features while it grows. Keep a copy of anything important — <Link href="/settings#data">Settings → Your data</Link> downloads everything — and export workflows you depend on to your repository, where they run without us.
+        {name} is in beta, and free while it is. It may change, have outages, or lose features while it grows. Keep a copy of anything important — <Link href="/settings#data">Settings → Your data</Link> downloads
+        everything — and export workflows you depend on to your repository, where they run without us.
       </p>
 
       <h2>Your account</h2>
       <ul>
         <li>You must be at least 13, and give an email address you can receive mail at.</li>
         <li>Keep your password to yourself. You are responsible for what happens under your account.</li>
-        <li>One person per account; create as many workflows as you need.</li>
+        <li>One person per account. An account holds up to 300 workflows, and a fair amount of history; the studio says when a limit is reached.</li>
       </ul>
 
       <h2>Your content</h2>
-      <p>Workflows you make are yours. You give us permission to store and show them to you, and — only when you create a share link — to show that copy publicly and let others remix it. Remixes belong to whoever made them.</p>
+      <p>
+        Workflows you make are yours. You give us permission to store and show them to you, and — only when you create a share link — to show that copy publicly and let others remix it. Remixes belong to whoever made
+        them. To report a shared workflow, write to <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
+      </p>
 
       <h2>Acceptable use</h2>
       <ul>
@@ -35,17 +46,33 @@ export default function TermsPage() {
         <li>No trying to get at other people’s accounts or data, or to overload the service.</li>
         <li>Shared workflows must not contain anything you do not have the right to share.</li>
       </ul>
-      <p>We may suspend accounts that break these rules.</p>
+      <p>We may suspend accounts that break these rules, and take down shared workflows that do.</p>
 
       <h2>Agents and your code</h2>
-      <p>Coding agents can be wrong. {name} makes them review each other and stops unattended runs at a draft pull request, but you decide what gets merged. Test runs in the studio are simulations, and spend forecasts are estimates, not quotes; what the agents cost is between you and their vendors.</p>
+      <p>
+        Coding agents can be wrong. {name} makes them review each other and stops unattended runs at a draft pull request, but you decide what gets merged. The agents run with the permissions of the account they are
+        signed in to, so run them on repositories and machines you are willing to let them change. Test runs in the studio are simulations, and spend forecasts are estimates, not quotes; what the agents cost is
+        between you and their vendors.
+      </p>
+
+      <h2>Relay Cloud</h2>
+      <p>
+        Relay Cloud is an invite-only beta, offered to the people we have added to it. If you use it, we run one Linux machine for you, which holds a checkout of the repositories you name and the sign-ins you make on
+        it. It is for running {name} workflows on your own repositories and nothing else: no mining, no hosting, no workloads unrelated to a run. Places are limited, so your machine may wait for room, and it runs one
+        run at a time. We may put it to sleep, replace it, or end the beta; where we can we will say so first, and your code is always in your repository, not only on the machine. You can remove the machine and
+        everything on it from Settings at any time.
+      </p>
 
       <h2>No warranty</h2>
       <p>The service is provided as is, without warranties of any kind. To the extent the law allows, we are not liable for indirect or consequential losses, or for anything an agent does in your repository.</p>
 
       <h2>Open source</h2>
       <p>
-        The {name} CLI and this studio are developed in the open on <a href={REPO_URL}>GitHub</a>, under the license in that repository.
+        The {name} CLI and this studio are developed in the open on{' '}
+        <a href={REPO_URL} target="_blank" rel="noreferrer">
+          GitHub
+        </a>
+        , under the MIT license in that repository. These terms cover the hosted service; the license covers the code.
       </p>
 
       <h2>Changes</h2>

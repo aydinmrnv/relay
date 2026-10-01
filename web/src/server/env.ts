@@ -97,6 +97,22 @@ export const PUBLIC_URL: string | undefined = (() => {
 })();
 
 /**
+ * The origin for links that must be absolute: the configured one, or the one
+ * this request arrived at. A deployment with no `NEXT_PUBLIC_SITE_URL` and no
+ * Vercel variables still has a host, and a sitemap without a `Sitemap:` line
+ * in robots.txt is one nobody is told about.
+ */
+export function siteOrigin(headers: { get(name: string): string | null }): string {
+  if (PUBLIC_URL !== undefined) return PUBLIC_URL;
+  const vercel = (process.env.VERCEL_PROJECT_PRODUCTION_URL ?? '').trim();
+  if (vercel.length > 0) return `https://${vercel}`;
+  const host = headers.get('x-forwarded-host') ?? headers.get('host');
+  if (host === null) return 'http://localhost:3000';
+  const proto = headers.get('x-forwarded-proto') ?? (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? 'http' : 'https');
+  return `${proto}://${host}`;
+}
+
+/**
  * The Relay Cloud hub, when this deployment has one: where a signed-in
  * person's cloud machine is reached. The browser calls it directly with its
  * Clerk session token; nothing here holds a secret for it.

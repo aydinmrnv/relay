@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
 import { shadcn } from '@clerk/ui/themes';
@@ -14,11 +14,22 @@ const geistMono = Geist_Mono({ variable: '--font-mono', subsets: ['latin'] });
 export const metadata: Metadata = {
   // Absolute URLs for the social card, so share links preview properly.
   metadataBase: new URL(PUBLIC_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:3000')),
-  title: { default: BRAND.name, template: `%s · ${BRAND.name}` },
+  // The home page says what the product is; every other page says what the page is.
+  title: { default: `${BRAND.name} — Ticket in. Reviewed PR out.`, template: `%s · ${BRAND.name}` },
   description: BRAND.tagline,
-  // The image itself is app/opengraph-image.png, drawn by scripts/gen-brand.mjs.
-  openGraph: { title: BRAND.name, description: BRAND.tagline, siteName: BRAND.name, type: 'website' },
+  applicationName: BRAND.name,
+  // No title here: each page's own title becomes its og:title, instead of every page unfurling as "Relay".
+  // The image itself is app/opengraph-image.png, drawn by scripts/gen-brand.mjs, with its alt text beside it.
+  openGraph: { description: BRAND.tagline, siteName: BRAND.name, type: 'website' },
   twitter: { card: 'summary_large_image' },
+};
+
+/** The browser's own chrome, in the page's background for either theme. */
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#faf9f7' },
+    { media: '(prefers-color-scheme: dark)', color: '#11100e' },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
@@ -32,7 +43,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       <body className="flex min-h-full flex-col bg-background font-sans text-foreground">
         {CLERK_CONFIGURED ? (
           <ClerkProvider
-            appearance={{ theme: shadcn }}
+            // The theme takes its input fill from `--input`, which here is the colour of a border: fields came out
+            // solid grey and read as disabled. They are the page's own background, like every other field in the studio.
+            appearance={{ theme: shadcn, variables: { colorInput: 'var(--background)', colorInputForeground: 'var(--foreground)' } }}
             signInUrl="/sign-in"
             signUpUrl="/sign-up"
             signInFallbackRedirectUrl="/dashboard"

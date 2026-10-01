@@ -15,7 +15,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AppMark, useCalmMotion, useStudioEntry } from './primitives';
+import { AppMark, SAMPLE, useCalmMotion, useStudioEntry } from './primitives';
 
 const STAGES = [
   {
@@ -25,14 +25,14 @@ const STAGES = [
     connector: 'github',
     heading: 'Start with the ticket.',
     description:
-      'A labeled issue brings the task and repository into the workflow. Author permissions and budget limits are checked before the agents start.',
-    file: 'issue #142',
+      'A labelled issue brings the task and repository into the workflow. Who applied the label and the budget are checked before the agents start.',
+    file: `issue ${SAMPLE.issue}`,
     kind: 'input',
     lines: [
-      'Fix the flaky retry test',
+      SAMPLE.title,
       '',
-      'Repository   acme/api',
-      'Label        agent-ready',
+      `Repository   ${SAMPLE.repository}`,
+      `Label        ${SAMPLE.label}`,
       'Expected     Deterministic retries in CI',
     ],
     output: 'Task and repository context',
@@ -44,7 +44,7 @@ const STAGES = [
     connector: 'claude',
     heading: 'A plan, with a second opinion.',
     description:
-      'Claude reads the repository and proposes a change. Codex checks the plan against the code before implementation begins.',
+      'Claude Code reads the repository and proposes a change. Codex checks the plan against the code before implementation begins.',
     file: 'plan.md',
     kind: 'plan',
     lines: [
@@ -86,7 +86,7 @@ const STAGES = [
     connector: 'claude',
     heading: 'Fresh eyes on the actual diff.',
     description:
-      'Claude reviews the implementation against the plan and the repository. Blocking findings go back for a fix, with a cap on review rounds.',
+      'Claude Code reviews the implementation against the plan and the repository. Blocking findings go back for a fix, with a cap on review rounds.',
     file: 'review.md',
     kind: 'review',
     lines: [
@@ -131,9 +131,9 @@ const STAGES = [
     file: 'pull request',
     kind: 'delivery',
     lines: [
-      'DRAFT  Fix the flaky retry test',
+      `DRAFT  ${SAMPLE.title}`,
       '',
-      'acme/api ← agent/issue-142',
+      `${SAMPLE.repository} ← ${SAMPLE.branch}`,
       '',
       '✓ Independent review',
       '✓ Tests and secret scan',
@@ -170,7 +170,7 @@ export function PipelinePreview() {
         <div className="flex items-center gap-2.5">
           <Workflow className="size-4 text-muted-foreground" />
           <h2 className="text-xs font-medium sm:text-sm">Issue to pull request</h2>
-          <span className="rounded border px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground uppercase">
+          <span className="rounded border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground uppercase">
             Example
           </span>
         </div>
@@ -185,10 +185,10 @@ export function PipelinePreview() {
       <div className="border-b">
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 text-[11px] sm:px-6">
           <span className="text-muted-foreground">
-            <span className="mr-2 font-mono">#142</span> Fix the flaky retry test
+            <span className="mr-2 font-mono">{SAMPLE.issue}</span> {SAMPLE.title}
           </span>
-          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
-            <GitBranch className="size-3" /> acme/api
+          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+            <GitBranch className="size-3" /> {SAMPLE.repository}
           </span>
         </div>
         <div className="px-4 pt-6 pb-6 sm:px-6" role="tablist" aria-label="Workflow stages">
@@ -222,11 +222,11 @@ export function PipelinePreview() {
                         <Terminal className="size-3.5" />
                       )}
                     </span>
-                    <span className="font-mono text-[9px] text-muted-foreground">0{index + 1}</span>
+                    <span className="font-mono text-[11px] text-muted-foreground">0{index + 1}</span>
                   </span>
                   <span className="block w-full text-xs font-medium">
                     {item.label}
-                    <span className="mt-1 block truncate text-[9px] sm:text-[10px] font-normal text-muted-foreground">
+                    <span className="mt-1 block truncate text-[11px] font-normal text-muted-foreground">
                       {item.agent}
                     </span>
                   </span>
@@ -274,7 +274,7 @@ export function PipelinePreview() {
             </p>
           </div>
           <div className="min-w-0 border-t bg-muted/20 md:border-t-0 md:border-l">
-            <div className="flex items-center justify-between gap-2 border-b px-5 py-3 font-mono text-[10px] text-muted-foreground">
+            <div className="flex items-center justify-between gap-2 border-b px-5 py-3 font-mono text-[11px] text-muted-foreground">
               <span className="flex items-center gap-2">
                 <FileCode2 className="size-3.5" />
                 {stage.file}
@@ -313,9 +313,9 @@ export function PipelinePreview() {
           </div>
         </motion.div>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3 text-[10px] text-muted-foreground sm:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3 text-xs text-muted-foreground sm:px-6">
         <span className="flex items-center gap-1.5">
-          <ShieldCheck className="size-3.5" /> Your machine. Your keys. Your approval.
+          <ShieldCheck className="size-3.5" /> Your machine. Your plans. Your approval.
         </span>
         <button
           type="button"

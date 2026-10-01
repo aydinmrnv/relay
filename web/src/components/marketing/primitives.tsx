@@ -12,8 +12,18 @@ import { cn } from '@/lib/utils';
 
 /** The engine's public repository. The only external product link on the page. */
 export { REPO_URL } from '@/lib/links';
+export { SAMPLE } from './sample';
 
 /** In-page anchors, shared by the header, the mobile menu and the footer so none can point at nothing. */
+/**
+ * Whether this deployment offers Relay Cloud. The public pages mention it
+ * only then: advertising a machine nobody can be given is worse than not
+ * mentioning one.
+ */
+export function useCloudOffered(): boolean {
+  return useCapabilities().cloudHub != null;
+}
+
 export const SECTIONS = [
   { id: 'how', label: 'How it works' },
   { id: 'builder', label: 'The studio' },

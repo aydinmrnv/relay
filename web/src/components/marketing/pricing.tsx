@@ -5,18 +5,19 @@ import { ArrowRight, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBrand } from '@/hooks/use-brand';
 import { cn } from '@/lib/utils';
-import { PILL, Reveal, SectionHeading, useStudioEntry } from './primitives';
+import { PILL, Reveal, SectionHeading, useCloudOffered, useStudioEntry } from './primitives';
 
 export function Pricing() {
   const brand = useBrand();
   const entry = useStudioEntry();
+  const cloud = useCloudOffered();
   return (
     <section id="pricing" className="scroll-mt-20 border-t py-16 sm:py-24">
       <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="Pricing"
           title="Free to build. Your infrastructure to run."
-          description="Make a free account and build as much as you like. When you run for real, usage stays on the plans you already have."
+          description="Free while in beta: make an account and build as much as you like. When you run for real, usage stays on the plans you already have."
         />
         {/* Two columns of one table, split by a rule: they are two halves of one answer, not two products to choose between. */}
         <div className="mt-12 grid overflow-hidden rounded-xl border bg-card shadow-panel md:grid-cols-2">
@@ -28,14 +29,14 @@ export function Pricing() {
               </div>
               <p className="mt-6 flex items-baseline gap-2">
                 <span className="text-5xl font-semibold tracking-[-0.04em]">$0</span>
-                <span className="text-sm text-muted-foreground">with a free account</span>
+                <span className="text-sm text-muted-foreground">while in beta, with an account</span>
               </p>
               <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
                 Design a workflow, inspect every step, and try it with simulated runs.
               </p>
               <ul className="my-6 space-y-3 border-t pt-6">
                 {[
-                  'Unlimited workflows and templates',
+                  'Up to 300 workflows, and every template',
                   'Visual builder and connector catalog',
                   'Describe a workflow in a sentence',
                   'Spend forecasts and free simulated test runs',
@@ -65,12 +66,14 @@ export function Pricing() {
                 <span className="text-sm text-muted-foreground">paid to {brand.name}</span>
               </p>
               <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-                Pair your own computer with relay connect, run on a Relay Cloud machine we make for you, or export to your repository. Your providers bill their own usage.
+                {cloud
+                  ? 'Pair your own computer with relay connect, run on a Relay Cloud machine (invite-only beta), or export to your repository. Your providers bill their own usage.'
+                  : 'Pair your own computer with relay connect, or export to your repository. Your providers bill their own usage.'}
               </p>
               <ul className="my-6 space-y-3 border-t pt-6">
                 {[
                   'Use your Claude Code and Codex sign-ins',
-                  'Run on your computer or on a machine of your own, in an isolated worktree',
+                  cloud ? 'Run on your computer or on a machine of your own, in an isolated worktree' : 'Run on your own computer, in an isolated worktree',
                   'Automate with your GitHub Actions minutes',
                   'Keep your config and changes in your repo',
                 ].map((item) => (
@@ -81,7 +84,7 @@ export function Pricing() {
                 ))}
               </ul>
               <Button className={cn('mt-auto w-full', PILL)} variant="outline" nativeButton={false} render={<Link href="/runners" />}>
-                Your computer or Relay Cloud?
+                {cloud ? 'Your computer or Relay Cloud?' : 'Where your agents run'}
                 <ArrowRight data-icon="inline-end" />
               </Button>
             </article>

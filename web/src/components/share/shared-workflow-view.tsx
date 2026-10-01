@@ -9,6 +9,7 @@ import { ArrowRight, Bot, Eye, Flag, GitFork, Link2, Loader2, Plug, Shuffle } fr
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { BrandMark } from '@/components/app/brand-mark';
+import { ThemeToggle } from '@/components/app/theme-toggle';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { GraphView } from '@/components/templates/graph-view';
 import { branchParent, StepItem } from '@/components/templates/template-preview';
@@ -104,6 +105,7 @@ export function SharedWorkflowView({ share }: { share: SharedWorkflow }) {
             <BrandMark className="size-7" />
             {brand.name}
           </Link>
+          <ThemeToggle className="size-8" />
           {entry.invite ? (
             <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/sign-in" />}>
               Sign in
