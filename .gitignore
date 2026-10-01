@@ -17,5 +17,9 @@ dist/
 # Eval results are written here by default: local measurements, not the project.
 .relay/eval/
 
-# `npm pack` writes the man page here from the CLI help.
-man/
+# `npm pack` writes the man page here from the CLI help. Anchored: unanchored,
+# it also ignores src/cli/man/, where the generator itself lives.
+/man/
+
+# What `npm pack` leaves behind when it is run by hand.
+*.tgz

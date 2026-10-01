@@ -44,7 +44,7 @@ export async function describeInstallation(from: string = fileURLToPath(import.m
 
   return {
     root,
-    version: manifest.version ?? 'unknown',
+    version: versionLabel(manifest.version ?? 'unknown', await buildCommit(root)),
     kind: await detectKind(root),
     spec: npmSpec(manifest),
   };
@@ -57,13 +57,48 @@ export async function packageVersion(from: string = fileURLToPath(import.meta.ur
 }
 
 /**
+ * The commit a packed build was made from, or null for a copy that was never
+ * packed — a checkout runs its own sources, and `git log` already says where
+ * those came from. Written by `scripts/stamp-build.mjs` during `npm pack`.
+ */
+export async function buildCommit(root: string): Promise<string | null> {
+  try {
+    const commit = (JSON.parse(await readFile(join(root, 'dist', 'build.json'), 'utf8')) as { commit?: unknown }).commit;
+    return typeof commit === 'string' && /^[0-9a-f]{7,40}$/i.test(commit) ? commit.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `0.1.0+8cb9739` — the version, and the build.
+ *
+ * Every green push to main is published as the same version number, so the
+ * number alone cannot tell two installs apart, or tell a bug report which
+ * code it is about. The commit rides as semver build metadata: it changes
+ * nothing about precedence, and it is the one fact that identifies a build.
+ */
+export function versionLabel(version: string, commit: string | null): string {
+  return commit === null ? version : `${version}+${commit.slice(0, 7)}`;
+}
+
+/** What `relay --version` prints: the version, and the commit when this copy was packed. */
+export async function buildVersion(from: string = fileURLToPath(import.meta.url)): Promise<string> {
+  const root = await findPackageRoot(dirname(from));
+  return versionLabel((await readManifest(root)).version ?? 'unknown', await buildCommit(root));
+}
+
+/**
  * The version recorded in an installed copy, or null when it cannot be read.
  * Called after an update, where a missing answer is worth reporting plainly
- * rather than turning a successful update into a failure.
+ * rather than turning a successful update into a failure. It carries the build
+ * commit when there is one, because an update that replaced the code without
+ * moving the version number has still changed what is installed.
  */
 export async function installedVersion(root: string): Promise<string | null> {
   try {
-    return (JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as Manifest).version ?? null;
+    const version = (JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as Manifest).version;
+    return version === undefined ? null : versionLabel(version, await buildCommit(root));
   } catch {
     return null;
   }

@@ -5,7 +5,10 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": false,
-    "sourceMap": true
+    // No source maps: the package ships dist/ without src/, so a map would
+    // point at files that are not there. Debug from a checkout instead, where
+    // Node runs the sources themselves.
+    "sourceMap": false
   },
   "include": ["src/**/*.ts"]
 }

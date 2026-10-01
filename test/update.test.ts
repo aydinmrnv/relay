@@ -6,7 +6,15 @@ import { dirname, join } from 'node:path';
 
 import { setTheme } from '../src/cli/output.ts';
 import { runUpdate, type NpmResult, type UpdateDeps } from '../src/cli/commands/update.ts';
-import { describeInstallation, type Installation } from '../src/update/installation.ts';
+import {
+  buildCommit,
+  buildVersion,
+  describeInstallation,
+  installedVersion,
+  packageVersion,
+  versionLabel,
+  type Installation,
+} from '../src/update/installation.ts';
 import { runProcess } from '../src/process/runner.ts';
 import { isRelayError } from '../src/util/errors.ts';
 import type { Theme } from '../src/ui/theme.ts';
@@ -396,6 +404,40 @@ describe('installation detection', () => {
     await write(join(root, 'package.json'), `${JSON.stringify({ name: 'relay-orchestrator', version: '0.1.0' })}\n`);
 
     assert.equal((await describeInstallation(moduleIn(root))).spec, 'relay-orchestrator@latest');
+  });
+
+  // Every green push to main is published under the same version number. The
+  // commit a build was packed from is what tells two installs apart — and
+  // what an update that moved no version number has to be able to show.
+  it('names the build a packed copy was made from, as semver build metadata', async () => {
+    const commit = '8cb9739f0e1d2c3b4a5968778695a4b3c2d1e0f9';
+    assert.equal(versionLabel('0.1.0', commit), '0.1.0+8cb9739');
+    assert.equal(versionLabel('0.1.0', null), '0.1.0');
+
+    const root = await scratch('relay-build-');
+    await write(join(root, 'package.json'), manifest('0.1.0'));
+    // A checkout: nothing was packed, so there is no build to name.
+    assert.equal(await buildCommit(root), null);
+    assert.equal(await buildVersion(moduleIn(root)), '0.1.0');
+    assert.equal(await installedVersion(root), '0.1.0');
+
+    await write(join(root, 'dist', 'build.json'), `${JSON.stringify({ commit })}\n`);
+    assert.equal(await buildCommit(root), commit);
+    assert.equal(await buildVersion(moduleIn(root)), '0.1.0+8cb9739');
+    assert.equal(await installedVersion(root), '0.1.0+8cb9739');
+    assert.equal((await describeInstallation(moduleIn(root))).version, '0.1.0+8cb9739');
+    // The number other code compares and records is still the bare version.
+    assert.equal(await packageVersion(moduleIn(root)), '0.1.0');
+  });
+
+  it('ignores a build stamp that is not a commit', async () => {
+    const root = await scratch('relay-build-');
+    await write(join(root, 'package.json'), manifest('0.1.0'));
+    for (const stamp of ['{"commit": "not a sha"}', '{"commit": 12}', '{}', 'not json']) {
+      await write(join(root, 'dist', 'build.json'), stamp);
+      assert.equal(await buildCommit(root), null, stamp);
+      assert.equal(await buildVersion(moduleIn(root)), '0.1.0', stamp);
+    }
   });
 
   it('describes the copy that is actually running', async () => {
