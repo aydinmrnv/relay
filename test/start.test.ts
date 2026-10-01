@@ -410,6 +410,12 @@ describe('relay start — idempotence', () => {
 
     const gitignore = await readFile(join(repo.root, '.gitignore'), 'utf8');
     assert.ok(gitignore.includes('.relay/onboarding.json'), gitignore);
+    // And what `relay serve` leaves behind: a committed STOP file would stop
+    // every clone's server, and a committed ledger would tell them the work
+    // had already been picked up.
+    for (const entry of ['.relay/runs/', '.relay/unattended.json', '.relay/STOP', '.relay/*.lock']) {
+      assert.ok(gitignore.split('\n').includes(entry), `${entry} is not ignored:\n${gitignore}`);
+    }
   });
 
   it('replays the tour on demand without touching anything else', async () => {

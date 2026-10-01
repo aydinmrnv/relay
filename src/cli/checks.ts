@@ -11,6 +11,7 @@ import { ISSUE_TRACKER_REGISTRY, issueTrackerRegistration } from '../issues/regi
 import { detectWebhookFormat, resolveWebhookFormat } from '../notify/format.ts';
 import { resolveExecutable, runProcess } from '../process/runner.ts';
 import { configHarnesses, loadConfig, type RelayConfig } from '../storage/config.ts';
+import { isRelayError } from '../util/errors.ts';
 
 export interface Check {
   label: string;
@@ -297,7 +298,9 @@ export async function repositoryChecks(cwd: string): Promise<{ root?: string; ch
           label: 'Git repository',
           status: 'fail',
           detail: error instanceof Error ? error.message : 'not a git repository',
-          hint: 'Run relay from inside a git repository.',
+          // The error knows which of the two it is: no repository here, or no
+          // git to ask. They need different advice.
+          hint: isRelayError(error) && error.hint !== undefined ? error.hint : 'Run relay from inside a git repository.',
         },
       ],
     };

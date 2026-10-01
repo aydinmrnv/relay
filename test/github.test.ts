@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { parseIssueRef, normalizeGhIssue, GitHubIssueProvider } from '../src/github/provider.ts';
 import { renderIssueMarkdown } from '../src/github/types.ts';
-import { parseRemoteUrl } from '../src/git/repository.ts';
+import { githubSlug, parseRemoteUrl } from '../src/git/repository.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { autoMergeAllowed, enableAutoMerge, pullRequestNumber } from '../src/github/pullRequest.ts';
 import { pullRequestDraft } from '../src/workflow/publishRun.ts';
@@ -162,6 +162,34 @@ describe('git remote parsing', () => {
 
   it('returns null for something that is not a remote URL', () => {
     assert.equal(parseRemoteUrl('not a url'), null);
+  });
+
+  // An owner and a name on GitLab mean nothing to `gh`. Passed to it anyway,
+  // they name whichever GitHub repository happens to share the spelling.
+  it('does not read a GitLab or Bitbucket remote as a GitHub repository', () => {
+    for (const url of [
+      'git@gitlab.com:acme/widgets.git',
+      'https://gitlab.com/acme/widgets.git',
+      'https://gitlab.example.com/acme/widgets',
+      'git@bitbucket.org:acme/widgets.git',
+      'https://bitbucket.org/acme/widgets',
+      'https://codeberg.org/acme/widgets.git',
+      'git@ssh.dev.azure.com:v3/acme/project/widgets',
+      'https://dev.azure.com/acme/project/_git/widgets',
+      'https://git.sr.ht/~acme/widgets',
+    ]) {
+      assert.equal(githubSlug(url), null, url);
+      // Still a remote with an owner and a name — just not GitHub's.
+      assert.notEqual(parseRemoteUrl(url), null, url);
+    }
+  });
+
+  it('reads GitHub, and a GitHub Enterprise host it has no way to recognise, as GitHub', () => {
+    assert.deepEqual(githubSlug('git@github.com:acme/widgets.git'), { owner: 'acme', name: 'widgets' });
+    assert.deepEqual(githubSlug('https://github.com/acme/widgets'), { owner: 'acme', name: 'widgets' });
+    assert.deepEqual(githubSlug('https://github.acme.example/platform/widgets.git'), { owner: 'platform', name: 'widgets' });
+    assert.deepEqual(githubSlug('git@code.acme.example:platform/widgets.git'), { owner: 'platform', name: 'widgets' });
+    assert.equal(githubSlug('not a url'), null);
   });
 });
 
