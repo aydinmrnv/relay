@@ -475,7 +475,7 @@ describe('the Azure driver', () => {
       urls.push(url);
       if (url.includes('$expand')) return new Response(JSON.stringify({ error: { code: 'BadRequest', message: 'Expand Instance View is only supported when Virtual Machine Scale Set resource filter is applied' } }), { status: 400 });
       if (url.includes('statusOnly=true')) {
-        return new Response(JSON.stringify({ value: [{ id: id.toUpperCase(), name: 'relay-abc', properties: { instanceView: { statuses: [{ code: 'PowerState/running' }] } } }, { id: '/subscriptions/sub/resourceGroups/relay-dev/providers/Microsoft.Compute/virtualMachines/other', name: 'other' }] }));
+        return new Response(JSON.stringify({ value: [{ id: id.toUpperCase(), name: 'relay-abc', properties: { instanceView: { statuses: [{ code: 'PowerState/running' }] } } }, { id: '/subscriptions/sub/resourceGroups/something-else/providers/Microsoft.Compute/virtualMachines/other', name: 'other' }] }));
       }
       return new Response(JSON.stringify({ value: [{ id, name: 'relay-abc', location: 'spaincentral', tags: { 'relay-role': 'runner', 'relay-user': 'user_1' }, properties: { provisioningState: 'Succeeded' } }] }));
     }) as unknown as typeof fetch;
@@ -571,6 +571,7 @@ describe('the hub’s configuration', () => {
       RELAY_CLOUD_REGIONS: 'northcentralus, spaincentral',
       RELAY_HUB_PUBLIC_URL: 'https://hub.example.com',
       RELAY_CLOUD_SSH_KEY: 'ssh-ed25519 AAAA ops',
+      RELAY_HUB_TARBALL: '/opt/relay/relay.tgz',
       RELAY_CLOUD_ALLOWED_USERS: '*',
     });
     assert.deepEqual(managed.cloud?.regions, ['northcentralus', 'spaincentral']);

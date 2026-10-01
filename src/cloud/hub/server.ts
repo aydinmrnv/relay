@@ -67,6 +67,8 @@ export interface HubOptions {
   adminToken?: string | null;
   /** The Relay tarball runners install, served at `/runner/relay.tgz`. */
   tarballPath?: string | null;
+  /** The versions of the coding CLIs runner machines should have, stated beside the package so a changed pin reaches machines that already exist. */
+  cliVersions?: { claudeCode: string; codex: string };
   log?: (entry: HubLogEntry) => void;
   requestTimeoutMs?: number;
   /** How long a request that needs the machine waits for it to wake. */
@@ -596,7 +598,7 @@ export function createHub(options: HubOptions): Hub {
    * bytes: a rebuilt hub with the same version number is still a different
    * Relay, and runners compare this name to decide whether to update.
    */
-  let tarballTag: { key: string; tag: string } | null = null;
+  let tarballTag: { key: string; tag: string; sha256: string } | null = null;
   async function serveTarball(response: ServerResponse, method: string): Promise<void> {
     const path = options.tarballPath;
     if (path === null || path === undefined) throw new HttpError(404, 'This hub serves no runner package.');
@@ -604,10 +606,18 @@ export function createHub(options: HubOptions): Hub {
     if (info === null) throw new HttpError(404, 'The runner package is missing.');
     const key = `${info.size}:${info.mtimeMs}`;
     if (tarballTag?.key !== key) {
-      const digest = createHash('sha256').update(await readFile(path)).digest('hex').slice(0, 12);
-      tarballTag = { key, tag: `${options.version}+${digest}` };
+      const sha256 = createHash('sha256').update(await readFile(path)).digest('hex');
+      tarballTag = { key, tag: `${options.version}+${sha256.slice(0, 12)}`, sha256 };
     }
-    response.writeHead(200, { 'content-type': 'application/gzip', 'content-length': info.size, 'cache-control': 'no-store', 'x-relay-version': tarballTag.tag });
+    response.writeHead(200, {
+      'content-type': 'application/gzip',
+      'content-length': info.size,
+      'cache-control': 'no-store',
+      'x-relay-version': tarballTag.tag,
+      // The whole hash: a runner installs the file only if what it downloaded matches.
+      'x-relay-sha256': tarballTag.sha256,
+      ...(options.cliVersions === undefined ? {} : { 'x-relay-claude-code': options.cliVersions.claudeCode, 'x-relay-codex': options.cliVersions.codex }),
+    });
     if (method === 'HEAD') {
       response.end();
       return;

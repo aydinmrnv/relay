@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import { AzureDriver, type AzureCredential } from '../../cloud/hub/azure.ts';
 import { ClerkVerifier, clerkIssuerFromPublishableKey, DEFAULT_OWN_TOKEN_TTL_MS, mintRunnerToken } from '../../cloud/hub/auth.ts';
-import { RUN_USER, runnerCloudInit } from '../../cloud/hub/cloudInit.ts';
+import { NPM_VERSION, RUN_USER, runnerCloudInit } from '../../cloud/hub/cloudInit.ts';
 import { DEFAULT_MAX_MACHINES, Fleet, type FleetEvent } from '../../cloud/hub/fleet.ts';
 import { createHub, StaticVerifier, type HubLogEntry, type SessionVerifier } from '../../cloud/hub/server.ts';
 import { isLoopbackOrigin, STUDIO_URL_VARIABLE, trustedStudioOrigin } from '../../studio/protocol.ts';
@@ -54,6 +54,9 @@ export interface HubConfig {
     dailyHours: number;
     maxMachines: number;
     allowedUsers: '*' | string[];
+    /** The npm versions of the coding CLIs runner machines install: exact versions, or `latest` when the operator has not pinned them. */
+    claudeCodeVersion: string;
+    codexVersion: string;
   } | null;
 }
 
@@ -69,6 +72,13 @@ function number(env: NodeJS.ProcessEnv, name: string, fallback: number, min: num
   if (raw === undefined || raw.trim() === '') return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value) || value < min || value > max) throw new RelayError(`${name}=${raw} is not a number from ${min} to ${max}.`, { code: 'BAD_CONFIG' });
+  return value;
+}
+
+function npmVersion(env: NodeJS.ProcessEnv, name: string): string {
+  const value = env[name]?.trim() ?? '';
+  if (value.length === 0) return 'latest';
+  if (!NPM_VERSION.test(value)) throw new RelayError(`${name}="${value}" is not an npm version or tag.`, { code: 'BAD_CONFIG', hint: 'An exact version such as 2.1.0 pins it; leave it unset for "latest".' });
   return value;
 }
 
@@ -222,7 +232,15 @@ export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promi
       dailyHours: number(env, 'RELAY_CLOUD_DAILY_HOURS', 12, 0, 24),
       maxMachines: number(env, 'RELAY_CLOUD_MAX_MACHINES', DEFAULT_MAX_MACHINES, 0, 10_000),
       allowedUsers: allowed === '*' ? '*' : list(allowed),
+      claudeCodeVersion: npmVersion(env, 'RELAY_CLOUD_CLAUDE_CODE_VERSION'),
+      codexVersion: npmVersion(env, 'RELAY_CLOUD_CODEX_VERSION'),
     };
+    // Runner machines install Relay from the hub and nowhere else, so that
+    // what they run is the bytes the hub vouches for. A hub that makes
+    // machines and serves no package would make machines that cannot start.
+    if ((env['RELAY_HUB_TARBALL']?.trim() ?? '').length === 0) {
+      throw new RelayError('RELAY_HUB_TARBALL must be set when the hub makes machines: they install Relay from it.', { code: 'BAD_CONFIG', hint: 'npm pack this checkout and point RELAY_HUB_TARBALL at the .tgz; scripts/azure/deploy-hub.sh does both.' });
+    }
   }
 
   return {
@@ -312,7 +330,7 @@ async function serveHub(config: HubConfig, version: string, logLine: (entry: Hub
           osDiskGb: cloud.osDiskGb,
           adminUser: cloud.adminUser,
           sshPublicKey: cloud.sshPublicKey,
-          customData: () => runnerCloudInit({ hubUrl: config.publicUrl!, maxRuns: cloud.maxRuns, adminUser: cloud.adminUser }),
+          customData: () => runnerCloudInit({ hubUrl: config.publicUrl!, maxRuns: cloud.maxRuns, adminUser: cloud.adminUser, claudeCodeVersion: cloud.claudeCodeVersion, codexVersion: cloud.codexVersion }),
         });
 
   const fleet = new Fleet({
@@ -346,7 +364,21 @@ async function serveHub(config: HubConfig, version: string, logLine: (entry: Hub
   if (config.previousSecrets.length > 0) {
     logLine({ level: 'info', msg: `still reading runner tokens signed by ${config.previousSecrets.length} earlier secret${config.previousSecrets.length === 1 ? '' : 's'}; drop RELAY_HUB_SECRET_PREVIOUS once every machine has been started again` });
   }
-  const hub = createHub({ fleet, secret: config.secret, previousSecrets: config.previousSecrets, sessions, origins: config.origins, version, adminToken: config.adminToken, tarballPath: config.tarball, log: logLine });
+  if (cloud !== null && (cloud.claudeCodeVersion === 'latest' || cloud.codexVersion === 'latest')) {
+    logLine({ level: 'warn', msg: 'runner machines install the newest Claude Code or Codex npm serves, as root: pin them with RELAY_CLOUD_CLAUDE_CODE_VERSION and RELAY_CLOUD_CODEX_VERSION' });
+  }
+  const hub = createHub({
+    fleet,
+    secret: config.secret,
+    previousSecrets: config.previousSecrets,
+    sessions,
+    origins: config.origins,
+    version,
+    adminToken: config.adminToken,
+    tarballPath: config.tarball,
+    ...(cloud === null ? {} : { cliVersions: { claudeCode: cloud.claudeCodeVersion, codex: cloud.codexVersion } }),
+    log: logLine,
+  });
   const port = await hub.listen(config.port, config.host);
   logLine({ level: 'info', msg: `hub listening on ${config.host}:${port}`, version, machines: driver === null ? 'none (runners dial in on their own)' : `${cloud?.vmSize} in ${cloud?.regions.join(', ')}` });
 

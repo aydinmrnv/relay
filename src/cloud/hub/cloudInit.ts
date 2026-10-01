@@ -9,9 +9,27 @@
  * stops.
  *
  * Before every start the service checks the hub's Relay version and updates
- * to it, and refreshes the coding CLIs once a week — machines sleep most of
- * the time, so "at boot" is when updates can happen without interrupting a
- * run. A failed update never stops the runner from starting.
+ * to it, and brings the coding CLIs to the versions the hub names — machines
+ * sleep most of the time, so "at boot" is when updates can happen without
+ * interrupting a run. A failed update never stops the runner from starting.
+ *
+ * **What it runs as root, and how much of it is pinned.** All of this runs
+ * as root, on every start, so what it fetches matters:
+ *
+ *   - Relay comes from the hub and is installed only if its SHA-256 matches
+ *     the one the hub states. There is no fallback to building from GitHub.
+ *   - Node comes from NodeSource's apt repository, checked by apt against
+ *     NodeSource's signing key. No script from the network is piped to a
+ *     shell. The key itself is fetched over TLS and its fingerprint is not
+ *     pinned here.
+ *   - gh comes from GitHub's apt repository, the same way.
+ *   - Claude Code and Codex are installed at the versions the hub is
+ *     configured with (`RELAY_CLOUD_CLAUDE_CODE_VERSION`,
+ *     `RELAY_CLOUD_CODEX_VERSION`), which it also states on every start, so
+ *     changing a pin reaches machines that already exist. Left unset they are
+ *     `latest`: whatever npm serves that week. npm checks a package against
+ *     the registry's own integrity record; nothing here pins their
+ *     dependencies or checks a hash of our own choosing.
  *
  * **Who runs what.** Two users matter on a runner machine:
  *
@@ -53,7 +71,13 @@ export interface RunnerCloudInitOptions {
   adminUser: string;
   /** The user the runner and the agents run as. No sudo. */
   runUser?: string;
+  /** The npm versions of the coding CLIs to install when the hub does not say: an exact version, or a dist-tag such as `latest`. */
+  claudeCodeVersion?: string;
+  codexVersion?: string;
 }
+
+/** What may follow `@` in an npm install: a version or a dist-tag, and nothing a shell would read as more. */
+export const NPM_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$/;
 
 /** The unprivileged user a managed runner and its agents run as. */
 export const RUN_USER = 'relay-run';
@@ -78,6 +102,11 @@ export function runnerFiles(options: RunnerCloudInitOptions): { prepare: string;
   }
   if (user === options.adminUser || user === 'root') throw new Error(`The runner cannot run as "${user}": that user can become root, and the agents would be able to with it.`);
   const maxRuns = Math.max(1, Math.min(8, Math.floor(options.maxRuns)));
+  const claudeCode = options.claudeCodeVersion ?? 'latest';
+  const codex = options.codexVersion ?? 'latest';
+  for (const version of [claudeCode, codex]) {
+    if (!NPM_VERSION.test(version)) throw new Error(`"${version}" is not an npm version or tag.`);
+  }
 
   // The rule, spelled once: the check and the insert must name the same thing.
   const rule = `OUTPUT -d ${METADATA_ADDRESS} -m owner ! --uid-owner 0 -j REJECT`;
@@ -116,9 +145,24 @@ if id -nG "$run_user" | tr ' ' '\\n' | grep -Eqx 'sudo|admin|wheel|adm|docker|lx
   exit 1
 fi
 
+# What the hub says this machine should run, read once: its own Relay package
+# (a version, and the SHA-256 of the file), and the versions of the coding CLIs.
+headers="$(curl -fsSI -m 20 "$hub/runner/relay.tgz" | tr -d '\\r')"
+header() { printf '%s\\n' "$headers" | awk -F': ' -v name="$1" 'tolower($1)==name{print $2}' | head -n 1; }
+# A version or a tag, and nothing a shell or npm would read as more than that.
+pin() { case "$1" in ''|*[!A-Za-z0-9.+-]*) return 1 ;; *) return 0 ;; esac; }
+
 if ! command -v node >/dev/null || ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
   log "installing Node 22"
-  retry bash -c 'curl -fsSL https://deb.nodesource.com/setup_22.x | bash -' && retry apt-get install -y nodejs
+  # NodeSource's apt repository, checked against its signing key: apt verifies
+  # what it installs, and nothing downloaded is handed to a shell.
+  install -d -m 0755 /etc/apt/keyrings
+  retry curl -fsSL -o /tmp/nodesource.key https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \\
+    && gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource.key \\
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \\
+    && printf 'Package: nodejs\\nPin: origin deb.nodesource.com\\nPin-Priority: 600\\n' > /etc/apt/preferences.d/nodejs \\
+    && retry apt-get update && retry apt-get install -y nodejs || log "could not install Node 22"
+  rm -f /tmp/nodesource.key
 fi
 if ! command -v gh >/dev/null; then
   log "installing gh"
@@ -128,27 +172,46 @@ if ! command -v gh >/dev/null; then
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
   retry apt-get update && retry apt-get install -y gh
 fi
-stamp=/var/lib/relay-runner/clis-updated
-if ! command -v claude >/dev/null || ! command -v codex >/dev/null || [ ! -f "$stamp" ] || [ -n "$(find "$stamp" -mtime +6 2>/dev/null)" ]; then
-  log "installing or updating Claude Code and Codex"
-  retry timeout 900 npm install -g --no-audit --no-fund @anthropic-ai/claude-code@latest @openai/codex@latest && date -u +%FT%TZ > "$stamp" || log "CLI install failed; keeping what is there"
+
+# The coding CLIs, at the versions the hub names now, or failing that the ones
+# it named when this machine was made. A pinned version is installed once and
+# left alone; "latest" is asked for again once a week.
+claude_want="${claudeCode}"
+codex_want="${codex}"
+named="$(header x-relay-claude-code)"; pin "$named" && claude_want="$named"
+named="$(header x-relay-codex)"; pin "$named" && codex_want="$named"
+stamp=/var/lib/relay-runner/clis-installed
+wanted="claude-code@$claude_want codex@$codex_want"
+stale=""
+case "$wanted" in *@latest*) [ -n "$(find "$stamp" -mtime +6 2>/dev/null)" ] && stale=yes ;; esac
+if ! command -v claude >/dev/null || ! command -v codex >/dev/null || [ "$wanted" != "$(cat "$stamp" 2>/dev/null || true)" ] || [ -n "$stale" ]; then
+  log "installing Claude Code $claude_want and Codex $codex_want"
+  retry timeout 900 npm install -g --no-audit --no-fund "@anthropic-ai/claude-code@$claude_want" "@openai/codex@$codex_want" && echo "$wanted" > "$stamp" || log "CLI install failed; keeping what is there"
 fi
 
-# The hub names its package by version and content hash; the last one installed is kept here.
+# Relay itself, from the hub, and only if the file is the one the hub says it
+# is. The hub names its package by version and content hash; the last one
+# installed is kept here.
 installed=/var/lib/relay-runner/relay-version
-want="$(curl -fsSI -m 20 "$hub/runner/relay.tgz" | tr -d '\\r' | awk -F': ' 'tolower($1)=="x-relay-version"{print $2}')"
+want="$(header x-relay-version)"
+sum="$(header x-relay-sha256)"
 have="$(cat "$installed" 2>/dev/null || true)"
-if [ -n "$want" ] && { [ "$want" != "$have" ] || ! command -v relay >/dev/null; }; then
+if [ -z "$want" ]; then
+  log "the hub serves no Relay package; keeping what is installed"
+elif [ "$want" != "$have" ] || ! command -v relay >/dev/null; then
   log "Relay \${have:-none} -> $want, from the hub"
   tmp="$(mktemp -d)"
-  retry curl -fsS -m 300 -o "$tmp/relay.tgz" "$hub/runner/relay.tgz" && npm install -g --no-audit --no-fund "$tmp/relay.tgz" && echo "$want" > "$installed" || log "could not install Relay $want"
+  if retry curl -fsS -m 300 -o "$tmp/relay.tgz" "$hub/runner/relay.tgz"; then
+    got="$(sha256sum "$tmp/relay.tgz" | cut -d' ' -f1)"
+    if [ -n "$sum" ] && [ "$got" = "$sum" ]; then
+      npm install -g --no-audit --no-fund "$tmp/relay.tgz" && echo "$want" > "$installed" || log "could not install Relay $want"
+    else
+      log "the Relay package is not the one the hub described (sha256 $got, expected \${sum:-none}); not installing it"
+    fi
+  else
+    log "could not download Relay $want"
+  fi
   rm -rf "$tmp"
-elif ! command -v relay >/dev/null; then
-  log "the hub serves no Relay; building it from GitHub"
-  rm -rf /opt/relay-src
-  retry git clone --depth 1 https://github.com/aydinmrnv/relay /opt/relay-src \\
-    && (cd /opt/relay-src && npm ci --no-audit --no-fund && npm pack --pack-destination /tmp) \\
-    && npm install -g --no-audit --no-fund /tmp/relay-orchestrator-*.tgz || log "could not build Relay"
 fi
 exit 0
 `;
@@ -168,6 +231,7 @@ if ! iptables -C ${rule} 2>/dev/null; then
 fi
 home="$(getent passwd "$run_user" | cut -d: -f6)"
 [ -n "$home" ] && [ -d "$home" ] || { log "$run_user has no home; not starting"; exit 1; }
+command -v relay >/dev/null || { log "Relay is not installed: relay-runner-prepare could not get it from the hub; not starting"; exit 1; }
 
 token=""
 for attempt in 1 2 3 4 5 6; do

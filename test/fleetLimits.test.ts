@@ -216,6 +216,7 @@ describe('how many machines the hub makes', () => {
       RELAY_CLOUD_REGIONS: 'northcentralus',
       RELAY_HUB_PUBLIC_URL: 'https://hub.example.com',
       RELAY_CLOUD_SSH_KEY: 'ssh-ed25519 AAAA ops',
+      RELAY_HUB_TARBALL: '/opt/relay/relay.tgz',
     });
     assert.equal(config.cloud?.maxMachines, DEFAULT_MAX_MACHINES);
     assert.equal(config.cloud?.maxUnattendedMinutes, 360);
