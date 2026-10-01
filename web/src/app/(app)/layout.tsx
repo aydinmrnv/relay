@@ -8,7 +8,8 @@ export default function AppLayout({ children }: LayoutProps<'/'>) {
   return (
     <SidebarProvider>
       <AppSidebar />
-      <SidebarInset className="min-w-0">
+      {/* The builder is a tool, not a page: it takes exactly the window, so its canvas and panels scroll, not the document. */}
+      <SidebarInset className="min-w-0 has-data-builder:h-dvh has-data-builder:overflow-hidden">
         <DemoBanner />
         <AppHeader />
         <div className="flex min-h-0 flex-1 flex-col">

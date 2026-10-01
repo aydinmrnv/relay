@@ -114,7 +114,10 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
                 started <StartedAt iso={run.startedAt} now={now} className="text-foreground" />
               </span>
               <span aria-hidden>·</span>
-              <span className="tabular-nums">{live ? `${formatRunDuration(run)} so far` : `took ${formatRunDuration(run)}`}</span>
+              {/* A test run's clock is the simulator's: minutes of pretend work played back in seconds. Say which clock this is. */}
+              <span className="tabular-nums" title={machine === undefined ? 'How long a real run of these steps would take. The playback itself took seconds.' : undefined}>
+                {live ? `${formatRunDuration(run)} so far` : machine === undefined ? `${formatRunDuration(run)} of simulated time` : `took ${formatRunDuration(run)}`}
+              </span>
             </p>
           </div>
         </div>
@@ -131,7 +134,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
                 <RotateCcw data-icon="inline-start" /> Run again
               </TooltipTrigger>
               <TooltipContent className="max-w-64">
-                Plays the current version of {workflow.name} with the same ticket as a test run. Free; nothing is called.{machine === undefined ? '' : ' To run it for real again, use Run on this machine in the builder.'}
+                Plays the current version of {workflow.name} with the same ticket as a test run. Free; nothing is called.{machine === undefined ? '' : ' To run it for real again, open the workflow and choose Run on your computer or in Relay Cloud.'}
               </TooltipContent>
             </Tooltip>
           ) : (
@@ -149,12 +152,12 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
               <WorkflowIcon data-icon="inline-start" /> Open workflow
             </Button>
           ) : null}
-          {run.prUrl !== undefined ? (
+          {run.prUrl !== undefined && machine !== undefined ? (
             <Tooltip>
               <TooltipTrigger render={<Button variant="outline" nativeButton={false} render={<a href={run.prUrl} target="_blank" rel="noreferrer" />} />}>
                 PR #{prNumber(run.prUrl)} <ExternalLink data-icon="inline-end" />
               </TooltipTrigger>
-              <TooltipContent className="max-w-64">{machine === undefined ? 'Simulated: the test run made this number up, so GitHub will not find it.' : `Opened by the run on ${machine.host}.`}</TooltipContent>
+              <TooltipContent className="max-w-64">Opened by the run on {machine.host}.</TooltipContent>
             </Tooltip>
           ) : null}
           <DropdownMenu>
@@ -224,15 +227,19 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
             label={run.prUrl !== undefined ? 'Pull request' : 'Branch'}
             value={run.prUrl !== undefined ? `#${prNumber(run.prUrl)}` : (run.branch ?? '—')}
             hint={
-              run.prUrl !== undefined
-                ? (run.branch ?? 'opened')
-                : run.branch !== undefined
-                  ? live
-                    ? 'The work in progress lives here'
-                    : 'Committed, not published'
-                  : live
-                    ? 'Not created yet'
-                    : 'No branch was created'
+              machine === undefined && (run.prUrl !== undefined || run.branch !== undefined)
+                ? `Simulated: a real run would ${run.prUrl !== undefined ? 'open this' : 'use this branch'}; nothing exists`
+                : run.prUrl !== undefined
+                  ? (run.branch ?? 'opened')
+                  : run.branch !== undefined
+                    ? live
+                      ? 'The work in progress lives here'
+                      : run.diff === undefined
+                        ? 'Created; no code was committed to it'
+                        : 'Committed, not published'
+                    : live
+                      ? 'Not created yet'
+                      : 'No branch was created'
             }
             mono={run.prUrl === undefined && run.branch !== undefined}
           />
@@ -331,12 +338,14 @@ const OUTCOME_STYLE: Record<RunStatus, { box: string; icon: React.ReactNode; tit
 function Outcome({ run, speed }: { run: Run; speed: string }) {
   const style = OUTCOME_STYLE[run.status];
   const live = isLive(run.status);
+  // A run on a machine is happening, not being played back.
+  const real = run.source === 'machine';
   return (
     <div role="status" className={cn('flex items-start gap-3 rounded-xl border px-4 py-3.5', style.box)}>
       <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">{style.icon}</span>
       <div className="min-w-0 flex-1 text-sm">
         <p className="font-medium text-pretty">
-          {style.title}.{' '}
+          {run.status === 'running' && real ? 'Running now' : style.title}.{' '}
           <span className="font-normal text-muted-foreground">
             {run.status === 'running' ? 'The timeline, phases and cost below fill in as each step finishes.' : STATUS_MEANING[run.status]}
           </span>
@@ -344,13 +353,17 @@ function Outcome({ run, speed }: { run: Run; speed: string }) {
         {live ? (
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
             <LiveStep run={run} className="text-sm" />
-            <span className="text-xs">
-              · {speed} speed (
-              <Link href="/settings#appearance" className="underline underline-offset-2 hover:text-foreground">
-                change
-              </Link>
-              )
-            </span>
+            {real ? (
+              <span className="text-xs">· on {run.machine?.host ?? 'your machine'}, at the speed the agents work</span>
+            ) : (
+              <span className="text-xs">
+                · played back at {speed} speed (
+                <Link href="/settings#appearance" className="underline underline-offset-2 hover:text-foreground">
+                  change
+                </Link>
+                )
+              </span>
+            )}
           </div>
         ) : (
           <p className="mt-1 text-pretty text-foreground/90">{outcomeReason(run)}</p>
@@ -389,7 +402,7 @@ function RunNotFound() {
             </EmptyMedia>
             <EmptyTitle>This run is not here</EmptyTitle>
             <EmptyDescription>
-              It may have been deleted, cleared with the history, or removed along with its workflow. As a guest, runs live only in the browser that played them; test runs still playing when a tab closed are not kept.
+              It may have been deleted, cleared with the history, or removed along with its workflow. A test run that was still playing when its tab closed is not kept either.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent className="flex-row justify-center">

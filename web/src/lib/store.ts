@@ -168,6 +168,7 @@ function browserStorage(): PersistStorage<Persisted> {
     pending = null;
     write(name, value);
   };
+  flushStorage = flush;
 
   if (typeof window !== 'undefined') {
     window.addEventListener('pagehide', flush);
@@ -201,6 +202,9 @@ function browserStorage(): PersistStorage<Persisted> {
     },
   };
 }
+
+/** Writes what is waiting to this browser's storage now. For a change made as the page is going away. */
+export let flushStorage: () => void = () => undefined;
 
 /** Forgets everything this browser saved for the studio and starts it again. The account, if any, is untouched. */
 export function resetLocalData(): void {

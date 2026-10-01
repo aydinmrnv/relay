@@ -9,6 +9,8 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { getNodeType, NODE_TYPES, searchNodeTypes, type NodeTypeDef, type PortSpec } from '@/lib/connectors';
 import { portsCompatible } from '@/lib/workflow/validate';
 import { useStudio } from '@/lib/store';
+import { isSimulatedOnly } from '@/lib/workflow/readiness';
+import { SimulatedOnly } from './palette';
 import { PORT_STYLE } from './ports';
 
 /** What the picker is adding after, when it was opened from a node or a dragged connection. */
@@ -94,7 +96,7 @@ function PickerList({ source, needsTrigger, onPick }: Omit<Props, 'open' | 'onOp
 
   return (
     <Command shouldFilter={false} className="rounded-none! p-0">
-      <CommandInput value={query} onValueChange={setQuery} placeholder="Search 1,800+ triggers and actions: “slack”, “budget”, “pull request”…" autoFocus />
+      <CommandInput value={query} onValueChange={setQuery} placeholder={`Search ${NODE_TYPES.length} triggers and actions: “slack”, “budget”, “pull request”…`} autoFocus />
       <CommandList className="max-h-[min(60vh,440px)] p-1">
         <CommandEmpty>Nothing that fits here matches “{query}”. Try the HTTP request node for anything else.</CommandEmpty>
         {searching ? (
@@ -113,7 +115,7 @@ function PickerList({ source, needsTrigger, onPick }: Omit<Props, 'open' | 'onOp
               </CommandGroup>
             ) : null}
             {fromConnected.length > 0 ? (
-              <CommandGroup heading="From your connected apps">
+              <CommandGroup heading="From apps you connected or marked ready">
                 {fromConnected.map((def) => (
                   <PickerItem key={def.id} def={def} onPick={onPick} />
                 ))}
@@ -142,6 +144,7 @@ function PickerItem({ def, onPick }: { def: NodeTypeDef; onPick: (def: NodeTypeD
               <Zap className="size-2.5! fill-current" /> trigger
             </Badge>
           ) : null}
+          {isSimulatedOnly(def.id) ? <SimulatedOnly /> : null}
         </div>
         <p className="line-clamp-1 text-xs text-muted-foreground">
           <span className="text-foreground/70">{def.connector.name}</span> · {def.description}

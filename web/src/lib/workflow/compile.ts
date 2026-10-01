@@ -12,6 +12,7 @@
 import { BRAND, slugify, type Brand } from '../brand';
 import { getConnector, getNodeType, type NodeTypeDef } from '../connectors';
 import { ACTION_REF, CLI_INSTALL_COMMAND } from '../links';
+import { SIMULATED_ONLY } from './readiness';
 import { isSecretField } from './redact';
 import type { AuthPreference, Workflow, WorkflowEdge, WorkflowNode } from './schema';
 import { isPlaceholderLogin, isUnattendedTrigger } from './validate';
@@ -51,19 +52,6 @@ interface Found {
   node: WorkflowNode;
   def: NodeTypeDef;
 }
-
-/** Steps a test run plays that neither the CLI nor the exported Action performs. */
-const SIMULATED_ONLY = new Set([
-  'gates.action.approval',
-  'logic.action.condition',
-  'logic.action.filter',
-  'logic.action.transform',
-  'logic.action.ai-step',
-  'logic.action.merge-paths',
-  'pipeline.action.estimate',
-  'schedule.action.delay',
-  'schedule.action.business-hours',
-]);
 
 export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options: CompileOptions = {}): CompiledOutput {
   // Nothing typed into a secret field may reach a file people are told to
@@ -205,7 +193,7 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
   if (webhook !== null && CREDENTIAL_URL.test(webhook)) {
     warnings.push('The URL in “Post the run as JSON” looks like it carries a credential, and it is written to .relay/config.json, which you commit. Use an endpoint whose address is not itself the secret.');
   }
-  const simulated = [...new Set(found.filter((entry) => SIMULATED_ONLY.has(entry.def.id)).map((entry) => entry.def.name))];
+  const simulated = [...new Set(found.filter((entry) => entry.def.kind === 'action' && SIMULATED_ONLY.has(entry.def.id)).map((entry) => entry.def.name))];
   if (simulated.length > 0) {
     warnings.push(`${list(simulated)} ${simulated.length === 1 ? 'is' : 'are'} played in test runs only. The exported files do not perform ${simulated.length === 1 ? 'it' : 'them'}: Relay decides the allowlist and the budget itself, then runs the pipeline on the issue it is given.`);
   }

@@ -85,7 +85,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'estimate',
         name: 'Estimate cost',
-        description: 'Prices the run before any agent turn, from the issue and the repository size.',
+        description: 'Prices the run before any agent turn. In a test run the price is drawn from a typical range.',
         inputs: PORTS.issueIn,
         outputs: PORTS.issueOut,
         fields: [],
@@ -136,7 +136,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'approval',
         name: 'Human approval',
-        description: 'Pauses until a person approves in chat, on the issue, or in the dashboard.',
+        description: 'Holds the run for a person’s yes or no. In a test run the answer is played; nothing waits for a real one yet.',
         inputs: PORTS.anyIn,
         outputs: [
           { id: 'approved', label: 'Approved', type: 'any' },
@@ -267,7 +267,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'webhook',
         name: 'Incoming webhook',
-        description: 'A unique URL. POST anything to it to start the workflow.',
+        description: 'Start from any tool that can send a webhook. A test run plays a sample body; no URL is listening yet.',
         fields: [{ key: 'secret', label: 'Signing secret', type: 'secret', placeholder: 'optional' }, FIELDS.text('path', 'Path suffix', 'ticket-in')],
         sample: { method: 'POST', body: { title: 'Anything you send' } },
       },
@@ -348,7 +348,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'filter',
         name: 'Filter',
-        description: 'Continue only when the expression is true; otherwise stop quietly.',
+        description: 'Continue only when the expression is true. In a test run it always passes: the expression is not evaluated yet.',
         inputs: PORTS.anyIn,
         outputs: PORTS.eventOut,
         fields: [FIELDS.text('expression', 'Expression', 'issue.estimate <= 3', true)],
@@ -356,7 +356,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'transform',
         name: 'Transform',
-        description: 'Reshape the payload with a small JavaScript function.',
+        description: 'Reshape the payload with a small JavaScript function. In a test run the payload passes through unchanged.',
         inputs: PORTS.anyIn,
         outputs: PORTS.eventOut,
         fields: [{ key: 'code', label: 'Function body', type: 'textarea', default: 'return { ...input, title: input.title.trim() };' }],

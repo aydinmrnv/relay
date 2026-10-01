@@ -12,6 +12,28 @@
 import { getNodeType } from '../connectors';
 import type { Workflow } from './schema';
 
+/**
+ * Steps a test run plays that nothing performs for real: not the CLI, not
+ * the exported Action. They are worth drawing — a Condition says what the
+ * workflow is meant to decide — but they must not read as working.
+ */
+export const SIMULATED_ONLY: ReadonlySet<string> = new Set([
+  'gates.action.approval',
+  'http.trigger.webhook',
+  'logic.action.condition',
+  'logic.action.filter',
+  'logic.action.transform',
+  'logic.action.ai-step',
+  'logic.action.merge-paths',
+  'pipeline.action.estimate',
+  'schedule.action.delay',
+  'schedule.action.business-hours',
+]);
+
+export function isSimulatedOnly(typeId: string): boolean {
+  return SIMULATED_ONLY.has(typeId);
+}
+
 export interface Readiness {
   /** An event can start it with nobody pressing anything. */
   unattended: boolean;

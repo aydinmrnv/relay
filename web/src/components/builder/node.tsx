@@ -10,6 +10,7 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { BorderTrail } from '@/components/21st/border-trail';
 import { TextShimmer } from '@/components/21st/text-shimmer';
+import { useCombo } from '@/hooks/use-key-label';
 import { useBuilderActions } from './builder-context';
 import { PORT_STYLE } from './ports';
 import type { CanvasNode } from './types';
@@ -167,6 +168,7 @@ function WorkflowNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
 /** Right-click on a node: the same things the inspector offers, without leaving the canvas. */
 function NodeMenu({ id, def, children }: { id: string; def: NodeTypeDef; children: React.ReactNode }) {
   const actions = useBuilderActions();
+  const combo = useCombo();
   if (actions.readOnly) return <>{children}</>;
   return (
     <ContextMenu>
@@ -181,7 +183,7 @@ function NodeMenu({ id, def, children }: { id: string; def: NodeTypeDef; childre
         ) : null}
         <ContextMenuItem onClick={() => actions.duplicate(id)}>
           <Copy /> Duplicate
-          <ContextMenuShortcut>⌘D</ContextMenuShortcut>
+          <ContextMenuShortcut>{combo('mod', 'D')}</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" onClick={() => actions.remove(id)}>

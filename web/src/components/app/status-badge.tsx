@@ -27,7 +27,7 @@ const LABELS: Record<Status, string> = {
   done: 'Done',
   failed: 'Failed',
   refused: 'Refused',
-  cancelled: 'Cancelled',
+  cancelled: 'Stopped',
   waiting: 'Waiting',
   pending: 'Pending',
   skipped: 'Skipped',
@@ -35,12 +35,12 @@ const LABELS: Record<Status, string> = {
 
 /** What each run status means, for tooltips and the guide. */
 export const STATUS_MEANING: Record<RunStatus, string> = {
-  running: 'Playing right now.',
+  running: 'Going right now.',
   succeeded: 'Every node that ran finished, and the pipeline delivered.',
   failed: 'A node failed — usually the tests, or an agent that could not finish.',
   refused: 'A guardrail said no before any money was spent: budget, allowlist, approval or kill switch.',
-  cancelled: 'Stopped by you, or interrupted by closing the tab.',
-  waiting: 'Paused on a human approval or a wait step.',
+  cancelled: 'Stopped by you, interrupted by closing the tab, or — for a run on a machine — lost track of before it finished.',
+  waiting: 'Paused, waiting on a person.',
 };
 
 export function StatusBadge({ status, className }: { status: Status; className?: string }) {

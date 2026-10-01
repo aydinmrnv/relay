@@ -27,10 +27,11 @@ export const PEOPLE_CONNECTORS: Connector[] = [
     docsUrl: 'https://api.slack.com/',
     tags: ['chat', 'notifications', 'bug reports'],
     popular: true,
+    // What an incoming webhook can do comes first: that is the connection that exists today, and the first line is what the card shows.
     uses: [
-      'React with :robot_face: to a bug report in #bugs and the thread gets the draft PR.',
       'Ask the channel for review when an agent\'s pull request opens.',
       'Tell #builds why a red build was not fixed automatically.',
+      'React with :robot_face: to a bug report in #bugs and the thread gets the draft PR.',
     ],
     triggers: [
       { id: 'reaction-added', name: 'Emoji reaction added', description: 'Someone reacts to a message with a chosen emoji. The message and its thread become the task.', outputs: PORTS.issueOut, fields: [FIELDS.text('channel', 'Channel', '#bugs'), FIELDS.text('reaction', 'Emoji', 'robot_face')], sample: report('1726912345.000200', 'Export button does nothing on the second click in Safari', 'https://acme.slack.com/archives/C01ABC/p1726912345000200', 'jane', 'From #bugs, reported by Jane: "Export does nothing if you click it twice on Safari. Console says blob.size is undefined." 2 replies confirm it on Safari 18.') },
@@ -55,7 +56,7 @@ export const PEOPLE_CONNECTORS: Connector[] = [
     docsUrl: 'https://discord.com/developers/docs',
     tags: ['community', 'bug reports'],
     popular: true,
-    uses: ['A moderator reacts to a post in #bug-reports and the reporter hears back in that post when a fix is up.'],
+    uses: ['Post an agent\'s pull request to #maintainers when a fix is up.', 'A moderator reacts to a post in #bug-reports and the reporter hears back in that post when a fix is up.'],
     triggers: [
       { id: 'reaction-added', name: 'Reaction added', description: 'A moderator reacts to a message or forum post with a chosen emoji.', outputs: PORTS.issueOut, fields: [FIELDS.text('channel', 'Channel', '#bug-reports'), FIELDS.text('reaction', 'Emoji', 'robot')], sample: report('1287654321', 'Login loops after a password reset', 'https://discord.com/channels/1/2/1287654321', 'kai', 'After resetting my password the login page keeps redirecting to itself. Clearing cookies fixes it. Happens on Firefox and Chrome.') },
       { id: 'forum-post-created', name: 'Forum post created', description: 'A new post in a forum channel. Pair it with a triage step: most posts are not bugs.', outputs: PORTS.issueOut, fields: [FIELDS.text('channel', 'Forum channel', '#bug-reports')], sample: report('1287654999', 'Crash when importing a 2 GB project', 'https://discord.com/channels/1/3/1287654999', 'mira', 'Importing a large project crashes the desktop app with "out of memory". Log attached.') },

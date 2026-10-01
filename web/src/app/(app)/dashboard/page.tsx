@@ -207,14 +207,16 @@ export default function DashboardPage() {
             successRate={week.successRate}
             finished={week.finished}
             spend={week.spend}
-            connected={connected}
+            realSpend={week.realSpend}
+            // Connected means the app accepted a credential. A marker is a label, counted in the line under the number.
+            connected={tally.verified}
             connections={tally}
-            catalog={CONNECTORS.length}
+            catalog={CONNECTORS.filter((connector) => connector.category !== 'core').length}
           />
 
           <FadeIn delay={0.08} className="grid items-stretch gap-6 lg:grid-cols-3">
             <ActivityChart days={days} className="lg:col-span-2" />
-            <SpendCard today={today} ceiling={ceiling} rows={spend.rows} other={spend.other} weekTotal={spend.total} />
+            <SpendCard today={today.total} todayReal={today.real} ceiling={ceiling} rows={spend.rows} other={spend.other} weekTotal={spend.total} weekReal={spend.real} />
           </FadeIn>
 
           <FadeIn delay={0.12} className="grid items-stretch gap-6 lg:grid-cols-3">

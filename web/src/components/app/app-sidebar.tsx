@@ -66,7 +66,8 @@ export function AppSidebar() {
   const brand = useBrand();
   const workflows = useStudio((state) => Object.keys(state.workflows).length);
   const running = useStudio((state) => state.runs.filter((run) => run.status === 'running').length);
-  const connected = useStudio((state) => Object.keys(state.connections).length);
+  // Real connections only: a marker is a label, and a badge that counts labels says "connected" about nothing.
+  const connected = useStudio((state) => Object.values(state.connections).filter((connection) => connection.credential !== undefined).length);
 
   const badgeFor = (href: string): React.ReactNode => {
     if (href === '/workflows' && workflows > 0) return workflows;

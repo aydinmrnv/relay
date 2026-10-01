@@ -1,6 +1,6 @@
 'use client';
 
-import { useDeferredValue, useEffect, useId, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useId, useMemo, useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { BarChart3, CircleCheck, CircleX, Clock, CornerDownRight, Gauge, ShieldAlert, ShieldCheck, Table2, TriangleAlert } from 'lucide-react';
@@ -84,11 +84,18 @@ function useWorkflowForecast(workflow: Workflow, enabled: boolean): ForecastStat
   const [progress, setProgress] = useState<{ key: string; done: number; total: number } | null>(null);
   const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
   const fresh = latest?.key === key ? latest.forecast : (finished.get(key) ?? null);
+  // The newest copy, read when a simulation starts. Not a dependency: a
+  // rename or a drag makes a new object without changing what a run costs,
+  // and must not throw away a simulation that is half done.
+  const current = useRef(workflow);
+  useEffect(() => {
+    current.current = workflow;
+  });
 
   useEffect(() => {
     if (!enabled || fresh !== null) return;
     const controller = new AbortController();
-    forecastWorkflow(workflow, {
+    forecastWorkflow(current.current, {
       brand,
       ticketsPerWeek: DEFAULT_TICKETS_PER_WEEK,
       signal: controller.signal,
@@ -103,7 +110,7 @@ function useWorkflowForecast(workflow: Workflow, enabled: boolean): ForecastStat
       },
     );
     return () => controller.abort();
-  }, [enabled, fresh, key, workflow, brand]);
+  }, [enabled, fresh, key, brand]);
 
   const error = failure?.key === key ? failure.message : null;
   return {
@@ -154,8 +161,10 @@ function ForecastPanel({ workflow, tickets, onTicketsChange }: { workflow: Workf
           <HelpTip term="cost" />
         </DialogTitle>
         <DialogDescription>
-          What this workflow will cost before it runs
-          {nothingToSimulate ? '.' : `: ${samples} simulated runs through the same guardrails, review rounds and budgets as a test run, projected over the tickets you expect.`}
+          A rough range for what this workflow costs
+          {nothingToSimulate
+            ? '.'
+            : `: ${samples} simulated runs through the same guardrails, review rounds and budgets as a test run, projected over the tickets you expect. The review level and your budgets shape it; which agent or model fills a role does not, because nothing here knows what each one charges.`}
         </DialogDescription>
       </DialogHeader>
 
@@ -204,8 +213,8 @@ function ForecastPanel({ workflow, tickets, onTicketsChange }: { workflow: Workf
       <DialogFooter showCloseButton className="sm:items-center sm:justify-between">
         <p className="text-xs text-pretty text-muted-foreground">
           {nothingToSimulate
-            ? 'A forecast is a simulation built from the same model as test runs. Real runs report what the CLIs actually charged.'
-            : `A simulation, built from the same model as test runs: ${samples} seeded runs, resampled into ${FORECAST_TRIALS} weeks and months at your volume, with budgets applied the way the CLI applies them. Real runs report what the CLIs actually charged.`}
+            ? 'A forecast is a simulation built from the same model as test runs, from typical ranges per phase. Real runs report what the CLIs actually charged.'
+            : `A simulation, built from the same model as test runs: ${samples} seeded runs drawn from typical ranges per phase, resampled into ${FORECAST_TRIALS} weeks and months at your volume, with budgets applied the way the CLI applies them. Treat it as an order of magnitude; real runs report what the CLIs actually charged.`}
         </p>
       </DialogFooter>
     </>
@@ -232,6 +241,9 @@ function VolumeControl({ tickets, onChange }: { tickets: number; onChange: (tick
   const set = (value: number) => {
     if (Number.isFinite(value)) onChange(Math.min(MAX_TICKETS, Math.max(MIN_TICKETS, Math.round(value))));
   };
+  // What is typed, while it is being typed. The field can be emptied to type
+  // a new number; the forecast keeps the last real one until there is another.
+  const [typing, setTyping] = useState<string | null>(null);
   return (
     <section className="grid gap-2.5 rounded-lg border p-3">
       <div className="flex items-center justify-between gap-3">
@@ -244,10 +256,12 @@ function VolumeControl({ tickets, onChange }: { tickets: number; onChange: (tick
           inputMode="numeric"
           min={MIN_TICKETS}
           max={MAX_TICKETS}
-          value={tickets}
+          value={typing ?? tickets}
           onChange={(event) => {
+            setTyping(event.target.value);
             if (event.target.value !== '') set(Number(event.target.value));
           }}
+          onBlur={() => setTyping(null)}
           className="h-7 w-20 text-right tabular-nums"
         />
       </div>
@@ -368,10 +382,11 @@ function CostHistogram({ forecast }: { forecast: Forecast }) {
       </div>
       {view === 'chart' ? (
         <ChartContainer config={HISTOGRAM_CONFIG} className="aspect-auto h-52 w-full" initialDimension={{ width: 340, height: 208 }}>
-          <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: -8 }} barCategoryGap={2} accessibilityLayer>
+          <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: 0 }} barCategoryGap={2} accessibilityLayer>
             <CartesianGrid vertical={false} />
-            <XAxis dataKey="key" tickLine={false} axisLine={false} tickMargin={6} minTickGap={6} />
-            <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} />
+            {/* Every n-th bin, so the labels are evenly spaced: left to itself the axis drops whichever ones collide. */}
+            <XAxis dataKey="key" tickLine={false} axisLine={false} tickMargin={6} interval={Math.max(0, Math.ceil(data.length / 6) - 1)} />
+            <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={34} />
             <ChartTooltip cursor={{ radius: 4 }} content={<BinTooltip />} />
             {/* A legend only when there are two kinds of bar; one series is named by the heading. Stack order, not alphabetical. */}
             {anyStopped ? <ChartLegend content={<ChartLegendContent />} itemSorter={null} /> : null}

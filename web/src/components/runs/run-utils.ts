@@ -75,7 +75,7 @@ export function stoppingEvent(run: Run): RunEvent | undefined {
 export function outcomeReason(run: Run): string {
   switch (run.status) {
     case 'running':
-      return liveStep(run) ?? 'Playing now.';
+      return liveStep(run) ?? (run.source === 'machine' ? 'Running now.' : 'Playing now.');
     case 'waiting':
       return 'Paused on a human approval.';
     case 'failed':
@@ -86,6 +86,12 @@ export function outcomeReason(run: Run): string {
       if (run.summary !== undefined && (run.source === 'machine' || run.summary.startsWith('Interrupted'))) return run.summary;
       return 'Stopped before it finished; nothing after that point ran.';
     case 'succeeded': {
+      // A test run opens and commits nothing; say what a real one would have done, not that it happened.
+      if (run.source !== 'machine') {
+        if (run.prUrl !== undefined) return `A real run would end with a pull request from ${run.branch ?? 'its branch'}. This was a test run: nothing was opened.`;
+        if (run.branch !== undefined) return `A real run would leave the change on ${run.branch}. This was a test run: nothing was committed.`;
+        return 'Every step finished. This workflow has no agent pipeline, so no code would be written.';
+      }
       if (run.prUrl !== undefined) return `Opened pull request #${prNumber(run.prUrl)} from ${run.branch ?? 'its branch'}.`;
       if (run.branch !== undefined) return `The change is on ${run.branch}.`;
       return 'Every step finished. This workflow has no agent pipeline, so no code was written.';
