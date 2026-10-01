@@ -212,7 +212,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
                 </span>
               )
             }
-            hint={run.diff === undefined ? (live ? 'Nothing written yet' : 'No code was written') : `${run.diff.files} files · ${machine === undefined ? 'simulated, ' : ''}counted from git`}
+            hint={run.diff === undefined ? (live ? 'Nothing written yet' : 'No code was written') : `${run.diff.files} files · ${machine === undefined ? 'simulated' : 'counted from git'}`}
           />
         </StaggerItem>
         <StaggerItem>

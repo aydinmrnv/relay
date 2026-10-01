@@ -193,6 +193,23 @@ export interface SaveOptions {
   force?: boolean;
 }
 
+/** Whether two JSON values are the same whatever order their keys are in: Postgres hands `jsonb` back with its own. */
+function sameJson(a: unknown, b: unknown): boolean {
+  const ordered = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(ordered);
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([, entry]) => entry !== undefined)
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .map(([key, entry]) => [key, ordered(entry)]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(ordered(a)) === JSON.stringify(ordered(b));
+}
+
 export async function saveWorkflow(userId: string, next: Workflow, options: SaveOptions): Promise<{ revision: string }> {
   const db = await getDb();
   await assertRoom(userId, Buffer.byteLength(JSON.stringify(next), 'utf8'));
@@ -214,6 +231,10 @@ export async function saveWorkflow(userId: string, next: Workflow, options: Save
     } else {
       const revision = existing.updatedAt.toISOString();
       if (options.force !== true && options.baseRevision !== revision) {
+        // The same save arriving twice (a tab that sent it as it closed, and
+        // sends it again when it opens) is not two people editing: what is
+        // stored is already what was asked for, so say so and change nothing.
+        if (sameJson(existing.data, next)) return { revision };
         throw new ApiError(409, 'CONFLICT', 'This workflow was changed somewhere else.', { workflow: existing.data, revision });
       }
       // Before the first save of an editing session, keep what it looked like,
