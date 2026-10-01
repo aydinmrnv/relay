@@ -142,7 +142,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
                     {installing ? <Spinner data-icon="inline-start" /> : <FolderInput data-icon="inline-start" />} Install into {machineRepo ?? 'the repository'}
                   </Button>
                   <p className="mt-1.5 text-xs text-muted-foreground">
-                    Written by relay connect on {machine?.machine ?? 'your computer'}; an existing config is merged, not replaced.{' '}
+                    Written by relay connect on {machine?.machine ?? 'your computer'}, which may ask in its terminal first; an existing config is merged, not replaced.{' '}
                     <button type="button" className="underline underline-offset-2 disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60" onClick={downloadZip} disabled={blocked}>
                       Download the .zip
                     </button>{' '}

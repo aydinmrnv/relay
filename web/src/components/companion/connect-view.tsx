@@ -180,7 +180,7 @@ function FailureHelp({ reason, port }: { reason: PairingFailure; port: number })
     return <p className="text-pretty">Press Try again, and choose Allow when your browser asks whether this site may reach apps on your device. That is relay connect, on this computer only.</p>;
   }
   if (reason === 'rejected') {
-    return <p className="text-pretty">It was started with a new token since this link was made. Open the newest link in its terminal, or stop it and run relay connect again.</p>;
+    return <p className="text-pretty">relay connect has been started again since this link was made, and every start has its own link. Open the newest one in its terminal.</p>;
   }
   const command = port === DEFAULT_COMPANION_PORT ? CONNECT_COMMAND : `${CONNECT_COMMAND} --port ${port}`;
   const here = typeof window === 'undefined' ? null : window.location.origin;

@@ -208,7 +208,7 @@ export function RunnerStatus({ target }: { target: RunnerTarget }) {
     );
   if (status === 'blocked') return <Badge variant="outline" className="h-5 border-warning/40 bg-warning/10 text-[10px] text-amber-700 dark:text-warning">Blocked by the browser</Badge>;
   if (status === 'unreachable') return <Badge variant="outline" className="h-5 border-warning/40 bg-warning/10 text-[10px] text-amber-700 dark:text-warning">Not running</Badge>;
-  if (status === 'rejected') return <Badge variant="outline" className="h-5 border-destructive/40 bg-destructive/10 text-[10px] text-destructive">Refused the pairing</Badge>;
+  if (status === 'rejected') return <Badge variant="outline" className="h-5 border-destructive/40 bg-destructive/10 text-[10px] text-destructive">Pair again</Badge>;
   return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Not paired</Badge>;
 }
 

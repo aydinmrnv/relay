@@ -32,7 +32,7 @@ export function machineStatusText(status: CompanionStatus, host: string | undefi
     case 'unreachable':
       return 'Paired, but relay connect is not running';
     case 'rejected':
-      return 'relay connect no longer accepts this pairing';
+      return 'relay connect was started again and needs pairing';
     case 'blocked':
       return 'Your browser is blocking the connection to relay connect';
     default:
@@ -116,7 +116,7 @@ export function MachineCard() {
                 : status === 'connecting'
                   ? 'Checking'
                   : status === 'rejected'
-                    ? 'Pairing refused'
+                    ? 'Pair again'
                     : status === 'blocked'
                       ? 'Blocked by the browser'
                       : 'Not running'}
@@ -126,11 +126,11 @@ export function MachineCard() {
           {connected
             ? `Signs in your coding agents, runs workflows for real and installs exports, through relay connect${checkedAt === null ? '' : ` · checked ${timeAgo(checkedAt, now)}`}.`
             : status === 'unreachable'
-              ? (notice ?? `This browser is paired with ${pairing?.machine ?? 'relay connect'} on port ${pairing?.port ?? '?'}, but nothing answers there. Start relay connect again and the studio finds it within seconds.`)
+              ? (notice ?? `This browser is paired with ${pairing?.machine ?? 'relay connect'} on port ${pairing?.port ?? '?'}, but nothing answers there. Start relay connect again and open the link it prints: each start pairs afresh.`)
               : status === 'blocked'
                 ? `This browser is paired with relay connect on port ${pairing?.port ?? '?'}, but it is not letting this site reach apps on your device.`
                 : status === 'rejected'
-                  ? (notice ?? 'relay connect is running but refused this browser’s token — it was rotated with --new-token. Open the new link it printed.')
+                  ? (notice ?? 'relay connect is running, but it has been started again since this browser was paired, and every start has its own link. Open the link it printed in its terminal.')
                 : 'The Relay CLI is the studio’s hands on your computer. Connect it and the studio can sign in Claude Code and Codex, run a workflow for real in your repository, and install an export there. Test runs stay free and in this browser either way.'}
         </CardDescription>
         {pairing !== null ? (

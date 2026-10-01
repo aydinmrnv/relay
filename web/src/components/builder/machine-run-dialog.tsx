@@ -225,6 +225,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
             The allowlist and the daily budget decide whether an event may start a run, so a person pressing this passes over them. The app steps before and after the pipeline are not performed by this run; they are in test runs
             and in the exported workflow.
           </li>
+          {cloudMode ? null : <li>The first run after relay connect starts is confirmed in its terminal: it asks there, and waits two minutes for a y.</li>}
         </ul>
       </div>
 
