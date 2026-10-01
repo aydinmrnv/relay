@@ -123,7 +123,19 @@ export function startRunner(options: RunnerModeOptions): RunnerMode {
     runs,
     log: (message, level) => options.log({ kind: level === 'error' ? 'error' : level === 'warn' ? 'refused' : 'paired', message }),
   });
-  return { runs, link };
+  // Stopping the runner stops what it started: a run left behind would go on
+  // spending with nothing to report to and nothing able to stop it.
+  return {
+    runs,
+    link: {
+      connected: link.connected,
+      ready: link.ready,
+      stop: async () => {
+        await link.stop();
+        await runs.shutdown();
+      },
+    },
+  };
 }
 
 function finished(view: CompanionRunView): string {

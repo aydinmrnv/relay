@@ -12,6 +12,7 @@ import { FrameError, parseHubFrame, parseRunnerFrame } from '../src/cloud/frames
 import { mintRunnerToken } from '../src/cloud/hub/auth.ts';
 import { Fleet } from '../src/cloud/hub/fleet.ts';
 import { createHub, StaticVerifier, type Hub, type HubLogEntry } from '../src/cloud/hub/server.ts';
+import { sessionToken } from '../src/studio/pairing.ts';
 import { parseRequestTarget } from '../src/studio/router.ts';
 import { StudioRuns } from '../src/studio/runs.ts';
 import { createCompanion } from '../src/studio/server.ts';
@@ -220,7 +221,7 @@ describe('the companion, sent things it cannot read', () => {
     });
     const port = await companion.listen(0);
     const base = `http://127.0.0.1:${port}`;
-    const headers = { authorization: 'Bearer secret-token', 'content-type': 'application/json' };
+    const headers = { authorization: `Bearer ${sessionToken('secret-token')}`, 'content-type': 'application/json' };
     try {
       for (const path of ['/v1/install', '/v1/logins/abc/code', '/v1/agents/claude/login']) {
         for (const body of ['null', '[]', '"text"', '7']) {

@@ -15,7 +15,8 @@ import {
   type InstallResponse,
   type RunStreamRecord,
 } from './protocol.ts';
-import { parseStartRequest, TaskError, type StudioRuns } from './runs.ts';
+import { printable } from './confirm.ts';
+import { parseStartRequest, QueueFullError, TaskError, type StudioRuns } from './runs.ts';
 
 /**
  * The companion's routes, apart from how they arrive.
@@ -50,12 +51,30 @@ export interface RouterOptions {
   logout?: (account: AccountId) => Promise<{ ok: boolean; detail: string }>;
   logins?: LoginSessions;
   installFiles?: (root: string, files: unknown) => Promise<InstallResponse>;
+  /**
+   * Asked before a run is started or files are installed, once the request is
+   * known to be well formed. It throws a `RouteError` to refuse. The loopback
+   * companion asks the person at the terminal (`confirm.ts`); a cloud runner
+   * has no terminal and no need, since the hub has already checked who is
+   * signed in.
+   */
+  authorize?: (ask: AuthorizeRequest) => Promise<void>;
+}
+
+export interface AuthorizeRequest {
+  /** The page that asked, as the transport saw it, or null when it was not a browser. */
+  origin: string | null;
+  action: 'run' | 'install';
+  /** One line saying what would happen, safe to print on a terminal. */
+  summary: string;
 }
 
 export interface RouteRequest {
   method: string;
   /** The path and query, e.g. `/v1/runs/sr_x/events?since=12`. */
   url: string;
+  /** The page the request came from, when the transport knows. */
+  origin?: string | null;
   /** The body as JSON. Transports enforce the size and the content type. */
   json(options?: { optional?: boolean }): Promise<unknown>;
 }
@@ -212,8 +231,10 @@ export function createRouter(options: RouterOptions): Router {
         let started: CompanionRunView;
         try {
           const parsed = parseStartRequest(await request.json(), { repositoryPerRun });
+          await options.authorize?.({ origin: request.origin ?? null, action: 'run', summary: describeRequest(parsed.workflow.name, parsed.task, parsed.repository ?? repositoryName(options.repository)) });
           started = await runs.start(parsed);
         } catch (error) {
+          if (error instanceof QueueFullError) throw new RouteError(429, error.message);
           if (error instanceof TaskError) throw new RouteError(400, error.message);
           throw error;
         }
@@ -247,6 +268,8 @@ export function createRouter(options: RouterOptions): Router {
           throw new RouteError(409, 'This companion was started outside a repository, so there is nowhere to install to.');
         }
         const files = objectBody(await request.json())['files'];
+        const paths = Array.isArray(files) ? files.map((file: unknown) => printable((file as { path?: unknown } | null)?.path, 80)).filter((path) => path.length > 0) : [];
+        await options.authorize?.({ origin: request.origin ?? null, action: 'install', summary: `${paths.slice(0, 6).join(', ') || 'no files'}${paths.length > 6 ? `, and ${paths.length - 6} more` : ''} in ${printable(options.repository.root, 200)}` });
         try {
           const result = await install(options.repository.root, files);
           const changed = result.files.filter((file) => file.status !== 'unchanged').map((file) => file.path);
@@ -264,6 +287,17 @@ export function createRouter(options: RouterOptions): Router {
   }
 
   return { hello, handle, capabilities, logins, pendingLogins: () => logins.pending() };
+}
+
+function repositoryName(repository: CompanionRepository | null): string | undefined {
+  if (repository === null) return undefined;
+  return repository.owner !== null && repository.name !== null ? `${repository.owner}/${repository.name}` : repository.root;
+}
+
+/** What a run would do, in one line for the person asked to allow it. Everything in it came from the caller, so all of it is cleaned. */
+function describeRequest(workflow: string, task: CompanionRunView['task'], repository: string | undefined): string {
+  const what = task.kind === 'issue' ? `issue ${printable(task.ref, 80)}` : `"${printable(task.text, 80)}"`;
+  return `"${printable(workflow, 60)}": ${what}${repository === undefined ? '' : ` in ${printable(repository, 200)}`}`;
 }
 
 function describeTask(run: CompanionRunView): string {

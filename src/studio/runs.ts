@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,8 +17,16 @@ import type { CompanionRunView, RunStage, RunStreamRecord, RunTask, StartRunRequ
  * person types, with the workflow's shape layered over the repository's config
  * — and the companion is only its relay: every line the engine prints is kept
  * and handed to whoever is listening, verbatim. A child rather than a call:
- * a run that crashes takes itself down, not the companion, and a stopped
- * companion leaves the run to finish exactly like a terminal that was closed.
+ * a run that crashes takes itself down, not the companion.
+ *
+ * A run does not outlive the companion that started it. Each child is the
+ * head of its own process group — so the Ctrl-C that stops the companion is
+ * not also delivered to every run — and when the companion goes, `shutdown`
+ * asks each run to stop the way `relay stop` would, waits, and then ends
+ * whatever is left of the group: the engine, and the coding CLIs it started.
+ * A run nobody can watch or stop, still spending on a machine whose owner
+ * believes they quit, is the thing this prevents. If the process ends without
+ * `shutdown` having run, an `exit` hook ends the groups anyway.
  */
 
 /** How a Relay child is launched: this Node, this launcher. */
@@ -46,6 +54,16 @@ const KEEP_FIRST = 1_000;
 const KEEP_LATEST = 4_000;
 /** Finished runs still held for replay; older ones are forgotten when a new run starts. */
 const MAX_FINISHED_RUNS = 50;
+/**
+ * Runs at once when nobody says otherwise, and how many more may wait. Each
+ * run is two coding agents and a test suite, on the person's own machine and
+ * their own subscriptions: a studio (or a script in one) asking for fifty at
+ * once is refused, not obeyed.
+ */
+const DEFAULT_MAX_CONCURRENT = 2;
+const MAX_WAITING = 20;
+/** The environment variable that sets how many runs a companion on this machine runs at once. */
+export const MAX_RUNS_VARIABLE = 'RELAY_COMPANION_MAX_RUNS';
 const MAX_STDERR_CHARS = 16_000;
 const MAX_TEXT = 20_000;
 /** An issue number, `owner/repo#n`, a URL, a Linear key or a spec path. Never a flag. */
@@ -82,8 +100,10 @@ interface StudioRun {
 }
 
 export interface StudioRunsOptions {
-  /** Runs at once; the rest wait their turn, in order. Unlimited when absent. */
+  /** Runs at once; the rest wait their turn, in order. Two when absent, or what `RELAY_COMPANION_MAX_RUNS` says. */
   maxConcurrent?: number;
+  /** How many runs may wait for a slot before another is refused. */
+  maxWaiting?: number;
   /**
    * Checks out `owner/name` and answers with its root: a companion whose runs
    * each name their repository (a cloud runner). Without it every run uses
@@ -95,6 +115,59 @@ export interface StudioRunsOptions {
 }
 
 export class TaskError extends Error {}
+
+/** Too many runs are already waiting on this machine. */
+export class QueueFullError extends Error {}
+
+function defaultMaxConcurrent(env: NodeJS.ProcessEnv = process.env): number {
+  const value = Number(env[MAX_RUNS_VARIABLE]);
+  return Number.isInteger(value) && value >= 1 && value <= 64 ? value : DEFAULT_MAX_CONCURRENT;
+}
+
+/* ------------------------------------------------------------------ */
+/* Children that must not outlive this process                         */
+/* ------------------------------------------------------------------ */
+
+/** Every engine child still alive, across every `StudioRuns` in the process. */
+const liveChildren = new Set<ChildProcess>();
+let exitHooked = false;
+
+/**
+ * Ends a child and everything it started. The child leads its own process
+ * group (it is spawned detached), so on POSIX the signal goes to the group;
+ * Windows has no groups, and `taskkill /T` walks the tree instead.
+ */
+function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  try {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    else process.kill(-pid, signal);
+  } catch {
+    // Already gone, or never a group leader: try the child itself.
+    try {
+      child.kill(signal);
+    } catch {
+      // Gone.
+    }
+  }
+}
+
+function watchChild(child: ChildProcess): void {
+  liveChildren.add(child);
+  const forget = (): void => {
+    liveChildren.delete(child);
+  };
+  child.once('close', forget);
+  child.once('error', forget);
+  if (exitHooked) return;
+  exitHooked = true;
+  // The backstop for an exit nobody planned (a crash, a second Ctrl-C): only
+  // synchronous work is possible here, so the groups are signalled and left.
+  process.once('exit', () => {
+    for (const live of liveChildren) killTree(live, 'SIGTERM');
+  });
+}
 
 /**
  * Checks what the studio sent before anything is spawned. A companion that
@@ -153,6 +226,7 @@ export class StudioRuns {
   private readonly launcher: RelayLauncher;
   private readonly onChange: (view: CompanionRunView) => void;
   private readonly maxConcurrent: number;
+  private readonly maxWaiting: number;
   private readonly checkout: ((repository: string, signal: AbortSignal) => Promise<string>) | undefined;
   private readonly keep: { first: number; latest: number };
   /** Runs waiting for a slot, oldest first. */
@@ -169,7 +243,8 @@ export class StudioRuns {
     this.root = root;
     this.launcher = launcher;
     this.onChange = onChange;
-    this.maxConcurrent = options.maxConcurrent ?? Number.POSITIVE_INFINITY;
+    this.maxConcurrent = options.maxConcurrent ?? defaultMaxConcurrent();
+    this.maxWaiting = options.maxWaiting ?? MAX_WAITING;
     this.checkout = options.checkout;
     this.keep = { first: Math.max(1, options.keep?.first ?? KEEP_FIRST), latest: Math.max(2, options.keep?.latest ?? KEEP_LATEST) };
   }
@@ -182,6 +257,10 @@ export class StudioRuns {
       mergeConfig(DEFAULT_CONFIG, overlay);
     } catch (error) {
       throw new TaskError(`The workflow does not compile to a config this Relay accepts: ${errorMessage(error)}`);
+    }
+
+    if (this.occupied >= this.maxConcurrent && this.waiting.length >= this.maxWaiting) {
+      throw new QueueFullError(`This machine is already running ${this.occupied} run${this.occupied === 1 ? '' : 's'} with ${this.waiting.length} more waiting. Let some finish, or stop one, before starting another.`);
     }
 
     const id = `sr_${randomBytes(6).toString('base64url')}`;
@@ -265,6 +344,7 @@ export class StudioRuns {
       windowsHide: true,
     });
     child.stdin?.end();
+    watchChild(child);
     run.child = child;
     run.root = root;
     this.stage(run, 'running');
@@ -412,6 +492,29 @@ export class StudioRuns {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     return true;
+  }
+
+  /**
+   * Stops every run and leaves nothing behind. Each is asked to stop cleanly
+   * first (work so far stays committed on its branch); whatever has not
+   * exited by the end of the grace period has its whole process group ended,
+   * politely and then not.
+   */
+  async shutdown(graceMs = 5_000): Promise<void> {
+    const open = [...this.runs.values()].filter((run) => !run.finished);
+    if (open.length === 0) return;
+    const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+    // `cancel` waits for `relay stop` on Windows; it does not get to hold the shutdown up.
+    await Promise.race([Promise.all(open.map((run) => this.cancel(run.view.id).catch(() => false))), pause(graceMs)]);
+    await this.settled(graceMs);
+    for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+      const left = open.filter((run) => !run.finished && run.child !== null);
+      if (left.length === 0) break;
+      for (const run of left) killTree(run.child!, signal);
+      await this.settled(2_000);
+    }
+    // Runs that never got as far as a child: queued, or still checking out.
+    for (const run of open) if (!run.finished) this.finish(run, 130, 'Stopped: the companion was shut down.');
   }
 
   /**
