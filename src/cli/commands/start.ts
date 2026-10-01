@@ -90,10 +90,13 @@ export interface StartDeps {
  * One command from a fresh clone to a first run.
  *
  * The hard rule this flow is built around: Relay has no API keys, reads no
- * credentials and never sees a token. Every sign-in step below delegates to the
- * vendor's own login command with the terminal handed over, then re-asks that
- * vendor whether it worked. There is no path here that prompts for a secret,
- * and nothing it learns is written to `.relay/config.json`.
+ * model or GitHub credential and never sees one of their tokens. Every sign-in
+ * step below delegates to the vendor's own login command with the terminal
+ * handed over, then re-asks that vendor whether it worked. There is no path
+ * here that prompts for a secret, and nothing it learns is written to
+ * `.relay/config.json`. Linear's key is the stated exception — it has no CLI
+ * to delegate to — and even there this flow names the variable Relay reads
+ * and prompts for nothing.
  *
  * Each step is idempotent, so re-running is both the resume path and the repair
  * path when one dependency breaks later.
