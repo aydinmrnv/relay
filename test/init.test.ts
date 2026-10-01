@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { runInit, type InitDeps } from '../src/cli/commands/init.ts';
+import { runInit, seatInstalledAgents, type InitDeps } from '../src/cli/commands/init.ts';
 import { setTheme } from '../src/cli/output.ts';
 import type { AgentCheck } from '../src/cli/checks.ts';
 import { AGENT_REGISTRY } from '../src/agents/index.ts';
@@ -29,12 +29,17 @@ afterEach(async () => {
   await repo.cleanup();
 });
 
-/** Agent probe results, without spawning a real `claude --version`. */
-function stubAgents(available: boolean): () => Promise<AgentCheck[]> {
+/**
+ * Agent probe results, without spawning a real `claude --version`. `true` and
+ * `false` mean every registered CLI is or is not installed; a list names the
+ * ones that are.
+ */
+function stubAgents(available: boolean | readonly string[]): () => Promise<AgentCheck[]> {
+  const installed = (name: string): boolean => (typeof available === 'boolean' ? available : available.includes(name));
   return async () =>
     AGENT_REGISTRY.map((entry) => ({
       entry,
-      check: available
+      check: installed(entry.name)
         ? { label: entry.label, status: 'ok' as const, detail: `${entry.name} 1.0.0` }
         : {
             label: entry.label,
@@ -53,7 +58,7 @@ interface Session {
 
 interface FlowOptions {
   interactive?: boolean;
-  agentsAvailable?: boolean;
+  agentsAvailable?: boolean | readonly string[];
   force?: boolean;
   yes?: boolean;
 }
@@ -128,6 +133,40 @@ describe('relay init — non-interactive', () => {
 
     assert.match(output, /Some agents are unavailable\. Run `relay doctor` for details\./);
     assert.ok(!output.includes('Ready. Run'));
+  });
+
+  // The shipped defaults cross two CLIs. On a machine with one of them that is
+  // a config whose every run stops at its first turn on the other, so a new
+  // config is written for the CLIs that are actually here.
+  it('seats every role on the one CLI that is installed, and says the review is not crossed', async () => {
+    const { output, exitCode } = await runFlow([], { interactive: false, agentsAvailable: ['claude'] });
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual((await readConfig()).agents, {
+      planner: 'claude',
+      planReviewer: 'claude',
+      implementer: 'claude',
+      codeReviewer: 'claude',
+    });
+    assert.match(output, /implementer: Claude Code — codex is not installed/);
+    assert.match(output, /One agent is reviewing its own work/);
+    // Nothing a role is seated on is missing, so this machine is ready.
+    assert.match(output, /Ready\. Run/);
+    assert.ok(!output.includes('Some agents are unavailable'), output);
+  });
+
+  it('seats every role on Codex when that is the one installed', async () => {
+    await runFlow([], { interactive: false, agentsAvailable: ['codex'] });
+
+    assert.deepEqual(new Set(Object.values((await readConfig()).agents)), new Set(['codex']));
+  });
+
+  it('keeps the roles an existing config chose, whatever is installed', async () => {
+    await runFlow([], { interactive: false });
+    const { output } = await runFlow([], { interactive: false, force: true, agentsAvailable: ['claude'] });
+
+    assert.equal((await readConfig()).agents.implementer, 'codex', 'a deliberate choice is not rewritten by --force');
+    assert.match(output, /Some agents are unavailable/);
   });
 
   it('adds the run directory to .gitignore exactly once', async () => {
@@ -374,5 +413,51 @@ describe('relay init — guided', () => {
 
     assert.match(output, /already exists/);
     assert.deepEqual(prompter.asked, [], 'it must not start a flow it would refuse to land');
+  });
+});
+
+describe('seating roles on installed agents', () => {
+  function checks(installed: readonly string[], extra: AgentCheck[] = []): AgentCheck[] {
+    return [
+      ...AGENT_REGISTRY.map((entry) => ({
+        entry,
+        check: installed.includes(entry.name)
+          ? { label: entry.label, status: 'ok' as const, detail: '1.0.0' }
+          : { label: entry.label, status: 'fail' as const, detail: 'not found' },
+      })),
+      ...extra,
+    ];
+  }
+
+  async function freshConfig(): Promise<RelayConfig> {
+    return structuredClone((await import('../src/storage/config.ts')).DEFAULT_CONFIG);
+  }
+
+  it('moves nothing when every default is installed', async () => {
+    const config = await freshConfig();
+    assert.deepEqual(seatInstalledAgents(config, checks(['claude', 'codex'])), []);
+    assert.deepEqual(config.agents, { planner: 'claude', planReviewer: 'codex', implementer: 'codex', codeReviewer: 'claude' });
+  });
+
+  it('moves nothing when nothing is installed, because there is nowhere better', async () => {
+    const config = await freshConfig();
+    assert.deepEqual(seatInstalledAgents(config, checks([])), []);
+    assert.equal(config.agents.implementer, 'codex');
+  });
+
+  it('never seats a reviewer on a CLI that cannot be confined to read-only', async () => {
+    const config = await freshConfig();
+    const writeOnly: AgentCheck = {
+      entry: { ...AGENT_REGISTRY[0]!, name: 'mytool', label: 'mytool (config)', enforcesReadOnly: false },
+      check: { label: 'mytool (config)', status: 'ok', detail: '/usr/bin/mytool' },
+    };
+    // Listed first, so it would win every seat if the rule were not applied.
+    seatInstalledAgents(config, [writeOnly, ...checks(['claude'])]);
+
+    assert.equal(config.agents.planReviewer, 'claude');
+    assert.equal(config.agents.codeReviewer, 'claude');
+    // An author seat has no such rule, and takes the other tool so the review
+    // stays crossed.
+    assert.equal(config.agents.implementer, 'mytool');
   });
 });
