@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { BrandMark } from '@/components/app/brand-mark';
 import { Hero1Art, Hero1Cta } from '@/components/watermelon/hero-1';
 import { useBrand } from '@/hooks/use-brand';
+import { OPERATOR } from '@/lib/links';
 import { cn } from '@/lib/utils';
-import { AppMark, PILL, REPO_URL, Reveal, useStudioEntry } from './primitives';
+import { AppMark, PILL, REPO_URL, Reveal, useCloudOffered, useStudioEntry } from './primitives';
 
 /** The page's last word: one framed band, lit by the hero's glow, with the same two ways in. */
 export function FinalCta() {
@@ -51,6 +52,7 @@ export function FinalCta() {
 export function SiteFooter() {
   const brand = useBrand();
   const entry = useStudioEntry();
+  const cloud = useCloudOffered();
 
   const columns = [
     {
@@ -65,18 +67,24 @@ export function SiteFooter() {
     {
       title: 'Resources',
       links: [
-        { label: 'Documentation', href: '/guide' },
-        { label: 'Your computer or Relay Cloud', href: '/runners' },
+        { label: 'Guide', href: '/guide' },
+        { label: cloud ? 'Your computer or Relay Cloud' : 'Where your agents run', href: '/runners' },
         { label: 'Source on GitHub', href: REPO_URL },
         { label: 'FAQ', href: '/#faq' },
       ],
     },
     {
       title: 'Account',
-      links: [
-        { label: 'Create an account', href: '/sign-up' },
-        { label: 'Sign in', href: '/sign-in' },
-      ],
+      // Someone already signed in has no use for "Create an account".
+      links: entry.signedIn
+        ? [
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Settings', href: '/settings' },
+          ]
+        : [
+            { label: 'Create an account', href: '/sign-up' },
+            { label: 'Sign in', href: '/sign-in' },
+          ],
     },
   ];
 
@@ -107,10 +115,6 @@ export function SiteFooter() {
                         {link.label}
                         <ArrowUpRight className="size-3" />
                       </a>
-                    ) : link.href.startsWith('#') ? (
-                      <a href={link.href} className="text-sm text-muted-foreground hover:text-foreground">
-                        {link.label}
-                      </a>
                     ) : (
                       <Link href={link.href} className="text-sm text-muted-foreground hover:text-foreground">
                         {link.label}
@@ -126,7 +130,7 @@ export function SiteFooter() {
       <div className="border-t">
         <div className="container flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 py-5 text-xs text-muted-foreground">
           <p className="mr-auto">
-            © {new Date().getFullYear()} {brand.name}. Open-source orchestration for coding agents.
+            © {new Date().getFullYear()} {OPERATOR}. {brand.name} is open-source orchestration for coding agents.
           </p>
           <nav aria-label="Legal" className="flex items-center gap-5">
             <Link href="/privacy" className="hover:text-foreground">

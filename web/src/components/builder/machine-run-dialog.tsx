@@ -19,6 +19,7 @@ import { machineRunNodes } from '@/lib/companion/machine-run';
 import { repositoryLabel, type RunTask } from '@/lib/companion/types';
 import { compiledConfig } from '@/lib/run-launcher';
 import type { Workflow } from '@/lib/workflow/schema';
+import { isRepository } from '@/lib/workflow/schema';
 
 interface Props {
   workflow: Workflow;
@@ -28,7 +29,6 @@ interface Props {
   onRun: (task: RunTask, repository?: string) => void;
 }
 
-const REPOSITORY = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', aider: 'Aider' };
 
@@ -60,8 +60,8 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
   const [repository, setRepository] = useState(() => (workflow.repository !== undefined && workflow.repository !== '' ? workflow.repository : defaultRepository));
   const [waking, setWaking] = useState(false);
 
-  const host = cloudMode ? 'Relay Cloud' : (hello?.machine ?? 'your machine');
-  const repo = cloudMode ? (REPOSITORY.test(repository.trim()) ? repository.trim() : null) : repositoryLabel(hello?.repository);
+  const host = cloudMode ? 'Relay Cloud' : (hello?.machine ?? 'your computer');
+  const repo = cloudMode ? (isRepository(repository) ? repository.trim() : null) : repositoryLabel(hello?.repository);
   const nodes = machineRunNodes(workflow);
   const config = useMemo(() => {
     try {
@@ -118,7 +118,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
             className="font-mono"
             aria-invalid={repository.trim().length > 0 && repo === null ? true : undefined}
           />
-          <p className="text-xs text-muted-foreground">Checked out on your machine the first time, fetched every time after. The pull request opens here.</p>
+          <p className="text-xs text-muted-foreground">Checked out on your runner the first time, fetched every time after. The pull request opens here.</p>
         </div>
       ) : null}
       {cloudMode && !cloudReady ? (
@@ -171,7 +171,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
       ) : null}
       {mismatch ? (
         <Notice tone="warn">
-          This workflow is attached to <span className="font-mono">{workflow.repository}</span>, but your machine is in <span className="font-mono">{repo}</span>. The run happens in {repo}.
+          This workflow is attached to <span className="font-mono">{workflow.repository}</span>, but relay connect is running in <span className="font-mono">{repo}</span>. The run happens in {repo}.
         </Notice>
       ) : null}
       {signedOut.length > 0 ? (
@@ -216,8 +216,16 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
           <li>
             Delivery: {deliver === 'none' ? 'nothing is committed' : deliver === 'branch' ? 'committed to a run branch, published nowhere' : deliver === 'push' ? 'committed and pushed' : 'committed, pushed and opened as a pull request'}. A run started here never merges — that is yours to do.
           </li>
-          <li>{cap === null ? 'No per-run cap: set Max cost on the pipeline node to have the run stop itself.' : `Stops itself once it has cost more than $${cap.toFixed(2)}.`}</li>
-          <li>Guardrails decide whether an event may start a run, so a person pressing this passes over them; actions after delivery run in the exported workflow.</li>
+          <li>
+            {cap === null
+              ? 'No per-run cap: set “Stop this run above” on the pipeline node, or “Stop a run above” on a Budget gate, to have the run stop itself.'
+              : `Stops itself once it has cost more than $${cap.toFixed(2)}: the lower of the pipeline node’s limit and the Budget gate’s.`}
+          </li>
+          <li>
+            The allowlist and the daily budget decide whether an event may start a run, so a person pressing this passes over them. The app steps before and after the pipeline are not performed by this run; they are in test runs
+            and in the exported workflow.
+          </li>
+          {cloudMode ? null : <li>The first run after relay connect starts is confirmed in its terminal: it asks there, and waits two minutes for a y.</li>}
         </ul>
       </div>
 

@@ -4,8 +4,8 @@ import { defineConnector, FIELDS, PORTS, type Connector } from '../types';
 export const AGENT_OPTIONS = [
   { value: 'claude', label: 'Claude Code', description: 'Anthropic’s CLI. Reads a codebase well; the default planner and code reviewer.' },
   { value: 'codex', label: 'Codex CLI', description: 'OpenAI’s CLI. Implements inside its own sandbox; the default implementer and plan reviewer.' },
-  { value: 'gemini', label: 'Gemini CLI', description: 'Google’s CLI, added as a config harness.' },
-  { value: 'aider', label: 'Aider', description: 'Open-source pair programmer, added as a config harness. Implementation only.' },
+  { value: 'gemini', label: 'Gemini CLI', description: 'Google’s CLI. Not built in: a real run needs a harness named gemini that you add to .relay/config.json.' },
+  { value: 'aider', label: 'Aider', description: 'Open-source pair programmer. Not built in: a real run needs a harness named aider that you add to .relay/config.json. Implementation only.' },
 ];
 
 export const REVIEW_LEVEL_OPTIONS = [
@@ -85,7 +85,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'estimate',
         name: 'Estimate cost',
-        description: 'Prices the run before any agent turn, from the issue and the repository size.',
+        description: 'Prices the run before any agent turn. In a test run the price is drawn from a typical range.',
         inputs: PORTS.issueIn,
         outputs: PORTS.issueOut,
         fields: [],
@@ -114,8 +114,8 @@ export const CORE_CONNECTORS: Connector[] = [
           { id: 'refused', label: 'Refused', type: 'event' },
         ],
         fields: [
-          FIELDS.number('maxRunCostUsd', 'Max cost per run (USD)', 5, 0, 500, 0.5),
-          FIELDS.number('maxDailyCostUsd', 'Max cost per day (USD)', 25, 0, 5000, 1),
+          FIELDS.number('maxRunCostUsd', 'Stop a run above (USD)', 5, 0, 500, 0.5),
+          FIELDS.number('maxDailyCostUsd', 'Refuse new runs above, per day (USD)', 25, 0, 5000, 1),
           FIELDS.number('confirmAboveUsd', 'Ask before starting above (USD)', 10, 0, 500, 0.5),
         ],
       },
@@ -136,7 +136,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'approval',
         name: 'Human approval',
-        description: 'Pauses until a person approves in chat, on the issue, or in the dashboard.',
+        description: 'Holds the run for a person’s yes or no. In a test run the answer is played; nothing waits for a real one yet.',
         inputs: PORTS.anyIn,
         outputs: [
           { id: 'approved', label: 'Approved', type: 'any' },
@@ -267,7 +267,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'webhook',
         name: 'Incoming webhook',
-        description: 'A unique URL. POST anything to it to start the workflow.',
+        description: 'Start from any tool that can send a webhook. A test run plays a sample body; no URL is listening yet.',
         fields: [{ key: 'secret', label: 'Signing secret', type: 'secret', placeholder: 'optional' }, FIELDS.text('path', 'Path suffix', 'ticket-in')],
         sample: { method: 'POST', body: { title: 'Anything you send' } },
       },
@@ -348,7 +348,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'filter',
         name: 'Filter',
-        description: 'Continue only when the expression is true; otherwise stop quietly.',
+        description: 'Continue only when the expression is true. In a test run it always passes: the expression is not evaluated yet.',
         inputs: PORTS.anyIn,
         outputs: PORTS.eventOut,
         fields: [FIELDS.text('expression', 'Expression', 'issue.estimate <= 3', true)],
@@ -356,7 +356,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'transform',
         name: 'Transform',
-        description: 'Reshape the payload with a small JavaScript function.',
+        description: 'Reshape the payload with a small JavaScript function. In a test run the payload passes through unchanged.',
         inputs: PORTS.anyIn,
         outputs: PORTS.eventOut,
         fields: [{ key: 'code', label: 'Function body', type: 'textarea', default: 'return { ...input, title: input.title.trim() };' }],

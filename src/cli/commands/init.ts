@@ -110,20 +110,25 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<num
   }
 
   const config = structuredClone(alreadyConfigured ? existing : DEFAULT_CONFIG);
+  // A config that already exists records somebody's choices and keeps them. A
+  // new one is being written from what is detected, and what is detected
+  // includes which CLIs are on this machine.
+  const fresh = !alreadyConfigured;
 
   // `--yes` and `--json` force the scripted path even on a TTY; everywhere else
   // the prompter has already decided from stdin and the theme.
   if (json) {
+    if (fresh) seatInstalledAgents(config, await deps.checkAgents(config));
     await writeConfig(repo.root, config);
     await ensureGitignore(repo.root);
     return reportConfig(repo, path, config, deps, { written: true });
   }
   if (options.yes === true || !deps.prompter.interactive) {
-    return writeDetectedConfig(repo, path, config, deps);
+    return writeDetectedConfig(repo, path, config, deps, fresh);
   }
 
   try {
-    return await guidedInit(repo, path, config, deps);
+    return await guidedInit(repo, path, config, deps, fresh);
   } catch (error) {
     if (!isPromptCancelled(error)) throw error;
     out();
@@ -131,6 +136,69 @@ export async function runInit(options: InitOptions, deps: InitDeps): Promise<num
     return EXIT.cancelled;
   } finally {
     deps.prompter.close();
+  }
+}
+
+/**
+ * Puts every role on a CLI that is actually installed.
+ *
+ * The shipped defaults cross Claude Code and Codex, which is the right answer
+ * for a machine that has both and a config that cannot run on a machine that
+ * has one: every run would stop at its first Codex turn. So a role whose
+ * default is missing moves to a CLI that is here, keeping the review on the
+ * other model wherever there still is another one. With a single CLI installed
+ * every role lands on it — a self-reviewed run, which is said out loud, and
+ * which is still a run.
+ *
+ * Nothing moves when no CLI is installed at all: there is nothing better to
+ * write, and the missing ones are reported either way. Returns one line per
+ * role it moved, for the caller to print.
+ */
+export function seatInstalledAgents(config: RelayConfig, agents: readonly AgentCheck[]): string[] {
+  const installed = agents.filter(({ check }) => check.status === 'ok').map(({ entry }) => entry);
+  if (installed.length === 0) return [];
+
+  const has = (name: string): boolean => installed.some((entry) => entry.name === name);
+  const counterpart: Record<Role, Role> = {
+    planner: 'planReviewer',
+    planReviewer: 'planner',
+    implementer: 'codeReviewer',
+    codeReviewer: 'implementer',
+  };
+
+  const moved: string[] = [];
+  // Authors first, so each reviewer is chosen knowing whose work it reads.
+  for (const role of ['planner', 'implementer', 'planReviewer', 'codeReviewer'] as const) {
+    if (has(config.agents[role])) continue;
+    const reviews = (REVIEW_ROLES as readonly Role[]).includes(role);
+    const candidates = installed.filter((entry) => !reviews || entry.enforcesReadOnly !== false);
+    const other = config.agents[counterpart[role]];
+    const choice = candidates.find((entry) => entry.name !== other) ?? candidates[0];
+    if (choice === undefined) continue;
+    moved.push(`${roleLabel(role)}: ${choice.label} — ${config.agents[role]} is not installed`);
+    config.agents[role] = choice.name;
+  }
+  return moved;
+}
+
+/** Says which roles `seatInstalledAgents` moved, and what that costs the review. */
+function reportReseating(config: RelayConfig, reseated: readonly string[]): void {
+  if (reseated.length === 0) return;
+  for (const line of reseated) out(dim(`  ${line}`));
+  if (config.agents.planner === config.agents.planReviewer || config.agents.implementer === config.agents.codeReviewer) {
+    // What to do about it has to be something that works. `relay init --force`
+    // keeps the roles a config already has — that is what "never loses a
+    // deliberate choice" means — so on its own, or with `--yes`, it changes
+    // nothing here. What crosses the roles is choosing: at the prompts, which
+    // need a terminal, or in the file.
+    out(warning('  One agent is reviewing its own work.'));
+    out(
+      dim(
+        '  To cross them, install a second CLI and give it the review roles: `relay init --force` asks\n' +
+          '  which agent takes each role when run on a terminal, or set agents.planReviewer and\n' +
+          '  agents.codeReviewer in .relay/config.json.',
+      ),
+    );
   }
 }
 
@@ -187,7 +255,10 @@ async function writeDetectedConfig(
   path: string,
   config: RelayConfig,
   deps: InitDeps,
+  fresh: boolean,
 ): Promise<number> {
+  const agents = await deps.checkAgents(config);
+  const reseated = fresh ? seatInstalledAgents(config, agents) : [];
   await writeConfig(repo.root, config);
   await ensureGitignore(repo.root);
 
@@ -198,19 +269,22 @@ async function writeDetectedConfig(
   out(`  Base branch ${repo.defaultBranch}`);
 
   out(`  Review      ${reviewLevelOf(config)} ${dim(`(${describeReview(config.workflow)})`)}`);
+  reportReseating(config, reseated);
 
   const discovery = await discoverTestCommand(repo.root, null);
   out(`  Tests       ${discovery.found ? discovery.command.command.join(' ') : dim(`none detected (${discovery.reason})`)}`);
   await reportProjectContext(repo.root);
 
-  const agents = await deps.checkAgents(config);
   const labelWidth = Math.max(11, ...agents.map(({ entry }) => entry.label.length));
   for (const { entry, check } of agents) {
     out(`  ${entry.label.padEnd(labelWidth)} ${check.status === 'ok' ? check.detail : warning(check.detail)}`);
   }
 
   out();
-  if (agents.some(({ check }) => check.status !== 'ok')) {
+  // Only a CLI a role is seated on can stop a run. One that is merely absent
+  // is worth a line above and nothing more.
+  const seated = new Set<string>(Object.values(config.agents));
+  if (agents.some(({ entry, check }) => check.status !== 'ok' && seated.has(entry.name))) {
     out(warning('Some agents are unavailable. Run `relay doctor` for details.'));
   } else {
     out(success('Ready. Run `relay run <issue-number>` to start.'));
@@ -219,13 +293,21 @@ async function writeDetectedConfig(
 }
 
 /** The five steps of the interactive flow: detect, check, assign, explain, land. */
-async function guidedInit(repo: RepositoryInfo, path: string, config: RelayConfig, deps: InitDeps): Promise<number> {
+async function guidedInit(
+  repo: RepositoryInfo,
+  path: string,
+  config: RelayConfig,
+  deps: InitDeps,
+  fresh: boolean,
+): Promise<number> {
   heading('Relay setup');
   out(dim('Every question has a default — press Enter to accept it.'));
 
   await confirmDetection(repo, config, deps.prompter);
   const agents = await confirmAgents(deps, config);
-  await assignRoles(config, agents, deps.prompter);
+  // After the re-check, so a CLI installed while it waited is a seat too.
+  const reseated = fresh && seatInstalledAgents(config, agents).length > 0;
+  await assignRoles(config, agents, deps.prompter, reseated);
   await chooseReviewDepth(config, deps.prompter);
   explainRun(config);
 
@@ -248,7 +330,8 @@ async function guidedInit(repo: RepositoryInfo, path: string, config: RelayConfi
   ]);
 
   out();
-  if (agents.some(({ check }) => check.status !== 'ok')) {
+  const seated = new Set<string>(Object.values(config.agents));
+  if (agents.some(({ entry, check }) => check.status !== 'ok' && seated.has(entry.name))) {
     out(warning('Some agents are still unavailable — `relay doctor` explains each one.'));
     out();
   }
@@ -324,11 +407,20 @@ async function confirmAgents(deps: InitDeps, config: RelayConfig): Promise<Agent
 }
 
 /** Step 3 — the one question that actually shapes the workflow. */
-async function assignRoles(config: RelayConfig, agents: AgentCheck[], prompter: PromptSession): Promise<void> {
+async function assignRoles(
+  config: RelayConfig,
+  agents: AgentCheck[],
+  prompter: PromptSession,
+  reseated = false,
+): Promise<void> {
   section('3. Roles');
   out(dim('  A plan reviewed by the model that wrote it is a plan nobody checked.'));
   out(dim('  Relay is built around each agent attacking the other\'s work, so keep'));
   out(dim('  the planner and the plan reviewer on different models.'));
+  if (reseated) {
+    out();
+    out(dim('  Not every CLI is installed, so the defaults below use only the ones that are.'));
+  }
 
   const choiceFor = ({ entry, check }: AgentCheck): Choice<string> => {
     const hints: string[] = [];

@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   DEFAULT_AGENT_PAIR,
@@ -662,6 +663,24 @@ test('the published table names the models it was produced with', async () => {
   assert.match(empty, /No session has been recorded yet/);
   assert.doesNotMatch(empty, /\| *0% *\|/);
   assert.doesNotMatch(empty, /95% CI/);
+  // And it says what that means for the claim, in so many words: it has not
+  // been measured, so nothing may be quoted from here as if it had.
+  assert.match(empty, /the claim\s+is the hypothesis the design rests on and not a result/);
+  assert.match(empty, /none has been measured/);
+});
+
+// The file in the repository is this function's output. While no session has
+// been recorded it must be exactly the empty report — not a hand-edited table,
+// and not numbers nobody ran.
+test('the committed results file is the report for the sessions that exist', async () => {
+  const resultsDir = fileURLToPath(new URL('../eval/results/', import.meta.url));
+  const sessions = await readdir(join(resultsDir, 'runs')).catch(() => [] as string[]);
+  const committed = (await readFile(join(resultsDir, 'RESULTS.md'), 'utf8')).replace(/\r\n/g, '\n');
+  if (sessions.filter((name) => name.endsWith('.json')).length === 0) {
+    assert.equal(committed, renderResultsMarkdown([]));
+  } else {
+    assert.doesNotMatch(committed, /No session has been recorded yet/);
+  }
 });
 
 test('sessions accumulate in the results directory rather than replacing each other', async () => {

@@ -1,14 +1,15 @@
 import { buildProgram } from './cli/program.ts';
 import { exitCodeFor, isCommanderError } from './cli/exit.ts';
 import { reportError } from './cli/output.ts';
-import { packageVersion } from './update/installation.ts';
+import { buildVersion } from './update/installation.ts';
 import { adoptConfigOverlay } from './storage/config.ts';
 
 async function main(): Promise<void> {
   adoptConfigOverlay();
   let version = 'unknown';
   try {
-    version = await packageVersion();
+    // The version and, for a packed copy, the commit it was built from.
+    version = await buildVersion();
   } catch {
     // A damaged installation should still be able to print help and diagnostics.
   }

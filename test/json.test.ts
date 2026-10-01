@@ -330,6 +330,50 @@ describe('stdout carries the JSON and nothing else', () => {
     assert.ok(!result.stdout.includes('No events recorded'));
   });
 
+  // The promise is that stdout carries the document. A command that failed
+  // used to keep the other half of it — nothing but JSON — by printing nothing
+  // at all, which a pipe cannot tell from a command that has not answered yet.
+  it('reports a failure as a document on stdout, and as prose on stderr', async () => {
+    const exitCode = process.exitCode;
+    try {
+      const captured = await captureStreams(async () => {
+        await buildProgram('test').parseAsync(['node', 'relay', 'status', 'no-such-run', '--json']);
+        return Number(process.exitCode);
+      });
+
+      assert.equal(captured.code, EXIT.error);
+      const lines = captured.stdout.trim().split('\n');
+      assert.equal(lines.length, 1, 'one line, so it parses as a document and as the last record of a stream');
+      const document = documentOf(lines[0] ?? '', 'status');
+      assert.equal(document['type'], 'error');
+      assert.equal(document['exitCode'], EXIT.error);
+      const error = document['error'] as { code: string; message: string; hint: string | null };
+      assert.equal(error.code, 'RUN_NOT_FOUND');
+      assert.equal(error.message, 'No runs found in this repository.');
+      assert.equal(error.hint, 'Start one with `relay run <issue>`.');
+      // The person reading the log still gets the sentence.
+      assert.match(captured.stderr, /No runs found in this repository\./);
+      assert.ok(!captured.stdout.includes('\u001B['), 'no colour reaches the document');
+    } finally {
+      process.exitCode = exitCode;
+    }
+  });
+
+  it('says nothing on stdout when a command fails without --json', async () => {
+    const exitCode = process.exitCode;
+    try {
+      const captured = await captureStreams(async () => {
+        await buildProgram('test').parseAsync(['node', 'relay', 'status', 'no-such-run']);
+        return Number(process.exitCode);
+      });
+      assert.equal(captured.code, EXIT.error);
+      assert.equal(captured.stdout, '');
+      assert.match(captured.stderr, /No runs found in this repository\./);
+    } finally {
+      process.exitCode = exitCode;
+    }
+  });
+
   it('leaves the human path writing to stdout, which is where a person reads it', async () => {
     const state = runState(repo.root);
     await persist(state);
@@ -370,6 +414,37 @@ describe('exit codes', () => {
 
     assert.ok(error !== undefined, 'an unknown option must not be silently accepted');
     assert.equal(exitCodeFor(error), EXIT.usage);
+  });
+
+  it('2 — a flag Relay had to read to reject is a usage error too', () => {
+    // Commander can only see that a flag exists. `--max-cost banana` parses,
+    // and it is Relay that refuses it — as the same kind of mistake.
+    assert.equal(exitCodeFor(new RelayError('--max-cost must be a positive number.', { code: 'BAD_FLAG' })), EXIT.usage);
+    assert.equal(exitCodeFor(new RelayError('Nothing to work on.', { code: 'NO_ISSUE_REF' })), EXIT.usage);
+  });
+
+  it('2 — a mistyped command gets a suggestion, not fifty lines of help', async () => {
+    const exitCode = process.exitCode;
+    try {
+      const captured = await captureStreams(async () => {
+        await buildProgram('test').parseAsync(['node', 'relay', 'statsu']);
+        return Number(process.exitCode);
+      });
+      assert.equal(captured.code, EXIT.usage);
+      assert.match(captured.stderr, /error: unknown command 'statsu'\n\(Did you mean stats\?\)/);
+      assert.match(captured.stderr, /--help/);
+      assert.doesNotMatch(captured.stderr, /Usage: relay/, 'the whole help was printed after the error');
+      assert.ok(captured.stderr.trim().split('\n').length <= 4, captured.stderr);
+
+      // Nothing close to it, so nothing is suggested.
+      const far = await captureStreams(async () => {
+        await buildProgram('test').parseAsync(['node', 'relay', 'xylophone']);
+        return Number(process.exitCode);
+      });
+      assert.doesNotMatch(far.stderr, /Did you mean/);
+    } finally {
+      process.exitCode = exitCode;
+    }
   });
 
   it('2 — but not for the throw that only reports that help was printed', () => {

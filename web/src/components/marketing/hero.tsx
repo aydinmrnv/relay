@@ -7,13 +7,14 @@ import { LiquidGlass } from '@/components/glass/liquid-glass';
 import { Hero1Art, Hero1Cta, useHero1Stagger } from '@/components/watermelon/hero-1';
 import { useBrand } from '@/hooks/use-brand';
 import { PipelinePreview } from './pipeline-preview';
-import { REPO_URL, useStudioEntry } from './primitives';
+import { REPO_URL, useCloudOffered, useStudioEntry } from './primitives';
 
 export function Hero() {
   const brand = useBrand();
   const entry = useStudioEntry();
   const { container, item, initial } = useHero1Stagger();
-  const trust = [`Runs on your computer or in ${brand.name} Cloud`, 'Uses the AI plans you already pay for', 'Free to start'];
+  const cloud = useCloudOffered();
+  const trust = [cloud ? `Runs on your computer or in ${brand.name} Cloud` : 'Runs on your own computer or CI', 'Uses the AI plans you already pay for', 'Free while in beta'];
   return (
     <section id="top" className="relative isolate overflow-hidden">
       <div className="relative">
@@ -23,19 +24,21 @@ export function Hero() {
           className="absolute right-0 -bottom-40 -z-10 h-[calc(100%+10rem)] w-full mask-[linear-gradient(to_bottom,black_70%,transparent)] md:w-[72%]"
         />
         <motion.div variants={container} initial={initial} animate="visible" className="container max-w-6xl pt-28 pb-12 sm:pt-36 sm:pb-16">
-          <motion.div variants={item}>
-            <Link
-              href="/runners"
-              className="group inline-flex items-center gap-2.5 rounded-full border bg-card/70 py-1 pr-3 pl-1 text-[13px] shadow-panel backdrop-blur-sm transition-colors outline-none hover:border-foreground/25 focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              <span className="rounded-full bg-foreground px-2 py-0.5 text-[11px] font-medium text-background">New</span>
-              <span className="text-muted-foreground">
-                <span className="font-medium text-foreground">{brand.name} Cloud</span>
-                <span className="hidden sm:inline"> · your agents keep working with the laptop shut</span>
-              </span>
-              <ArrowRight className="size-3.5 text-muted-foreground transition-transform duration-300 group-hover:translate-x-0.5" />
-            </Link>
-          </motion.div>
+          {cloud ? (
+            <motion.div variants={item}>
+              <Link
+                href="/runners"
+                className="group inline-flex items-center gap-2.5 rounded-full border bg-card/70 py-1 pr-3 pl-1 text-[13px] shadow-panel backdrop-blur-sm transition-colors outline-none hover:border-foreground/25 focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <span className="rounded-full bg-foreground px-2 py-0.5 text-[11px] font-medium text-background">Invite-only beta</span>
+                <span className="text-muted-foreground">
+                  <span className="font-medium text-foreground">{brand.name} Cloud</span>
+                  <span className="hidden sm:inline"> · your agents keep working with the laptop shut</span>
+                </span>
+                <ArrowRight className="size-3.5 text-muted-foreground transition-transform duration-300 group-hover:translate-x-0.5" />
+              </Link>
+            </motion.div>
+          ) : null}
           <motion.h1
             variants={item}
             className="mt-5 max-w-4xl text-[clamp(2.5rem,9vw,5.25rem)] leading-[1.02] font-semibold tracking-[-0.045em] text-balance"
@@ -55,7 +58,7 @@ export function Hero() {
                 href="/guide"
                 className="inline-flex h-11 items-center rounded-full px-5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
-                Read the docs
+                Read the guide
               </Link>
             </LiquidGlass>
           </motion.div>
@@ -78,7 +81,7 @@ export function Hero() {
       <div className="container max-w-6xl pb-16 sm:pb-24">
         <PipelinePreview />
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-          A sample workflow, step by step. Run it on your own computer, or on a machine Relay makes for you.
+          A sample workflow, step by step. {cloud ? 'Run it on your own computer, or on a machine Relay makes for you.' : 'Run it on your own computer, or export it to your repository’s CI.'}
         </p>
       </div>
     </section>

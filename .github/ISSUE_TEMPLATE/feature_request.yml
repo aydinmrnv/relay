@@ -1,0 +1,32 @@
+name: Feature request
+description: Something Relay does not do yet.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The work itself, rather than the feature. "I want to run Relay on issues from Jira" says more than "add a provider flag".
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today instead
+      description: A workaround, another tool, or nothing at all.
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like Relay to do
+      description: If you have a shape in mind — a flag, a config key, a node in the studio — say so. If not, leave it.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Which part of Relay
+      multiple: true
+      options:
+        - The CLI and the pipeline
+        - Unattended runs and the GitHub Action
+        - The studio
+        - Relay Cloud
+        - Documentation

@@ -19,6 +19,10 @@ export function detectTheme(
   const isCI = env['CI'] !== undefined && env['CI'] !== '' && env['CI'] !== '0' && env['CI'] !== 'false';
   const isDumb = env['TERM'] === 'dumb';
   const isTTY = stream.isTTY === true;
+  // A switch somebody set to off is off. `RELAY_ASCII=0` used to force ASCII,
+  // because only the variable's presence was looked at.
+  const ascii = env['RELAY_ASCII'];
+  const asciiOnly = ascii !== undefined && ascii !== '' && ascii !== '0' && ascii.toLowerCase() !== 'false';
 
   // On Windows a TTY does not imply escape sequences are safe. The terminals
   // that handle ANSI — Windows Terminal, VS Code, ConEmu, ANSICON, the
@@ -38,7 +42,7 @@ export function detectTheme(
     // CI turns colour off even on an allocated TTY: the output's real reader is
     // a stored log, and an escape sequence in a log is noise nobody asked for.
     color: !noColor && !isDumb && !isCI && isTTY && ansiCapable,
-    unicode: env['RELAY_ASCII'] === undefined && !isDumb && ansiCapable,
+    unicode: !asciiOnly && !isDumb && ansiCapable,
     interactive: isTTY && !isCI && !isDumb && ansiCapable,
   };
 }

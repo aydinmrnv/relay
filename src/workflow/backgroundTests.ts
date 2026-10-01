@@ -2,6 +2,7 @@ import { errorMessage, RelayError } from '../util/errors.ts';
 import { discoverTestCommand, type DiscoveryResult } from '../testing/discovery.ts';
 import { runTests, type TestExecution } from '../testing/runner.ts';
 import type { EngineContext } from './context.ts';
+import { unattendedEnvironment } from '../unattended/environment.ts';
 
 /** A discovery result plus, when a command was found and run, its execution. */
 export interface TestAttempt {
@@ -41,10 +42,15 @@ export async function performTests(context: EngineContext, signal: AbortSignal, 
 
   context.observer.testStatus({ phase: 'running', concurrent, detail: discovery.command.command.join(' ') });
 
+  // The suite runs code an agent has just written, so on a run nobody is
+  // watching it is given no more of the environment than the agent was — and
+  // none of the agents' own sign-ins, which are no business of a test.
+  const withheld = unattendedEnvironment(state);
   const execution = await runTests(discovery.command, {
     cwd: discovery.command.directory ?? workspace.path,
     timeoutMs: state.config.timeouts.testsMs,
     signal,
+    ...(withheld === undefined ? {} : { env: withheld.env }),
   });
 
   return { discovery, execution, concurrent };

@@ -20,7 +20,6 @@ import { useAgentsStore, useSignedIn } from '@/hooks/use-agent-accounts';
 import { useBrand } from '@/hooks/use-brand';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { useNow } from '@/hooks/use-now';
-import { DEFAULT_BRAND } from '@/lib/brand';
 import { CONNECTORS, getConnector } from '@/lib/connectors';
 import { connectionState } from '@/lib/connectors/connection-state';
 import { CREDENTIAL_SPECS } from '@/lib/connectors/credentials';
@@ -54,9 +53,10 @@ export default function DashboardPage() {
   // ten idle minutes, and a checklist that un-ticks itself every night would be
   // telling the truth about the wrong thing.
   const cloudChosen = cloud !== null && cloud.state !== 'none' && cloud.state !== 'failed';
-  const runnerLabel = machine !== null ? (machine.machine ?? 'your machine') : target === 'cloud' ? 'Relay Cloud' : 'your machine';
+  const runnerLabel = machine !== null ? (machine.machine ?? 'your computer') : target === 'cloud' ? 'Relay Cloud' : 'your runner';
   const signedIn = useSignedIn();
   const accounts = useCapabilities().enabled;
+  const cloudOffered = useCapabilities().cloudHub != null;
   const account = useAccount((state) => (state.status === 'signed-in' ? state.user : null));
   const onboarded = useAccount((state) => state.onboardedAt !== null);
 
@@ -115,13 +115,15 @@ export default function DashboardPage() {
     {
       id: 'machine',
       title: 'Choose where your agents run',
-      why: 'Your coding agents run somewhere: on your own computer through relay connect, or on a machine Relay runs for you in Relay Cloud. Both use your Claude and ChatGPT plans, and test runs stay free either way.',
+      why: cloudOffered
+        ? 'Your coding agents run somewhere: on your own computer through relay connect, or on a machine Relay runs for you in Relay Cloud. Both use your Claude and ChatGPT plans, and test runs stay free either way.'
+        : 'Your coding agents run on your own computer, through relay connect, with your Claude and ChatGPT plans. Test runs stay free either way.',
       done: machine !== null || cloudChosen,
       doneNote:
         machine !== null
-          ? `Connected to ${machine.machine ?? 'your machine'}${repositoryLabel(machine.repository) === null ? '' : `, in ${repositoryLabel(machine.repository)}`}.`
+          ? `Connected to ${machine.machine ?? 'your computer'}${repositoryLabel(machine.repository) === null ? '' : `, in ${repositoryLabel(machine.repository)}`}.`
           : 'Sign-ins and runs go to Relay Cloud, which wakes when you need it and sleeps when it is idle.',
-      action: { label: 'Compare the two runners', href: '/runners' },
+      action: { label: cloudOffered ? 'Compare the two runners' : 'Where your agents run', href: '/runners' },
       extra: { label: 'Connect your computer', href: '/connect' },
     },
     {
@@ -166,15 +168,6 @@ export default function DashboardPage() {
       doneNote: exported === undefined ? '' : `${exported.name} was exported.`,
       action: exportTarget === undefined ? null : { label: 'Open in the builder', href: `/workflows/${exportTarget.id}` },
     },
-    {
-      id: 'rename',
-      title: 'Name the product',
-      why: `“${DEFAULT_BRAND.name}” is a working title. Rename it once in Settings and every screen, branch prefix and exported file follows.`,
-      done: brand.name !== DEFAULT_BRAND.name,
-      doneNote: `It is called ${brand.name} now.`,
-      optional: true,
-      action: { label: 'Rename', href: '/settings#general' },
-    },
   ];
   const setupComplete = steps.every((step) => step.done || step.optional === true);
   const showChecklist = hydrated && !checklistDismissed && !setupComplete;
@@ -217,14 +210,16 @@ export default function DashboardPage() {
             successRate={week.successRate}
             finished={week.finished}
             spend={week.spend}
-            connected={connected}
+            realSpend={week.realSpend}
+            // Connected means the app accepted a credential. A marker is a label, counted in the line under the number.
+            connected={tally.verified}
             connections={tally}
-            catalog={CONNECTORS.length}
+            catalog={CONNECTORS.filter((connector) => connector.category !== 'core').length}
           />
 
           <FadeIn delay={0.08} className="grid items-stretch gap-6 lg:grid-cols-3">
             <ActivityChart days={days} className="lg:col-span-2" />
-            <SpendCard today={today} ceiling={ceiling} rows={spend.rows} other={spend.other} weekTotal={spend.total} />
+            <SpendCard today={today.total} todayReal={today.real} ceiling={ceiling} rows={spend.rows} other={spend.other} weekTotal={spend.total} weekReal={spend.real} />
           </FadeIn>
 
           <FadeIn delay={0.12} className="grid items-stretch gap-6 lg:grid-cols-3">

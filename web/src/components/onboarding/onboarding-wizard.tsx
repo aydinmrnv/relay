@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -35,12 +35,12 @@ import { DescribeWorkflowComposer } from '@/components/workflows/describe-workfl
 import { CopyButton } from '@/components/runs/copy-button';
 import { useBrand } from '@/hooks/use-brand';
 import { useUser as useClerkUser } from '@clerk/nextjs';
-import { useAccount } from '@/lib/cloud/account';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { api, importableGuestWorkflows, importGuestWorkflows, readGuestBackup } from '@/lib/cloud/sync';
 import type { OnboardingAnswers } from '@/lib/cloud/types';
 import { useStudio } from '@/lib/store';
 import { workflowFromDescription } from '@/lib/workflow/from-description';
-import type { Workflow } from '@/lib/workflow/schema';
+import { isRepository, type Workflow } from '@/lib/workflow/schema';
 import { blankWorkflow, instantiateTemplate, TEMPLATES } from '@/lib/workflow/templates';
 import { cn } from '@/lib/utils';
 import { INSTALL_COMMAND } from '@/components/companion/machine-card';
@@ -75,9 +75,9 @@ const DESTINATIONS: Array<{ id: string; app: string; label: string; phrase: stri
 ];
 
 const AGENTS: Array<{ id: AgentChoice; title: string; body: string; badge?: string; marks: string[] }> = [
-  { id: 'both', title: 'Claude Code and Codex', body: 'Each reviews the other’s plan and diff. Nothing grades its own homework.', badge: 'Recommended', marks: ['claude-code', 'codex-cli'] },
-  { id: 'claude', title: 'Claude Code only', body: 'One Claude plan does everything. Reviews are by a fresh, read-only session.', marks: ['claude-code'] },
-  { id: 'codex', title: 'Codex only', body: 'One ChatGPT plan does everything. Reviews are by a fresh, read-only session.', marks: ['codex-cli'] },
+  { id: 'both', title: 'Claude Code and Codex', body: 'Each reviews the other’s plan and diff. Nothing grades its own homework.', badge: 'Recommended', marks: ['claude', 'codex'] },
+  { id: 'claude', title: 'Claude Code only', body: 'One Claude plan does everything. Reviews are by a fresh, read-only session.', marks: ['claude'] },
+  { id: 'codex', title: 'Codex only', body: 'One ChatGPT plan does everything. Reviews are by a fresh, read-only session.', marks: ['codex'] },
 ];
 
 const REVIEWS: Array<{ id: Review; title: string; body: string }> = [
@@ -87,6 +87,31 @@ const REVIEWS: Array<{ id: Review; title: string; body: string }> = [
 ];
 
 const STEPS = ['About you', 'Your tools', 'Your agents', 'First workflow', 'Ready'] as const;
+
+const DRAFT_KEY = 'relay:onboarding';
+
+interface Draft {
+  step?: number;
+  name?: string | null;
+  role?: Role | null;
+  sources?: string[];
+  destinations?: string[];
+  agents?: AgentChoice;
+  review?: Review;
+  repository?: string | null;
+  choice?: string;
+}
+
+function readDraft(): Draft {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.sessionStorage.getItem(DRAFT_KEY);
+    const parsed: unknown = raw === null ? null : JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Draft) : {};
+  } catch {
+    return {};
+  }
+}
 
 type Pick = { kind: 'made'; workflow: Workflow } | { kind: 'template'; id: string; workflow: Workflow } | { kind: 'describe'; workflow: Workflow | null } | { kind: 'blank'; workflow: Workflow };
 
@@ -99,25 +124,55 @@ export function OnboardingWizard() {
   const { user: clerkUser } = useClerkUser();
   const savedRepository = useStudio((state) => state.settings.defaultRepository);
 
-  const [step, setStep] = useState(0);
+  // The answers so far, kept for this tab: the browser's Back button, a
+  // reload or a detour to the docs must not throw them away.
+  const [draft] = useState(readDraft);
+  const [step, setStep] = useState(() => Math.min(3, draft.step ?? 0));
   const [direction, setDirection] = useState(1);
-  const [name, setName] = useState<string | null>(null);
-  const [role, setRole] = useState<Role | null>(null);
-  const [sources, setSources] = useState<string[]>([]);
-  const [destinations, setDestinations] = useState<string[]>(['slack']);
-  const [agents, setAgents] = useState<AgentChoice>('both');
-  const [review, setReview] = useState<Review>('standard');
-  const [repository, setRepository] = useState<string | null>(null);
-  const [choice, setChoice] = useState<'made' | 'describe' | 'blank' | string>('made');
+  const [name, setName] = useState<string | null>(draft.name ?? null);
+  const [role, setRole] = useState<Role | null>(draft.role ?? null);
+  const [sources, setSources] = useState<string[]>(draft.sources ?? []);
+  const [destinations, setDestinations] = useState<string[]>(draft.destinations ?? ['slack']);
+  const [agents, setAgents] = useState<AgentChoice>(draft.agents ?? 'both');
+  const [review, setReview] = useState<Review>(draft.review ?? 'standard');
+  const [repository, setRepository] = useState<string | null>(draft.repository ?? null);
+  const [choice, setChoice] = useState<'made' | 'describe' | 'blank' | string>(draft.choice ?? 'made');
   const [described, setDescribed] = useState<{ text: string; workflow: Workflow | null }>({ text: '', workflow: null });
   const [importIds, setImportIds] = useState<Set<string> | null>(null);
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState<Workflow | null>(null);
 
+  useEffect(() => {
+    try {
+      // The last screen is the result, not a step to come back to.
+      if (step >= 4) window.sessionStorage.removeItem(DRAFT_KEY);
+      else window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ step, name, role, sources, destinations, agents, review, repository, choice } satisfies Draft));
+    } catch {
+      // No session storage: the answers last as long as the page does.
+    }
+  }, [step, name, role, sources, destinations, agents, review, repository, choice]);
+
+  // Each step is an entry in the tab's history, so Back goes to the step before, not out of the wizard.
+  useEffect(() => {
+    const onPop = (event: PopStateEvent) => {
+      const target = typeof (event.state as { step?: unknown } | null)?.step === 'number' ? (event.state as { step: number }).step : 0;
+      setStep((current) => {
+        // The finished screen has no way back into the questions: the workflow exists by then.
+        if (current >= 4) return current;
+        setDirection(target > current ? 1 : -1);
+        return Math.max(0, Math.min(3, target));
+      });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   const displayName = name ?? user?.name ?? '';
-  const repo = repository ?? (savedRepository === 'acme/api' ? '' : savedRepository);
-  const repoValid = repo.trim().length === 0 || /^[\w.-]+\/[\w.-]+$/.test(repo.trim());
-  const effectiveRepo = repo.trim().length > 0 ? repo.trim() : 'your-org/your-repo';
+  const repo = repository ?? savedRepository;
+  // The same rule as Settings and the run dialog: one answer to "is this a repository" everywhere.
+  const repoValid = repo.trim().length === 0 || isRepository(repo);
+  // Empty when none was given: a made-up repository on a real workflow is one somebody would run against.
+  const effectiveRepo = repo.trim();
 
   const inAccount = useStudio((state) => state.workflows);
   // Read once the account has loaded: signing in (GitHub's redirect included) sets the guest's work aside first.
@@ -151,6 +206,7 @@ export function OnboardingWizard() {
   const go = (next: number) => {
     setDirection(next > step ? 1 : -1);
     setStep(next);
+    if (next > step) window.history.pushState({ step: next }, '');
   };
 
   const canContinue = step === 0 ? displayName.trim().length > 0 : step === 2 ? repoValid : step === 3 ? pick !== null && pick.workflow !== null : true;
@@ -419,8 +475,8 @@ export function OnboardingWizard() {
 }
 
 function Ready({ workflow, onOpen }: { workflow: Workflow; onOpen: () => void }) {
-  const brand = useBrand();
-  const command = `${INSTALL_COMMAND} && ${brand.slug} connect`;
+  const cloud = useCapabilities().cloudHub != null;
+  const command = `${INSTALL_COMMAND} && relay connect`;
   return (
     <div className="flex flex-col items-center gap-8 text-center">
       <motion.span initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 260, damping: 18 }} className="flex size-14 items-center justify-center rounded-2xl bg-success/15 text-success">
@@ -441,15 +497,15 @@ function Ready({ workflow, onOpen }: { workflow: Workflow; onOpen: () => void })
           <Laptop className="size-4 text-muted-foreground" /> Optional: run it for real
         </p>
         <p className="text-xs text-pretty text-muted-foreground">
-          A run happens on a runner. Pair your own computer with relay connect and it works in your repository, on your toolchain; or use Relay Cloud and Relay makes a machine for you, with nothing to install. Either way the
-          agents use your plans and the pull request opens as you.
+          A run happens on a runner. Pair your own computer with relay connect and it works in your repository, on your toolchain
+          {cloud ? '; or use Relay Cloud, an invite-only beta, and Relay makes a machine for you, with nothing to install. Either way the' : '. The'} agents use your plans and the pull request opens as you.
         </p>
         <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 font-mono text-xs">
           <span className="flex-1 truncate">{command}</span>
           <CopyButton value={command} />
         </div>
         <Link href="/runners" className="inline-flex w-fit items-center gap-1 text-xs font-medium text-signal underline-offset-4 hover:underline">
-          Compare your computer and Relay Cloud <ArrowRight className="size-3" aria-hidden />
+          {cloud ? 'Compare your computer and Relay Cloud' : 'Where your agents run'} <ArrowRight className="size-3" aria-hidden />
         </Link>
       </div>
     </div>

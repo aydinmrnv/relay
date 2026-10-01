@@ -6,7 +6,7 @@ import { listRuns } from '../../storage/runs.ts';
 import { isTerminal } from '../../workflow/phases.ts';
 import { createCliContext } from '../context.ts';
 import { emitJson } from '../json.ts';
-import { out } from '../output.ts';
+import { hint, out } from '../output.ts';
 import type { CleanResult } from '../cleanJson.ts';
 import { isRelayError, RelayError } from '../../util/errors.ts';
 
@@ -15,10 +15,28 @@ export interface CleanOptions { all?: boolean; olderThan?: string; force?: boole
 export async function cleanCommand(options: CleanOptions = {}): Promise<number> {
   const cli = await createCliContext();
   const config = await loadConfig(cli.repo.root);
-  await pruneArtifacts(cli.repo.root, config.retention.artifactDays).catch(() => undefined);
+  const dryRun = options.yes !== true;
+  // Old artifacts are deleted for real, so only a real run deletes them. A dry
+  // run that pruned on its way to printing "would remove" removed something.
+  if (!dryRun) await pruneArtifacts(cli.repo.root, config.retention.artifactDays).catch(() => undefined);
   const results = await cleanRepository(cli.repo.root, options);
-  if (options.json === true) emitJson('clean', { dryRun: options.yes !== true, results });
-  else for (const result of results) out(`${result.action === 'remove' ? options.yes ? 'Removed' : 'Would remove' : 'Skipped'} ${result.path} (${result.reason})`);
+  if (options.json === true) {
+    emitJson('clean', { dryRun, results });
+    return 0;
+  }
+
+  for (const result of results) out(`${result.action === 'remove' ? options.yes ? 'Removed' : 'Would remove' : 'Skipped'} ${result.path} (${result.reason})`);
+  // Nothing to do is an answer, and silence reads as a command that did not run.
+  if (results.length === 0) {
+    out(
+      options.all === true
+        ? 'Nothing to clean: no finished run has a worktree left.'
+        : 'Nothing to clean: no merged run has a worktree left.',
+    );
+    if (options.all !== true) hint('`relay clean --all` also considers finished runs that were never merged.');
+  } else if (dryRun && results.some((result) => result.action === 'remove')) {
+    hint('This was a dry run. `relay clean --yes` removes them.');
+  }
   return 0;
 }
 

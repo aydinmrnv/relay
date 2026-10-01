@@ -27,6 +27,7 @@ import { useAccount } from '@/lib/cloud/account';
 import { useCompanion, type CompanionStatus, type RunnerTarget } from '@/lib/companion/client';
 import type { CloudRunnerStatus } from '@/lib/companion/types';
 import { timeAgo } from '@/lib/format';
+import { SUPPORT_EMAIL } from '@/lib/links';
 import { cn } from '@/lib/utils';
 
 /**
@@ -82,8 +83,14 @@ export function cloudStatusText(status: CompanionStatus, cloud: CloudRunnerStatu
   }
 }
 
-function describe(cloud: CloudRunnerStatus | null): string {
-  if (cloud === null) return 'Asking Relay Cloud…';
+/** Relay Cloud's own words, without the backticks it writes for a terminal. */
+function plain(text: string): string {
+  return text.replace(/`/g, '');
+}
+
+function describe(cloud: CloudRunnerStatus | null, status: CompanionStatus): string {
+  // No answer is not the same as still asking: after the first try, say so.
+  if (cloud === null) return status === 'connecting' ? 'Asking Relay Cloud…' : 'Relay Cloud is not answering. If you have a machine it is not affected; this studio just cannot reach it right now. Check again in a moment.';
   switch (cloud.state) {
     case 'none':
       return 'Start makes you a Linux machine of your own, with Claude Code, Codex and GitHub’s CLI installed. The first start takes about five minutes; after that, about a minute.';
@@ -97,19 +104,19 @@ function describe(cloud: CloudRunnerStatus | null): string {
       const activity = cloud.activity;
       const busy = activity === null ? 0 : activity.runs + activity.queued + activity.logins;
       return busy === 0
-        ? 'Awake and idle. It goes to sleep by itself after a few idle minutes, keeping every sign-in.'
+        ? 'Awake and idle. It goes to sleep by itself after ten idle minutes, keeping every sign-in.'
         : `Working: ${[activity!.runs > 0 ? `${activity!.runs} run${activity!.runs === 1 ? '' : 's'}` : null, activity!.queued > 0 ? `${activity!.queued} waiting` : null, activity!.logins > 0 ? 'a sign-in' : null].filter(Boolean).join(', ')}.`;
     }
     case 'stopping':
-      return 'Going to sleep. A sleeping machine costs nothing but its disk, and keeps every sign-in.';
+      return 'Going to sleep. A sleeping machine keeps its disk, and every sign-in on it.';
     case 'asleep':
       return 'Asleep, with every sign-in kept. It wakes when you run something, or when you press Start.';
     case 'deleting':
       return 'Being removed, with its disk and every sign-in on it.';
     case 'offline':
-      return 'A runner of your own, started with relay connect --hub, that is not connected right now.';
+      return 'A machine of your own, joined to Relay Cloud by hand, that is not connected right now.';
     default:
-      return cloud.error ?? 'Something went wrong starting your machine.';
+      return cloud.error === null ? 'Something went wrong starting your machine.' : plain(cloud.error);
   }
 }
 
@@ -150,7 +157,7 @@ export function RunnerPicker() {
   const options: Array<Choice<RunnerTarget>> = [
     {
       value: 'machine',
-      title: 'This machine',
+      title: 'Your computer',
       icon: Laptop,
       description: 'relay connect, in the repository you work on. Your own computer, your own sign-ins.',
     },
@@ -162,8 +169,8 @@ export function RunnerPicker() {
       badge: hub === null ? { label: 'Not here', tone: 'muted' } : !signedIn ? { label: 'Sign in', tone: 'muted' } : undefined,
       description:
         hub === null
-          ? 'A machine of your own that Relay runs for you. This studio has no hub configured.'
-          : 'A machine of your own that Relay runs and puts to sleep when idle. Nothing to install; your plans, your sign-ins.',
+          ? 'A machine of your own that Relay runs for you. Not offered on this studio.'
+          : 'Invite-only beta. A machine of your own that Relay runs and puts to sleep when idle. Nothing to install; your plans, your sign-ins.',
     },
   ];
 
@@ -203,13 +210,17 @@ export function CloudCard() {
     setBusy(action);
     try {
       const next = await cloudAction(action);
-      if (next.error !== null && next.state !== 'ready') toast.error(next.error);
+      // Say what Relay Cloud did, read from its answer, not what was asked for.
+      if (next.error !== null && next.state !== 'ready') toast.error(plain(next.error));
       else if (action === 'wake') toast.success(next.state === 'creating' ? 'Making your machine. About five minutes, once.' : next.state === 'queued' ? 'Waiting for room; it starts as soon as there is some.' : 'Starting your machine.');
-      else if (action === 'sleep') toast('Putting your machine to sleep.');
-      else toast('Removing your machine and its disk.');
+      else if (action === 'sleep') {
+        if (next.state === 'stopping' || next.state === 'asleep') toast('Putting your machine to sleep.');
+        else toast.error('Your machine was not put to sleep', { description: `It is still ${(LABEL[next.state] ?? next.state).toLowerCase()}${next.activity !== null && next.activity.runs > 0 ? ', with a run going' : ''}. Stop the run first, or try again.` });
+      } else if (next.state === 'deleting' || next.state === 'none') toast('Removing your machine and its disk.');
+      else toast.error('Your machine was not removed', { description: `It is still ${(LABEL[next.state] ?? next.state).toLowerCase()}. Try again in a moment.` });
       void refreshAgents();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      toast.error(plain(error instanceof Error ? error.message : String(error)));
     } finally {
       setBusy(null);
     }
@@ -237,7 +248,7 @@ export function CloudCard() {
             </Badge>
           )}
         </CardTitle>
-        <CardDescription className="text-pretty">{status === 'unpaired' || status === 'rejected' ? cloudStatusText(status, cloud) + '.' : describe(cloud)}</CardDescription>
+        <CardDescription className="text-pretty">{status === 'unpaired' || status === 'rejected' ? cloudStatusText(status, cloud) + '.' : describe(cloud, status)}</CardDescription>
         <CardAction>
           <Tooltip>
             <TooltipTrigger
@@ -262,12 +273,20 @@ export function CloudCard() {
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3">
-        {cloud?.state === 'failed' && cloud.error !== null ? (
-          <p className="flex items-start gap-1.5 rounded-lg border border-destructive/40 bg-destructive/8 p-2.5 text-xs text-destructive">
+        {/* Whatever Relay Cloud last said went wrong stays here until it stops being true: not being on the list, most of all, which a toast said once and then forgot. */}
+        {cloud !== null && cloud.error !== null && cloud.state !== 'ready' ? (
+          <div className="flex items-start gap-1.5 rounded-lg border border-destructive/40 bg-destructive/8 p-2.5 text-xs text-destructive">
             <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-            <span className="text-pretty">{cloud.error}</span>
-          </p>
+            <span className="text-pretty">{plain(cloud.error)}</span>
+          </div>
         ) : null}
+        <p className="rounded-lg border border-dashed px-2.5 py-2 text-xs text-pretty text-muted-foreground">
+          <span className="font-medium text-foreground">Invite-only beta.</span> Relay Cloud makes machines only for the people on its list, and there are few of them: one run at a time on each, and yours may wait for room.{' '}
+          <a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Relay Cloud access')}`} className="font-medium text-foreground underline underline-offset-4">
+            Request access
+          </a>
+          .
+        </p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
           <dt className="text-muted-foreground">Where</dt>
           <dd>{cloud?.managed === false ? 'Your own server' : `Azure, ${regionName(cloud?.region ?? null)}`}</dd>
@@ -320,7 +339,7 @@ export function CloudCard() {
         </div>
       </CardContent>
       <CardFooter className="text-xs text-pretty text-muted-foreground">
-        It has no public address: it dials out to Relay, and only your signed-in studio reaches it. The CLIs keep their own sign-ins on its disk; Relay never reads them.
+        It has no public address: it dials out to Relay, and only your signed-in studio reaches it. Your code and the CLIs’ sign-ins are on its disk, which Relay operates; the studio has no route that reads them, and they go when you remove the machine.
       </CardFooter>
     </Card>
   );

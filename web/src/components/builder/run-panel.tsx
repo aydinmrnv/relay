@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, ChevronUp, Eraser, ExternalLink, Square } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eraser, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { StatusBadge, STATUS_MEANING } from '@/components/app/status-badge';
 import { HelpTip } from '@/components/app/help-tip';
 import { TextShimmer } from '@/components/21st/text-shimmer';
+import { PullRequestLink } from '@/components/runs/run-bits';
 import { RunTimeline } from '@/components/runs/run-timeline';
 import { LabeledProgressIndicator } from '@/components/watermelon/labeled-progress-indicator';
 import type { Run, Workflow } from '@/lib/workflow/schema';
@@ -34,13 +35,13 @@ export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onC
   return (
     <div className="flex shrink-0 flex-col border-t bg-card">
       <div className="flex h-10 items-center gap-2.5 px-3">
-        <button type="button" onClick={onToggle} className="flex items-center gap-1.5 text-xs font-semibold" aria-expanded={open}>
+        <button type="button" onClick={onToggle} className="flex shrink-0 items-center gap-1.5 text-xs font-semibold whitespace-nowrap" aria-expanded={open}>
           {open ? <ChevronDown className="size-3.5" /> : <ChevronUp className="size-3.5" />}
           {run?.source === 'machine' ? `Run on ${run.machine?.host ?? 'your machine'}` : 'Test run'}
         </button>
         <HelpTip term={run?.source === 'machine' ? 'companion' : 'test-run'} side="top" />
         {run === null ? (
-          <span className="truncate text-xs text-muted-foreground">Press Test run to play this workflow with a sample ticket. It’s free and nothing leaves this browser.</span>
+          <span className="truncate text-xs text-muted-foreground">Press Test run to play this workflow with a sample ticket. It’s free: nothing is run, and no agent is called.</span>
         ) : (
           <>
             <span title={run.status === 'running' ? undefined : STATUS_MEANING[run.status]}>
@@ -57,11 +58,7 @@ export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onC
             <span className="ml-auto text-xs text-muted-foreground tabular-nums" title={run.source === 'machine' ? 'What the coding CLIs reported for this run' : 'Simulated cost: what the coding CLIs would report'}>
               {formatUsd(run.costUsd)}
             </span>
-            {run.prUrl !== undefined ? (
-              <a href={run.prUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium text-signal hover:underline">
-                PR #{run.prUrl.split('/').pop()} <ExternalLink className="size-3" />
-              </a>
-            ) : null}
+            <PullRequestLink run={run} className="shrink-0 text-xs" />
             {running ? (
               <Button size="xs" variant="outline" onClick={onCancel}>
                 <Square data-icon="inline-start" className="fill-current" /> Stop

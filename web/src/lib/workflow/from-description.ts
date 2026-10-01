@@ -909,13 +909,13 @@ function readPipeline(reader: Reader, notes: string[]): PipelineRead {
         reader.takeMatch(match);
         if (agent === 'aider') {
           read.worker = 'aider';
-          notes.push('Aider only implements: it has no read-only mode, so the reviews stay with Claude and Codex.');
+          notes.push('Aider only implements: it has no read-only mode, so the reviews stay with Claude Code and Codex.');
         } else read.roles = { planner: agent, planReviewer: agent, implementer: agent, codeReviewer: agent };
         continue;
       }
       if (agent === 'aider' && roles.some((role) => role !== 'implementer')) {
         // Left unclaimed on purpose: the hint shows it, the note says why.
-        notes.push('Aider cannot plan or review: it has no read-only mode. Those roles stay with Claude and Codex.');
+        notes.push('Aider cannot plan or review: it has no read-only mode. Those roles stay with Claude Code and Codex.');
         refused.push([match.index, match.index + match[0].length]);
         continue;
       }
@@ -1351,7 +1351,7 @@ function article(word: string): string {
 
 const POLICY_LABELS: Record<Policy, string> = { none: 'leave the diff', branch: 'commit to a branch', push: 'push the branch', pr: 'pull request', merge: 'merge when checks pass' };
 
-export function workflowFromDescription(text: string, brand: Brand, repository = 'acme/api'): DescriptionResult {
+export function workflowFromDescription(text: string, brand: Brand, repository = ''): DescriptionResult {
   const original = text.trim();
   const reader = new Reader(normalize(original));
   const notes: string[] = [];

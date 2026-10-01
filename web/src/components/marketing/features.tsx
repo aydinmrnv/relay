@@ -3,10 +3,11 @@
 import { Blocks, GitCompareArrows, KeyRound, ShieldCheck, SquareTerminal, Workflow } from 'lucide-react';
 import { useBrand } from '@/hooks/use-brand';
 import { TEMPLATES } from '@/lib/workflow/templates';
-import { Reveal, SectionHeading } from './primitives';
+import { Reveal, SectionHeading, useCloudOffered } from './primitives';
 
 export function Features() {
   const brand = useBrand();
+  const cloud = useCloudOffered();
 
   // Each card ends in the concrete mechanism behind the claim, in the CLI's own terms.
   const features = [
@@ -31,13 +32,13 @@ export function Features() {
     {
       icon: Blocks,
       title: 'Built for the work you hand over',
-      body: 'A red main, a new Sentry error, a security alert, a finished feature flag, a bug report in Slack: each arrives as a task with its evidence attached, and the answer goes back where it was asked.',
+      body: 'A red main, a new Sentry error, a security alert, a finished feature flag, a bug report in Slack: each has a workflow that carries its evidence to the agents. A GitHub issue label starts one unattended today; the others are test-run here and started by hand.',
       proof: `${TEMPLATES.length} ready-made workflows`,
     },
     {
       icon: KeyRound,
       title: 'Bring your own subscription',
-      body: `Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. There are no API keys to paste, and no token ever passes through ${brand.name}.`,
+      body: `Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. There are no API keys to paste. On your own computer and in CI no token ever reaches ${brand.name}${cloud ? `; a ${brand.name} Cloud machine holds the sign-ins you make on it, and nothing else does` : ''}.`,
       proof: 'claude auth login · codex login',
     },
     {
@@ -49,7 +50,7 @@ export function Features() {
   ];
 
   return (
-    <section id="features" className="scroll-mt-16 border-t py-16 sm:py-24">
+    <section id="features" className="scroll-mt-20 border-t py-16 sm:py-24">
       <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="Why it holds up"

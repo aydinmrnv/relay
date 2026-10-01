@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 
-import { EMPTY_WORD } from './complete.ts';
+import { commandFlags, EMPTY_WORD, subcommandNames } from './complete.ts';
 
 /**
  * The shells `relay completion` can write a script for. PowerShell is here
@@ -11,31 +11,45 @@ export const COMPLETION_SHELLS = ['bash', 'zsh', 'fish', 'powershell'] as const;
 export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
 function commands(program: Command): string {
-  return program.commands
-    .filter((command) => !command.name().startsWith('__'))
-    .flatMap((command) => [command.name(), ...command.aliases()])
-    .join(' ');
+  return subcommandNames(program).join(' ');
+}
+
+/**
+ * Everything the first word can be: a command, or one of the root's own flags.
+ * It is the one list written into the scripts, because it is the one question
+ * that can be answered without starting Relay — and `relay --<TAB>` is a first
+ * word too.
+ */
+function firstWords(program: Command): string {
+  return [...subcommandNames(program), ...commandFlags(program).filter((flag) => flag.startsWith('--'))].join(' ');
 }
 
 export function generateCompletion(program: Command, shell: CompletionShell): string {
   const names = commands(program);
+  const first = firstWords(program);
   if (shell === 'bash') return `# bash completion for relay
 _relay() {
   local cur="\${COMP_WORDS[COMP_CWORD]}"
-  if (( COMP_CWORD == 1 )); then COMPREPLY=( $(compgen -W '${names}' -- "$cur") ); return; fi
+  if (( COMP_CWORD == 1 )); then COMPREPLY=( $(compgen -W '${first}' -- "$cur") ); return; fi
   local values
   values=$(command relay __complete "\${COMP_WORDS[@]:1:COMP_CWORD}") || values=
   COMPREPLY=( $(compgen -W "$values" -- "$cur") )
 }
 complete -F _relay relay
 `;
+  // The words are passed as a quoted array, `"${(@)words[2,CURRENT]}"`, and not
+  // bare: unquoted, zsh drops every empty element, and the word under the
+  // cursor is empty whenever it is a fresh one. Dropped, `relay status <TAB>`
+  // arrives as `relay status` and asks for runs named "status" — so nothing
+  // was ever offered for a word not yet started, which is the case with the
+  // most to offer.
   if (shell === 'zsh') return `#compdef relay
 _relay() {
   local -a values
   if (( CURRENT == 2 )); then
-    values=(${names}); _describe 'command' values; return
+    values=(${first}); compadd -- \${values[@]}; return
   fi
-  values=(\${(f)"$(command relay __complete \${words[2,CURRENT]})"})
+  values=(\${(f)"$(command relay __complete "\${(@)words[2,CURRENT]}")"})
   compadd -- \${values[@]}
 }
 compdef _relay relay
@@ -59,7 +73,7 @@ Register-ArgumentCompleter -Native -CommandName relay -ScriptBlock {
     $words = @($commandAst.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.ToString() })
     if (-not $wordToComplete) { $words += '${EMPTY_WORD}' }
     if ($words.Count -le 1) {
-        $values = '${names}'.Split(' ')
+        $values = '${first}'.Split(' ')
     } else {
         $values = @(& relay __complete @words 2>$null)
     }

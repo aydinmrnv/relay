@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Check, ChevronRight, Search, X, Zap } from 'lucide-react';
+import { CircleDashed, Check, ChevronRight, Search, X, Zap } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -12,6 +12,7 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { CATEGORY_LABELS, CONNECTORS, connectorsByCategory, NODE_TYPES, searchNodeTypes, type Connector, type NodeTypeDef } from '@/lib/connectors';
 import { useStudio } from '@/lib/store';
 import { cn } from '@/lib/utils';
+import { isSimulatedOnly } from '@/lib/workflow/readiness';
 
 export const DRAG_MIME = 'application/x-workflow-node';
 
@@ -106,10 +107,19 @@ export function Palette({ onAdd }: { onAdd: (def: NodeTypeDef) => void }) {
               })}
               {connected.length > 0 ? (
                 <section>
-                  <SectionTitle title="Your connected apps" hint="Apps you marked as connected on the Integrations page." />
+                  <SectionTitle title="Connected or marked ready" hint="Apps you connected for real, or marked ready, on the Integrations page." />
                   <ul className="flex flex-col gap-0.5">
                     {connected.map((connector) => (
-                      <ConnectorGroup key={connector.id} connector={connector} open={openConnector === connector.id} onOpenChange={(open) => setOpenConnector(open ? connector.id : null)} connected keep={keep} onAdd={onAdd} />
+                      <ConnectorGroup
+                        key={connector.id}
+                        connector={connector}
+                        open={openConnector === connector.id}
+                        onOpenChange={(open) => setOpenConnector(open ? connector.id : null)}
+                        connected={connections[connector.id]?.credential !== undefined}
+                        marked={connections[connector.id]?.credential === undefined}
+                        keep={keep}
+                        onAdd={onAdd}
+                      />
                     ))}
                   </ul>
                 </section>
@@ -124,7 +134,8 @@ export function Palette({ onAdd }: { onAdd: (def: NodeTypeDef) => void }) {
                         connector={connector}
                         open={openConnector === connector.id}
                         onOpenChange={(open) => setOpenConnector(open ? connector.id : null)}
-                        connected={connections[connector.id] !== undefined}
+                        connected={connections[connector.id]?.credential !== undefined}
+                        marked={connections[connector.id] !== undefined && connections[connector.id]?.credential === undefined}
                         keep={keep}
                         onAdd={onAdd}
                       />
@@ -141,6 +152,15 @@ export function Palette({ onAdd }: { onAdd: (def: NodeTypeDef) => void }) {
   );
 }
 
+/** Marks a step that only test runs play, wherever nodes are listed. */
+export function SimulatedOnly() {
+  return (
+    <span className="shrink-0 rounded border px-1 text-[9px] font-normal tracking-wide text-muted-foreground uppercase" title="Played in test runs. Real runs and the exported workflow do not perform this step yet.">
+      test runs only
+    </span>
+  );
+}
+
 function SectionTitle({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="mb-1 px-1">
@@ -150,7 +170,25 @@ function SectionTitle({ title, hint }: { title: string; hint?: string }) {
   );
 }
 
-function ConnectorGroup({ connector, open, onOpenChange, connected, keep, onAdd }: { connector: Connector; open: boolean; onOpenChange: (open: boolean) => void; connected: boolean; keep: (def: NodeTypeDef) => boolean; onAdd: (def: NodeTypeDef) => void }) {
+function ConnectorGroup({
+  connector,
+  open,
+  onOpenChange,
+  connected,
+  marked,
+  keep,
+  onAdd,
+}: {
+  connector: Connector;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** The app accepted a credential. */
+  connected: boolean;
+  /** Marked ready: a label, with nothing signed in to. */
+  marked: boolean;
+  keep: (def: NodeTypeDef) => boolean;
+  onAdd: (def: NodeTypeDef) => void;
+}) {
   const defs = NODE_TYPES.filter((def) => def.connectorId === connector.id && keep(def));
   if (defs.length === 0) return null;
   return (
@@ -160,7 +198,7 @@ function ConnectorGroup({ connector, open, onOpenChange, connected, keep, onAdd 
           <ChevronRight className={cn('size-3 shrink-0 text-muted-foreground transition-transform', open ? 'rotate-90' : '')} />
           <ConnectorIcon connector={connector} size={12} />
           <span className="flex-1 truncate">{connector.name}</span>
-          {connected ? <Check className="size-3 text-muted-foreground" aria-label="Connected" /> : null}
+          {connected ? <Check className="size-3 text-muted-foreground" aria-label="Connected" /> : marked ? <CircleDashed className="size-3 text-muted-foreground" aria-label="Marked ready" /> : null}
           <span className="text-[10px] text-muted-foreground tabular-nums">{defs.length}</span>
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -198,6 +236,7 @@ function NodeRow({ def, onAdd, showConnector = false, rich = false }: { def: Nod
             {showConnector ? <span className="text-muted-foreground">{def.connector.name} · </span> : null}
             {def.name}
           </span>
+          {isSimulatedOnly(def.id) ? <SimulatedOnly /> : null}
         </span>
         {rich ? <span className="mt-0.5 line-clamp-2 block text-[11px] leading-snug text-muted-foreground">{def.description}</span> : null}
       </span>

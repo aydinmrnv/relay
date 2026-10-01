@@ -1,5 +1,6 @@
 'use client';
 
+import { BRAND } from './brand';
 import { useStudio } from './store';
 import { simulateRun, type SimulateOptions } from './workflow/simulate';
 import { compileWorkflow } from './workflow/compile';
@@ -46,30 +47,61 @@ export async function launchRun(workflow: Workflow, options: LaunchOptions = {})
   const controller = new AbortController();
   let recorded: string | null = null;
 
-  const result = await simulateRun(workflow, {
-    speed: options.speed ?? state.settings.simulationSpeed,
-    brand: state.brand,
-    repository: workflow.repository,
-    signal: controller.signal,
-    ...(options.payload === undefined ? {} : { payload: options.payload }),
-    ...(options.seed === undefined ? {} : { seed: options.seed }),
-    onEvent: (event, live) => {
-      const copy = snapshot(live);
-      if (recorded === null) {
-        recorded = live.id;
-        controllers.set(live.id, controller);
-        useStudio.getState().addRun({ ...copy, source: 'simulated' });
-      } else {
-        useStudio.getState().updateRun({ ...copy, source: 'simulated' });
-      }
-      options.onEvent?.(event, copy);
-    },
-  });
+  let latest: Run | null = null;
+  let result: Run;
+  try {
+    result = await simulateRun(workflow, {
+      speed: options.speed ?? state.settings.simulationSpeed,
+      brand: BRAND,
+      repository: workflow.repository,
+      signal: controller.signal,
+      ...(options.payload === undefined ? {} : { payload: options.payload }),
+      ...(options.seed === undefined ? {} : { seed: options.seed }),
+      onEvent: (event, live) => {
+        const copy = snapshot(live);
+        latest = copy;
+        if (recorded === null) {
+          recorded = live.id;
+          controllers.set(live.id, controller);
+          useStudio.getState().addRun({ ...copy, source: 'simulated' });
+        } else {
+          useStudio.getState().updateRun({ ...copy, source: 'simulated' });
+        }
+        options.onEvent?.(event, copy);
+      },
+    });
+  } catch (error) {
+    // The simulator threw part-way (a node it cannot play, a malformed
+    // workflow). The run it had recorded must not be left "running": nothing
+    // is playing it any more. Close it as failed, with the reason, and let
+    // the caller tell the person.
+    const why = error instanceof Error ? error.message : String(error);
+    if (recorded !== null && latest !== null) {
+      controllers.delete(recorded);
+      useStudio.getState().updateRun(closeFailed(latest, why));
+    }
+    throw new Error(`The test run stopped: ${why}`, { cause: error });
+  }
 
   const final = { ...snapshot(result), source: 'simulated' as const };
   useStudio.getState().updateRun(final);
   controllers.delete(result.id);
   return final;
+}
+
+function closeFailed(run: Run, why: string): Run {
+  const at = new Date().toISOString();
+  const nodeStatus = Object.fromEntries(Object.entries(run.nodeStatus).map(([id, status]) => [id, status === 'running' ? ('failed' as const) : status === 'pending' ? ('skipped' as const) : status]));
+  const summary = `The test run stopped on an error in the studio, not in your workflow’s logic: ${why}`;
+  return {
+    ...run,
+    source: 'simulated',
+    status: 'failed',
+    finishedAt: at,
+    nodeStatus,
+    summary,
+    events: [...run.events, { at, nodeId: null, kind: 'run-finished', status: 'failed', message: 'The test run could not finish.', detail: summary }],
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -79,7 +111,7 @@ export async function launchRun(workflow: Workflow, options: LaunchOptions = {})
 /** The `.relay/config.json` the export would write for this workflow: what the machine's run is shaped by. */
 export function compiledConfig(workflow: Workflow): Record<string, unknown> {
   const state = useStudio.getState();
-  const compiled = compileWorkflow(workflow, state.brand, { auth: state.settings.auth });
+  const compiled = compileWorkflow(workflow, BRAND, { auth: state.settings.auth });
   const file = compiled.files.find((entry) => entry.path === '.relay/config.json');
   if (file === undefined) throw new Error('The compiler produced no config.');
   return JSON.parse(file.content) as Record<string, unknown>;
@@ -101,7 +133,7 @@ export async function launchMachineRun(workflow: Workflow, task: RunTask, option
   const run = createMachineRun(workflow, {
     id: `run_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`,
     companionRunId: view.id,
-    host: target === 'cloud' ? 'Relay Cloud' : (hello?.machine ?? 'your machine'),
+    host: target === 'cloud' ? 'Relay Cloud' : (hello?.machine ?? 'your computer'),
     runner: target,
     repository: view.repository ?? repositoryLabel(hello?.repository),
     task,
@@ -133,7 +165,7 @@ export async function attachMachineRun(saved: Run): Promise<Run | undefined> {
   return follow(base, workflow);
 }
 
-/** How many times a dropped stream is picked up again before the run counts as lost. */
+/** How many times in a row a dropped stream is picked up again, with nothing new arriving, before the run counts as lost. */
 const RESUMES = 6;
 
 async function follow(run: Run, workflow: Workflow, onEvent?: (event: RunEvent, run: Run) => void): Promise<Run> {
@@ -153,7 +185,12 @@ async function follow(run: Run, workflow: Workflow, onEvent?: (event: RunEvent, 
     // The first record not yet folded in: a stream that drops is asked again
     // from there, so a blink in the connection costs nothing.
     let next = 0;
-    for (let attempt = 0; ; attempt += 1) {
+    // Counts failures in a row, not in total: a run that lasts an hour may
+    // lose its stream a dozen times, and each time it comes back with new
+    // records the run is plainly still there.
+    let attempt = 0;
+    for (;;) {
+      const before = next;
       let response: Response | null = null;
       let failure: string | null = null;
       try {
@@ -190,10 +227,12 @@ async function follow(run: Run, workflow: Workflow, onEvent?: (event: RunEvent, 
       } else if (response !== null && failure === null) {
         failure = `${where} answered ${response.status}.`;
       }
+      if (next > before) attempt = 0;
       if (attempt >= RESUMES) {
         return lose(run, failure ?? `Lost contact with ${where} before the run finished. ${runner === 'cloud' ? 'Relay Cloud could not reach your machine.' : '`relay connect` stopped or the connection dropped.'}`);
       }
       await new Promise((resolve) => setTimeout(resolve, Math.min(15_000, 1_000 * 2 ** attempt)));
+      attempt += 1;
     }
   } finally {
     following.delete(run.id);

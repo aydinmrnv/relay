@@ -15,9 +15,10 @@ import { CloudError, type CloudDriver, type CloudMachine, type MachineSpec, type
  *   per region       relay-runners-<region> a virtual network whose subnet keeps
  *                                           default outbound access: the runners'
  *                                           only way out, free, and no way in
- *   per person       <name>                 the VM, tagged relay-role=runner and
- *                    <name>-nic, <name>-os  relay-user=<Clerk id>; its NIC and disk
- *                                           are deleted with it
+ *   per person       <name>                 the VM, tagged relay-role=runner,
+ *                    <name>-nic, <name>-os  relay-user=<Clerk id> and relay-token=<the
+ *                                           id of its current runner token>; its NIC
+ *                                           and disk are deleted with it
  */
 
 const COMPUTE_API = '2024-07-01';
@@ -106,7 +107,21 @@ export function machineFromArm(vm: ArmVm, status?: ArmVm): CloudMachine | null {
     state === 'creating' || state === 'updating' || state === 'succeeded' || state === 'failed' || state === 'deleting' ? state : 'unknown';
   const created = vm.properties?.timeCreated === undefined ? NaN : Date.parse(vm.properties.timeCreated);
   // Azure spells a region `spaincentral` in one answer and `SpainCentral` in another.
-  return { name: vm.name, userId: tags['relay-user'], region: vm.location.toLowerCase(), power, provisioning, createdAt: Number.isNaN(created) ? null : created };
+  const tokenId = tags['relay-token'];
+  return {
+    name: vm.name,
+    userId: tags['relay-user'],
+    region: vm.location.toLowerCase(),
+    power,
+    provisioning,
+    createdAt: Number.isNaN(created) ? null : created,
+    tokenId: typeof tokenId === 'string' && tokenId.length > 0 ? tokenId : null,
+  };
+}
+
+/** What every runner VM is tagged with: what it is, whose it is, and which runner token is its current one. */
+function runnerTags(userId: string, tokenId: string): Record<string, string> {
+  return { 'relay-role': 'runner', 'relay-user': userId, 'relay-token': tokenId };
 }
 
 export class AzureDriver implements CloudDriver {
@@ -209,7 +224,7 @@ export class AzureDriver implements CloudDriver {
   }
 
   async create(spec: MachineSpec): Promise<void> {
-    const tags = { 'relay-role': 'runner', 'relay-user': spec.userId };
+    const tags = runnerTags(spec.userId, spec.tokenId);
     const nicName = `${spec.name}-nic`;
     const nic = `${this.group()}/providers/Microsoft.Network/networkInterfaces/${encodeURIComponent(nicName)}`;
     await this.arm('PUT', `${nic}?api-version=${NETWORK_API}`, {
@@ -247,13 +262,27 @@ export class AzureDriver implements CloudDriver {
             provisionVMAgent: true,
           },
         },
-        // The runner reads its token from the instance metadata service at
-        // every connect, so it is never written to the disk.
+        // The token travels in user data rather than custom data because user
+        // data can be replaced on a machine that exists (`rotateToken`). The
+        // instance metadata service hands it to whoever on the machine may ask
+        // it; the runner's cloud-init lets only root ask.
         userData: Buffer.from(spec.token).toString('base64'),
         networkProfile: { networkInterfaces: [{ id: nic, properties: { primary: true, deleteOption: 'Delete' } }] },
         diagnosticsProfile: { bootDiagnostics: { enabled: true } },
         securityProfile: galleryImage ? undefined : { securityType: 'TrustedLaunch', uefiSettings: { secureBootEnabled: true, vTpmEnabled: true } },
       },
+    });
+  }
+
+  /**
+   * One PATCH: the new token as the VM's user data, and its id in the tags.
+   * A PATCH replaces the whole tag set, so all three tags are sent. Azure
+   * applies new user data to a VM in any power state, without a reboot.
+   */
+  async rotateToken(machine: Pick<CloudMachine, 'name' | 'region' | 'userId'>, token: { token: string; id: string }): Promise<void> {
+    await this.arm('PATCH', `${this.vmPath(machine.name)}?api-version=${COMPUTE_API}`, {
+      tags: runnerTags(machine.userId, token.id),
+      properties: { userData: Buffer.from(token.token).toString('base64') },
     });
   }
 

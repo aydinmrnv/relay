@@ -30,6 +30,8 @@ export interface RecordedCall {
   sessionId: string | undefined;
   /** `prime` for a reviewer reading ahead; absent for the work itself. */
   purpose?: string;
+  /** The environment overrides the turn was handed, when it was handed any. */
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -99,6 +101,7 @@ export class FakeAgentHarness implements AgentHarness {
       resumed,
       sessionId,
       ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
+      ...(options.env === undefined ? {} : { env: options.env }),
     });
 
     if (this.cancelled || options.signal?.aborted === true) {

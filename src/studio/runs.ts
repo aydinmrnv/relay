@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,8 +17,16 @@ import type { CompanionRunView, RunStage, RunStreamRecord, RunTask, StartRunRequ
  * person types, with the workflow's shape layered over the repository's config
  * — and the companion is only its relay: every line the engine prints is kept
  * and handed to whoever is listening, verbatim. A child rather than a call:
- * a run that crashes takes itself down, not the companion, and a stopped
- * companion leaves the run to finish exactly like a terminal that was closed.
+ * a run that crashes takes itself down, not the companion.
+ *
+ * A run does not outlive the companion that started it. Each child is the
+ * head of its own process group — so the Ctrl-C that stops the companion is
+ * not also delivered to every run — and when the companion goes, `shutdown`
+ * asks each run to stop the way `relay stop` would, waits, and then ends
+ * whatever is left of the group: the engine, and the coding CLIs it started.
+ * A run nobody can watch or stop, still spending on a machine whose owner
+ * believes they quit, is the thing this prevents. If the process ends without
+ * `shutdown` having run, an `exit` hook ends the groups anyway.
  */
 
 /** How a Relay child is launched: this Node, this launcher. */
@@ -36,7 +44,26 @@ export function selfLauncher(): RelayLauncher {
   return { command: process.execPath, args: [...flags, entry] };
 }
 
-const MAX_RECORDS = 5_000;
+/**
+ * How much of a run is held for replay: its first records and its latest.
+ * A run is replayed to a studio that reloads, so the start (which run this
+ * is) and the end (the summary, the exit) are what must survive; a very long
+ * run gives up its middle rather than growing without bound.
+ */
+const KEEP_FIRST = 1_000;
+const KEEP_LATEST = 4_000;
+/** Finished runs still held for replay; older ones are forgotten when a new run starts. */
+const MAX_FINISHED_RUNS = 50;
+/**
+ * Runs at once when nobody says otherwise, and how many more may wait. Each
+ * run is two coding agents and a test suite, on the person's own machine and
+ * their own subscriptions: a studio (or a script in one) asking for fifty at
+ * once is refused, not obeyed.
+ */
+const DEFAULT_MAX_CONCURRENT = 2;
+const MAX_WAITING = 20;
+/** The environment variable that sets how many runs a companion on this machine runs at once. */
+export const MAX_RUNS_VARIABLE = 'RELAY_COMPANION_MAX_RUNS';
 const MAX_STDERR_CHARS = 16_000;
 const MAX_TEXT = 20_000;
 /** An issue number, `owner/repo#n`, a URL, a Linear key or a spec path. Never a flag. */
@@ -58,7 +85,14 @@ interface StudioRun {
   root: string | null;
   /** Stops a checkout in progress. */
   abort: AbortController;
-  records: RunStreamRecord[];
+  /** The number the next record gets. A record's `seq` is its place in the run, never its place in what is kept. */
+  nextSeq: number;
+  /** The first records of the run, and its latest: everything, until the run is long enough to lose its middle. */
+  first: RunStreamRecord[];
+  latest: RunStreamRecord[];
+  /** How many records between the two are gone, and the `seq` of the last of them. */
+  dropped: number;
+  droppedThrough: number;
   listeners: Set<Listener>;
   stderr: string;
   overlayDir: string | null;
@@ -66,17 +100,74 @@ interface StudioRun {
 }
 
 export interface StudioRunsOptions {
-  /** Runs at once; the rest wait their turn, in order. Unlimited when absent. */
+  /** Runs at once; the rest wait their turn, in order. Two when absent, or what `RELAY_COMPANION_MAX_RUNS` says. */
   maxConcurrent?: number;
+  /** How many runs may wait for a slot before another is refused. */
+  maxWaiting?: number;
   /**
    * Checks out `owner/name` and answers with its root: a companion whose runs
    * each name their repository (a cloud runner). Without it every run uses
    * the root the companion was started in.
    */
   checkout?: (repository: string, signal: AbortSignal) => Promise<string>;
+  /** How many of a run's records are held for replay. A seam for the tests. */
+  keep?: { first: number; latest: number };
 }
 
 export class TaskError extends Error {}
+
+/** Too many runs are already waiting on this machine. */
+export class QueueFullError extends Error {}
+
+function defaultMaxConcurrent(env: NodeJS.ProcessEnv = process.env): number {
+  const value = Number(env[MAX_RUNS_VARIABLE]);
+  return Number.isInteger(value) && value >= 1 && value <= 64 ? value : DEFAULT_MAX_CONCURRENT;
+}
+
+/* ------------------------------------------------------------------ */
+/* Children that must not outlive this process                         */
+/* ------------------------------------------------------------------ */
+
+/** Every engine child still alive, across every `StudioRuns` in the process. */
+const liveChildren = new Set<ChildProcess>();
+let exitHooked = false;
+
+/**
+ * Ends a child and everything it started. The child leads its own process
+ * group (it is spawned detached), so on POSIX the signal goes to the group;
+ * Windows has no groups, and `taskkill /T` walks the tree instead.
+ */
+function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  try {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    else process.kill(-pid, signal);
+  } catch {
+    // Already gone, or never a group leader: try the child itself.
+    try {
+      child.kill(signal);
+    } catch {
+      // Gone.
+    }
+  }
+}
+
+function watchChild(child: ChildProcess): void {
+  liveChildren.add(child);
+  const forget = (): void => {
+    liveChildren.delete(child);
+  };
+  child.once('close', forget);
+  child.once('error', forget);
+  if (exitHooked) return;
+  exitHooked = true;
+  // The backstop for an exit nobody planned (a crash, a second Ctrl-C): only
+  // synchronous work is possible here, so the groups are signalled and left.
+  process.once('exit', () => {
+    for (const live of liveChildren) killTree(live, 'SIGTERM');
+  });
+}
 
 /**
  * Checks what the studio sent before anything is spawned. A companion that
@@ -135,7 +226,9 @@ export class StudioRuns {
   private readonly launcher: RelayLauncher;
   private readonly onChange: (view: CompanionRunView) => void;
   private readonly maxConcurrent: number;
+  private readonly maxWaiting: number;
   private readonly checkout: ((repository: string, signal: AbortSignal) => Promise<string>) | undefined;
+  private readonly keep: { first: number; latest: number };
   /** Runs waiting for a slot, oldest first. */
   private readonly waiting: StudioRun[] = [];
   private occupied = 0;
@@ -150,8 +243,10 @@ export class StudioRuns {
     this.root = root;
     this.launcher = launcher;
     this.onChange = onChange;
-    this.maxConcurrent = options.maxConcurrent ?? Number.POSITIVE_INFINITY;
+    this.maxConcurrent = options.maxConcurrent ?? defaultMaxConcurrent();
+    this.maxWaiting = options.maxWaiting ?? MAX_WAITING;
     this.checkout = options.checkout;
+    this.keep = { first: Math.max(1, options.keep?.first ?? KEEP_FIRST), latest: Math.max(2, options.keep?.latest ?? KEEP_LATEST) };
   }
 
   async start(request: StartRunRequest): Promise<CompanionRunView> {
@@ -162,6 +257,10 @@ export class StudioRuns {
       mergeConfig(DEFAULT_CONFIG, overlay);
     } catch (error) {
       throw new TaskError(`The workflow does not compile to a config this Relay accepts: ${errorMessage(error)}`);
+    }
+
+    if (this.occupied >= this.maxConcurrent && this.waiting.length >= this.maxWaiting) {
+      throw new QueueFullError(`This machine is already running ${this.occupied} run${this.occupied === 1 ? '' : 's'} with ${this.waiting.length} more waiting. Let some finish, or stop one, before starting another.`);
     }
 
     const id = `sr_${randomBytes(6).toString('base64url')}`;
@@ -183,12 +282,17 @@ export class StudioRuns {
       child: null,
       root: null,
       abort: new AbortController(),
-      records: [],
+      nextSeq: 0,
+      first: [],
+      latest: [],
+      dropped: 0,
+      droppedThrough: -1,
       listeners: new Set(),
       stderr: '',
       overlayDir: null,
       finished: false,
     };
+    this.forgetOldRuns();
     this.runs.set(id, run);
 
     if (this.occupied < this.maxConcurrent) {
@@ -240,6 +344,7 @@ export class StudioRuns {
       windowsHide: true,
     });
     child.stdin?.end();
+    watchChild(child);
     run.child = child;
     run.root = root;
     this.stage(run, 'running');
@@ -315,8 +420,19 @@ export class StudioRuns {
   subscribe(id: string, listener: Listener, since = 0): (() => void) | undefined {
     const run = this.runs.get(id);
     if (run === undefined) return undefined;
-    for (const record of run.records) if (record.seq >= since) listener(record);
-    if (run.view.status === 'exited') return () => undefined;
+    for (const record of run.first) if (record.seq >= since) listener(record);
+    // A follower that starts before the gap is told there is one, in the
+    // stream's own terms: a note from the engine, numbered as the last record
+    // it will not get, so the numbers it sees still only go up.
+    if (run.dropped > 0 && since <= run.droppedThrough) listener(gapNote(run));
+    for (const record of run.latest) if (record.seq >= since) listener(record);
+    if (run.view.status === 'exited') {
+      // A stream ends on its `exit` record. A follower that asks from past the
+      // end still gets that record, so its stream ends instead of staying open.
+      const exit = run.latest.at(-1) ?? run.first.at(-1);
+      if (exit !== undefined && exit.type === 'exit' && exit.seq < since) listener(exit);
+      return () => undefined;
+    }
     run.listeners.add(listener);
     return () => run.listeners.delete(listener);
   }
@@ -378,12 +494,72 @@ export class StudioRuns {
     return true;
   }
 
+  /**
+   * Stops every run and leaves nothing behind. Each is asked to stop cleanly
+   * first (work so far stays committed on its branch); whatever has not
+   * exited by the end of the grace period has its whole process group ended,
+   * politely and then not.
+   */
+  async shutdown(graceMs = 5_000): Promise<void> {
+    const open = [...this.runs.values()].filter((run) => !run.finished);
+    if (open.length === 0) return;
+    const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+    // `cancel` waits for `relay stop` on Windows; it does not get to hold the shutdown up.
+    await Promise.race([Promise.all(open.map((run) => this.cancel(run.view.id).catch(() => false))), pause(graceMs)]);
+    await this.settled(graceMs);
+    for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+      const left = open.filter((run) => !run.finished && run.child !== null);
+      if (left.length === 0) break;
+      for (const run of left) killTree(run.child!, signal);
+      await this.settled(2_000);
+    }
+    // Runs that never got as far as a child: queued, or still checking out.
+    for (const run of open) if (!run.finished) this.finish(run, 130, 'Stopped: the companion was shut down.');
+  }
+
+  /**
+   * Numbers a record, keeps it for replay and hands it to whoever is
+   * following. The number comes from the run's own counter: it used to be the
+   * length of the kept list, so once that list was full every later record
+   * got the same number, and the summary was not kept at all — a long run
+   * that succeeded replayed as one that never said how it ended.
+   */
   private push(run: StudioRun, record: Unnumbered<RunStreamRecord>): void {
-    const full = { ...record, seq: run.records.length } as RunStreamRecord;
-    if (run.records.length < MAX_RECORDS || record.type === 'exit') run.records.push(full);
+    const full = { ...record, seq: run.nextSeq } as RunStreamRecord;
+    run.nextSeq += 1;
+    if (run.first.length < this.keep.first && run.latest.length === 0) run.first.push(full);
+    else {
+      run.latest.push(full);
+      // Trimmed a batch at a time, so holding the latest is not a copy per record.
+      if (run.latest.length >= this.keep.latest * 2) {
+        const cut = run.latest.length - this.keep.latest;
+        run.droppedThrough = run.latest[cut - 1]!.seq;
+        run.dropped += cut;
+        run.latest = run.latest.slice(cut);
+      }
+    }
     for (const listener of run.listeners) listener(full);
     if (record.type === 'exit') run.listeners.clear();
   }
+
+  /** Forgets the oldest finished runs, so a companion left running for weeks does not hold every run it ever relayed. */
+  private forgetOldRuns(): void {
+    const finished = [...this.runs.values()].filter((run) => run.finished);
+    if (finished.length < MAX_FINISHED_RUNS) return;
+    finished.sort((a, b) => (a.view.finishedAt ?? '').localeCompare(b.view.finishedAt ?? ''));
+    for (const run of finished.slice(0, finished.length - MAX_FINISHED_RUNS + 1)) this.runs.delete(run.view.id);
+  }
+}
+
+/** Stands in the stream for the records a long run no longer holds. */
+function gapNote(run: Pick<StudioRun, 'dropped' | 'droppedThrough' | 'latest'>): RunStreamRecord {
+  const next = run.latest[0];
+  const at = next !== undefined && next.type === 'engine' && typeof next.data['at'] === 'string' ? next.data['at'] : new Date().toISOString();
+  return {
+    seq: run.droppedThrough,
+    type: 'engine',
+    data: { type: 'note', at, message: `${run.dropped} earlier lines of this run are no longer held by the machine it ran on. What follows is the latest of it.` },
+  };
 }
 
 /**

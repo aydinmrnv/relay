@@ -1,8 +1,18 @@
 import * as z from 'zod';
 import { ApiError, json, readJson, withUser } from '@/server/api';
-import { deleteRun, saveRun } from '@/server/studio';
+import { deleteRun, getRun, saveRun } from '@/server/studio';
 import { describeZodError, RUN_MAX_BYTES, runSchema } from '@/server/validate';
 import type { Run } from '@/lib/workflow/schema';
+
+/** One run, for a workspace too large to arrive in one answer. */
+export async function GET(request: Request, context: RouteContext<'/api/runs/[id]'>) {
+  return withUser(request, async (user) => {
+    const { id } = await context.params;
+    const run = await getRun(user.id, id);
+    if (run === null) throw new ApiError(404, 'NOT_FOUND', 'No such run.');
+    return json({ run });
+  });
+}
 
 export async function PUT(request: Request, context: RouteContext<'/api/runs/[id]'>) {
   return withUser(request, async (user) => {

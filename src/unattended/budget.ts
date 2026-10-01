@@ -41,6 +41,14 @@ export interface DailySpend {
  * Every unattended run counts, whatever became of it — a run that failed in
  * implementation still spent the money it spent, and a budget that forgave
  * failures would be a budget an expensive failure loop could not exhaust.
+ *
+ * What it counts is what is on this machine's disk: the runs under
+ * `.relay/runs/`. That is the whole day for a `relay serve` that stays up, and
+ * it is nothing at all for a CI job, which starts from a fresh checkout with
+ * no earlier run in it. There the sum is always zero and this ceiling never
+ * stops anything — the per-run budget is the one that holds, and the server
+ * says so when it starts (`dailyBudgetEnforced` on its `watching` event)
+ * rather than report a daily budget that is not being kept.
  */
 export function dailySpend(runs: readonly RunState[], now: Date = new Date()): DailySpend {
   const day = dayOf(now);

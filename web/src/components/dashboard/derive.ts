@@ -1,5 +1,6 @@
 import { getConnector, getNodeType } from '@/lib/connectors';
 import type { Connection, Run, Workflow } from '@/lib/workflow/schema';
+import { numberOrNull } from '@/lib/workflow/simulate';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import { isLive, outcomeReason } from '@/components/runs/run-utils';
 
@@ -72,7 +73,10 @@ export interface WeekStats {
   finished: number;
   succeeded: number;
   successRate: number | null;
+  /** Every run's cost: what test runs would have cost, plus what real runs did. */
   spend: number;
+  /** The part of `spend` that real runs reported, and so was really used from somebody's plan. */
+  realSpend: number;
   previousRuns: number;
 }
 
@@ -83,47 +87,60 @@ export function weekStats(runs: Run[], now: number): WeekStats {
   let finished = 0;
   let succeeded = 0;
   let spend = 0;
+  let realSpend = 0;
   let previousRuns = 0;
   for (const run of runs) {
     const at = new Date(run.startedAt).getTime();
     if (at > weekAgo) {
       count += 1;
       spend += run.costUsd;
+      if (run.source === 'machine') realSpend += run.costUsd;
       if (!isLive(run.status)) finished += 1;
       if (run.status === 'succeeded') succeeded += 1;
     } else if (at > twoWeeksAgo) {
       previousRuns += 1;
     }
   }
-  return { runs: count, finished, succeeded, successRate: finished === 0 ? null : Math.round((succeeded / finished) * 100), spend, previousRuns };
+  return { runs: count, finished, succeeded, successRate: finished === 0 ? null : Math.round((succeeded / finished) * 100), spend, realSpend, previousRuns };
 }
 
 export interface SpendRow {
   workflowId: string;
   name: string;
   spend: number;
+  /** The part of `spend` that came from real runs. */
+  real: number;
   runs: number;
 }
 
-/** Simulated spend per workflow over the last 7 days, largest first; the tail folds into one row. */
-export function spendByWorkflow(runs: Run[], workflows: Record<string, Workflow>, now: number, limit = 5): { rows: SpendRow[]; other: SpendRow | null; total: number } {
+/** Spend per workflow over the last 7 days, simulated and real, largest first; the tail folds into one row. */
+export function spendByWorkflow(runs: Run[], workflows: Record<string, Workflow>, now: number, limit = 5): { rows: SpendRow[]; other: SpendRow | null; total: number; real: number } {
   const weekAgo = now - 7 * DAY;
   const map = new Map<string, SpendRow>();
   for (const run of runs) {
     if (new Date(run.startedAt).getTime() <= weekAgo) continue;
-    const row = map.get(run.workflowId) ?? { workflowId: run.workflowId, name: workflows[run.workflowId]?.name ?? run.workflowName, spend: 0, runs: 0 };
+    const row = map.get(run.workflowId) ?? { workflowId: run.workflowId, name: workflows[run.workflowId]?.name ?? run.workflowName, spend: 0, real: 0, runs: 0 };
     row.spend += run.costUsd;
+    if (run.source === 'machine') row.real += run.costUsd;
     row.runs += 1;
     map.set(run.workflowId, row);
   }
   const sorted = [...map.values()].filter((row) => row.spend > 0).sort((a, b) => b.spend - a.spend);
   const total = sorted.reduce((sum, row) => sum + row.spend, 0);
-  if (sorted.length <= limit) return { rows: sorted, other: null, total };
+  const real = sorted.reduce((sum, row) => sum + row.real, 0);
+  if (sorted.length <= limit) return { rows: sorted, other: null, total, real };
   const rest = sorted.slice(limit - 1);
   return {
     rows: sorted.slice(0, limit - 1),
-    other: { workflowId: '', name: `${rest.length} other workflows`, spend: rest.reduce((sum, row) => sum + row.spend, 0), runs: rest.reduce((sum, row) => sum + row.runs, 0) },
+    other: {
+      workflowId: '',
+      name: `${rest.length} other workflows`,
+      spend: rest.reduce((sum, row) => sum + row.spend, 0),
+      real: rest.reduce((sum, row) => sum + row.real, 0),
+      runs: rest.reduce((sum, row) => sum + row.runs, 0),
+    },
     total,
+    real,
   };
 }
 
@@ -159,9 +176,9 @@ export function dailyCeiling(workflows: Workflow[]): Ceiling {
     }
     guarded += 1;
     for (const gate of gates) {
-      const raw = gate.data.config['maxDailyCostUsd'];
-      const value = raw === undefined || raw === null || raw === '' ? 25 : Number(raw);
-      if (Number.isFinite(value) && value < usd) {
+      // An emptied field is no daily ceiling, here as in the export and the test run: there is nothing to measure against.
+      const value = numberOrNull(gate.data.config['maxDailyCostUsd']);
+      if (value !== null && value < usd) {
         usd = value;
         best = { id: workflow.id, name: workflow.name };
       }
@@ -170,9 +187,17 @@ export function dailyCeiling(workflows: Workflow[]): Ceiling {
   return best === undefined ? { usd: FALLBACK_DAILY_CEILING, guarded, unguarded } : { usd, source: best, guarded, unguarded };
 }
 
-export function spendToday(runs: Run[], now: number): number {
+/** Today's spend, and the part of it real runs reported. */
+export function spendToday(runs: Run[], now: number): { total: number; real: number } {
   const start = startOfToday(now).getTime();
-  return runs.reduce((sum, run) => (new Date(run.startedAt).getTime() >= start ? sum + run.costUsd : sum), 0);
+  let total = 0;
+  let real = 0;
+  for (const run of runs) {
+    if (new Date(run.startedAt).getTime() < start) continue;
+    total += run.costUsd;
+    if (run.source === 'machine') real += run.costUsd;
+  }
+  return { total, real };
 }
 
 export type AttentionItem =

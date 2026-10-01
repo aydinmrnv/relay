@@ -6,6 +6,9 @@ import { discoverRepository } from '../../git/repository.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import type { EngineContext, PhaseResult } from '../context.ts';
 import { assembleBrief, renderBriefArtifact } from '../../agents/brief.ts';
+import { harnessRegistration } from '../../agents/index.ts';
+import { describeWithheld, unattendedEnvironment } from '../../unattended/environment.ts';
+import { trustedComments, unattendedOf } from '../../unattended/policy.ts';
 
 async function ensureBrief(context: EngineContext, worktreePath: string): Promise<void> {
   if (context.state.brief === undefined) context.state.brief = await assembleBrief(worktreePath);
@@ -36,15 +39,59 @@ export async function initializing(context: EngineContext): Promise<PhaseResult>
     observer.note(`${provider} ${availability.detail}`);
   }
 
+  // Said once, up front, and by name: an agent that cannot find `GH_TOKEN` is
+  // a confusing failure unless the run has already said it took it away.
+  const withheld = unattendedEnvironment(state);
+  if (withheld !== undefined && withheld.names.length > 0) {
+    observer.note(
+      `Unattended: ${withheld.names.length} secret-looking environment variable(s) are withheld from the agents ` +
+        `and the test suite (${describeWithheld(withheld.names)}). Claude Code and Codex each keep their own ` +
+        'sign-in; anything else an agent or the suite needs has to be named in unattended.allowEnv.',
+    );
+    // A harness from config signs in with a variable Relay cannot recognise,
+    // so nothing was kept for it — said by name, because the alternative is a
+    // turn that fails on a missing key with no word about where it went.
+    const unknown = [...new Set(roles.map((role) => state.config.agents[role]))].filter(
+      (provider) => harnessRegistration(provider)?.ownEnvironment === undefined,
+    );
+    if (unknown.length > 0) {
+      observer.note(
+        `Unattended: ${unknown.join(', ')} is defined in config, so Relay does not know which variable it signs in ` +
+          'with and kept none for it. If it signs in from the environment, name that variable in unattended.allowEnv.',
+      );
+    }
+  }
+
   const assignments = roles.map((role) => `${role}=${state.config.agents[role]}`).join('  ');
   return { next: 'FETCHING_ISSUE', note: assignments };
 }
 
 export async function fetchingIssue(context: EngineContext): Promise<PhaseResult> {
-  const { state, store, issueProvider, signal } = context;
+  const { state, store, issueProvider, observer, signal } = context;
 
-  const issue = await issueProvider.getIssue(state.issueRef, { signal });
-  const markdown = renderIssueMarkdown(issue);
+  const fetched = await issueProvider.getIssue(state.issueRef, { signal });
+
+  // A run nobody is watching reads the comments of people it has a reason to
+  // trust and no others. A run somebody started reads all of them: that person
+  // chose the issue, and is there to see what the agents make of it.
+  let issue = fetched;
+  let omitted = '';
+  if (state.trigger !== undefined) {
+    const comments = trustedComments(unattendedOf(state.config), fetched, state.trigger.actor);
+    if (comments.dropped > 0) {
+      issue = { ...fetched, comments: comments.kept };
+      const who = comments.droppedAuthors.join(', ');
+      observer.note(
+        `Unattended: ${comments.dropped} comment(s) from outside the allowlist were not given to the agents (${who}).`,
+      );
+      omitted =
+        `\n_${comments.dropped} comment(s) on this issue are not shown here. This run started without a person, ` +
+        `so it reads only comments from people on the repository's allowlist, its owner, its collaborators ` +
+        `and members of the organisation that owns it; ` +
+        `the rest (from ${who}) were left out._\n`;
+    }
+  }
+  const markdown = `${renderIssueMarkdown(issue)}${omitted}`;
 
   await store.writeArtifact(RUN_FILES.issue, markdown);
   context.issueMarkdown = markdown;

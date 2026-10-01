@@ -24,7 +24,7 @@ export function useCreateWorkflow() {
     const workflow = instantiateTemplate(templateId, brand, repository);
     if (workflow === undefined) return undefined;
     upsertWorkflow(workflow);
-    toast.success(`Created “${workflow.name}”`, { description: 'It is yours to change; the template stays as it was.' });
+    toast.success(`Created “${workflow.name}”`, { description: 'It is yours to change, and it starts paused: switch it to Active when it is ready.' });
     router.push(`/workflows/${workflow.id}`);
     return workflow;
   };

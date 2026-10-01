@@ -1,19 +1,16 @@
-'use client';
-
-import { useMemo } from 'react';
-import Link from 'next/link';
-import { ArrowRight, CheckCircle2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { CheckCircle2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useBrand } from '@/hooks/use-brand';
+import { BRAND } from '@/lib/brand';
 import { getNodeType, type NodeTypeDef, type PortType } from '@/lib/connectors';
 import { instantiateTemplate } from '@/lib/workflow/templates';
 import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import type { Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
-import { AppTile, PILL, Reveal, SectionHeading, useStudioEntry } from './primitives';
+import { AppTile, Reveal, SectionHeading } from './primitives';
+import { SAMPLE } from './sample';
+import { OpenBuilderButton } from './showcase-cta';
 
 const NODE_W = 220;
 const NODE_H = 78;
@@ -43,7 +40,7 @@ const PORT_FILL: Record<PortType, string> = {
 const CAPABILITIES = [
   {
     title: 'Typed ports',
-    body: 'Cyan carries a ticket, grey a finished run, ink a pull request. The canvas refuses a wire whose types do not fit.',
+    body: 'Each wire is coloured by what it carries: a ticket, a finished run, a pull request. The canvas refuses a wire whose types do not fit.',
   },
   {
     title: 'Validation as you edit',
@@ -53,29 +50,29 @@ const CAPABILITIES = [
     title: 'Free test runs',
     body: 'Play the flow back with a sample ticket: phases, review rounds, budgets and refusals, simulated in your browser.',
   },
-  { title: 'Export that is real', body: 'The files on the right are the actual config and Actions workflow generated for this template.' },
+  { title: 'Export you can read', body: 'The files shown with the canvas are the config and the Actions workflow the compiler writes for this template, as it writes them.' },
 ];
 
 /**
- * The builder, shown rather than described: the "Linear ticket to pull request"
- * template drawn as a static canvas, next to the exact files the compiler
- * writes for it. Both are generated from the live catalog and templates, so
- * the page cannot drift from what the studio does.
+ * The builder, shown rather than described: the "GitHub label to pull
+ * request" template — the one a real repository can run unattended today —
+ * drawn as a static canvas, next to the exact files the compiler writes for
+ * it. Both are generated from the live catalog and templates, so the page
+ * cannot drift from what the studio does.
+ *
+ * A server component: the templates, the validator and the compiler run
+ * where the page is rendered, and none of them is sent to a visitor's
+ * browser to draw a preview.
  */
 export function BuilderShowcase() {
-  const brand = useBrand();
-  const entry = useStudioEntry();
-  const workflow = useMemo(() => instantiateTemplate('ticket-to-pr', brand), [brand]);
-  const compiled = useMemo(() => (workflow === undefined ? undefined : compileWorkflow(workflow, brand)), [workflow, brand]);
-  const validation = useMemo(() => (workflow === undefined ? undefined : validateWorkflow(workflow)), [workflow]);
-  // The graph JSON carries generated ids and a timestamp, which would differ between server and client render.
-  const files = useMemo(
-    () => (compiled === undefined || workflow === undefined ? [] : compiled.files.filter((file) => !file.content.includes(workflow.id))),
-    [compiled, workflow],
-  );
+  const workflow = instantiateTemplate('label-run', BRAND, SAMPLE.repository);
+  const compiled = workflow === undefined ? undefined : compileWorkflow(workflow, BRAND);
+  const validation = workflow === undefined ? undefined : validateWorkflow(workflow);
+  // The graph JSON is the workflow again, with ids made for this render: the two files a repository commits are the ones worth showing.
+  const files = compiled === undefined || workflow === undefined ? [] : compiled.files.filter((file) => !file.content.includes(workflow.id));
 
   return (
-    <section id="builder" className="scroll-mt-16 border-t py-16 sm:py-24">
+    <section id="builder" className="scroll-mt-20 border-t py-16 sm:py-24">
       <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="The studio"
@@ -96,8 +93,9 @@ export function BuilderShowcase() {
                 <Badge variant="destructive">{validation.errors} errors</Badge>
               )}
               <p className="ml-auto text-xs text-muted-foreground">
-                <span className="hidden sm:inline">{workflow?.nodes.length ?? 0} nodes, drawn from the template</span>
-                <span className="sm:hidden">Scroll sideways</span>
+                <span className="hidden lg:inline">{workflow?.nodes.length ?? 0} nodes, drawn from the template</span>
+                {/* The canvas scrolls until it fits, which is at this width, not at the phone breakpoint. */}
+                <span className="lg:hidden">Scroll sideways to see it all</span>
               </p>
             </div>
             <div className="overflow-x-auto bg-grid" tabIndex={0} role="region" aria-label="Workflow canvas preview">
@@ -116,10 +114,7 @@ export function BuilderShowcase() {
                 </div>
               ))}
             </dl>
-            <Button className={cn('mt-6', PILL)} variant="outline" nativeButton={false} render={<Link href={entry.into('/workflows')} />}>
-              Open the builder
-              <ArrowRight data-icon="inline-end" />
-            </Button>
+            <OpenBuilderButton />
           </Reveal>
 
           <Reveal delay={0.08} className="min-w-0 lg:col-span-3">
@@ -224,7 +219,7 @@ function MiniCanvas({ workflow }: { workflow: Workflow }) {
         <g key={node.id}>
           <foreignObject x={x} y={y} width={NODE_W} height={NODE_H} className="overflow-visible">
             <div className="flex h-full items-start gap-2.5 overflow-hidden rounded-lg border bg-card p-3">
-              <AppTile connector={def.connector} size={15} />
+              <AppTile connector={def.connectorId} size={15} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[11px] text-muted-foreground">
                   {def.connector.name}

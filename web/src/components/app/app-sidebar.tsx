@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/sidebar';
 import { useBrand } from '@/hooks/use-brand';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
+import { useCapabilities } from '@/lib/cloud/account';
 import { useCompanion } from '@/lib/companion/client';
 import { cloudStatusText } from '@/components/companion/cloud-card';
 import { useStudio } from '@/lib/store';
@@ -48,14 +49,14 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'Operate',
     items: [
-      { href: '/runs', label: 'Runs', icon: Play, hint: 'Every test run, with its timeline and cost' },
+      { href: '/runs', label: 'Runs', icon: Play, hint: 'Every run, test or real, with its timeline and cost' },
       { href: '/integrations', label: 'Integrations', icon: Cable, hint: 'Apps your workflows can listen to and act on' },
     ],
   },
   {
     label: 'Learn',
     items: [
-      { href: '/runners', label: 'Where agents run', icon: Laptop, hint: 'Your computer through relay connect, or Relay Cloud — the two places a run happens' },
+      { href: '/runners', label: 'Where agents run', icon: Laptop, hint: 'Where a run happens: your computer, through relay connect, or Relay Cloud where it is offered' },
       { href: '/guide', label: 'Guide', icon: BookOpen, hint: 'How the studio works, and what every part does' },
     ],
   },
@@ -66,7 +67,8 @@ export function AppSidebar() {
   const brand = useBrand();
   const workflows = useStudio((state) => Object.keys(state.workflows).length);
   const running = useStudio((state) => state.runs.filter((run) => run.status === 'running').length);
-  const connected = useStudio((state) => Object.keys(state.connections).length);
+  // Real connections only: a marker is a label, and a badge that counts labels says "connected" about nothing.
+  const connected = useStudio((state) => Object.values(state.connections).filter((connection) => connection.credential !== undefined).length);
 
   const badgeFor = (href: string): React.ReactNode => {
     if (href === '/workflows' && workflows > 0) return workflows;
@@ -88,8 +90,9 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link href="/" />} tooltip={`${brand.name} home`}>
-              <BrandMark className="size-8" />
-              <div className="grid flex-1 text-left leading-tight">
+              <BrandMark className="size-8 shrink-0" />
+              {/* Collapsed to icons, the rail is as wide as the mark: the words would be cut to their first letters. */}
+              <div className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold tracking-tight">{brand.name}</span>
                 <span className="truncate text-xs text-muted-foreground">Workflow studio</span>
               </div>
@@ -104,7 +107,8 @@ export function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => {
-                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  // Connecting a computer is part of "Where agents run", so that item is lit there too: no page should leave the sidebar with nothing selected.
+                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`) || (item.href === '/runners' && pathname === '/connect');
                   const badge = badgeFor(item.href);
                   return (
                     <SidebarMenuItem key={item.href}>
@@ -140,7 +144,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton
               isActive={pathname.startsWith('/settings')}
-              tooltip="Settings: product name, sign-ins, execution, your data"
+              tooltip="Settings: your account, sign-ins, execution, your data"
               render={<Link href="/settings" />}
             >
               <Settings />
@@ -162,6 +166,7 @@ function AgentsFooter() {
   const host = useCompanion((state) => state.hello?.machine);
   const target = useCompanion((state) => state.target);
   const cloud = useCompanion((state) => (state.target === 'cloud' ? state.cloud : undefined));
+  const cloudOffered = useCapabilities().cloudHub != null;
   return (
     <div className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs group-data-[collapsible=icon]:hidden">
       <Link
@@ -169,7 +174,7 @@ function AgentsFooter() {
         className="grid gap-1.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <span className="flex items-center gap-1.5 font-medium text-foreground">
-          <span className="truncate">{companion === 'connected' ? (host ?? 'Your machine') : cloud !== undefined ? 'Relay Cloud' : 'No runner yet'}</span>
+          <span className="truncate">{companion === 'connected' ? (host ?? 'Your computer') : cloud !== undefined ? 'Relay Cloud' : 'No runner yet'}</span>
         </span>
         {bridge === 'unavailable' ? (
           <span className="text-muted-foreground">
@@ -197,7 +202,7 @@ function AgentsFooter() {
       </Link>
       {/* The local-or-cloud question, wherever the studio is looking right now. */}
       <Link href="/runners" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-        {target === 'cloud' ? 'Relay Cloud, or your computer' : 'Your computer, or Relay Cloud'} →
+        {!cloudOffered ? 'Where your agents run' : target === 'cloud' ? 'Relay Cloud, or your computer' : 'Your computer, or Relay Cloud'} →
       </Link>
     </div>
   );

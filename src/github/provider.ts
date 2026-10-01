@@ -58,7 +58,12 @@ interface GhIssuePayload {
   state?: string;
   author?: { login?: string } | null;
   labels?: Array<{ name?: string }>;
-  comments?: Array<{ author?: { login?: string } | null; createdAt?: string; body?: string }>;
+  comments?: Array<{
+    author?: { login?: string } | null;
+    authorAssociation?: string;
+    createdAt?: string;
+    body?: string;
+  }>;
 }
 
 /** Maps `gh issue view --json` output onto Relay's Issue, tolerating missing fields. */
@@ -83,6 +88,7 @@ export function normalizeGhIssue(
         author: comment?.author?.login ?? 'unknown',
         createdAt: typeof comment?.createdAt === 'string' ? comment.createdAt : '',
         body: typeof comment?.body === 'string' ? comment.body : '',
+        ...(typeof comment?.authorAssociation === 'string' ? { association: comment.authorAssociation } : {}),
       }))
     : [];
 

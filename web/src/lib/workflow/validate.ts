@@ -21,6 +21,12 @@ export interface ValidationResult {
 /** Agents that cannot be confined to read-only, so they may never review. Mirrors `assertReviewRolesEnforceable`. */
 const UNCONFINABLE_REVIEWERS = new Set(['aider']);
 
+/** Agents the CLI ships no harness for: it runs them only when the repository's config describes one under the same name. */
+const UNPACKAGED_AGENTS = new Map([
+  ['gemini', 'Gemini CLI'],
+  ['aider', 'Aider'],
+]);
+
 export function portsCompatible(a: PortType, b: PortType): boolean {
   return a === 'any' || b === 'any' || a === b;
 }
@@ -48,6 +54,17 @@ export function startedByPerson(def: NodeTypeDef | undefined): boolean {
   return def.connectorId !== 'schedule' && !SYSTEM_CATEGORIES.has(def.connector.category);
 }
 
+/**
+ * Logins and teams the templates fill an allowlist with so a test run has
+ * somebody to allow. They are nobody's GitHub login, and `you` in an exported
+ * allowlist would let nobody in — or, worse, whoever owns that account.
+ */
+const PLACEHOLDER_LOGINS = new Set(['you', 'alice', 'bob', 'sam', 'acme/platform', 'acme/security']);
+
+export function isPlaceholderLogin(value: string): boolean {
+  return PLACEHOLDER_LOGINS.has(value.trim().replace(/^@/, '').toLowerCase());
+}
+
 export interface ValidationContext {
   /** Which agents are signed in on this machine, when the local bridge knows. Missing = unknown, never assumed. */
   signedIn?: Partial<Record<string, boolean>>;
@@ -73,6 +90,15 @@ export function validateWorkflow(workflow: Workflow, context: ValidationContext 
   const triggers = nodes.filter(isTriggerNode);
   if (triggers.length === 0) {
     issues.push({ level: 'error', message: 'The workflow has no trigger.', hint: 'Every workflow starts with something that happened: a ticket assigned, a label applied, a schedule.' });
+  }
+  // One trigger starts a run: the first. A second is drawn but never fires.
+  for (const extra of triggers.slice(1)) {
+    issues.push({
+      level: 'warning',
+      nodeId: extra.id,
+      message: `${resolveNode(extra)?.name ?? 'This trigger'} is a second trigger, and only the first one starts a run.`,
+      hint: 'Test runs and the export both use the first trigger. Give this one its own workflow.',
+    });
   }
 
   // Edges: endpoints exist, ports exist, types line up.
@@ -150,6 +176,15 @@ export function validateWorkflow(workflow: Workflow, context: ValidationContext 
         });
       }
     }
+    const unpackaged = [...new Set(['planner', 'planReviewer', 'implementer', 'codeReviewer'].map((role) => String(config[role] ?? '')).filter((agent) => UNPACKAGED_AGENTS.has(agent)))];
+    for (const agent of unpackaged) {
+      issues.push({
+        level: 'warning',
+        nodeId: node.id,
+        message: `${UNPACKAGED_AGENTS.get(agent)} is not built into the Relay CLI.`,
+        hint: `Test runs play it. A real run stops unless .relay/config.json defines a harness named ${agent}; the export does not write one. Claude Code and Codex need nothing.`,
+      });
+    }
     if (config['planner'] !== undefined && config['planner'] === config['planReviewer']) {
       issues.push({ level: 'warning', nodeId: node.id, message: 'The same model plans and reviews the plan.', hint: 'Cross-model review is the point: give the review to the other CLI.' });
     }
@@ -199,6 +234,18 @@ export function validateWorkflow(workflow: Workflow, context: ValidationContext 
     // and concurrency gates are what bound those.
     if (!hasAllowlist && triggers.some((node) => startedByPerson(resolveNode(node)))) {
       issues.push({ level: 'warning', message: 'No author allowlist.', hint: 'On a public repository, a drive-by label is a funded denial-of-wallet attack.' });
+    } else if (!hasAllowlist) {
+      // Nobody asks for a red build, so a test run needs no list. The export
+      // is different: its Action starts from a labelled issue, and the engine
+      // asks who applied the label.
+      issues.push({ level: 'info', message: 'No author allowlist.', hint: 'Test runs do not need one for this trigger. The exported Action does: it starts from a labelled issue and refuses everyone until logins are listed.' });
+    }
+  }
+  for (const node of nodes) {
+    if (resolveNode(node)?.id !== 'gates.action.allowlist') continue;
+    const placeholders = [...String(node.data.config['authors'] ?? '').split(/[\n,]/), ...String(node.data.config['teams'] ?? '').split(/[\n,]/)].map((value) => value.trim()).filter((value) => value.length > 0 && isPlaceholderLogin(value));
+    if (placeholders.length > 0) {
+      issues.push({ level: 'warning', nodeId: node.id, message: `The allowlist still has example names: ${placeholders.join(', ')}.`, hint: 'They let a test run through, but they are not real GitHub logins. Replace them before exporting; the export leaves them out.' });
     }
   }
 
@@ -252,6 +299,6 @@ export function retiredMessage(retired: { app: string; step: string; appRetired:
 
 export function retiredHint(retired: { app: string; step: string; appRetired: boolean }): string {
   return retired.appRetired
-    ? 'Start from it with an Incoming webhook, or call it with an HTTP request, then delete this step.'
+    ? 'Start from it with an Incoming webhook, or call it with an HTTP request, then delete this node.'
     : `Pick one of ${retired.app}'s current steps from the palette, or use an HTTP request, then delete this one.`;
 }

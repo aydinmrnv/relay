@@ -11,6 +11,7 @@ import { ISSUE_TRACKER_REGISTRY, issueTrackerRegistration } from '../issues/regi
 import { detectWebhookFormat, resolveWebhookFormat } from '../notify/format.ts';
 import { resolveExecutable, runProcess } from '../process/runner.ts';
 import { configHarnesses, loadConfig, type RelayConfig } from '../storage/config.ts';
+import { isRelayError } from '../util/errors.ts';
 
 export interface Check {
   label: string;
@@ -38,7 +39,7 @@ export async function checkBinary(name: string, versionArgs: readonly string[]):
       label: name,
       status: 'fail',
       detail: 'not found',
-      hint: `Install ${name} and make sure it is on your PATH.`,
+      hint: installHint(name),
     };
   }
 
@@ -50,6 +51,33 @@ export async function checkBinary(name: string, versionArgs: readonly string[]):
 }
 
 /**
+ * How the two tools Relay does not ship a harness for are installed, by
+ * platform. Printed, never run: "install git" is advice somebody has to go and
+ * look up, and the command is what they were going to look up.
+ */
+const INSTALL_COMMANDS: Readonly<Record<string, Partial<Record<NodeJS.Platform, string>> & { anywhere: string }>> = {
+  git: {
+    darwin: 'xcode-select --install        # or: brew install git',
+    win32: 'winget install Git.Git',
+    linux: 'sudo apt-get install git      # or your distribution\'s package manager',
+    anywhere: 'https://git-scm.com/downloads',
+  },
+  gh: {
+    darwin: 'brew install gh',
+    win32: 'winget install GitHub.cli',
+    linux: 'sudo apt-get install gh       # or see https://github.com/cli/cli#installation',
+    anywhere: 'https://cli.github.com',
+  },
+};
+
+/** The line a missing executable's check carries: the command, where one is known. */
+export function installHint(name: string, platform: NodeJS.Platform = process.platform): string {
+  const known = INSTALL_COMMANDS[name];
+  if (known === undefined) return `Install ${name} and make sure it is on your PATH.`;
+  return `Install ${name}, then run \`relay doctor\` again:\n\n  ${known[platform] ?? known.anywhere}`;
+}
+
+/**
  * Every registered CLI, in registry order, so a newly added harness is checked
  * without doctor or init knowing its name. Config-defined harnesses ride along
  * as `extra` rows, after the shipped ones.
@@ -58,16 +86,55 @@ export async function agentChecks(extra: readonly HarnessRegistration[] = []): P
   return Promise.all(
     [...AGENT_REGISTRY, ...extra].map(async (entry) => {
       const result = await entry.create({}).checkAvailability();
+      // A shipped CLI that is not there at all gets the two commands that put
+      // it there, from the registry row that already knows them: the one that
+      // installs it, and the vendor's own sign-in. A config-defined harness
+      // has neither to offer, and keeps the sentence its harness wrote.
+      const missing = !result.available && result.path === undefined && AGENT_REGISTRY.includes(entry);
+      const hint = missing
+        ? `${entry.label} was not found. Install it and sign in, then run \`relay doctor\` again:\n\n` +
+          `  ${entry.installCommand}\n  ${describeCommand(entry.auth.login)}`
+        : result.hint;
       return {
         entry,
         check: {
           label: entry.label,
           status: result.available ? ('ok' as const) : ('fail' as const),
           detail: result.detail,
-          ...(result.hint === undefined ? {} : { hint: result.hint }),
+          ...(hint === undefined ? {} : { hint }),
         },
       };
     }),
+  );
+}
+
+/** The CLIs a config actually runs: the ones a role is seated on. */
+export function seatedAgents(config: RelayConfig): Set<string> {
+  return new Set(Object.values(config.agents));
+}
+
+const NO_ROLE = 'Optional: no role in .relay/config.json is seated on it.';
+
+function splitBySeat(
+  agents: readonly AgentCheck[],
+  seated: ReadonlySet<string> | undefined,
+): { used: AgentCheck[]; spare: AgentCheck[] } {
+  const isUsed = ({ entry }: AgentCheck): boolean => seated === undefined || seated.has(entry.name);
+  return { used: agents.filter(isUsed), spare: agents.filter((agent) => !isUsed(agent)) };
+}
+
+/**
+ * The agent rows `relay doctor` reports, judged against who holds the roles.
+ *
+ * A run needs the CLIs its roles are seated on and no others: Relay runs on
+ * one CLI as readily as on two. So where a config says who holds the roles, a
+ * CLI none of them is seated on is still reported — it is worth knowing it is
+ * missing — but as a warning, because nothing here will ever call it. With no
+ * config to ask, every registered CLI is judged as before.
+ */
+export function seatedAgentChecks(agents: readonly AgentCheck[], seated: ReadonlySet<string> | undefined): Check[] {
+  return agents.map(({ entry, check }) =>
+    seated === undefined || seated.has(entry.name) ? check : softenToWarning(check, NO_ROLE),
   );
 }
 
@@ -231,7 +298,9 @@ export async function repositoryChecks(cwd: string): Promise<{ root?: string; ch
           label: 'Git repository',
           status: 'fail',
           detail: error instanceof Error ? error.message : 'not a git repository',
-          hint: 'Run relay from inside a git repository.',
+          // The error knows which of the two it is: no repository here, or no
+          // git to ask. They need different advice.
+          hint: isRelayError(error) && error.hint !== undefined ? error.hint : 'Run relay from inside a git repository.',
         },
       ],
     };
@@ -335,11 +404,14 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
   const repository = await repositoryChecks(cwd);
   const configured = await configuredHarnesses(repository.root);
 
+  const seated = configured.config === undefined ? undefined : seatedAgents(configured.config);
   const agents = await agentChecks(configured.registrations);
-  for (const { check } of agents) checks.push(check);
+  checks.push(...seatedAgentChecks(agents, seated));
   checks.push(...(await enforcementChecks(configured.registrations)));
 
-  checks.push(...(await agentAuthChecks(repository.root ?? cwd, agents)));
+  const { used, spare } = splitBySeat(agents, seated);
+  checks.push(...(await agentAuthChecks(repository.root ?? cwd, used)));
+  checks.push(...(await agentAuthChecks(repository.root ?? cwd, spare)).map((check) => softenToWarning(check, NO_ROLE)));
   checks.push(...repository.checks);
   if (configured.check !== undefined) checks.push(configured.check);
   checks.push(...(await trackerChecks(repository.root ?? cwd, configured.config)));

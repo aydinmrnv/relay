@@ -7,7 +7,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ApiError } from '../api';
-import { CREDENTIALS_ENABLED, CREDENTIALS_KEY, CREDENTIALS_UNAVAILABLE_REASON } from '../env';
+import { CREDENTIALS_ENABLED, CREDENTIALS_KEY, CREDENTIALS_UNAVAILABLE_REASON, IS_PRODUCTION } from '../env';
 
 const VERSION = 'v1';
 const DEV_KEY_FILE = path.join('.data', 'credentials.key');
@@ -15,7 +15,7 @@ const DEV_KEY_FILE = path.join('.data', 'credentials.key');
 let devKey: Promise<Buffer> | null = null;
 
 async function key(): Promise<Buffer> {
-  if (!CREDENTIALS_ENABLED) throw new ApiError(503, 'CREDENTIALS_DISABLED', CREDENTIALS_UNAVAILABLE_REASON ?? 'Real connections are not switched on for this server.');
+  if (!CREDENTIALS_ENABLED) throw new ApiError(503, 'CREDENTIALS_DISABLED', IS_PRODUCTION ? 'Real connections are not switched on for this server.' : (CREDENTIALS_UNAVAILABLE_REASON ?? 'Real connections are not switched on for this server.'));
   if (CREDENTIALS_KEY !== null) return CREDENTIALS_KEY;
   devKey ??= loadDevKey().catch((error: unknown) => {
     devKey = null;
@@ -54,23 +54,57 @@ function context(userId: string, connectorId: string): Buffer {
 }
 
 export async function seal(plaintext: string, userId: string, connectorId: string): Promise<string> {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', await key(), iv);
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv('aes-256-gcm', await key(), iv, { authTagLength: TAG_BYTES });
   cipher.setAAD(context(userId, connectorId));
   const body = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   return [VERSION, iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), body.toString('base64url')].join('.');
 }
 
-export async function unseal(sealed: string, userId: string, connectorId: string): Promise<string> {
-  const [version, iv, tag, body] = sealed.split('.');
-  if (version !== VERSION || iv === undefined || tag === undefined || body === undefined) throw new ApiError(500, 'CREDENTIAL_UNREADABLE', 'The stored credential is in a format this server does not know. Connect the app again.');
+/**
+ * Keys this server used before, for rotating: `RELAY_CREDENTIALS_KEY_PREVIOUS`,
+ * comma-separated, each 32 bytes of base64. New values are always sealed with
+ * the current key; a stored one that only an older key opens still opens,
+ * says so, and is sealed again the next time it is checked. Once every
+ * connection has been checked since the change, the old key can be removed.
+ */
+const PREVIOUS_KEYS: Buffer[] = (process.env.RELAY_CREDENTIALS_KEY_PREVIOUS ?? '')
+  .split(',')
+  .map((raw) => Buffer.from(raw.trim(), 'base64'))
+  .filter((candidate) => candidate.length === 32);
+
+const IV_BYTES = 12;
+const TAG_BYTES = 16;
+
+function open(secret: Buffer, iv: Buffer, tag: Buffer, body: Buffer, userId: string, connectorId: string): string {
+  // The tag's length is fixed here: GCM accepts shorter ones, and a 4-byte tag is one a forger can guess.
+  const decipher = createDecipheriv('aes-256-gcm', secret, iv, { authTagLength: TAG_BYTES });
+  decipher.setAAD(context(userId, connectorId));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
+}
+
+/** The credential, and whether it took a retired key to open it. */
+export async function unseal(sealed: string, userId: string, connectorId: string): Promise<{ value: string; stale: boolean }> {
+  const [version, ivText, tagText, bodyText] = sealed.split('.');
+  const unreadable = () => new ApiError(500, 'CREDENTIAL_UNREADABLE', 'The stored credential is in a format this server does not know. Connect the app again.');
+  if (version !== VERSION || ivText === undefined || tagText === undefined || bodyText === undefined) throw unreadable();
+  const iv = Buffer.from(ivText, 'base64url');
+  const tag = Buffer.from(tagText, 'base64url');
+  if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) throw unreadable();
+  const body = Buffer.from(bodyText, 'base64url');
+  const current = await key();
   try {
-    const decipher = createDecipheriv('aes-256-gcm', await key(), Buffer.from(iv, 'base64url'));
-    decipher.setAAD(context(userId, connectorId));
-    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
-    return Buffer.concat([decipher.update(Buffer.from(body, 'base64url')), decipher.final()]).toString('utf8');
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    throw new ApiError(500, 'CREDENTIAL_UNREADABLE', 'The stored credential cannot be decrypted, most likely because the server’s key changed. Connect the app again.');
+    return { value: open(current, iv, tag, body, userId, connectorId), stale: false };
+  } catch {
+    // Not the current key. One it was rotated from, perhaps.
   }
+  for (const previous of PREVIOUS_KEYS) {
+    try {
+      return { value: open(previous, iv, tag, body, userId, connectorId), stale: true };
+    } catch {
+      // Not this one either.
+    }
+  }
+  throw new ApiError(500, 'CREDENTIAL_UNREADABLE', 'The stored credential cannot be decrypted, most likely because the server’s key changed. Connect the app again.');
 }

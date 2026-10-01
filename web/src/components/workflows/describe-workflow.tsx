@@ -227,7 +227,7 @@ function DescribeDialogBody({ onDone }: { onDone: () => void }) {
     // Read again from the text as it stands, rather than from a preview that may be a keystroke behind.
     const { workflow, steps } = workflowFromDescription(text, brand, repository);
     useStudio.getState().upsertWorkflow(workflow);
-    toast.success(`Created “${workflow.name}”`, { description: `${steps.length} steps, switched off until you turn it on. Check each step’s settings first.` });
+    toast.success(`Created “${workflow.name}”`, { description: `${steps.length} nodes, switched off until you turn it on. Check each node’s settings first.` });
     onDone();
     router.push(`/workflows/${workflow.id}`);
   };

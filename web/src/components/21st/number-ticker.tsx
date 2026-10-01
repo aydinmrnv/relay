@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, type ComponentPropsWithoutRef } from "react"
-import { useInView, useMotionValue, useSpring } from "motion/react"
+import { useInView, useMotionValue, useReducedMotionConfig, useSpring } from "motion/react"
 
 import { cn } from "@/lib/utils"
 
@@ -29,13 +29,19 @@ export function NumberTicker({
     stiffness: 100,
   })
   const isInView = useInView(ref, { once: true, margin: "0px" })
+  // With reduced motion the number is simply there: no counting up.
+  const still = useReducedMotionConfig()
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
+    const target = direction === "down" ? startValue : value
 
-    if (isInView) {
+    if (still) {
+      motionValue.jump(target)
+      springValue.jump(target)
+    } else if (isInView) {
       timer = setTimeout(() => {
-        motionValue.set(direction === "down" ? startValue : value)
+        motionValue.set(target)
       }, delay * 1000)
     }
 
@@ -44,7 +50,7 @@ export function NumberTicker({
         clearTimeout(timer)
       }
     }
-  }, [motionValue, isInView, delay, value, direction, startValue])
+  }, [motionValue, springValue, still, isInView, delay, value, direction, startValue])
 
   useEffect(
     () =>
@@ -63,12 +69,12 @@ export function NumberTicker({
     <span
       ref={ref}
       className={cn(
-        "inline-block tracking-wider text-black tabular-nums dark:text-white",
+        "inline-block tracking-wider text-foreground tabular-nums",
         className
       )}
       {...props}
     >
-      {startValue}
+      {still ? Intl.NumberFormat("en-US", { minimumFractionDigits: decimalPlaces, maximumFractionDigits: decimalPlaces }).format(direction === "down" ? startValue : value) : startValue}
     </span>
   )
 }

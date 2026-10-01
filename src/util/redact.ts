@@ -4,7 +4,8 @@
  * shapes we can recognize before anything reaches disk.
  *
  * This is defence in depth, not a guarantee: the real protection is that Relay
- * never reads credentials and never forwards the environment it cannot see.
+ * reads no model or tracker-CLI credential, and that a run nobody is watching
+ * withholds secret-looking variables from its agents (`unattended/environment.ts`).
  *
  * The same shapes guard the other path a secret can take off this machine: the
  * pre-publish scan in `src/git/secretScan.ts` reads the high-signal subset of

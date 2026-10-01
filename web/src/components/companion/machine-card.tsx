@@ -11,6 +11,7 @@ import { CopyButton } from '@/components/runs/copy-button';
 import { REPO_URL } from '@/components/marketing/primitives';
 import { restartCommand, useCompanion, type CompanionStatus } from '@/lib/companion/client';
 import { repositoryLabel } from '@/lib/companion/types';
+import { CLI_INSTALL_COMMAND } from '@/lib/links';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
@@ -18,24 +19,24 @@ import { cn } from '@/lib/utils';
 import { BlockedAccessHelp } from './browser-access';
 
 /** The prebuilt CLI that CI publishes (`.github/workflows/cli-release.yml`); `github:` installs come out empty on current npm. */
-export const INSTALL_COMMAND = 'npm install -g https://github.com/aydinmrnv/relay/releases/download/cli-latest/relay.tgz';
+export const INSTALL_COMMAND = CLI_INSTALL_COMMAND;
 export const CONNECT_COMMAND = 'relay connect';
 
 /** One line on where the studio's machine stands, for badges and the sidebar. */
 export function machineStatusText(status: CompanionStatus, host: string | undefined): string {
   switch (status) {
     case 'connected':
-      return `Connected to ${host ?? 'your machine'}`;
+      return `Connected to ${host ?? 'your computer'}`;
     case 'connecting':
-      return 'Looking for your machine…';
+      return 'Looking for your computer…';
     case 'unreachable':
-      return 'Paired, but `relay connect` is not running';
+      return 'Paired, but relay connect is not running';
     case 'rejected':
-      return 'The machine no longer accepts this pairing';
+      return 'relay connect was started again and needs pairing';
     case 'blocked':
       return 'Your browser is blocking the connection to relay connect';
     default:
-      return 'No machine connected';
+      return 'No computer connected';
   }
 }
 
@@ -44,8 +45,8 @@ export function ConnectSteps({ className }: { className?: string }) {
   return (
     <ol className={cn('grid gap-2 text-sm', className)}>
       <Step n={1} text="Install the Relay CLI, once (Node 22.6 or later):" command={INSTALL_COMMAND} />
-      <Step n={2} text="In the repository your workflows run on, start the companion. It opens this studio and pairs it:" command={CONNECT_COMMAND} />
-      <Step n={3} text="If your browser asks whether this site may reach apps on your device, choose Allow. That is the companion." />
+      <Step n={2} text="In the repository your workflows run on, start it. It opens this studio and pairs it:" command={CONNECT_COMMAND} />
+      <Step n={3} text="If your browser asks whether this site may reach apps on your device, choose Allow. That is relay connect. Safari cannot reach it at all: use Chrome, Edge or Firefox." />
     </ol>
   );
 }
@@ -82,6 +83,7 @@ export function MachineCard() {
   const hello = useCompanion((state) => state.hello);
   const pairing = useCompanion((state) => state.pairing);
   const checkedAt = useCompanion((state) => state.checkedAt);
+  const notice = useCompanion((state) => state.notice);
   const forget = useCompanion((state) => state.forget);
   const refreshAgents = useAgentsStore((state) => state.refresh);
   const now = useNow();
@@ -99,7 +101,7 @@ export function MachineCard() {
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           <Laptop className="size-4 text-muted-foreground" aria-hidden />
-          {connected ? (hello?.machine ?? 'Your machine') : 'Connect your machine'}
+          {connected ? (hello?.machine ?? 'Your computer') : 'Connect your computer'}
           <Badge
             variant="outline"
             className={cn(
@@ -114,7 +116,7 @@ export function MachineCard() {
                 : status === 'connecting'
                   ? 'Checking'
                   : status === 'rejected'
-                    ? 'Pairing refused'
+                    ? 'Pair again'
                     : status === 'blocked'
                       ? 'Blocked by the browser'
                       : 'Not running'}
@@ -124,11 +126,11 @@ export function MachineCard() {
           {connected
             ? `Signs in your coding agents, runs workflows for real and installs exports, through relay connect${checkedAt === null ? '' : ` · checked ${timeAgo(checkedAt, now)}`}.`
             : status === 'unreachable'
-              ? `This browser is paired with ${pairing?.machine ?? 'the companion'} on port ${pairing?.port ?? '?'}, but nothing answers there. Start relay connect again and the studio finds it within seconds.`
+              ? (notice ?? `This browser is paired with ${pairing?.machine ?? 'relay connect'} on port ${pairing?.port ?? '?'}, but nothing answers there. Start relay connect again and open the link it prints: each start pairs afresh.`)
               : status === 'blocked'
-                ? `This browser is paired with the companion on port ${pairing?.port ?? '?'}, but it is not letting this site reach apps on your device.`
+                ? `This browser is paired with relay connect on port ${pairing?.port ?? '?'}, but it is not letting this site reach apps on your device.`
                 : status === 'rejected'
-                ? 'The companion is running but refused this browser’s token — it was rotated with --new-token. Open the new link it printed.'
+                  ? (notice ?? 'relay connect is running, but it has been started again since this browser was paired, and every start has its own link. Open the link it printed in its terminal.')
                 : 'The Relay CLI is the studio’s hands on your computer. Connect it and the studio can sign in Claude Code and Codex, run a workflow for real in your repository, and install an export there. Test runs stay free and in this browser either way.'}
         </CardDescription>
         {pairing !== null ? (
@@ -191,7 +193,7 @@ export function MachineCard() {
         )}
       </CardContent>
       <CardFooter className="flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-        <span className="text-pretty">It listens on 127.0.0.1 only, answers only this studio, and never sees a token: the CLIs keep their own sign-ins.</span>
+        <span className="text-pretty">It listens on 127.0.0.1 only, answers only this studio, and never reads a model credential: the CLIs keep their own sign-ins.</span>
         {pairing !== null ? (
           <Button
             size="sm"
@@ -199,10 +201,10 @@ export function MachineCard() {
             onClick={() => {
               forget();
               void refreshAgents();
-              toast('Forgot this machine', { description: 'Run relay connect and open its link to pair again.' });
+              toast('Forgot this computer', { description: 'Run relay connect and open its link to pair again.' });
             }}
           >
-            <Unplug data-icon="inline-start" /> Forget this machine
+            <Unplug data-icon="inline-start" /> Forget this computer
           </Button>
         ) : (
           <a href={REPO_URL} target="_blank" rel="noreferrer" className="font-medium text-foreground underline-offset-4 hover:underline">

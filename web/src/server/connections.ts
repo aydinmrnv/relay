@@ -11,11 +11,17 @@ import { seal, unseal } from './credentials/crypto';
 import { checkCredential, sendTestMessage, type CheckResult } from './credentials/verify';
 import { getDb } from './db';
 import { connection } from './db/schema';
-import { CREDENTIALS_ENABLED, CREDENTIALS_UNAVAILABLE_REASON } from './env';
+import { BRAND } from '@/lib/brand';
+import { CREDENTIALS_ENABLED, CREDENTIALS_UNAVAILABLE_REASON, IS_PRODUCTION } from './env';
 
 /** Refuses when this server cannot keep credentials: accounts off, or no key in production. */
 export function assertCredentials(): void {
-  if (!CREDENTIALS_ENABLED) throw new ApiError(503, 'CREDENTIALS_DISABLED', CREDENTIALS_UNAVAILABLE_REASON ?? 'Real connections are not switched on for this server.');
+  if (!CREDENTIALS_ENABLED) throw new ApiError(503, 'CREDENTIALS_DISABLED', credentialsUnavailable());
+}
+
+/** Why, for whoever is asking. In production that is a stranger, who is not told which setting the server is missing. */
+export function credentialsUnavailable(): string {
+  return IS_PRODUCTION ? 'Real connections are not switched on for this server.' : (CREDENTIALS_UNAVAILABLE_REASON ?? 'Real connections are not switched on for this server.');
 }
 
 type Row = typeof connection.$inferSelect;
@@ -88,24 +94,30 @@ export async function connectApp(userId: string, connectorId: string, secret: st
 export async function recheckApp(userId: string, connectorId: string): Promise<Connection> {
   const spec = specFor(connectorId);
   const row = await find(userId, connectorId);
-  const result = await checkCredential(spec.kind, await unseal(row.secret, userId, connectorId));
+  const opened = await unseal(row.secret, userId, connectorId);
+  const result = await checkCredential(spec.kind, opened.value);
   if (!result.ok && result.reason === 'unreachable') throw failure(spec, result);
   const now = new Date();
   const db = await getDb();
+  // Opened with a key that is being retired: seal it again with the current one, so the old key can go.
+  const resealed = opened.stale ? { secret: await seal(opened.value, userId, connectorId) } : {};
   const [updated] = await db
     .update(connection)
-    .set(result.ok ? { status: 'connected', error: null, checkedAt: now, updatedAt: now } : { status: 'error', error: result.message, checkedAt: now, updatedAt: now })
+    .set(result.ok ? { status: 'connected', error: null, checkedAt: now, updatedAt: now, ...resealed } : { status: 'error', error: result.message, checkedAt: now, updatedAt: now, ...resealed })
     .where(and(eq(connection.userId, userId), eq(connection.connectorId, connectorId)))
     .returning();
   return toConnection(updated!);
 }
 
 /** Posts a short message through the connection, so the person sees it arrive where they expect. */
-export async function testApp(userId: string, connectorId: string, product: string): Promise<Connection> {
+export async function testApp(userId: string, connectorId: string): Promise<Connection> {
   const spec = specFor(connectorId);
   const row = await find(userId, connectorId);
-  const text = `${product}: this channel is connected. Messages from your workflows will arrive here.`;
-  const result = await sendTestMessage(spec.kind, await unseal(row.secret, userId, connectorId), text);
+  // What is true today: the studio keeps the webhook and can post a test
+  // through it. A run does not post through it yet; an exported workflow
+  // posts with the same URL held as a secret in its own repository.
+  const text = `${BRAND.name}: this webhook works, and test messages like this one arrive here. An exported workflow posts here once the same URL is set as a secret in its repository.`;
+  const result = await sendTestMessage(spec.kind, (await unseal(row.secret, userId, connectorId)).value, text);
   if (!result.ok && result.reason === 'unreachable') throw failure(spec, result);
   const now = new Date();
   const db = await getDb();

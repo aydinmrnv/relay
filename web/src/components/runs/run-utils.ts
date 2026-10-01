@@ -75,15 +75,23 @@ export function stoppingEvent(run: Run): RunEvent | undefined {
 export function outcomeReason(run: Run): string {
   switch (run.status) {
     case 'running':
-      return liveStep(run) ?? 'Playing now.';
+      return liveStep(run) ?? (run.source === 'machine' ? 'Running now.' : 'Playing now.');
     case 'waiting':
       return 'Paused on a human approval.';
     case 'failed':
     case 'refused':
       return stoppingEvent(run)?.message ?? run.summary ?? 'No reason was recorded.';
     case 'cancelled':
-      return run.summary?.startsWith('Interrupted') === true ? run.summary : 'Stopped before it finished; nothing after that point ran.';
+      // A machine run says in its own words how it ended: stopped by the person, or lost track of while it may well have carried on.
+      if (run.summary !== undefined && (run.source === 'machine' || run.summary.startsWith('Interrupted'))) return run.summary;
+      return 'Stopped before it finished; nothing after that point ran.';
     case 'succeeded': {
+      // A test run opens and commits nothing; say what a real one would have done, not that it happened.
+      if (run.source !== 'machine') {
+        if (run.prUrl !== undefined) return `A real run would end with a pull request from ${run.branch ?? 'its branch'}. This was a test run: nothing was opened.`;
+        if (run.branch !== undefined) return `A real run would leave the change on ${run.branch}. This was a test run: nothing was committed.`;
+        return 'Every step finished. This workflow has no agent pipeline, so no code would be written.';
+      }
       if (run.prUrl !== undefined) return `Opened pull request #${prNumber(run.prUrl)} from ${run.branch ?? 'its branch'}.`;
       if (run.branch !== undefined) return `The change is on ${run.branch}.`;
       return 'Every step finished. This workflow has no agent pipeline, so no code was written.';
@@ -105,5 +113,6 @@ export function downloadJson(filename: string, value: unknown): void {
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  // Not at once: some browsers start the download after this task, and a revoked URL saves nothing.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

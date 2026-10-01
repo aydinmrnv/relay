@@ -12,19 +12,24 @@ import { FALLBACK_DAILY_CEILING, type Ceiling, type SpendRow } from './derive';
 
 interface Props {
   today: number;
+  /** The part of today's spend that real runs reported. */
+  todayReal: number;
   ceiling: Ceiling;
   rows: SpendRow[];
   other: SpendRow | null;
   weekTotal: number;
+  /** The part of the week's spend that real runs reported. */
+  weekReal: number;
   className?: string;
 }
 
 /**
- * Today's simulated spend against the tightest Budget gate, and where this
- * week's spend went. Nothing here is billed; the point is to see what the
- * guardrails would see before a real run spends real money.
+ * Today's spend against the tightest Budget gate, and where this week's
+ * spend went. Most of it is simulated — what test runs would have cost — so
+ * the guardrails can be watched before a real run spends anything; the part
+ * that real runs reported is named wherever there is some.
  */
-export function SpendCard({ today, ceiling, rows, other, weekTotal, className }: Props) {
+export function SpendCard({ today, todayReal, ceiling, rows, other, weekTotal, weekReal, className }: Props) {
   const reduce = useCalmMotion();
   const ratio = ceiling.usd <= 0 ? 1 : today / ceiling.usd;
   const percent = Math.min(100, Math.round(ratio * 100));
@@ -38,7 +43,11 @@ export function SpendCard({ today, ceiling, rows, other, weekTotal, className }:
         <CardTitle className="flex items-center gap-1.5">
           Spend <HelpTip term="cost" />
         </CardTitle>
-        <CardDescription>What the coding CLIs would report. Simulated — nothing here was billed.</CardDescription>
+        <CardDescription>
+          {weekReal > 0
+            ? 'What test runs would have cost, and what real runs did cost. Relay bills nothing; a real run uses your own Claude and ChatGPT plans.'
+            : 'What the coding CLIs would report. Simulated — nothing here was billed.'}
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
         <section aria-labelledby="spend-today" className="flex flex-col gap-2">
@@ -49,6 +58,7 @@ export function SpendCard({ today, ceiling, rows, other, weekTotal, className }:
             <p className="text-sm">
               <span className="font-semibold">{formatUsd(today)}</span>
               <span className="text-muted-foreground"> of {formatUsd(ceiling.usd)}</span>
+              {todayReal > 0 ? <span className="text-muted-foreground"> · {formatUsd(todayReal)} real</span> : null}
             </p>
           </div>
           <div className={cn('h-2 w-full overflow-hidden rounded-full', tone.track)} role="meter" aria-labelledby="spend-today" aria-valuenow={Math.round(today * 100) / 100} aria-valuemin={0} aria-valuemax={ceiling.usd}>
@@ -90,7 +100,10 @@ export function SpendCard({ today, ceiling, rows, other, weekTotal, className }:
             <h3 id="spend-week" className="text-sm font-medium">
               By workflow, last 7 days
             </h3>
-            <span className="text-sm text-muted-foreground tabular-nums">{formatUsd(weekTotal)}</span>
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {formatUsd(weekTotal)}
+              {weekReal > 0 ? ` · ${formatUsd(weekReal)} real` : ''}
+            </span>
           </div>
           {rows.length === 0 ? (
             <p className="text-xs text-muted-foreground">No spend this week. Only workflows with an agent pipeline or an AI step report a cost.</p>
@@ -118,6 +131,7 @@ function SpendBar({ row, max, reduce }: { row: SpendRow; max: number; reduce: bo
         <span className="truncate font-medium text-foreground group-hover:underline group-hover:underline-offset-4">{row.name}</span>
         <span className="shrink-0 text-muted-foreground tabular-nums">
           {row.runs} {row.runs === 1 ? 'run' : 'runs'} · <span className="text-foreground">{formatUsd(row.spend)}</span>
+          {row.real > 0 ? ` (${formatUsd(row.real)} real)` : ''}
         </span>
       </div>
       <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-primary/10">

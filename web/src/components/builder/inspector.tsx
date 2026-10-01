@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import { AlertTriangle, ArrowRight, Braces, CircleAlert, Copy, CornerDownRight, Info, Plug, Trash2, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +28,7 @@ import type { Term } from '@/lib/glossary';
 import type { ValidationIssue } from '@/lib/workflow/validate';
 import type { Run, Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
+import { isSimulatedOnly } from '@/lib/workflow/readiness';
 import { PORT_LEGEND, PORT_STYLE } from './ports';
 import type { CanvasNode } from './types';
 import { ForecastSummary } from './forecast-dialog';
@@ -299,6 +300,11 @@ function NodePanel({ node, issues, run, onChange, onDelete, onDuplicate }: Props
             {term === undefined ? null : <HelpTip term={term} detailed />}
           </p>
           <p className="mt-1 text-xs leading-snug text-muted-foreground">{def.description}</p>
+          {isSimulatedOnly(def.id) ? (
+            <p className="mt-2 rounded-md border border-dashed px-2 py-1.5 text-[11px] leading-snug text-muted-foreground">
+              <span className="font-medium text-foreground">Test runs only.</span> This step is played when you test the workflow. A real run and the exported workflow do not perform it yet; Export says so in its warnings.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -554,7 +560,8 @@ function FieldControl({ field, value, onChange }: { field: FieldSpec; value: unk
             min={field.min}
             max={field.max}
             step={field.step}
-            placeholder={field.placeholder}
+            // Empty is "unset" on every screen: no limit, not zero.
+            placeholder={field.placeholder ?? 'unset'}
             onChange={(event) => onChange(event.target.value === '' ? '' : Number(event.target.value))}
             className="h-8 text-sm tabular-nums"
           />
@@ -599,6 +606,29 @@ function FieldControl({ field, value, onChange }: { field: FieldSpec; value: unk
 
 function TemplateField({ id, label, help, field, value, onChange }: { id: string; label: React.ReactNode; help: React.ReactNode; field: FieldSpec; value: string; onChange: (value: unknown) => void }) {
   const [open, setOpen] = useState(false);
+  const area = useRef<HTMLTextAreaElement>(null);
+  // Where the caret was when the field was last used. Opening the menu takes
+  // focus away, so it is remembered rather than asked for at that moment.
+  const caret = useRef<{ start: number; end: number } | null>(null);
+  const remember = (element: HTMLTextAreaElement) => {
+    caret.current = { start: element.selectionStart, end: element.selectionEnd };
+  };
+  /** Puts the variable where the caret is, replacing a selection; at the end only when the field was never touched. */
+  const insert = (path: string) => {
+    const at = caret.current ?? { start: value.length, end: value.length };
+    const before = value.slice(0, at.start);
+    const after = value.slice(at.end);
+    const token = `{{${path}}}`;
+    const lead = caret.current === null && before.length > 0 && !/\s$/.test(before) ? ' ' : '';
+    onChange(`${before}${lead}${token}${after}`);
+    const position = before.length + lead.length + token.length;
+    caret.current = { start: position, end: position };
+    setOpen(false);
+    requestAnimationFrame(() => {
+      area.current?.focus();
+      area.current?.setSelectionRange(position, position);
+    });
+  };
   return (
     <div className="grid gap-1.5">
       <div className="flex items-center justify-between">
@@ -618,10 +648,7 @@ function TemplateField({ id, label, help, field, value, onChange }: { id: string
                       key={variable.path}
                       type="button"
                       className="flex w-full flex-col items-start rounded-md px-1.5 py-1 text-left hover:bg-muted"
-                      onClick={() => {
-                        onChange(`${value}${value.length > 0 && !value.endsWith(' ') && !value.endsWith('\n') ? ' ' : ''}{{${variable.path}}}`);
-                        setOpen(false);
-                      }}
+                      onClick={() => insert(variable.path)}
                     >
                       <span className="font-mono text-xs">{`{{${variable.path}}}`}</span>
                       <span className="text-[11px] text-muted-foreground">{variable.description}</span>
@@ -633,7 +660,19 @@ function TemplateField({ id, label, help, field, value, onChange }: { id: string
           </PopoverContent>
         </Popover>
       </div>
-      <Textarea id={id} value={value} placeholder={field.placeholder} onChange={(event) => onChange(event.target.value)} className="min-h-20 font-mono text-xs" />
+      <Textarea
+        ref={area}
+        id={id}
+        value={value}
+        placeholder={field.placeholder}
+        onChange={(event) => {
+          remember(event.currentTarget);
+          onChange(event.target.value);
+        }}
+        onSelect={(event) => remember(event.currentTarget)}
+        onBlur={(event) => remember(event.currentTarget)}
+        className="min-h-20 font-mono text-xs"
+      />
       {help}
     </div>
   );

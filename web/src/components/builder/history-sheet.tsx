@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { GraphThumbnail } from '@/components/templates/graph-thumbnail';
 import { useAccount } from '@/lib/cloud/account';
+import { useCombo } from '@/hooks/use-key-label';
 import { api, flushNow } from '@/lib/cloud/sync';
 import { withLocalSecrets, withoutSecrets } from '@/lib/cloud/secrets';
 import type { VersionSummary } from '@/lib/cloud/types';
@@ -25,6 +26,7 @@ import { cn } from '@/lib/utils';
  */
 export function HistorySheet({ workflow, open, onOpenChange, onRestore }: { workflow: Workflow; open: boolean; onOpenChange: (open: boolean) => void; onRestore: (version: Workflow, label: string) => void }) {
   const signedIn = useAccount((state) => state.status === 'signed-in');
+  const combo = useCombo();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-[92vw] gap-0 p-0 sm:max-w-md">
@@ -32,7 +34,7 @@ export function HistorySheet({ workflow, open, onOpenChange, onRestore }: { work
           <SheetTitle className="flex items-center gap-2">
             <History className="size-4 text-muted-foreground" /> Version history
           </SheetTitle>
-          <SheetDescription>Saved automatically before each editing session, and whenever you save one by hand. Restore any of them; ⌘Z undoes a restore.</SheetDescription>
+          <SheetDescription>Saved automatically before each editing session, and whenever you save one by hand. Restore any of them; {combo('mod', 'Z')} undoes a restore.</SheetDescription>
         </SheetHeader>
         {signedIn ? <Versions workflow={workflow} open={open} onRestore={onRestore} /> : <GuestHistory />}
       </SheetContent>
@@ -59,14 +61,21 @@ function Versions({ workflow, open, onRestore }: { workflow: Workflow; open: boo
   const [expanded, setExpanded] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Record<string, Workflow>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  // Why the list could not be loaded: not the same thing as a list with nothing in it.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Versions whose graph could not be fetched, so the preview can say so instead of spinning.
+  const [unavailable, setUnavailable] = useState<Record<string, true>>({});
+  // The version whose delete button has been pressed once, and asks to be pressed again.
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    setLoadError(null);
     try {
       const result = await api<{ versions: VersionSummary[] }>(`/api/workflows/${encodeURIComponent(workflow.id)}/versions`);
       setVersions(result.versions);
     } catch (error) {
-      setVersions([]);
-      toast.error('Could not load the history', { description: error instanceof Error ? error.message : undefined });
+      setVersions(null);
+      setLoadError(error instanceof Error ? error.message : 'The server did not answer.');
     }
   }, [workflow.id]);
 
@@ -79,11 +88,18 @@ function Versions({ workflow, open, onRestore }: { workflow: Workflow; open: boo
 
   const fetchVersion = async (id: string): Promise<Workflow | null> => {
     if (previews[id] !== undefined) return previews[id];
+    setUnavailable((current) => {
+      if (current[id] === undefined) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
     try {
       const result = await api<{ workflow: Workflow }>(`/api/workflows/${encodeURIComponent(workflow.id)}/versions/${encodeURIComponent(id)}`);
       setPreviews((current) => ({ ...current, [id]: result.workflow }));
       return result.workflow;
     } catch (error) {
+      setUnavailable((current) => ({ ...current, [id]: true }));
       toast.error('Could not open that version', { description: error instanceof Error ? error.message : undefined });
       return null;
     }
@@ -107,6 +123,12 @@ function Versions({ workflow, open, onRestore }: { workflow: Workflow; open: boo
   };
 
   const remove = async (version: VersionSummary) => {
+    // A saved version cannot be brought back, so the first press only arms the button.
+    if (confirming !== version.id) {
+      setConfirming(version.id);
+      return;
+    }
+    setConfirming(null);
     setBusy(version.id);
     try {
       await api(`/api/workflows/${encodeURIComponent(workflow.id)}/versions/${encodeURIComponent(version.id)}`, { method: 'DELETE' });
@@ -144,7 +166,16 @@ function Versions({ workflow, open, onRestore }: { workflow: Workflow; open: boo
         </Button>
       </form>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {versions === null ? (
+        {loadError !== null ? (
+          <div className="flex flex-col items-start gap-2 p-3 text-sm">
+            <p className="text-pretty text-muted-foreground">
+              <span className="font-medium text-foreground">The history could not be loaded.</span> {loadError} The versions are still in your account.
+            </p>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              <RotateCcw data-icon="inline-start" /> Try again
+            </Button>
+          </div>
+        ) : versions === null ? (
           <p className="flex items-center gap-2 p-3 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Loading…
           </p>
@@ -167,7 +198,14 @@ function Versions({ workflow, open, onRestore }: { workflow: Workflow; open: boo
                 </button>
                 {expanded === version.id ? (
                   <div className="flex flex-col gap-2 px-2.5 pb-2.5">
-                    {previews[version.id] === undefined ? (
+                    {unavailable[version.id] === true ? (
+                      <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-xs text-muted-foreground">
+                        This version could not be loaded.
+                        <Button size="xs" variant="outline" onClick={() => void fetchVersion(version.id)}>
+                          Try again
+                        </Button>
+                      </div>
+                    ) : previews[version.id] === undefined ? (
                       <div className="flex h-32 items-center justify-center rounded-lg border border-dashed">
                         <Loader2 className="size-4 animate-spin text-muted-foreground" />
                       </div>
@@ -179,8 +217,16 @@ function Versions({ workflow, open, onRestore }: { workflow: Workflow; open: boo
                         {busy === version.id ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <RotateCcw data-icon="inline-start" />}
                         Restore this version
                       </Button>
-                      <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => void remove(version)} disabled={busy !== null} aria-label="Delete this version">
-                        <Trash2 />
+                      <Button
+                        size="sm"
+                        variant={confirming === version.id ? 'destructive' : 'ghost'}
+                        className={cn('ml-auto', confirming === version.id ? '' : 'text-muted-foreground')}
+                        onClick={() => void remove(version)}
+                        onBlur={() => setConfirming((current) => (current === version.id ? null : current))}
+                        disabled={busy !== null}
+                        aria-label={confirming === version.id ? 'Press again to delete this version for good' : 'Delete this version'}
+                      >
+                        <Trash2 /> {confirming === version.id ? 'Delete for good?' : null}
                       </Button>
                     </div>
                   </div>

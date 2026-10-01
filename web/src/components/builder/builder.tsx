@@ -1,11 +1,12 @@
 'use client';
 
+import { usePageTitle } from '@/hooks/use-page-title';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ReactFlowProvider, addEdge, applyEdgeChanges, applyNodeChanges, useReactFlow, type EdgeChange, type NodeChange, type OnConnect } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import { AlertTriangle, Check, ChevronDown, CircleAlert, CircleDollarSign, Cloud, FileCode2, FileJson, Globe, History, Laptop, LayoutTemplate, Loader2, PanelLeft, PanelRight, Play, Plug, Plus, Redo2, Sparkles, Undo2, Wand2, Zap } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, CircleAlert, CircleDollarSign, Cloud, Ellipsis, FileCode2, FileJson, Globe, History, Laptop, LayoutTemplate, Loader2, PanelLeft, PanelRight, Play, Plug, Plus, Redo2, SlidersHorizontal, Undo2, Wand2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -14,14 +15,15 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Kbd } from '@/components/ui/kbd';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useCombo } from '@/hooks/use-key-label';
 import { HelpTip } from '@/components/app/help-tip';
 import { defaultConfig, getNodeType, type NodeTypeDef, type PortSpec } from '@/lib/connectors';
-import { useStudio } from '@/lib/store';
+import { flushStorage, useStudio } from '@/lib/store';
 import { useAccount } from '@/lib/cloud/account';
 import { useSyncStatus } from '@/lib/cloud/sync';
 import { useSignedIn } from '@/hooks/use-agent-accounts';
@@ -30,7 +32,7 @@ import { launchRun, launchMachineRun, cancelRun } from '@/lib/run-launcher';
 import { useCompanion, useCompanionCan } from '@/lib/companion/client';
 import type { RunTask } from '@/lib/companion/types';
 import { isTypingTarget } from '@/lib/shortcuts';
-import type { Run, RunEvent, Workflow, WorkflowEdge, WorkflowNode } from '@/lib/workflow/schema';
+import type { Run, RunEvent, Settings, Workflow, WorkflowEdge, WorkflowNode } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
 import { Canvas } from './canvas';
 import { Palette } from './palette';
@@ -77,12 +79,15 @@ function clean(node: CanvasNode): CanvasNode {
 
 function BuilderInner({ workflowId }: { workflowId: string }) {
   const saved = useStudio((state) => state.workflows[workflowId]);
+  usePageTitle(saved?.name);
   const setGraph = useStudio((state) => state.setGraph);
   const renameWorkflow = useStudio((state) => state.renameWorkflow);
   const toggleWorkflow = useStudio((state) => state.toggleWorkflow);
   const toursSeen = useStudio((state) => state.toursSeen);
   const markTourSeen = useStudio((state) => state.markTourSeen);
   const speed = useStudio((state) => state.settings.simulationSpeed);
+  const updateSettings = useStudio((state) => state.updateSettings);
+  const combo = useCombo();
   const signedIn = useSignedIn();
   const signedInKey = `${signedIn.claude}|${signedIn.codex}`;
   const { fitView, screenToFlowPosition, setCenter, getZoom } = useReactFlow();
@@ -109,13 +114,18 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   const machineHost = useCompanion((state) => state.hello?.machine);
   const [picker, setPicker] = useState<{ open: boolean; source: PickerSource | null; position: { x: number; y: number } | null }>({ open: false, source: null, position: null });
   const [runOpen, setRunOpen] = useState(false);
-  const [run, setRun] = useState<Run | null>(null);
+  // Starts from the last run this workflow had, so a reload does not empty the run panel and the settings panel's "Last run".
+  const [run, setRun] = useState<Run | null>(() => useStudio.getState().runs.find((candidate) => candidate.workflowId === workflowId) ?? null);
   const [running, setRunning] = useState(false);
   const [showRunState, setShowRunState] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [history, setHistory] = useState({ past: 0, future: 0 });
 
   const canvasRef = useRef<HTMLDivElement>(null);
+  const comboRef = useRef(combo);
+  useEffect(() => {
+    comboRef.current = combo;
+  });
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   const past = useRef<Snapshot[]>([]);
@@ -123,6 +133,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   const lastCommit = useRef(0);
   const committedFrom = useRef<{ nodes: CanvasNode[] | null; edges: CanvasEdge[] | null }>({ nodes: null, edges: null });
   const runIdRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -132,6 +143,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   // The saved graph is the source of truth; the canvas is a working copy that
   // writes back after a short pause so dragging does not thrash the store.
   useEffect(() => {
+    dirtyRef.current = dirty;
     if (!dirty || saved === undefined) return;
     const handle = setTimeout(() => {
       const graph = fromCanvas(nodes, edges);
@@ -140,6 +152,25 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
     }, 400);
     return () => clearTimeout(handle);
   }, [dirty, nodes, edges, saved, setGraph]);
+
+  // An edit made in the last moments before leaving — a click on another
+  // page, a closed tab — is still waiting for that pause. Write it as the
+  // builder goes, and as the page goes, rather than drop it.
+  useEffect(() => {
+    const flush = () => {
+      if (!dirtyRef.current) return;
+      dirtyRef.current = false;
+      const graph = fromCanvas(nodesRef.current, edgesRef.current);
+      setGraph(workflowId, graph.nodes, graph.edges);
+      // The store itself saves on a short delay, which a closing page does not wait for.
+      flushStorage();
+    };
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
+  }, [workflowId, setGraph]);
 
   /* ---------------------------------------------------------------- */
   /* Undo / redo                                                        */
@@ -264,9 +295,9 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
       setSelectedId(nodeId);
       setNodes((current) => current.map((node) => (node.selected === (node.id === nodeId) ? node : { ...node, selected: node.id === nodeId })));
       if (nodeId !== null && focus) void fitView({ nodes: [{ id: nodeId }], duration: 400, maxZoom: 1, padding: 0.6 });
-      if (nodeId !== null) setShowInspector(true);
+      if (nodeId !== null && !mobile) setShowInspector(true);
     },
-    [fitView],
+    [fitView, mobile],
   );
 
   /** Where a new node goes after `sourceId`: one column right, below any siblings already there. */
@@ -299,12 +330,12 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
         }
       }
       setSelectedId(id);
-      setShowInspector(true);
+      if (!mobile) setShowInspector(true);
       setDirty(true);
       // A node placed by the builder rather than by a drop may land off screen; bring it into view.
       if (position === undefined) setTimeout(() => void setCenter(at.x + 136, at.y + 40, { zoom: Math.max(getZoom(), 0.7), duration: 350 }), 30);
     },
-    [commit, placeAfter, viewportCentre, setCenter, getZoom],
+    [commit, placeAfter, viewportCentre, setCenter, getZoom, mobile],
   );
 
   /** Palette click: add next to the selected node, connected, when the two fit; otherwise in view. */
@@ -374,9 +405,11 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
       setEdges((current) => [...current, ...wired]);
       setSelectedId(created.length === 1 ? created[0]!.id : null);
       setDirty(true);
+      // Pasted next to where they were copied from, which may be off screen, or in another workflow altogether: show them.
+      if (created.length > 0) setTimeout(() => void fitView({ nodes: created.map((node) => ({ id: node.id })), duration: 350, padding: 0.4, maxZoom: Math.max(getZoom(), 0.7) }), 30);
       return created.length;
     },
-    [commit],
+    [commit, fitView, getZoom],
   );
 
   const duplicate = useCallback(
@@ -396,7 +429,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
       chosen,
       edgesRef.current.filter((edge) => ids.has(edge.source) && ids.has(edge.target)),
     );
-    toast(`Copied ${chosen.length} node${chosen.length === 1 ? '' : 's'}`, { description: 'Paste with ⌘V here or in another workflow.' });
+    toast(`Copied ${chosen.length} node${chosen.length === 1 ? '' : 's'}`, { description: `Paste with ${comboRef.current('mod', 'V')} here or in another workflow.` });
   }, []);
 
   /** Lay the graph out in columns by distance from the trigger, ordering each column after its parents to keep lines from crossing. */
@@ -454,7 +487,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
       setSelectedId(null);
       setDirty(true);
       setHistoryOpen(false);
-      toast.success(`Restored ${label}`, { description: 'Press ⌘Z to undo.' });
+      toast.success(`Restored ${label}`, { description: `Press ${comboRef.current('mod', 'Z')} to undo.` });
       setTimeout(() => void fitView({ duration: 400, padding: 0.18, maxZoom: 1 }), 30);
     },
     [commit, fitView],
@@ -528,6 +561,10 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
         else if (result.status === 'refused') toast.warning('A guardrail refused the run', { description: 'Open the run panel to see which gate said no, and why.' });
         else if (result.status === 'failed') toast.error('The test run failed', { description: 'Open the run panel to see which node failed.' });
         else if (result.status === 'cancelled') toast('Test run stopped');
+      } catch (error) {
+        // The launcher closed the run as failed; take the "running" colours off the canvas and say why.
+        setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: node.data.status === 'running' || node.data.status === 'pending' ? undefined : node.data.status, phase: undefined } })));
+        toast.error('The test run could not finish', { description: error instanceof Error ? error.message : String(error) });
       } finally {
         setRunning(false);
         runIdRef.current = null;
@@ -583,7 +620,10 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   /* Keyboard                                                           */
   /* ---------------------------------------------------------------- */
 
-  const dialogOpen = picker.open || exportOpen || payloadOpen || machineOpen;
+  const tourOpen = toursSeen['builder'] !== true;
+  // Everything that covers the canvas. A shortcut pressed while one is open
+  // is meant for it, not for the graph behind it.
+  const dialogOpen = picker.open || exportOpen || payloadOpen || machineOpen || shareOpen || historyOpen || forecastOpen || tourOpen;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (dialogOpen || isTypingTarget(event.target)) return;
@@ -627,7 +667,6 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   const actions: BuilderActions = useMemo(() => ({ addAfter, duplicate, remove: deleteNode, removeEdge, select: (nodeId) => selectNode(nodeId), readOnly: running }), [addAfter, duplicate, deleteNode, removeEdge, selectNode, running]);
 
   if (saved === undefined || workflow === null) return null;
-  const tourOpen = toursSeen['builder'] !== true;
 
   const canvasArea = (
     <>
@@ -640,7 +679,8 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
           onConnect={onConnect}
           onSelect={(nodeId) => {
             setSelectedId(nodeId);
-            if (nodeId !== null) setShowInspector(true);
+            // On a phone the settings cover the canvas, so a tap only selects; the toolbar's Settings button opens them.
+            if (nodeId !== null && !mobile) setShowInspector(true);
           }}
           onDrop={(def, position) => addNode(def, position)}
           onDropConnection={(source, position) => {
@@ -669,9 +709,10 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
 
   return (
     <BuilderActionsContext.Provider value={actions}>
-      <div className="flex h-[calc(100dvh-3rem)] min-h-0 flex-col">
+      {/* Fills what is left of the window under the header and any banner above it: the layout gives it that height (see `(app)/layout.tsx`). */}
+      <div data-builder className="flex min-h-0 flex-1 flex-col">
         {/* Toolbar */}
-        <div className="flex h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b bg-card px-2 [scrollbar-width:none]">
+        <div className="flex h-12 shrink-0 items-center gap-1.5 border-b bg-card px-2">
           <IconButton label={showPalette ? 'Hide the node list' : 'Show the node list'} onClick={() => setShowPalette((value) => !value)} active={showPalette}>
             <PanelLeft />
           </IconButton>
@@ -681,7 +722,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
             onBlur={(event) => {
               if (event.target.value.trim().length === 0) renameWorkflow(saved.id, 'Untitled workflow');
             }}
-            className="hidden h-8 w-40 shrink-0 border-transparent bg-transparent font-semibold shadow-none hover:border-border focus-visible:border-border sm:block sm:w-56 lg:w-64 dark:bg-transparent"
+            className="h-8 min-w-0 flex-1 border-transparent bg-transparent font-semibold shadow-none hover:border-border focus-visible:border-border md:w-56 md:flex-none lg:w-64 dark:bg-transparent"
             aria-label="Workflow name"
           />
           <label className="hidden items-center gap-1.5 text-xs text-muted-foreground md:flex">
@@ -691,32 +732,40 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
           </label>
           <SaveState saving={dirty} />
 
-          <div className="ml-auto flex items-center gap-1">
-            <IconButton label="Undo" shortcut="⌘Z" onClick={undo} disabled={history.past === 0 || running}>
-              <Undo2 />
-            </IconButton>
-            <IconButton label="Redo" shortcut="⇧⌘Z" onClick={redo} disabled={history.future === 0 || running}>
-              <Redo2 />
-            </IconButton>
-            <IconButton label="Tidy the layout" onClick={autoLayout} disabled={running || nodes.length < 2}>
-              <Wand2 />
-            </IconButton>
-            <div className="mx-1 h-5 w-px bg-border" />
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {mobile ? null : (
+              <>
+                <IconButton label="Undo" shortcut={combo('mod', 'Z')} onClick={undo} disabled={history.past === 0 || running}>
+                  <Undo2 />
+                </IconButton>
+                <IconButton label="Redo" shortcut={combo('Shift', 'mod', 'Z')} onClick={redo} disabled={history.future === 0 || running}>
+                  <Redo2 />
+                </IconButton>
+                <IconButton label="Tidy the layout" onClick={autoLayout} disabled={running || nodes.length < 2}>
+                  <Wand2 />
+                </IconButton>
+                <div className="mx-1 h-5 w-px bg-border" />
+              </>
+            )}
             {validation === null ? null : <ValidationButton issues={validation.issues} errors={validation.errors} warnings={validation.warnings} onSelect={(nodeId) => selectNode(nodeId, true)} />}
-            <IconButton label="Spend forecast: what this workflow will cost" onClick={() => setForecastOpen(true)}>
-              <CircleDollarSign />
-            </IconButton>
-            <IconButton label="Version history" onClick={() => setHistoryOpen(true)}>
-              <History />
-            </IconButton>
-            <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
-              <Globe data-icon="inline-start" /> <span className="hidden lg:inline">Share</span>
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setExportOpen(true)}>
-              <FileCode2 data-icon="inline-start" /> <span className="hidden sm:inline">Export</span>
-            </Button>
+            {mobile ? null : (
+              <>
+                <IconButton label="Spend forecast: a rough range for what this workflow costs" onClick={() => setForecastOpen(true)}>
+                  <CircleDollarSign />
+                </IconButton>
+                <IconButton label="Version history" onClick={() => setHistoryOpen(true)}>
+                  <History />
+                </IconButton>
+                <Button variant="outline" size="sm" onClick={() => setShareOpen(true)} aria-label="Share">
+                  <Globe data-icon="inline-start" /> <span className="hidden lg:inline">Share</span>
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setExportOpen(true)} aria-label="Export">
+                  <FileCode2 data-icon="inline-start" /> <span className="hidden lg:inline">Export</span>
+                </Button>
+              </>
+            )}
             <ButtonGroup>
-              <Button size="sm" onClick={() => void testRun()} disabled={running}>
+              <Button size="sm" onClick={() => void testRun()} disabled={running} className="whitespace-nowrap">
                 {running ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Play data-icon="inline-start" className="fill-current" />}
                 {running ? 'Running…' : 'Test run'}
               </Button>
@@ -729,7 +778,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
                     <DropdownMenuLabel>Test run</DropdownMenuLabel>
                     <DropdownMenuItem onClick={() => void testRun()}>
                       <Play /> With a sample ticket
-                      <Kbd className="ml-auto">⌘↵</Kbd>
+                      <Kbd className="ml-auto">{combo('mod', 'Enter')}</Kbd>
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setPayloadOpen(true)} disabled={!hasTrigger}>
                       <FileJson /> With my own payload…
@@ -739,24 +788,70 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>For real</DropdownMenuLabel>
                     <DropdownMenuItem onClick={() => setMachineOpen(true)} disabled={!canRunOnMachine || !hasTrigger}>
-                      {cloudTarget ? <Cloud /> : <Laptop />} {cloudTarget ? 'Run in Relay Cloud…' : canRunOnMachine ? `Run on ${machineHost ?? 'this machine'}…` : 'Run on this machine…'}
+                      {cloudTarget ? <Cloud /> : <Laptop />} {cloudTarget ? 'Run in Relay Cloud…' : canRunOnMachine ? `Run on ${machineHost ?? 'your computer'}…` : 'Run on your computer…'}
                     </DropdownMenuItem>
                     {canRunOnMachine ? null : (
                       <DropdownMenuItem render={<Link href="/connect" />}>
-                        <Plug /> Connect your machine
+                        <Plug /> Connect your computer
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem render={<Link href="/settings#appearance" />}>
-                    <Sparkles /> Playback speed: {speed}
-                  </DropdownMenuItem>
+                  {/* Chosen here, where it is used: a link to Settings left the builder to change one option. */}
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Playback speed</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup value={speed} onValueChange={(value) => updateSettings({ simulationSpeed: value as Settings['simulationSpeed'] })}>
+                      <DropdownMenuRadioItem value="instant">Instant</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="fast">Fast</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="realistic">Realistic</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
             </ButtonGroup>
-            <IconButton label={showInspector ? 'Hide settings panel' : 'Show settings panel'} onClick={() => setShowInspector((value) => !value)} active={showInspector}>
-              <PanelRight />
-            </IconButton>
+            {mobile ? (
+              // A phone's toolbar has room for the name, the checks and the run button. Everything else is one tap away.
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="More" />}>
+                  <Ellipsis />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-60">
+                  <DropdownMenuItem onClick={() => setShowInspector(true)}>
+                    <SlidersHorizontal /> {selected === null ? 'Workflow settings' : 'Node settings'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => toggleWorkflow(saved.id, !saved.enabled)}>
+                    <Zap /> {saved.enabled ? 'Active: pause it' : 'Paused: make it active'}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={undo} disabled={history.past === 0 || running}>
+                    <Undo2 /> Undo
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={redo} disabled={history.future === 0 || running}>
+                    <Redo2 /> Redo
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={autoLayout} disabled={running || nodes.length < 2}>
+                    <Wand2 /> Tidy the layout
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setForecastOpen(true)}>
+                    <CircleDollarSign /> Spend forecast
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setHistoryOpen(true)}>
+                    <History /> Version history
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShareOpen(true)}>
+                    <Globe /> Share
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setExportOpen(true)}>
+                    <FileCode2 /> Export
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <IconButton label={showInspector ? 'Hide settings panel' : 'Show settings panel'} onClick={() => setShowInspector((value) => !value)} active={showInspector}>
+                <PanelRight />
+              </IconButton>
+            )}
           </div>
         </div>
 
@@ -764,7 +859,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
           <>
             <div className="flex min-h-0 flex-1 flex-col">{canvasArea}</div>
             <Sheet open={showPalette} onOpenChange={setShowPalette}>
-              <SheetContent side="left" className="w-[88vw] gap-0 p-0 sm:max-w-sm" showCloseButton={false}>
+              <SheetContent side="left" className="w-[88vw] gap-0 p-0 sm:max-w-sm">
                 <SheetTitle className="sr-only">Nodes</SheetTitle>
                 <Palette
                   onAdd={(def) => {
@@ -855,7 +950,7 @@ function SaveState({ saving }: { saving: boolean }) {
   const busy = saving || (signedIn && !offline && (cloud === 'saving' || pending > 0));
   const key = busy ? 'saving' : offline ? 'offline' : 'saved';
   return (
-    <span className="hidden w-24 text-xs text-muted-foreground sm:inline-flex" aria-live="polite" title={signedIn ? 'Saved to your account' : 'Saved in this browser'}>
+    <span className="hidden w-24 shrink-0 text-xs text-muted-foreground md:inline-flex" aria-live="polite" title={signedIn ? 'Saved to your account' : 'Saved in this browser'}>
       <AnimatePresence mode="wait" initial={false}>
         <motion.span key={key} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.15 }} className="inline-flex items-center gap-1">
           {busy ? (
@@ -881,6 +976,7 @@ function ValidationButton({ issues, errors, warnings, onSelect }: { issues: Vali
           <Button
             variant="outline"
             size="sm"
+            aria-label={errors > 0 ? `Checks: ${errors} to fix` : warnings > 0 ? `Checks: ${warnings} warning${warnings === 1 ? '' : 's'}` : 'Checks: ready'}
             className={cn(errors > 0 ? 'border-destructive/40 text-destructive hover:text-destructive' : warnings > 0 ? 'border-warning/50 text-amber-700 dark:text-warning' : 'text-success hover:text-success')}
           />
         }
@@ -889,10 +985,10 @@ function ValidationButton({ issues, errors, warnings, onSelect }: { issues: Vali
         <span className="hidden md:inline">{errors > 0 ? `${errors} to fix` : warnings > 0 ? `${warnings} warning${warnings === 1 ? '' : 's'}` : 'Ready'}</span>
         <span className="md:hidden">{errors > 0 ? errors : warnings > 0 ? warnings : ''}</span>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[26rem] gap-0 p-0">
+      <PopoverContent align="end" className="w-[min(26rem,calc(100vw-1rem))] gap-0 p-0">
         <div className="flex items-center gap-1.5 border-b px-3 py-2.5 text-sm font-medium">
           Checks <HelpTip term="validation" />
-          <span className="ml-auto text-xs font-normal text-muted-foreground">Errors block test runs and export; warnings are advice.</span>
+          <span className="ml-auto text-right text-xs font-normal text-muted-foreground">Errors block test runs and export; warnings are advice.</span>
         </div>
         <ul className="max-h-96 overflow-auto p-1.5">
           {issues.length === 0 ? <li className="p-3 text-sm text-muted-foreground">Nothing to report. This workflow can be test-run and exported.</li> : null}

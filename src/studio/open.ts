@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+import { pairingTicketUrl } from './pairing.ts';
+
 /**
  * Opens a URL in the default browser, without a shell on any platform.
  *
@@ -13,9 +15,16 @@ export function browserCommand(url: string, platform: NodeJS.Platform = process.
   return { command: 'xdg-open', args: [url] };
 }
 
-/** Best effort: resolves false when nothing could be launched, and the caller prints the link instead. */
+/**
+ * Best effort: resolves false when nothing could be launched, and the caller prints the link instead.
+ *
+ * A pairing link is never passed to the launcher itself, where its token
+ * would sit in a command line: the browser is sent to this machine's
+ * companion with a single-use ticket, and the companion redirects it to the
+ * link (see `pairingTicketUrl`).
+ */
 export function openInBrowser(url: string): Promise<boolean> {
-  const { command, args } = browserCommand(url);
+  const { command, args } = browserCommand(pairingTicketUrl(url) ?? url);
   return new Promise((resolve) => {
     try {
       const child = spawn(command, args, { stdio: 'ignore', detached: true, shell: false, windowsHide: true });

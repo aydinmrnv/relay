@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { runProcess, resolveExecutable } from '../process/runner.ts';
 import { parseJsonLine } from '../process/lines.ts';
-import { sandboxReadOnly } from './sandbox.ts';
+import { describeSandboxFailure, sandboxReadOnly, type SandboxMechanism } from './sandbox.ts';
 import { uuid } from '../util/ids.ts';
 import { oneLine } from '../util/text.ts';
 import type {
@@ -370,9 +370,11 @@ export class ClaudeHarness implements AgentHarness {
     // system's promise rather than the CLI's. When no sandbox exists, the turn
     // says so out loud instead of implying parity it does not have.
     let spawnSpec = { command: this.binary, args };
+    let sandbox: SandboxMechanism | undefined;
     if (options.capability === 'read_only') {
       const sandboxed = await sandboxReadOnly(spawnSpec, claudeWritablePaths());
       spawnSpec = sandboxed.invocation;
+      sandbox = sandboxed.mechanism;
       if (sandboxed.notice !== undefined) {
         emit(makeEvent('notice', options.role, { text: sandboxed.notice }));
       }
@@ -389,6 +391,10 @@ export class ClaudeHarness implements AgentHarness {
           stdin: options.prompt,
           timeoutMs: options.timeoutMs ?? this.defaultTimeoutMs,
           signal: controller.signal,
+          // A turn is the CLI and everything it started — shells, test
+          // commands, language servers. Cancelling it has to reach all of them.
+          killTree: true,
+          ...(options.env === undefined ? {} : { env: options.env }),
           onStdoutLine: (line) => {
             const parsed = parseJsonLine(line);
             if (parsed === undefined) return;
@@ -429,13 +435,19 @@ export class ClaudeHarness implements AgentHarness {
       }
       const ok = result.ok && failure === undefined;
       if (!ok && failure === undefined) {
-        failure = result.timedOut
-          ? `claude timed out after ${Math.round((options.timeoutMs ?? this.defaultTimeoutMs) / 1000)}s`
-          : result.aborted
-            ? 'claude was cancelled'
-            : result.signal !== null
-              ? `claude was killed by ${result.signal}`
-              : `claude exited with code ${result.exitCode}${result.stderr.trim() ? `: ${oneLine(result.stderr, 400)}` : ''}`;
+        // When it was the sandbox that could not start, the CLI never ran:
+        // saying "claude exited" would send the reader to the wrong program.
+        const wrapper =
+          sandbox === undefined || result.timedOut || result.aborted ? undefined : describeSandboxFailure(sandbox, result.stderr);
+        failure =
+          wrapper ??
+          (result.timedOut
+            ? `claude timed out after ${Math.round((options.timeoutMs ?? this.defaultTimeoutMs) / 1000)}s`
+            : result.aborted
+              ? 'claude was cancelled'
+              : result.signal !== null
+                ? `claude was killed by ${result.signal}`
+                : `claude exited with code ${result.exitCode}${result.stderr.trim() ? `: ${oneLine(result.stderr, 400)}` : ''}`);
       }
       // The contract promises a `failed` event for every failed turn, so one is
       // synthesized when the stream itself never said so — a kill, a silent

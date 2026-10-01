@@ -33,6 +33,7 @@ export function DeleteRunDialog({
   onDeleted?: () => void;
 }) {
   const deleteRun = useStudio((state) => state.deleteRun);
+  const stopsReal = run !== undefined && run.source === 'machine' && run.status === 'running';
 
   const confirm = () => {
     if (run === undefined) return;
@@ -52,13 +53,15 @@ export function DeleteRunDialog({
           </AlertDialogMedia>
           <AlertDialogTitle>Delete run {run?.shortId}?</AlertDialogTitle>
           <AlertDialogDescription>
-            Its timeline, phases and cost disappear from this browser. The workflow stays as it is, and you can play it again any time.
+            {stopsReal
+              ? `This run is still going on ${run.machine?.host ?? 'your runner'}, for real. Deleting it stops it there first, the way Stop does: work so far stays on its branch. Then its timeline, phases and cost are removed.`
+              : 'Its timeline, phases and cost are removed. The workflow stays as it is, and you can play it again any time.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Keep it</AlertDialogCancel>
           <AlertDialogAction variant="destructive" onClick={confirm}>
-            Delete run
+            {stopsReal ? 'Stop and delete' : 'Delete run'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -70,6 +73,7 @@ export function DeleteRunDialog({
 export function ClearRunsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const runs = useStudio((state) => state.runs);
   const clearRuns = useStudio((state) => state.clearRuns);
+  const real = runs.filter((run) => run.source === 'machine' && run.status === 'running').length;
 
   const confirm = () => {
     for (const run of runs) cancelRun(run.id);
@@ -89,12 +93,13 @@ export function ClearRunsDialog({ open, onOpenChange }: { open: boolean; onOpenC
           </AlertDialogTitle>
           <AlertDialogDescription>
             Every run recorded here is removed, including the dashboard&rsquo;s history and spend. Workflows, connections and settings are not touched.
+            {real > 0 ? ` ${real === 1 ? 'One run is' : `${real} runs are`} still going for real on a runner, and ${real === 1 ? 'is' : 'are'} stopped first: work so far stays on ${real === 1 ? 'its branch' : 'their branches'}.` : ''}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Keep history</AlertDialogCancel>
           <AlertDialogAction variant="destructive" onClick={confirm}>
-            Clear history
+            {real > 0 ? 'Stop and clear' : 'Clear history'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

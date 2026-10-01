@@ -43,6 +43,8 @@ interface WorldOptions {
   linearKey?: boolean;
   initExitCode?: number;
   runExitCode?: number;
+  /** The roles `relay init` writes, when not the shipped ones. */
+  initAgents?: Partial<Record<'planner' | 'planReviewer' | 'implementer' | 'codeReviewer', string>>;
 }
 
 /**
@@ -106,7 +108,9 @@ class World {
       },
       init: async (options) => {
         this.initCalls.push(options);
-        await writeConfig(repo.root, structuredClone(DEFAULT_CONFIG));
+        const config = structuredClone(DEFAULT_CONFIG);
+        Object.assign(config.agents, this.options.initAgents ?? {});
+        await writeConfig(repo.root, config);
         return this.options.initExitCode ?? 0;
       },
       run: async (ref, options) => {
@@ -201,6 +205,27 @@ describe('relay start — non-interactive', () => {
     assert.match(output, /Codex/);
     assert.match(output, /npm install -g @openai\/codex/);
     assert.match(output, /no \.relay\/config\.json/);
+  });
+
+  it('passes with one CLI installed when every role is seated on it', async () => {
+    const config = structuredClone(DEFAULT_CONFIG);
+    Object.assign(config.agents, { planner: 'claude', planReviewer: 'claude', implementer: 'claude', codeReviewer: 'claude' });
+    await writeConfig(repo.root, config);
+
+    const { output, exitCode } = await start([], {}, { interactive: false, installed: ['claude', 'gh'] });
+
+    assert.equal(exitCode, EXIT.success, output);
+    assert.match(output, /! Codex\s+not found/, 'reported as a warning, not as a failure');
+    assert.match(output, /no role in \.relay\/config\.json uses it/);
+    assert.match(output, /Ready\./);
+  });
+
+  it('still fails when a role is seated on a CLI that is missing', async () => {
+    await alreadyOnboarded();
+    const { output, exitCode } = await start([], {}, { interactive: false, installed: ['claude', 'gh'] });
+
+    assert.equal(exitCode, EXIT.preconditions);
+    assert.match(output, /✗ Codex\s+not found/);
   });
 
   it('passes once every dependency is satisfied and the repo is configured', async () => {
@@ -299,6 +324,49 @@ describe('relay start — guided flow', () => {
     assert.match(output, /Fix those, then run `relay start` again/);
   });
 
+  // One CLI is enough to run Relay: `relay init` seats every role on what is
+  // installed. A CLI nothing is seated on cannot stop a run, so it must not
+  // stop onboarding either.
+  const ALL_CLAUDE = { planner: 'claude', planReviewer: 'claude', implementer: 'claude', codeReviewer: 'claude' } as const;
+
+  it('does not block on a CLI that no role is seated on', async () => {
+    const { output, exitCode, world } = await start([], {}, { installed: ['claude', 'gh'], initAgents: ALL_CLAUDE });
+
+    assert.equal(exitCode, EXIT.success, output);
+    assert.match(output, /npm install -g @openai\/codex/, 'the missing CLI is still named, with its install command');
+    assert.match(output, /Or carry on without it/);
+    assert.ok(!output.includes('Fix those, then run `relay start` again'), output);
+    assert.ok(
+      world.prompter.asked.some((question) => question.includes('Start a run against a real issue now?')),
+      'the first run is offered, because nothing a role needs is missing',
+    );
+  });
+
+  it('does not ask about a CLI an existing config does not use', async () => {
+    const config = structuredClone(DEFAULT_CONFIG);
+    Object.assign(config.agents, ALL_CLAUDE);
+    await writeConfig(repo.root, config);
+
+    const { output, exitCode, world } = await start([], {}, { installed: ['claude', 'gh'], auth: { codex: 'unauthenticated' } });
+
+    assert.equal(exitCode, EXIT.success, output);
+    assert.match(output, /Codex\s+not found · no role uses it/);
+    assert.ok(!output.includes('npm install -g @openai/codex'), 'an unused CLI is not something to install');
+    assert.deepEqual(world.logins, []);
+  });
+
+  it('does not offer a sign-in for an installed CLI no role uses', async () => {
+    const config = structuredClone(DEFAULT_CONFIG);
+    Object.assign(config.agents, ALL_CLAUDE);
+    await writeConfig(repo.root, config);
+
+    const { exitCode, world } = await start([], {}, { auth: { codex: 'unauthenticated' } });
+
+    assert.equal(exitCode, EXIT.success);
+    assert.deepEqual(world.logins, []);
+    assert.ok(!world.prompter.asked.some((question) => question.includes('codex login')));
+  });
+
   it('drives `gh auth login` when GitHub is installed but unauthenticated', async () => {
     const { output, world } = await start(['y'], {}, { auth: { gh: 'unauthenticated' } });
 
@@ -342,6 +410,12 @@ describe('relay start — idempotence', () => {
 
     const gitignore = await readFile(join(repo.root, '.gitignore'), 'utf8');
     assert.ok(gitignore.includes('.relay/onboarding.json'), gitignore);
+    // And what `relay serve` leaves behind: a committed STOP file would stop
+    // every clone's server, and a committed ledger would tell them the work
+    // had already been picked up.
+    for (const entry of ['.relay/runs/', '.relay/unattended.json', '.relay/STOP', '.relay/*.lock']) {
+      assert.ok(gitignore.split('\n').includes(entry), `${entry} is not ignored:\n${gitignore}`);
+    }
   });
 
   it('replays the tour on demand without touching anything else', async () => {
@@ -384,10 +458,10 @@ describe('relay start — the tour', () => {
   it('is honest about time, tokens and what Relay will never do', async () => {
     const { output } = await start([]);
 
-    assert.match(output, /8–15 minutes/);
+    assert.match(output, /10–20 minutes/);
     assert.match(output, /--fast/);
     assert.match(output, /billed to your own Claude Code and Codex accounts/);
-    assert.match(output, /never read, never prompted for, never stored/);
+    assert.match(output, /model and GitHub sign-ins are never read, prompted for or stored/);
     // Delivery is part of the tour because it is part of the run: the tour says
     // how far this repository's policy goes, what it will ask about the rest,
     // and that a finished run leaves you back on the home screen.

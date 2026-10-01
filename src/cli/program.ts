@@ -1,4 +1,4 @@
-import { Command, Help } from 'commander';
+import { Command, Help, Option } from 'commander';
 
 import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
 import { DELIVERY_POLICIES, REVIEW_LEVELS } from '../storage/config.ts';
@@ -29,10 +29,11 @@ import {
 } from './commands/inspect.ts';
 import { reportError, theme } from './output.ts';
 import { EXIT, exitCodeFor, isCommanderError } from './exit.ts';
-import { enterJsonMode } from './json.ts';
+import { emitJsonLine, enterJsonMode, errorToJson, jsonMode } from './json.ts';
 import { completionCommand, COMPLETION_HELP } from './commands/completion.ts';
 import { completeCommand } from './completion/complete.ts';
-import { formatCommandDoc } from './help/commandDoc.ts';
+import { formatCommandDoc, helpRow, visibleCommands } from './help/commandDoc.ts';
+import { closestMatch } from '../util/text.ts';
 
 /** Help text names whichever CLIs are registered, not whichever shipped first. */
 const AGENT_LABELS = AGENT_REGISTRY.map((entry) => entry.label).join(', ');
@@ -54,6 +55,16 @@ function optionsOf(args: readonly unknown[]): { json?: unknown } | undefined {
 }
 
 /**
+ * The name a document says it came from. Commander passes the Command itself
+ * as the last argument; the root's handler answers for the home screen.
+ */
+function commandNameOf(args: readonly unknown[]): string {
+  const command = args.at(-1);
+  if (!(command instanceof Command)) return 'relay';
+  return command.parent === null ? 'home' : command.name();
+}
+
+/**
  * Wraps a command so every failure exits with a code from the published table
  * and an actionable message, instead of an unhandled rejection stack.
  *
@@ -69,9 +80,15 @@ function wrap<Args extends unknown[]>(
     try {
       process.exitCode = await handler(...args);
     } catch (error) {
+      const code = exitCodeFor(error);
       // Commander has already printed its own message and its own help.
-      if (!isCommanderError(error)) reportError(error);
-      process.exitCode = exitCodeFor(error);
+      if (!isCommanderError(error)) {
+        reportError(error);
+        // The prose above went to stderr. Whatever is parsing stdout gets the
+        // same failure as a document, rather than an empty stream.
+        if (jsonMode()) emitJsonLine(commandNameOf(args), errorToJson(error, code));
+      }
+      process.exitCode = code;
     }
   };
 }
@@ -96,8 +113,9 @@ const HELP_GROUPS = [
 ] as const;
 
 function groupedHelp(command: Command, helper: Help): string {
-  if (command.parent !== null) return formatCommandDoc(command);
-  const base = defaultHelp(command, helper.helpWidth);
+  const helpWidth = helper.helpWidth ?? 80;
+  if (command.parent !== null) return formatCommandDoc(command, helpWidth);
+  const base = defaultHelp(command, helpWidth);
   const marker = 'Commands:\n';
   const start = base.indexOf(marker);
   if (start < 0) return base;
@@ -105,16 +123,26 @@ function groupedHelp(command: Command, helper: Help): string {
   const commands = helper.visibleCommands(command);
   const byName = new Map(commands.map((child) => [child.name(), child]));
   const width = Math.max(...commands.map((child) => helper.subcommandTerm(child).length));
-  const sections = HELP_GROUPS.map(([title, names]) => {
+  // A group whose every command is hidden has nothing to head, so it is left
+  // out rather than printed as a title over an empty list.
+  const sections = HELP_GROUPS.flatMap(([title, names]) => {
     const lines = names.flatMap((name) => {
       const child = byName.get(name);
       return child === undefined
         ? []
-        : [`  ${helper.subcommandTerm(child).padEnd(width + 2)}${helper.subcommandDescription(child)}`];
+        : [helpRow(helper.subcommandTerm(child), helper.subcommandDescription(child), width, helpWidth)];
     });
-    return `${title}:\n${lines.join('\n')}`;
+    return lines.length === 0 ? [] : [`${title}:\n${lines.join('\n')}`];
   });
   return `${prefix}${sections.join('\n\n')}\n`;
+}
+
+/**
+ * `--tuff`: kept working, and kept out of the help, the man page and the
+ * completions. It is a flag for somebody who already knows it is there.
+ */
+function tuffOption(description: string): Option {
+  return new Option('--tuff', description).hideHelp();
 }
 
 export function buildProgram(version: string): Command {
@@ -122,16 +150,22 @@ export function buildProgram(version: string): Command {
 
   program
     .name('relay')
+    // One paragraph with no line breaks of its own: Commander wraps it to the
+    // terminal, and text that arrives already wrapped for one width is ragged
+    // at every other.
     .description(
-      `The workflow studio's companion on this machine. \`relay connect\` lets the studio sign in\n` +
-        `the coding agents here (${AGENT_LABELS}), run its workflows for real in this repository and\n` +
-        'install their exports; every other command is the engine behind the Agent pipeline node —\n' +
+      `The workflow studio's companion on this machine. \`relay connect\` lets the studio sign in ` +
+        `the coding agents here (${AGENT_LABELS}), run its workflows for real in this repository and ` +
+        'install their exports; every other command is the engine behind the Agent pipeline node — ' +
         'plan, review, implement and critique an issue, a spec file or a prompt in an isolated worktree.',
     )
     .version(version)
     .option('--update', 'update Relay itself to the latest version')
     .option('--json', JSON_FLAG)
-    .showHelpAfterError();
+    // A mistyped command gets the line that says what is wrong and where the
+    // list is — not the list itself, which is fifty lines pushing the one
+    // useful sentence off the top of the terminal.
+    .showHelpAfterError('(run with --help for usage)');
 
   program.configureHelp({ formatHelp: groupedHelp });
 
@@ -160,7 +194,11 @@ export function buildProgram(version: string): Command {
     wrap(async (options: { update?: boolean; json?: boolean }, command: Command): Promise<number> => {
       const [unrecognized] = command.args;
       if (unrecognized !== undefined) {
-        command.error(`error: unknown command '${unrecognized}'`, { code: 'commander.unknownCommand' });
+        const near = closestMatch(unrecognized, visibleCommands(command).map((child) => child.name()));
+        command.error(
+          `error: unknown command '${unrecognized}'${near === undefined ? '' : `\n(Did you mean ${near}?)`}`,
+          { code: 'commander.unknownCommand' },
+        );
       }
       if (options.update === true) return updateCommand();
       // `--json` is a request for the home screen's facts, so it answers with
@@ -183,17 +221,21 @@ export function buildProgram(version: string): Command {
     .option('-p, --port <n>', `port on 127.0.0.1 to listen on (default ${DEFAULT_COMPANION_PORT}, or RELAY_COMPANION_PORT)`)
     .option('--studio <url>', 'the studio to pair with (default the hosted studio, or RELAY_STUDIO_URL)')
     .option('--allow-origin <origin>', 'another studio origin allowed to connect (repeatable)', collect, [])
-    .option('--open', 'open the pairing page even when this machine is already paired')
+    .option('--open', 'open the pairing page even when not at a terminal')
     .option('--no-open', 'never open a browser; print the pairing link instead')
-    .option('--new-token', 'rotate the pairing token, unpairing every studio that had the old one')
+    .option('--new-token', 'replace this machine\'s secret; every start already has a pairing token of its own')
     .option('--hub <url>', 'run as a Relay Cloud runner: dial out to this hub instead of listening (or RELAY_HUB_URL)')
-    .option('--token-from <source>', 'with --hub, where the runner token is: env (RELAY_RUNNER_TOKEN), azure, or file:<path>')
+    .option('--token-from <source>', 'with --hub, where the runner token is: env (RELAY_RUNNER_TOKEN), stdin, file:<path>, or azure')
     .option('--json', `${JSON_FLAG} — one object per line: listening, then each event`)
     .action(wrap(connectCommand));
 
   // The server side of Relay Cloud. People never run this; whoever hosts the
-  // hub does, and each runner machine it makes runs `connect --hub`.
-  const hub = program.command('hub').description('run the Relay Cloud hub: one machine per person, reached through here');
+  // hub does, and each runner machine it makes runs `connect --hub`. So it is
+  // hidden from the help, the man page and the first word of a completion —
+  // `relay hub --help` and `relay hub <TAB>` still answer whoever does need it.
+  const hub = program
+    .command('hub', { hidden: true })
+    .description('run the Relay Cloud hub: one machine per person, reached through here');
   hub
     .command('serve')
     .description('serve the hub, configured by RELAY_HUB_* and RELAY_CLOUD_* variables (docs/design/relay-cloud-runners.md)')
@@ -267,7 +309,7 @@ export function buildProgram(version: string): Command {
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .option('--allow-secret <path>', 'publish a file the secret scan flagged (repeatable)', collect, [])
-    .option('--tuff', 'write the pull request, commits and code comments with typos, like a human')
+    .addOption(tuffOption('write the pull request, commits and code comments with typos, like a human'))
     .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
     .option('--detach', 'start the run in the background and return immediately')
     .action(wrap(runSession));
@@ -318,7 +360,7 @@ export function buildProgram(version: string): Command {
     .option('--deliver <policy>', `how far to deliver the work (${DELIVERY_POLICIES.join('|')})`)
     .option('--no-offer-merge', 'finish without asking whether to merge')
     .option('--allow-secret <path>', 'publish a file the secret scan flagged (repeatable)', collect, [])
-    .option('--tuff', 'write the pull request and commits with typos, like a human')
+    .addOption(tuffOption('write the pull request and commits with typos, like a human'))
     .option('--json', `${JSON_FLAG} — one object per line as phases complete, then a summary`)
     .action(wrap(resumeCommand));
 
@@ -379,8 +421,10 @@ export function buildProgram(version: string): Command {
   program
     .command('eval')
     .description('measure whether cross-model review actually produces better changes')
-    .option('--config <name...>', `configuration(s) to run (${EVAL_CONFIG_NAMES.join('|')})`, collect)
-    .option('--compare <name...>', `run the arms of a comparison (${EVAL_COMPARISON_NAMES.join('|')})`, collect)
+    // Listed with commas rather than bars: seven names joined by `|` are one
+    // unbreakable word, and no terminal is wide enough to wrap around it.
+    .option('--config <name...>', `configuration(s) to run: ${EVAL_CONFIG_NAMES.join(', ')}`, collect)
+    .option('--compare <name...>', `run the arms of a comparison: ${EVAL_COMPARISON_NAMES.join(', ')}`, collect)
     .option('--fixture <id...>', 'run only these fixtures', collect)
     .option('-n, --repeat <n>', 'runs per fixture per configuration', '3')
     .option('--concurrency <n>', 'runs in flight at once (above 1, wall-clock is contended)', '1')

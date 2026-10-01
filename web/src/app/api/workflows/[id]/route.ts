@@ -1,8 +1,18 @@
 import * as z from 'zod';
 import { ApiError, json, readJson, withUser } from '@/server/api';
-import { deleteWorkflow, saveWorkflow } from '@/server/studio';
+import { deleteWorkflow, getWorkflow, saveWorkflow } from '@/server/studio';
 import { describeZodError, WORKFLOW_MAX_BYTES, workflowSchema } from '@/server/validate';
 import type { Workflow } from '@/lib/workflow/schema';
+
+/** One workflow, for a workspace too large to arrive in one answer. */
+export async function GET(request: Request, context: RouteContext<'/api/workflows/[id]'>) {
+  return withUser(request, async (user) => {
+    const { id } = await context.params;
+    const found = await getWorkflow(user.id, id);
+    if (found === null) throw new ApiError(404, 'NOT_FOUND', 'No such workflow.');
+    return json(found);
+  });
+}
 
 export async function PUT(request: Request, context: RouteContext<'/api/workflows/[id]'>) {
   return withUser(request, async (user) => {

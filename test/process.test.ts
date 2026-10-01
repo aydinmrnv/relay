@@ -1,8 +1,10 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   runProcess,
@@ -54,6 +56,151 @@ describe('process runner', () => {
     const result = await runProcess('node', ['-e', 'setTimeout(()=>{}, 60000)'], { timeoutMs: 300 });
     assert.equal(result.timedOut, true);
     assert.equal(result.ok, false);
+  });
+
+  // `npm test` is npm, a shell, node and its workers; an agent CLI is the CLI
+  // and every command it ran. The grandchild here holds the same output pipes
+  // the parent does, so stopping only the parent would leave this call waiting
+  // on a process nothing is ever going to signal.
+  it(
+    'terminates everything a process started when asked to kill the tree',
+    { skip: process.platform === 'win32' ? 'process groups are POSIX; Windows terminates the direct child only' : false },
+    async () => {
+      const grandchild = 'setInterval(() => {}, 60000)';
+      const parent =
+        `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grandchild)}], { stdio: "inherit" });` +
+        'console.log(child.pid); setInterval(() => {}, 60000);';
+      let pid: number | undefined;
+      const result = await runProcess('node', ['-e', parent], {
+        timeoutMs: 1_000,
+        killTree: true,
+        onStdoutLine: (line) => {
+          pid ??= Number.parseInt(line, 10);
+        },
+      });
+
+      assert.equal(result.timedOut, true);
+      assert.ok(pid !== undefined && Number.isInteger(pid), 'the grandchild never reported its pid');
+      // The signal is delivered asynchronously; give the kernel a moment.
+      const deadline = Date.now() + 5_000;
+      const alive = (): boolean => {
+        try {
+          process.kill(pid!, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      while (alive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(alive(), false, 'the grandchild outlived the timeout that stopped its parent');
+    },
+  );
+
+  // A tree in a session of its own does not die with Relay. `exit` covers the
+  // ways Node leaves on purpose; a signal nothing handles is not one of them —
+  // the process is gone before any `exit` handler runs. `relay eval` killed by
+  // a supervisor, a terminal closed under a command that claims no signals:
+  // each used to leave every agent turn running, with nobody left to stop it.
+  describe('when the process holding a tree is killed', () => {
+    const skip = process.platform === 'win32' ? 'process groups are POSIX; nothing is detached on Windows' : false;
+    const runner = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'process', 'runner.ts')).href;
+    let dir: string;
+    let host: string;
+
+    before(async () => {
+      dir = await mkdtemp(join(tmpdir(), 'relay-signal-'));
+      host = join(dir, 'host.mjs');
+      await writeFile(
+        host,
+        [
+          `import { runProcess } from ${JSON.stringify(runner)};`,
+          // A command that has claimed the signal decides what it means.
+          "if (process.argv[2] === 'owns') process.on(process.argv[3], () => console.log('HOST-HANDLED'));",
+          "void runProcess(process.execPath, ['-e', 'console.log(process.pid); setInterval(() => {}, 60000)'], {",
+          '  killTree: true,',
+          '  onStdoutLine: (line) => console.log(`CHILD ${line}`),',
+          '});',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+    });
+    after(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    const alive = (pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const gone = async (pid: number, timeoutMs: number): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs;
+      while (alive(pid) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+      return !alive(pid);
+    };
+
+    /** Starts the host, waits for its turn to be running, and sends it `signal`. */
+    async function signalHost(
+      signal: NodeJS.Signals,
+      args: string[] = [],
+    ): Promise<{ turn: number; host: ReturnType<typeof spawn>; output: () => string; closed: Promise<NodeJS.Signals | null> }> {
+      const child = spawn(process.execPath, ['--experimental-strip-types', host, ...args], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+      const closed = new Promise<NodeJS.Signals | null>((resolve) => child.once('close', (_code, sig) => resolve(sig)));
+      const turn = await new Promise<number>((resolve, reject) => {
+        child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+          stdout += chunk;
+          const match = /CHILD (\d+)/.exec(stdout);
+          if (match !== null) resolve(Number.parseInt(match[1]!, 10));
+        });
+        child.once('close', () => reject(new Error(`the host exited before its turn started: ${stderr}`)));
+      });
+      child.kill(signal);
+      return { turn, host: child, output: () => stdout, closed };
+    }
+
+    for (const signal of ['SIGTERM', 'SIGHUP', 'SIGINT'] as const) {
+      it(`takes the tree with it on an unhandled ${signal}, and still dies of that signal`, { skip }, async () => {
+        const { turn, closed } = await signalHost(signal);
+        try {
+          // The exit status a shell and a supervisor expect: killed by the
+          // signal, not "exited 0" because something caught it.
+          assert.equal(await closed, signal);
+          assert.ok(await gone(turn, 5_000), `the turn outlived a host killed by ${signal}`);
+        } finally {
+          if (alive(turn)) process.kill(turn, 'SIGKILL');
+        }
+      });
+    }
+
+    it('leaves the tree to a command that handles the signal itself', { skip }, async () => {
+      const { turn, host: child, output, closed } = await signalHost('SIGTERM', ['owns', 'SIGTERM']);
+      try {
+        const deadline = Date.now() + 5_000;
+        while (!output().includes('HOST-HANDLED') && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert.match(output(), /HOST-HANDLED/);
+        // Long enough for a kill to have landed, had one been sent.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.equal(alive(turn), true, 'the tree was killed under a command that had claimed the signal');
+        assert.equal(child.exitCode, null);
+        assert.equal(child.signalCode, null);
+      } finally {
+        child.kill('SIGKILL');
+        await closed;
+        if (alive(turn)) process.kill(turn, 'SIGKILL');
+      }
+    });
   });
 
   it('cancels via an abort signal', async () => {
