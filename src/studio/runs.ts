@@ -36,7 +36,16 @@ export function selfLauncher(): RelayLauncher {
   return { command: process.execPath, args: [...flags, entry] };
 }
 
-const MAX_RECORDS = 5_000;
+/**
+ * How much of a run is held for replay: its first records and its latest.
+ * A run is replayed to a studio that reloads, so the start (which run this
+ * is) and the end (the summary, the exit) are what must survive; a very long
+ * run gives up its middle rather than growing without bound.
+ */
+const KEEP_FIRST = 1_000;
+const KEEP_LATEST = 4_000;
+/** Finished runs still held for replay; older ones are forgotten when a new run starts. */
+const MAX_FINISHED_RUNS = 50;
 const MAX_STDERR_CHARS = 16_000;
 const MAX_TEXT = 20_000;
 /** An issue number, `owner/repo#n`, a URL, a Linear key or a spec path. Never a flag. */
@@ -58,7 +67,14 @@ interface StudioRun {
   root: string | null;
   /** Stops a checkout in progress. */
   abort: AbortController;
-  records: RunStreamRecord[];
+  /** The number the next record gets. A record's `seq` is its place in the run, never its place in what is kept. */
+  nextSeq: number;
+  /** The first records of the run, and its latest: everything, until the run is long enough to lose its middle. */
+  first: RunStreamRecord[];
+  latest: RunStreamRecord[];
+  /** How many records between the two are gone, and the `seq` of the last of them. */
+  dropped: number;
+  droppedThrough: number;
   listeners: Set<Listener>;
   stderr: string;
   overlayDir: string | null;
@@ -74,6 +90,8 @@ export interface StudioRunsOptions {
    * the root the companion was started in.
    */
   checkout?: (repository: string, signal: AbortSignal) => Promise<string>;
+  /** How many of a run's records are held for replay. A seam for the tests. */
+  keep?: { first: number; latest: number };
 }
 
 export class TaskError extends Error {}
@@ -136,6 +154,7 @@ export class StudioRuns {
   private readonly onChange: (view: CompanionRunView) => void;
   private readonly maxConcurrent: number;
   private readonly checkout: ((repository: string, signal: AbortSignal) => Promise<string>) | undefined;
+  private readonly keep: { first: number; latest: number };
   /** Runs waiting for a slot, oldest first. */
   private readonly waiting: StudioRun[] = [];
   private occupied = 0;
@@ -152,6 +171,7 @@ export class StudioRuns {
     this.onChange = onChange;
     this.maxConcurrent = options.maxConcurrent ?? Number.POSITIVE_INFINITY;
     this.checkout = options.checkout;
+    this.keep = { first: Math.max(1, options.keep?.first ?? KEEP_FIRST), latest: Math.max(2, options.keep?.latest ?? KEEP_LATEST) };
   }
 
   async start(request: StartRunRequest): Promise<CompanionRunView> {
@@ -183,12 +203,17 @@ export class StudioRuns {
       child: null,
       root: null,
       abort: new AbortController(),
-      records: [],
+      nextSeq: 0,
+      first: [],
+      latest: [],
+      dropped: 0,
+      droppedThrough: -1,
       listeners: new Set(),
       stderr: '',
       overlayDir: null,
       finished: false,
     };
+    this.forgetOldRuns();
     this.runs.set(id, run);
 
     if (this.occupied < this.maxConcurrent) {
@@ -315,8 +340,19 @@ export class StudioRuns {
   subscribe(id: string, listener: Listener, since = 0): (() => void) | undefined {
     const run = this.runs.get(id);
     if (run === undefined) return undefined;
-    for (const record of run.records) if (record.seq >= since) listener(record);
-    if (run.view.status === 'exited') return () => undefined;
+    for (const record of run.first) if (record.seq >= since) listener(record);
+    // A follower that starts before the gap is told there is one, in the
+    // stream's own terms: a note from the engine, numbered as the last record
+    // it will not get, so the numbers it sees still only go up.
+    if (run.dropped > 0 && since <= run.droppedThrough) listener(gapNote(run));
+    for (const record of run.latest) if (record.seq >= since) listener(record);
+    if (run.view.status === 'exited') {
+      // A stream ends on its `exit` record. A follower that asks from past the
+      // end still gets that record, so its stream ends instead of staying open.
+      const exit = run.latest.at(-1) ?? run.first.at(-1);
+      if (exit !== undefined && exit.type === 'exit' && exit.seq < since) listener(exit);
+      return () => undefined;
+    }
     run.listeners.add(listener);
     return () => run.listeners.delete(listener);
   }
@@ -378,12 +414,49 @@ export class StudioRuns {
     return true;
   }
 
+  /**
+   * Numbers a record, keeps it for replay and hands it to whoever is
+   * following. The number comes from the run's own counter: it used to be the
+   * length of the kept list, so once that list was full every later record
+   * got the same number, and the summary was not kept at all — a long run
+   * that succeeded replayed as one that never said how it ended.
+   */
   private push(run: StudioRun, record: Unnumbered<RunStreamRecord>): void {
-    const full = { ...record, seq: run.records.length } as RunStreamRecord;
-    if (run.records.length < MAX_RECORDS || record.type === 'exit') run.records.push(full);
+    const full = { ...record, seq: run.nextSeq } as RunStreamRecord;
+    run.nextSeq += 1;
+    if (run.first.length < this.keep.first && run.latest.length === 0) run.first.push(full);
+    else {
+      run.latest.push(full);
+      // Trimmed a batch at a time, so holding the latest is not a copy per record.
+      if (run.latest.length >= this.keep.latest * 2) {
+        const cut = run.latest.length - this.keep.latest;
+        run.droppedThrough = run.latest[cut - 1]!.seq;
+        run.dropped += cut;
+        run.latest = run.latest.slice(cut);
+      }
+    }
     for (const listener of run.listeners) listener(full);
     if (record.type === 'exit') run.listeners.clear();
   }
+
+  /** Forgets the oldest finished runs, so a companion left running for weeks does not hold every run it ever relayed. */
+  private forgetOldRuns(): void {
+    const finished = [...this.runs.values()].filter((run) => run.finished);
+    if (finished.length < MAX_FINISHED_RUNS) return;
+    finished.sort((a, b) => (a.view.finishedAt ?? '').localeCompare(b.view.finishedAt ?? ''));
+    for (const run of finished.slice(0, finished.length - MAX_FINISHED_RUNS + 1)) this.runs.delete(run.view.id);
+  }
+}
+
+/** Stands in the stream for the records a long run no longer holds. */
+function gapNote(run: Pick<StudioRun, 'dropped' | 'droppedThrough' | 'latest'>): RunStreamRecord {
+  const next = run.latest[0];
+  const at = next !== undefined && next.type === 'engine' && typeof next.data['at'] === 'string' ? next.data['at'] : new Date().toISOString();
+  return {
+    seq: run.droppedThrough,
+    type: 'engine',
+    data: { type: 'note', at, message: `${run.dropped} earlier lines of this run are no longer held by the machine it ran on. What follows is the latest of it.` },
+  };
 }
 
 /**
