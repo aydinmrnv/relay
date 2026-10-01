@@ -1,16 +1,21 @@
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { isolatedGitEnv } from './helpers/tempRepo.ts';
 
 /**
  * The rules the Action and the workflows keep, checked as text.
  *
- * None of this can be run from a test — it only executes on a runner — so what
- * is asserted here is the shape that makes two specific mistakes impossible to
- * reintroduce quietly: an expression pasted into a script, and an action
- * referenced by a tag somebody else can move.
+ * Almost none of this can be run from a test — it only executes on a runner —
+ * so what is asserted here is the shape that makes two specific mistakes
+ * impossible to reintroduce quietly: an expression pasted into a script, and an
+ * action referenced by a tag somebody else can move. The exception is at the
+ * bottom: the script that decides whether to publish, which is run.
  */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -123,5 +128,151 @@ describe('the Action and the workflows', () => {
     assert.ok(!commands.some((line) => line.includes('--clobber')), 'the release replaces an asset by deleting it first');
     const ci = await read('.github/workflows/ci.yml');
     assert.match(ci, /release:\n {4}needs: \[check, package, unattended, action-install\]/);
+  });
+
+  // The publish job reads package.json with `node` and installs the tarball
+  // with `npm`, so it pins the Node it does that with like every other job.
+  it('set up Node in the job that publishes', async () => {
+    const release = await read('.github/workflows/cli-release.yml');
+    assert.match(release, /uses: actions\/setup-node@[0-9a-f]{40} # v\d+\.\d+\.\d+\n\s+with:\n\s+node-version: 22\n/);
+  });
+});
+
+/**
+ * The one script in the release that decides something, run for real.
+ *
+ * "Should this commit replace what is published?" is a question about three
+ * commits' places in a history, and the wrong answer either moves every install
+ * back to older code or stops releases for good. It is plain git and shell, so
+ * it is lifted out of the workflow and run against a repository built for it.
+ */
+describe('what the release decides to publish', () => {
+  const skip =
+    process.platform === 'win32'
+      ? 'the release runs on a Linux runner; its script is bash'
+      : spawnSync('bash', ['-c', 'exit 0']).status === 0
+        ? false
+        : 'bash is not installed';
+
+  let dir: string;
+  let repo: string;
+  let script: string;
+  let env: Record<string, string>;
+  const commits: Record<'base' | 'cliChange' | 'docsOnly' | 'elsewhere', string> = {
+    base: '',
+    cliChange: '',
+    docsOnly: '',
+    elsewhere: '',
+  };
+
+  const git = (...args: string[]): string => {
+    const result = spawnSync('git', args, { cwd: repo, env, encoding: 'utf8' });
+    assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  const commit = async (path: string, contents: string, message: string): Promise<string> => {
+    await mkdir(dirname(join(repo, path)), { recursive: true });
+    await writeFile(join(repo, path), contents, 'utf8');
+    git('add', '-A');
+    git('commit', '-q', '-m', message);
+    return git('rev-parse', 'HEAD');
+  };
+
+  before(async () => {
+    if (skip !== false) return;
+    const release = await read('.github/workflows/cli-release.yml');
+    const named = release.split('\n').findIndex((line) => line.includes('- name: Decide what to publish')) + 1;
+    assert.ok(named > 0, 'the release no longer has a step that decides what to publish');
+    script = runBlocks(release).find((block) => block.line > named)?.body ?? '';
+    assert.match(script, /rolling=/);
+
+    dir = await realpath(await mkdtemp(join(tmpdir(), 'relay-release-')));
+    repo = join(dir, 'repo');
+    await mkdir(join(dir, 'pack'), { recursive: true });
+    await writeFile(join(dir, 'pack', 'relay.tgz'), 'not a real tarball', 'utf8');
+    // `gh release view` is asked whether the versioned release exists. Here
+    // it never does, so `versioned` follows `rolling`.
+    await mkdir(join(dir, 'bin'), { recursive: true });
+    await writeFile(join(dir, 'bin', 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    await mkdir(repo, { recursive: true });
+    env = {
+      ...(process.env as Record<string, string>),
+      ...(await isolatedGitEnv(dir)),
+      PATH: `${join(dir, 'bin')}:${process.env['PATH'] ?? ''}`,
+      RUNNER_TEMP: dir,
+      CLI_PATHS: 'src package.json',
+    };
+
+    git('init', '-q', '-b', 'main');
+    commits.base = await commit('package.json', '{ "version": "0.1.0" }\n', 'base');
+    // A commit main never had: what a rewritten history leaves the tag on.
+    git('checkout', '-q', '-b', 'abandoned');
+    commits.elsewhere = await commit('src/old.ts', 'export const old = 1;\n', 'abandoned work');
+    git('checkout', '-q', 'main');
+    commits.cliChange = await commit('src/a.ts', 'export const a = 1;\n', 'change the CLI');
+    commits.docsOnly = await commit('docs/notes.md', 'notes\n', 'change only the docs');
+  });
+  after(async () => {
+    if (dir !== undefined) await rm(dir, { recursive: true, force: true });
+  });
+
+  /** Runs the step for `sha` with `cli-latest` at `published`, as the runner would. */
+  async function plan(sha: string, published: string | null): Promise<{ rolling: string; versioned: string; log: string }> {
+    if (published === null) spawnSync('git', ['tag', '-d', 'cli-latest'], { cwd: repo, env });
+    else git('tag', '-f', 'cli-latest', published);
+    git('checkout', '-q', '--detach', sha);
+
+    const output = join(dir, 'output.txt');
+    await writeFile(output, '', 'utf8');
+    const result = spawnSync('bash', ['-c', script], {
+      cwd: repo,
+      env: { ...env, GITHUB_SHA: sha, GITHUB_OUTPUT: output },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, `the step failed:\n${result.stdout}\n${result.stderr}`);
+    const outputs = Object.fromEntries(
+      (await readFile(output, 'utf8'))
+        .split('\n')
+        .filter((line) => line.includes('='))
+        .map((line) => line.split('=', 2) as [string, string]),
+    );
+    return { rolling: outputs['rolling'] ?? '', versioned: outputs['versioned'] ?? '', log: result.stdout };
+  }
+
+  it('publishes the first build, and cuts the versioned release with it', { skip }, async () => {
+    const result = await plan(commits.cliChange, null);
+    assert.equal(result.rolling, 'true');
+    assert.equal(result.versioned, 'true');
+  });
+
+  it('publishes a commit that changed the CLI since the published one', { skip }, async () => {
+    assert.equal((await plan(commits.cliChange, commits.base)).rolling, 'true');
+  });
+
+  it('publishes nothing for a commit that changed only something else', { skip }, async () => {
+    const result = await plan(commits.docsOnly, commits.cliChange);
+    assert.equal(result.rolling, 'false');
+    assert.equal(result.versioned, 'false');
+    assert.match(result.log, /Nothing the CLI is built from changed/);
+  });
+
+  it('publishes nothing twice', { skip }, async () => {
+    assert.equal((await plan(commits.cliChange, commits.cliChange)).rolling, 'false');
+  });
+
+  // A slow run finishing after a faster, newer one — or an old run re-run.
+  it('never moves the release back to an older commit', { skip }, async () => {
+    const result = await plan(commits.cliChange, commits.docsOnly);
+    assert.equal(result.rolling, 'false');
+    assert.match(result.log, /already a newer commit/);
+  });
+
+  // "Not an ancestor" used to be read as "newer", which is true of the case
+  // above and false of this one: nothing on main will ever descend from a
+  // commit main does not have, so every release from here on was skipped.
+  it('publishes over a commit that is not in the history at all', { skip }, async () => {
+    const result = await plan(commits.docsOnly, commits.elsewhere);
+    assert.equal(result.rolling, 'true');
+    assert.match(result.log, /::warning::.*not in this branch's history/);
   });
 });

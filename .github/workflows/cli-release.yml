@@ -56,7 +56,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # One at a time, in order, and never cancelled halfway through a swap.
+    # One at a time, and a publish that has started is never cancelled halfway
+    # through a swap. That is all this promises. GitHub keeps one run waiting
+    # per group and drops an older waiting run when a newer one queues, and it
+    # does not promise the order they start in — so a commit can be skipped, or
+    # arrive after a newer one. Neither moves `cli-latest` backwards: the plan
+    # step below refuses a commit older than the one already published.
     concurrency:
       group: cli-release
       cancel-in-progress: false
@@ -67,6 +72,13 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+
+      # The steps below read package.json with `node` and install the tarball
+      # with `npm`. Whatever the runner image happens to ship is not the Node
+      # the tarball was built and tested on.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -83,21 +95,37 @@ jobs:
           version=$(node -p "require('./package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+          # Three things the published commit can be to this one, and "not an
+          # ancestor" is two of them. Told apart, because they want opposite
+          # answers:
+          #
+          #   behind    it is in this commit's history. The ordinary case:
+          #             publish if anything the CLI is built from changed.
+          #   ahead     this commit is in *its* history — a newer build finished
+          #             first, or an old run was re-run. Publishing now would
+          #             move every install back to older code, so leave it.
+          #   elsewhere neither: main was rewritten, or the tag was moved by
+          #             hand to a commit main never had. Nothing on main will
+          #             ever descend from it, so waiting for one that does would
+          #             stop every release from here on. This commit passed CI
+          #             on main; it is the one to publish.
           rolling=true
           published=$(git rev-parse --quiet --verify "refs/tags/cli-latest^{commit}" || true)
           if [ -n "$published" ]; then
             if [ "$published" = "$GITHUB_SHA" ]; then
               rolling=false
               echo "::notice::cli-latest is already this commit."
-            elif ! git merge-base --is-ancestor "$published" "$GITHUB_SHA"; then
-              # A newer commit finished first. Publishing this one now would
-              # move every install back to older code.
+            elif git merge-base --is-ancestor "$published" "$GITHUB_SHA"; then
+              # shellcheck disable=SC2086
+              if git diff --quiet "$published" "$GITHUB_SHA" -- $CLI_PATHS; then
+                rolling=false
+                echo "::notice::Nothing the CLI is built from changed since ${published::7}."
+              fi
+            elif git merge-base --is-ancestor "$GITHUB_SHA" "$published"; then
               rolling=false
-              echo "::notice::cli-latest ($published) is not an ancestor of this commit, so it is left alone."
-            # shellcheck disable=SC2086
-            elif git diff --quiet "$published" "$GITHUB_SHA" -- $CLI_PATHS; then
-              rolling=false
-              echo "::notice::Nothing the CLI is built from changed since ${published::7}."
+              echo "::notice::cli-latest (${published::7}) is already a newer commit than this one, so it is left alone."
+            else
+              echo "::warning::cli-latest (${published::7}) is not in this branch's history at all — rewritten history, or a tag moved by hand. Publishing ${GITHUB_SHA::7} over it."
             fi
           fi
           echo "rolling=$rolling" >> "$GITHUB_OUTPUT"

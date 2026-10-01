@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, parse, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,13 +60,30 @@ export async function packageVersion(from: string = fileURLToPath(import.meta.ur
  * The commit a packed build was made from, or null for a copy that was never
  * packed — a checkout runs its own sources, and `git log` already says where
  * those came from. Written by `scripts/stamp-build.mjs` during `npm pack`.
+ *
+ * A checkout is asked first, because one can have a stamp too: `npm pack` in a
+ * working tree leaves `dist/build.json` behind, naming the commit that was
+ * HEAD that day. Every commit since would be reported as that one. So a root
+ * that is itself a repository has no build to name, whatever is in its dist/;
+ * an installed package never has a `.git`, and is the only thing that does.
  */
 export async function buildCommit(root: string): Promise<string | null> {
+  // `.git` is a directory in a clone and a file in a worktree or a submodule.
+  if (await exists(join(root, '.git'))) return null;
   try {
     const commit = (JSON.parse(await readFile(join(root, 'dist', 'build.json'), 'utf8')) as { commit?: unknown }).commit;
     return typeof commit === 'string' && /^[0-9a-f]{7,40}$/i.test(commit) ? commit.toLowerCase() : null;
   } catch {
     return null;
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

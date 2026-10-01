@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { setTheme } from '../src/cli/output.ts';
 import { runUpdate, type NpmResult, type UpdateDeps } from '../src/cli/commands/update.ts';
@@ -416,7 +417,7 @@ describe('installation detection', () => {
 
     const root = await scratch('relay-build-');
     await write(join(root, 'package.json'), manifest('0.1.0'));
-    // A checkout: nothing was packed, so there is no build to name.
+    // Nothing was packed, so there is no build to name.
     assert.equal(await buildCommit(root), null);
     assert.equal(await buildVersion(moduleIn(root)), '0.1.0');
     assert.equal(await installedVersion(root), '0.1.0');
@@ -438,6 +439,95 @@ describe('installation detection', () => {
       assert.equal(await buildCommit(root), null, stamp);
       assert.equal(await buildVersion(moduleIn(root)), '0.1.0', stamp);
     }
+  });
+
+  // `npm pack` in a working tree leaves its stamp in dist/. Read back from
+  // there, every commit made afterwards would report itself as the one that
+  // was HEAD on the day somebody packed.
+  it('does not believe a build stamp lying in a checkout', async () => {
+    const commit = '8cb9739f0e1d2c3b4a5968778695a4b3c2d1e0f9';
+    for (const kind of ['clone', 'worktree'] as const) {
+      const root = await scratch('relay-build-');
+      await write(join(root, 'package.json'), manifest('0.1.0'));
+      await write(join(root, 'dist', 'build.json'), `${JSON.stringify({ commit })}\n`);
+      assert.equal(await buildCommit(root), commit, kind);
+
+      // A clone has a `.git` directory; a worktree and a submodule have a file.
+      if (kind === 'clone') await mkdir(join(root, '.git'));
+      else await write(join(root, '.git'), 'gitdir: /somewhere/else\n');
+      assert.equal(await buildCommit(root), null, kind);
+      assert.equal(await buildVersion(moduleIn(root)), '0.1.0', kind);
+      assert.equal(await installedVersion(root), '0.1.0', kind);
+    }
+  });
+
+  describe('stamping a build', () => {
+    const STAMP = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'stamp-build.mjs');
+    const head = '[0-9a-f]{40}';
+
+    /** A package with the real stamp script in it, at `root`. */
+    async function packageAt(root: string): Promise<void> {
+      await write(join(root, 'package.json'), manifest('0.1.0'));
+      await write(join(root, 'scripts', 'stamp-build.mjs'), await readFile(STAMP, 'utf8'));
+    }
+    async function stampOf(root: string): Promise<string | null> {
+      try {
+        return (JSON.parse(await readFile(join(root, 'dist', 'build.json'), 'utf8')) as { commit: string }).commit;
+      } catch {
+        return null;
+      }
+    }
+    async function stamp(root: string, env: Record<string, string | undefined> = {}): Promise<void> {
+      const result = await runProcess(process.execPath, [join(root, 'scripts', 'stamp-build.mjs')], {
+        cwd: root,
+        // Whatever CI this suite runs under has a GITHUB_SHA of its own.
+        env: { ...gitEnv, GITHUB_SHA: undefined, RELAY_BUILD_COMMIT: undefined, ...env },
+      });
+      assert.equal(result.ok, true, result.stderr);
+    }
+
+    it("records the repository's own HEAD, not the commit a workflow is running for", async () => {
+      const root = await scratch('relay-stamp-');
+      await packageAt(root);
+      await git(['init', '-q', '-b', 'main'], root);
+      await git(['add', '-A'], root);
+      await git(['commit', '-q', '-m', 'package'], root);
+      const sha = await git(['rev-parse', 'HEAD'], root);
+      assert.match(sha, new RegExp(`^${head}$`));
+
+      // GITHUB_SHA is some other repository's commit when this is packed in
+      // some other repository's workflow.
+      await stamp(root, { GITHUB_SHA: 'f'.repeat(40) });
+      assert.equal(await stampOf(root), sha);
+
+      // The one override is the variable that exists to be one.
+      await stamp(root, { RELAY_BUILD_COMMIT: 'A'.repeat(40) });
+      assert.equal(await stampOf(root), 'a'.repeat(40));
+      await stamp(root, { RELAY_BUILD_COMMIT: 'not-a-commit' });
+      assert.equal(await stampOf(root), sha);
+    });
+
+    it('records nothing for a copy vendored inside another repository, and removes an old stamp', async () => {
+      const outer = await scratch('relay-stamp-');
+      const root = join(outer, 'vendor', 'relay');
+      await packageAt(root);
+      await git(['init', '-q', '-b', 'main'], outer);
+      await git(['add', '-A'], outer);
+      await git(['commit', '-q', '-m', 'somebody else\'s project'], outer);
+
+      await write(join(root, 'dist', 'build.json'), `${JSON.stringify({ commit: 'b'.repeat(40) })}\n`);
+      await stamp(root, { GITHUB_SHA: 'f'.repeat(40) });
+      assert.equal(await stampOf(root), null, 'a build that cannot name its commit kept an older build\'s');
+    });
+
+    it('records nothing where there is no repository at all', async () => {
+      const root = await scratch('relay-stamp-');
+      await packageAt(root);
+      // Above the temp directory there may be anything; nothing above it is
+      // rooted here, which is the only thing the script accepts.
+      await stamp(root);
+      assert.equal(await stampOf(root), null);
+    });
   });
 
   it('describes the copy that is actually running', async () => {
