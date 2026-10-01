@@ -5,7 +5,7 @@ import { ClerkVerifier, clerkIssuerFromPublishableKey, DEFAULT_OWN_TOKEN_TTL_MS,
 import { RUN_USER, runnerCloudInit } from '../../cloud/hub/cloudInit.ts';
 import { DEFAULT_MAX_MACHINES, Fleet, type FleetEvent } from '../../cloud/hub/fleet.ts';
 import { createHub, StaticVerifier, type HubLogEntry, type SessionVerifier } from '../../cloud/hub/server.ts';
-import { DEFAULT_STUDIO_URL } from '../../studio/protocol.ts';
+import { isLoopbackOrigin, STUDIO_URL_VARIABLE, trustedStudioOrigin } from '../../studio/protocol.ts';
 import { packageVersion } from '../../update/installation.ts';
 import { errorMessage, RelayError } from '../../util/errors.ts';
 import { EXIT } from '../exit.ts';
@@ -27,7 +27,10 @@ export interface HubConfig {
   secret: string;
   /** Secrets the hub used before this one. Tokens they signed are still read; new tokens are signed with `secret`. */
   previousSecrets: string[];
+  /** The studios this hub serves: the origins a browser may call from, and the only parties a session may have been issued to. */
   origins: string[];
+  /** Configured origins that were left out because they are this machine itself and the hub is not in development mode. */
+  droppedOrigins: string[];
   adminToken: string | null;
   tarball: string | null;
   sessions: { kind: 'clerk'; issuer: string; jwksUrl: string | null } | { kind: 'dev'; users: Array<[string, string]> };
@@ -111,6 +114,53 @@ async function previousSecrets(env: NodeJS.ProcessEnv): Promise<string[]> {
   return secrets;
 }
 
+/**
+ * The studios the hub serves: `RELAY_HUB_STUDIO_ORIGINS`, or the trusted
+ * studio when that is not set.
+ *
+ * A studio on this machine itself (`http://localhost:3000`) is a development
+ * studio, and is only served by a development hub (`RELAY_HUB_DEV=1`). It
+ * used to be on by default everywhere, which made every production hub
+ * accept a session issued to whatever was listening on port 3000 of the
+ * visitor's own computer. An origin of that kind in the configuration of a
+ * hub that is not in development is left out and said so at start, rather
+ * than refused outright: environment files written by earlier deploys list
+ * it, and a hub that will not start is worse than one that ignores it.
+ */
+function studioOrigins(env: NodeJS.ProcessEnv): { origins: string[]; droppedOrigins: string[] } {
+  const dev = env['RELAY_HUB_DEV'] === '1';
+  let configured = list(env['RELAY_HUB_STUDIO_ORIGINS']);
+  if (configured.length === 0) {
+    let trusted: string;
+    try {
+      trusted = trustedStudioOrigin(env);
+    } catch (error) {
+      throw new RelayError(errorMessage(error), { code: 'BAD_CONFIG' });
+    }
+    configured = dev ? [trusted, 'http://localhost:3000'] : [trusted];
+  }
+  const normalized = configured.map((value) => {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('not http');
+      // Clerk writes a token's `azp` as a bare origin, so that is what it is compared with.
+      return url.origin;
+    } catch {
+      throw new RelayError(`RELAY_HUB_STUDIO_ORIGINS: "${value}" is not an origin.`, { code: 'BAD_CONFIG', hint: 'An origin is a scheme, a host and maybe a port: https://studio.example.com' });
+    }
+  });
+  const unique = [...new Set(normalized)];
+  const droppedOrigins = dev ? [] : unique.filter(isLoopbackOrigin);
+  const origins = unique.filter((origin) => !droppedOrigins.includes(origin));
+  if (origins.length === 0) {
+    throw new RelayError('The hub has no studio to serve: every configured origin is on this machine itself.', {
+      code: 'BAD_CONFIG',
+      hint: `Set RELAY_HUB_STUDIO_ORIGINS (or ${STUDIO_URL_VARIABLE}) to the studio's address, or RELAY_HUB_DEV=1 for a development hub.`,
+    });
+  }
+  return { origins, droppedOrigins };
+}
+
 export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promise<HubConfig> {
   const secret = await secretFrom(env, 'RELAY_HUB_SECRET');
   if (secret === null || secret.length < 32) {
@@ -135,7 +185,7 @@ export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promi
     sessions = { kind: 'clerk', issuer, jwksUrl: env['RELAY_HUB_CLERK_JWKS_URL']?.trim() || null };
   }
 
-  const origins = list(env['RELAY_HUB_STUDIO_ORIGINS']);
+  const { origins, droppedOrigins } = studioOrigins(env);
   const publicUrl = env['RELAY_HUB_PUBLIC_URL']?.trim() || null;
 
   let cloud: HubConfig['cloud'] = null;
@@ -181,7 +231,8 @@ export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promi
     publicUrl,
     secret,
     previousSecrets: (await previousSecrets(env)).filter((previous) => previous !== secret),
-    origins: origins.length > 0 ? origins : [DEFAULT_STUDIO_URL, 'http://localhost:3000'],
+    origins,
+    droppedOrigins,
     adminToken: await secretFrom(env, 'RELAY_HUB_ADMIN_TOKEN'),
     tarball: env['RELAY_HUB_TARBALL']?.trim() || null,
     sessions,
@@ -289,6 +340,9 @@ async function serveHub(config: HubConfig, version: string, logLine: (entry: Hub
     sessions = verifier;
   }
 
+  if (config.droppedOrigins.length > 0) {
+    logLine({ level: 'warn', msg: `not serving ${config.droppedOrigins.join(', ')}: a studio on this machine is for development. Set RELAY_HUB_DEV=1 to serve it.` });
+  }
   if (config.previousSecrets.length > 0) {
     logLine({ level: 'info', msg: `still reading runner tokens signed by ${config.previousSecrets.length} earlier secret${config.previousSecrets.length === 1 ? '' : 's'}; drop RELAY_HUB_SECRET_PREVIOUS once every machine has been started again` });
   }

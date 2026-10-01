@@ -76,6 +76,10 @@ export interface HubOptions {
   heartbeatMs?: number;
   /** Requests one person may have open at once. */
   maxInflightPerUser?: number;
+  /** Run streams one person may follow at once. A stream outlives the request that opened it, so it is counted on its own. */
+  maxStreamsPerUser?: number;
+  /** Bytes that may wait unread on a runner's socket, or on a browser's run stream, before it is cut. */
+  maxBuffered?: number;
 }
 
 export interface Hub {
@@ -110,6 +114,9 @@ export function createHub(options: HubOptions): Hub {
   const resumeWindow = options.resumeWindowMs ?? 180_000;
   const heartbeatMs = options.heartbeatMs ?? 15_000;
   const maxInflight = options.maxInflightPerUser ?? 16;
+  const maxStreams = options.maxStreamsPerUser ?? 8;
+  const maxBuffered = options.maxBuffered ?? 16 * 1024 * 1024;
+  const streams = new Map<string, number>();
   const secrets = [options.secret, ...(options.previousSecrets ?? [])];
   const links = new Map<string, RunnerLink>();
   const inflight = new Map<string, number>();
@@ -175,7 +182,7 @@ export function createHub(options: HubOptions): Hub {
       return refuseUpgrade(socket, admission.status, admission.reason);
     }
     const identity: RunnerToken = verified;
-    const ws = acceptWebSocket(request, socket, head, { maxPayload: MAX_FRAME, pingIntervalMs: 20_000 });
+    const ws = acceptWebSocket(request, socket, head, { maxPayload: MAX_FRAME, pingIntervalMs: 20_000, maxBuffered });
     const link = new RunnerLink(ws, identity);
     let greeted = false;
     const greeting = setTimeout(() => {
@@ -255,9 +262,11 @@ export function createHub(options: HubOptions): Hub {
     if (path === null) throw new HttpError(400, 'That is not a path.');
     const method = request.method ?? 'GET';
 
+    // Open to anyone, so it says the hub is up and nothing about who uses it:
+    // how many machines exist, are awake or are queued is the operator's to
+    // read, behind the admin token, at /admin/v1/fleet.
     if (path === '/healthz' && method === 'GET') {
-      const summary = fleet.summary();
-      send(response, 200, { ok: true, version: options.version, runners: { connected: links.size, machines: summary.machines, byState: summary.byState, queued: summary.queued } });
+      send(response, 200, { ok: true, version: options.version });
       return;
     }
     if (path === '/runner/relay.tgz' && (method === 'GET' || method === 'HEAD')) return serveTarball(response, method);
@@ -395,43 +404,68 @@ export function createHub(options: HubOptions): Hub {
    * is back the hub asks again from the first record the browser has not seen.
    */
   function followRun(response: ServerResponse, userId: string, runId: string, since: number): void {
+    // A stream stays open long after `handle` has returned and given back the
+    // request's place in `inflight`, so streams have a count of their own:
+    // without one, a person could hold any number open.
+    const open = streams.get(userId) ?? 0;
+    if (open >= maxStreams) throw new HttpError(429, 'Too many run streams open at once. Close a studio tab that is following a run.');
+    streams.set(userId, open + 1);
+
     let next = since;
-    let closed = false;
+    /** Nothing more is written, and the stream's place has been given back. */
+    let done = false;
     let cancel: (() => void) | null = null;
     let started = false;
+
+    /** Ends the stream's bookkeeping, once. False when it had already ended. */
+    const settle = (): boolean => {
+      if (done) return false;
+      done = true;
+      clearInterval(heartbeat);
+      cancel?.();
+      openResponses.delete(response);
+      const left = (streams.get(userId) ?? 1) - 1;
+      if (left <= 0) streams.delete(userId);
+      else streams.set(userId, left);
+      return true;
+    };
+    /** Ends it with a JSON answer if nothing was streamed yet, and by closing the stream if something was. */
+    const answer = (status: number, body: unknown): void => {
+      if (!settle()) return;
+      if (!started && !response.headersSent) send(response, status, body);
+      else response.end();
+    };
+    const finish = (): void => answer(503, { error: 'Your cloud machine is not connected.', cloud: fleet.status(userId) });
 
     const begin = (): void => {
       if (started) return;
       started = true;
       response.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      // Sent now, not with the first record: a run that is quiet for a while has still been found.
+      response.flushHeaders();
       openResponses.add(response);
     };
     const write = (record: RunStreamRecord): void => {
-      if (closed || response.writableEnded) return;
+      if (done || response.writableEnded) return;
       begin();
+      // A browser that has stopped reading gets no more: the records would
+      // wait in this process instead. The studio picks a cut stream back up
+      // from the first record it has not seen.
+      if (response.writableLength > maxBuffered) {
+        log({ level: 'warn', msg: 'cut a run stream nobody was reading', user: userId });
+        settle();
+        response.destroy();
+        return;
+      }
       response.write(`${JSON.stringify(record)}\n`);
     };
     const heartbeat = setInterval(() => {
       if (started) write({ seq: -1, type: 'ping' });
     }, heartbeatMs);
     heartbeat.unref();
-    const finish = (): void => {
-      if (closed) return;
-      closed = true;
-      clearInterval(heartbeat);
-      cancel?.();
-      openResponses.delete(response);
-      if (!started && !response.headersSent) send(response, 503, { error: 'Your cloud machine is not connected.', cloud: fleet.status(userId) });
-      else response.end();
-    };
     // The response's close, not the request's: a request's fires as soon as its (empty) body is read.
     response.on('close', () => {
-      if (!response.writableEnded) {
-        closed = true;
-        clearInterval(heartbeat);
-        cancel?.();
-        openResponses.delete(response);
-      }
+      settle();
     });
 
     // The stream's steps run on their own, with nobody awaiting them: a step
@@ -449,7 +483,7 @@ export function createHub(options: HubOptions): Hub {
 
     const waitForRunner = async (): Promise<void> => {
       const back = await fleet.whenReady(userId, resumeWindow);
-      if (closed) return;
+      if (done) return;
       if (back) step(attach);
       else finish();
     };
@@ -457,13 +491,8 @@ export function createHub(options: HubOptions): Hub {
     const attach = async (): Promise<void> => {
       const link = links.get(userId);
       if (link === undefined || !link.open) {
-        if (!started) {
-          // Nothing to resume: the first ask of a stream does not wait for a sleeping machine.
-          send(response, 503, { error: 'Your cloud machine is asleep.', cloud: fleet.status(userId) });
-          closed = true;
-          clearInterval(heartbeat);
-          return;
-        }
+        // Nothing to resume: the first ask of a stream does not wait for a sleeping machine.
+        if (!started) return answer(503, { error: 'Your cloud machine is asleep.', cloud: fleet.status(userId) });
         return waitForRunner();
       }
       const follow = link.follow(
@@ -475,20 +504,15 @@ export function createHub(options: HubOptions): Hub {
         },
         (reason) => {
           if (reason === 'exit') finish();
-          else if (reason === 'lost' && !closed) step(waitForRunner);
+          else if (reason === 'lost' && !done) step(waitForRunner);
         },
       );
       cancel = follow.cancel;
       try {
-        const answer = await follow.started;
-        if (closed) return follow.cancel();
-        if (!answer.stream) {
-          if (!started) {
-            closed = true;
-            clearInterval(heartbeat);
-            send(response, answer.status, answer.body);
-            return;
-          }
+        const opened = await follow.started;
+        if (done) return follow.cancel();
+        if (!opened.stream) {
+          if (!started) return answer(opened.status, opened.body);
           // The runner came back without this run: its process restarted, and the run went with it.
           write({ seq: next, type: 'exit', code: null, error: 'Your cloud machine restarted while this run was going, and the run did not survive it.' });
           finish();
@@ -496,13 +520,9 @@ export function createHub(options: HubOptions): Hub {
         }
         begin();
       } catch (error) {
-        if (closed) return;
+        if (done) return;
         if (error instanceof LinkLost) return waitForRunner();
-        if (!started) {
-          closed = true;
-          clearInterval(heartbeat);
-          send(response, 504, { error: errorMessage(error) });
-        } else finish();
+        answer(504, { error: errorMessage(error) });
       }
     };
 

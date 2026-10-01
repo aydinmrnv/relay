@@ -143,7 +143,11 @@ interface Jwk extends JsonWebKey {
 
 export interface ClerkVerifierOptions {
   issuer: string;
-  /** Origins the token may have been issued to (its `azp`). Empty accepts any. */
+  /**
+   * Origins the token may have been issued to (its `azp`). A token must name
+   * one of them: an empty list authorises nothing, and a token with no `azp`
+   * is refused.
+   */
   authorizedParties: readonly string[];
   /** Where the keys are; defaults to the issuer's `/.well-known/jwks.json`. */
   jwksUrl?: string;
@@ -151,19 +155,34 @@ export interface ClerkVerifierOptions {
   now?: () => number;
   /** Clock skew allowed on `exp` and `nbf`, in seconds. */
   leewaySeconds?: number;
+  /** How old the keys may be before they are read again. Default one hour. */
+  refreshMs?: number;
+  /** How long the keys are still used when Clerk cannot be reached to re-read them. Default one day. */
+  maxStaleMs?: number;
 }
 
+/** How soon another read of the keys may follow one that was just tried. */
+const JWKS_RETRY_MS = 60_000;
+
 /**
- * Verifies Clerk session JWTs (RS256) against the instance's JWKS, which is
- * fetched once and again only when a token names a key the hub has not seen —
- * at most once a minute, so a stream of forged `kid`s cannot make the hub
- * hammer Clerk.
+ * Verifies Clerk session JWTs (RS256) against the instance's JWKS.
+ *
+ * The keys are read again when they are an hour old, not only when a token
+ * names one the hub has not seen. Reading only on an unknown `kid` meant a
+ * key Clerk had withdrawn stayed good here until the hub restarted. A read is
+ * tried at most once a minute, so neither an outage at Clerk nor a stream of
+ * forged `kid`s makes the hub hammer it. If Clerk cannot be reached, the
+ * keys already held are used for up to a day, and after that nothing is: a
+ * hub that cannot learn which keys are still good stops accepting sessions
+ * rather than trusting old keys for ever.
  */
 export class ClerkVerifier {
   private readonly options: ClerkVerifierOptions;
   private readonly fetchImpl: typeof fetch;
   private keys = new Map<string, KeyObject>();
-  private fetchedAt = 0;
+  /** When the keys were last read successfully, and when a read was last tried. */
+  private freshAt = Number.NEGATIVE_INFINITY;
+  private triedAt = Number.NEGATIVE_INFINITY;
   private inflight: Promise<void> | null = null;
 
   constructor(options: ClerkVerifierOptions) {
@@ -182,15 +201,19 @@ export class ClerkVerifier {
         const url = this.options.jwksUrl ?? `${this.options.issuer}/.well-known/jwks.json`;
         const response = await this.fetchImpl(url, { signal: AbortSignal.timeout(8_000) });
         if (!response.ok) throw new Error(`JWKS answered ${response.status}`);
-        const body = (await response.json()) as { keys?: Jwk[] };
+        const body = (await response.json()) as { keys?: Jwk[] } | null;
         const next = new Map<string, KeyObject>();
-        for (const jwk of body.keys ?? []) {
+        for (const jwk of body?.keys ?? []) {
           if (jwk.kty !== 'RSA' || typeof jwk.kid !== 'string') continue;
           next.set(jwk.kid, createPublicKey({ key: jwk, format: 'jwk' }));
         }
-        if (next.size > 0) this.keys = next;
+        // An answer with no usable key is a failed read, not an instruction to trust nothing.
+        if (next.size === 0) throw new Error('JWKS held no RSA key');
+        // Replaced whole: a key that is no longer published is no longer accepted.
+        this.keys = next;
+        this.freshAt = this.now();
       } finally {
-        this.fetchedAt = this.now();
+        this.triedAt = this.now();
         this.inflight = null;
       }
     })();
@@ -198,9 +221,14 @@ export class ClerkVerifier {
   }
 
   private async key(kid: string): Promise<KeyObject | undefined> {
+    const refreshMs = this.options.refreshMs ?? 60 * 60_000;
+    const maxStaleMs = this.options.maxStaleMs ?? 24 * 60 * 60_000;
+    const due = (): boolean => this.now() - this.triedAt > JWKS_RETRY_MS;
+    if (this.now() - this.freshAt > refreshMs && due()) await this.refresh().catch(() => undefined);
+    if (this.now() - this.freshAt > maxStaleMs) this.keys = new Map();
     const known = this.keys.get(kid);
     if (known !== undefined) return known;
-    if (this.now() - this.fetchedAt > 60_000) await this.refresh().catch(() => undefined);
+    if (due()) await this.refresh().catch(() => undefined);
     return this.keys.get(kid);
   }
 
@@ -217,6 +245,8 @@ export class ClerkVerifier {
     } catch {
       throw new AuthError('That is not a session token.');
     }
+    // `null` and a list are JSON too, and neither has a header or a claim to read.
+    if (header === null || typeof header !== 'object' || claims === null || typeof claims !== 'object') throw new AuthError('That is not a session token.');
     if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw new AuthError('That session token is not signed the way Clerk signs.');
     const key = await this.key(header.kid);
     if (key === undefined) throw new AuthError('That session token was not signed by this studio.');
@@ -229,10 +259,13 @@ export class ClerkVerifier {
     if (typeof claims['exp'] !== 'number' || claims['exp'] + leeway < now) throw new AuthError('Your session expired. Reload the studio.');
     if (typeof claims['nbf'] === 'number' && claims['nbf'] - leeway > now) throw new AuthError('That session token is not valid yet.');
     if (claims['iss'] !== this.options.issuer) throw new AuthError('That session token is from another Clerk instance.');
+    // `azp` is the origin the token was issued to. It has to be there and it
+    // has to be one of the hub's studios: a token minted for any other site
+    // that shares this Clerk instance is somebody's session, but not with us.
+    // (A token with no `azp` used to pass this check untested.)
     const azp = claims['azp'];
-    if (this.options.authorizedParties.length > 0 && typeof azp === 'string' && !this.options.authorizedParties.includes(azp)) {
-      throw new AuthError('That session token was issued to another site.');
-    }
+    if (typeof azp !== 'string' || azp.length === 0) throw new AuthError('That session token does not say which site it was issued to.');
+    if (!this.options.authorizedParties.includes(azp)) throw new AuthError('That session token was issued to another site.');
     const sub = claims['sub'];
     if (typeof sub !== 'string' || sub.length === 0) throw new AuthError('That session token names no user.');
     return { userId: sub, sessionId: typeof claims['sid'] === 'string' ? claims['sid'] : null, expiresAt: claims['exp'] * 1000 };
