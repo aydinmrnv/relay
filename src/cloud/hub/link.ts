@@ -161,13 +161,13 @@ export class RunnerLink implements FleetLink {
     this.lost = true;
     for (const [id, entry] of this.pending) {
       this.pending.delete(id);
-      if (entry.kind === 'json') {
-        clearTimeout(entry.timer);
-        entry.reject(new LinkLost('Lost the connection to your cloud machine.'));
-      } else {
-        if (entry.timer !== null) clearTimeout(entry.timer);
-        if (entry.started) entry.onEnd('lost');
+      if (entry.timer !== null) clearTimeout(entry.timer);
+      // Each waiter hears it, whatever the one before it did with the news.
+      try {
+        if (entry.kind === 'stream' && entry.started) entry.onEnd('lost');
         else entry.reject(new LinkLost('Lost the connection to your cloud machine.'));
+      } catch {
+        // A waiter that throws on being told has already been told.
       }
     }
   }

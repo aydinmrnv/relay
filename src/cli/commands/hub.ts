@@ -143,6 +143,45 @@ export async function readHubConfig(env: NodeJS.ProcessEnv = process.env): Promi
   };
 }
 
+/**
+ * Keeps the hub serving through an error nothing caught.
+ *
+ * Node's answer to an unhandled rejection or an uncaught exception is to end
+ * the process, and for most programs that is right: the state may be wrong,
+ * so start again. For the hub it is the worse failure. One process holds
+ * every person's runner link and every open run stream, so ending it turns a
+ * bug in one request into an outage for everyone, and a request that can
+ * trigger it into a way to keep the hub down for as long as someone repeats
+ * it. And the hub has little state to be wrong: what it knows about machines
+ * is rebuilt from Azure every thirty seconds, and a link or a stream that was
+ * left half-done times out on its own.
+ *
+ * So the error is logged, loudly, with its stack, and the hub carries on.
+ * The handlers in `createHub` are meant to make this unreachable; when a line
+ * from here shows up in the journal, that is a bug to fix, not noise.
+ *
+ * Returns the function that removes the handlers again.
+ */
+export function keepServing(log: (entry: HubLogEntry) => void, target: Pick<NodeJS.Process, 'on' | 'off'> = process): () => void {
+  const describe = (error: unknown): { error: string; stack?: string } =>
+    error instanceof Error && error.stack !== undefined ? { error: error.message, stack: error.stack } : { error: errorMessage(error) };
+  const say = (msg: string, error: unknown): void => {
+    try {
+      log({ level: 'error', msg, ...describe(error) });
+    } catch {
+      // A log line that cannot be written is not a reason to stop either.
+    }
+  };
+  const onRejection = (reason: unknown): void => say('unhandled rejection; the hub keeps serving', reason);
+  const onException = (error: Error): void => say('uncaught exception; the hub keeps serving', error);
+  target.on('unhandledRejection', onRejection);
+  target.on('uncaughtException', onException);
+  return () => {
+    target.off('unhandledRejection', onRejection);
+    target.off('uncaughtException', onException);
+  };
+}
+
 export async function hubServeCommand(options: { json?: boolean } = {}): Promise<number> {
   const config = await readHubConfig();
   const version = await packageVersion().catch(() => 'unknown');
@@ -151,6 +190,16 @@ export async function hubServeCommand(options: { json?: boolean } = {}): Promise
     if (options.json === true || !process.stdout.isTTY) process.stdout.write(`${JSON.stringify(line)}\n`);
     else out(`  ${line.at.slice(11, 19)}  ${entry.level === 'info' ? '' : `${entry.level}: `}${entry.msg}${Object.keys(entry).length > 2 ? `  ${JSON.stringify(Object.fromEntries(Object.entries(entry).filter(([key]) => key !== 'level' && key !== 'msg')))}` : ''}`);
   };
+  // From here on: a bad configuration above still ends the command with its message.
+  const stopKeeping = keepServing(logLine);
+  try {
+    return await serveHub(config, version, logLine);
+  } finally {
+    stopKeeping();
+  }
+}
+
+async function serveHub(config: HubConfig, version: string, logLine: (entry: HubLogEntry) => void): Promise<number> {
 
   const cloud = config.cloud;
   const driver =

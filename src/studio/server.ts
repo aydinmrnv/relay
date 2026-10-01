@@ -4,7 +4,7 @@ import { errorMessage } from '../util/errors.ts';
 import type { LoginSessions } from './agents.ts';
 import { tokensMatch } from './pairing.ts';
 import type { AccountId, AgentsStatus, CompanionRepository, InstallResponse, RunStreamRecord } from './protocol.ts';
-import { createRouter, RouteError, type CompanionEvent, type RouteResult } from './router.ts';
+import { createRouter, parseRequestTarget, RouteError, type CompanionEvent, type RouteResult } from './router.ts';
 import type { StudioRuns } from './runs.ts';
 
 export type { CompanionEvent } from './router.ts';
@@ -86,10 +86,16 @@ export function createCompanion(options: CompanionOptions): Companion {
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
-      const status = error instanceof RouteError ? error.status : 500;
-      if (status === 500) log({ kind: 'error', message: errorMessage(error) });
-      if (!response.headersSent) send(response, status, { error: errorMessage(error) });
-      else response.end();
+      // Nothing may throw from here: this is the last thing between a bad
+      // request and an unhandled rejection, which would end `relay connect`.
+      try {
+        const status = error instanceof RouteError ? error.status : 500;
+        if (status === 500) log({ kind: 'error', message: errorMessage(error) });
+        if (!response.headersSent) send(response, status, { error: errorMessage(error) });
+        else response.end();
+      } catch {
+        response.destroy();
+      }
     });
   });
 
@@ -139,8 +145,10 @@ export function createCompanion(options: CompanionOptions): Companion {
     const authorized = tokensMatch(options.token, presented);
     const method = request.method ?? 'GET';
     const url = request.url ?? '/';
+    const target = parseRequestTarget(url);
+    if (target === null) throw new HttpError(400, 'That is not a path.');
 
-    if (method === 'GET' && new URL(url, 'http://127.0.0.1').pathname.replace(/\/+$/, '') === '/v1/hello') {
+    if (method === 'GET' && target.pathname.replace(/\/+$/, '') === '/v1/hello') {
       if (authorized && origin !== undefined && !pairedOrigins.has(origin)) {
         pairedOrigins.add(origin);
         log({ kind: 'paired', message: `Studio connected from ${origin}.` });

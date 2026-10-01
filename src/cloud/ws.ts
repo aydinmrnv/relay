@@ -139,7 +139,15 @@ export class WsConnection {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.pinger);
-    for (const listener of this.closeListeners) listener(code, reason);
+    for (const listener of this.closeListeners) {
+      // Called from the socket's own events, where a throw is an uncaught
+      // exception: one listener failing must not stop the others hearing the close.
+      try {
+        listener(code, reason);
+      } catch {
+        // The listener's own business; the connection is gone either way.
+      }
+    }
     this.closeListeners.clear();
     this.messageListeners.clear();
   }
@@ -239,7 +247,15 @@ export class WsConnection {
           this.fragmentOpcode = null;
           if (kind !== OP_TEXT) return this.fail(1003, 'text messages only');
           const text = whole.toString('utf8');
-          for (const listener of this.messageListeners) listener(text);
+          // This runs inside the socket's `data` event. A listener that throws
+          // would be an uncaught exception in whoever owns the server, so it
+          // costs this one connection instead. Callers handle their own errors;
+          // this is the backstop for the one they did not think of.
+          try {
+            for (const listener of this.messageListeners) listener(text);
+          } catch {
+            return this.fail(1011, 'internal error');
+          }
           break;
         }
         default:

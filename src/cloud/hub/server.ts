@@ -6,10 +6,11 @@ import type { Duplex } from 'node:stream';
 
 import { tokensMatch } from '../../studio/pairing.ts';
 import { PROTOCOL_VERSION, type HelloResponse, type RunStreamRecord } from '../../studio/protocol.ts';
+import { decodeSegment, parseRequestTarget } from '../../studio/router.ts';
 import { errorMessage } from '../../util/errors.ts';
-import { parseFrame, type RunnerFrame } from '../frames.ts';
+import { FrameError, parseRunnerFrame } from '../frames.ts';
 import { acceptWebSocket, isWebSocketUpgrade, refuseUpgrade } from '../ws.ts';
-import { AuthError, bearer, mintRunnerToken, verifyRunnerToken, type SessionClaims } from './auth.ts';
+import { AuthError, bearer, mintRunnerToken, verifyRunnerToken, type RunnerIdentity, type SessionClaims } from './auth.ts';
 import type { Fleet } from './fleet.ts';
 import { LinkLost, RunnerLink } from './link.ts';
 
@@ -83,6 +84,9 @@ export interface Hub {
 
 const MAX_BODY = 2_000_000;
 const MAX_FRAME = 4 * 1024 * 1024;
+/** The request line of anything the hub forwards; the runner's own limit is far above it. */
+const MAX_URL = 4_096;
+const FORWARDED_METHODS = new Set(['GET', 'POST', 'DELETE']);
 
 class HttpError extends Error {
   readonly status: number;
@@ -107,15 +111,38 @@ export function createHub(options: HubOptions): Hub {
   const inflight = new Map<string, number>();
   const openResponses = new Set<ServerResponse>();
 
+  /**
+   * Nothing a caller sends may end the process. Every entry point — a request,
+   * an upgrade, a frame, a socket closing — runs inside a handler that turns a
+   * throw into an answer for that one caller, and none of these handlers can
+   * throw themselves: an exception here would be an unhandled rejection or an
+   * uncaught exception, and the hub going down takes every person's machine
+   * and every run stream with it. (`relay hub serve` adds process-level
+   * handlers as well, for whatever this still misses.)
+   */
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
-      const status = error instanceof HttpError ? error.status : error instanceof AuthError ? 401 : 500;
-      if (status === 500) log({ level: 'error', msg: 'request failed', path: pathOf(request), error: errorMessage(error) });
-      if (!response.headersSent) send(response, status, { error: errorMessage(error), ...(error instanceof HttpError ? error.extra : {}) });
-      else response.end();
+      try {
+        const status = error instanceof HttpError ? error.status : error instanceof AuthError ? 401 : 500;
+        // The path as sent, cut short: it may be the very thing that could not be parsed.
+        if (status === 500) log({ level: 'error', msg: 'request failed', path: pathOf(request) ?? (request.url ?? '').slice(0, 200), error: errorMessage(error) });
+        if (!response.headersSent) send(response, status, { error: errorMessage(error), ...(error instanceof HttpError ? error.extra : {}) });
+        else response.end();
+      } catch {
+        response.destroy();
+      }
     });
   });
-  server.on('upgrade', (request, socket, head) => onUpgrade(request, socket, head));
+  server.on('upgrade', (request, socket, head) => {
+    try {
+      onUpgrade(request, socket, head);
+    } catch (error) {
+      log({ level: 'error', msg: 'upgrade failed', error: errorMessage(error) });
+      socket.destroy();
+    }
+  });
+  // An error on the listening socket after start (out of file descriptors, say) is logged, not thrown.
+  server.on('error', (error) => log({ level: 'error', msg: 'server error', error: errorMessage(error) }));
   // Long-lived streams and sockets are the point; Node's defaults would cut them.
   server.requestTimeout = 0;
   server.headersTimeout = 30_000;
@@ -127,13 +154,16 @@ export function createHub(options: HubOptions): Hub {
 
   function onUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
     socket.on('error', () => undefined);
-    if (pathOf(request) !== '/v1/runner/connect') return refuseUpgrade(socket, 404, 'No such endpoint.');
+    const path = pathOf(request);
+    if (path === null) return refuseUpgrade(socket, 400, 'That is not a path.');
+    if (path !== '/v1/runner/connect') return refuseUpgrade(socket, 404, 'No such endpoint.');
     if (!isWebSocketUpgrade(request)) return refuseUpgrade(socket, 426, 'Connect with a WebSocket.');
-    const identity = verifyRunnerToken(options.secret, bearer(request.headers.authorization));
-    if (identity === null) {
+    const verified = verifyRunnerToken(options.secret, bearer(request.headers.authorization));
+    if (verified === null) {
       log({ level: 'warn', msg: 'refused a runner: bad token', ip: request.socket.remoteAddress });
       return refuseUpgrade(socket, 401, 'That runner token is not one this hub made.');
     }
+    const identity: RunnerIdentity = verified;
     const ws = acceptWebSocket(request, socket, head, { maxPayload: MAX_FRAME, pingIntervalMs: 20_000 });
     const link = new RunnerLink(ws, identity);
     let greeted = false;
@@ -142,8 +172,20 @@ export function createHub(options: HubOptions): Hub {
     }, 15_000);
     greeting.unref();
 
+    // A frame that is not what its type promises ends this connection and
+    // nothing else: the runner dials back, and no other person's link notices.
     ws.onMessage((text) => {
-      const frame = parseFrame<RunnerFrame>(text);
+      try {
+        onFrame(text);
+      } catch (error) {
+        const malformed = error instanceof FrameError;
+        log({ level: malformed ? 'warn' : 'error', msg: malformed ? 'closed a runner that sent a malformed frame' : 'a runner frame failed', runner: identity.runner, error: errorMessage(error) });
+        link.close(malformed ? 1007 : 1011, malformed ? 'malformed frame' : 'internal error');
+      }
+    });
+
+    function onFrame(text: string): void {
+      const frame = parseRunnerFrame(text);
       if (frame === null) return;
       if (frame.t === 'hello') {
         if (greeted) return;
@@ -167,14 +209,20 @@ export function createHub(options: HubOptions): Hub {
       if (!greeted) return;
       if (frame.t === 'activity') {
         link.activity = frame.activity;
-        fleet.reportActivity(identity.userId, frame.activity);
+        // Only from the connection the fleet is routing to: one it refused or replaced says nothing about the machine.
+        if (links.get(identity.userId) === link) fleet.reportActivity(identity.userId, frame.activity);
         return;
       }
       link.receive(frame);
-    });
+    }
+
     ws.onClose((code) => {
       clearTimeout(greeting);
-      link.failAll();
+      try {
+        link.failAll();
+      } catch (error) {
+        log({ level: 'error', msg: 'failing the requests of a lost runner failed', runner: identity.runner, error: errorMessage(error) });
+      }
       if (links.get(identity.userId) === link) links.delete(identity.userId);
       fleet.disconnected(identity.userId, link);
       if (greeted) log({ level: 'info', msg: 'runner disconnected', runner: identity.runner, code });
@@ -187,6 +235,7 @@ export function createHub(options: HubOptions): Hub {
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const path = pathOf(request);
+    if (path === null) throw new HttpError(400, 'That is not a path.');
     const method = request.method ?? 'GET';
 
     if (path === '/healthz' && method === 'GET') {
@@ -222,7 +271,7 @@ export function createHub(options: HubOptions): Hub {
     inflight.set(userId, open + 1);
     try {
       if (path.startsWith('/cloud/v1/')) return await cloud(request, response, method, path, userId);
-      return await proxy(request, response, method, userId);
+      return await proxy(request, response, method, path, userId);
     } finally {
       const now = (inflight.get(userId) ?? 1) - 1;
       if (now <= 0) inflight.delete(userId);
@@ -256,9 +305,11 @@ export function createHub(options: HubOptions): Hub {
     }
   }
 
-  async function proxy(request: IncomingMessage, response: ServerResponse, method: string, userId: string): Promise<void> {
+  async function proxy(request: IncomingMessage, response: ServerResponse, method: string, path: string, userId: string): Promise<void> {
     const url = request.url ?? '/';
-    const path = pathOf(request);
+    // Refused here rather than forwarded: the runner has nothing to answer them with.
+    if (!FORWARDED_METHODS.has(method)) throw new HttpError(405, 'Relay Cloud answers GET, POST and DELETE.');
+    if (url.length > MAX_URL) throw new HttpError(414, 'That address is longer than any the studio sends.');
 
     if (method === 'GET' && path.replace(/\/+$/, '') === '/v1/hello') {
       const status = fleet.status(userId);
@@ -273,8 +324,10 @@ export function createHub(options: HubOptions): Hub {
 
     const events = /^\/v1\/runs\/([^/]+)\/events\/?$/.exec(path);
     if (method === 'GET' && events !== null) {
-      const since = Number(new URL(url, 'http://hub.invalid').searchParams.get('since') ?? '0');
-      return followRun(response, userId, decodeURIComponent(events[1]!), Number.isInteger(since) && since > 0 ? since : 0);
+      const runId = decodeSegment(events[1]!);
+      if (runId === null) throw new HttpError(400, 'That is not a run.');
+      const since = Number(parseRequestTarget(url)?.searchParams.get('since') ?? '0');
+      return followRun(response, userId, runId, Number.isInteger(since) && since > 0 ? since : 0);
     }
 
     // The body is read first, so a request that waits for the machine to wake
@@ -357,10 +410,23 @@ export function createHub(options: HubOptions): Hub {
       }
     });
 
+    // The stream's steps run on their own, with nobody awaiting them: a step
+    // that throws ends this one stream instead of becoming an unhandled rejection.
+    const step = (work: () => Promise<void>): void => {
+      void work().catch((error: unknown) => {
+        log({ level: 'error', msg: 'following a run failed', user: userId, error: errorMessage(error) });
+        try {
+          finish();
+        } catch {
+          response.destroy();
+        }
+      });
+    };
+
     const waitForRunner = async (): Promise<void> => {
       const back = await fleet.whenReady(userId, resumeWindow);
       if (closed) return;
-      if (back) void attach();
+      if (back) step(attach);
       else finish();
     };
 
@@ -380,12 +446,12 @@ export function createHub(options: HubOptions): Hub {
         `/v1/runs/${encodeURIComponent(runId)}/events?since=${next}`,
         (record) => {
           if (record.type === 'ping') return;
-          next = record.seq + 1;
+          next = Math.max(next, record.seq + 1);
           write(record);
         },
         (reason) => {
           if (reason === 'exit') finish();
-          else if (reason === 'lost' && !closed) void waitForRunner();
+          else if (reason === 'lost' && !closed) step(waitForRunner);
         },
       );
       cancel = follow.cancel;
@@ -416,7 +482,7 @@ export function createHub(options: HubOptions): Hub {
       }
     };
 
-    void attach();
+    step(attach);
   }
 
   /* -------------------------------------------------------------- */
@@ -429,7 +495,8 @@ export function createHub(options: HubOptions): Hub {
     }
     const parts = path.split('/').filter(Boolean); // admin v1 ...
     const route = `${method} /${parts.map((part, index) => (index >= 3 ? ':' : part)).join('/')}`;
-    const target = parts[3] === undefined ? '' : decodeURIComponent(parts[3]);
+    const target = parts[3] === undefined ? '' : decodeSegment(parts[3]);
+    if (target === null) throw new HttpError(400, 'That is not a user id.');
     switch (route) {
       case 'GET /admin/v1/fleet':
         send(response, 200, { summary: fleet.summary(), links: [...links.values()].map((link) => ({ runner: link.identity.runner, userId: link.identity.userId, since: new Date(link.connectedAt).toISOString(), activity: link.activity })) });
@@ -454,7 +521,9 @@ export function createHub(options: HubOptions): Hub {
         return;
       case 'POST /admin/v1/tokens': {
         // A token for a runner the operator starts by hand: someone's own server, or a development VM.
-        const body = (await readJson(request)) as { userId?: unknown; runner?: unknown };
+        const sent = await readJson(request);
+        // `null`, a list or nothing at all is still something an operator may send by mistake.
+        const body = (sent !== null && typeof sent === 'object' ? sent : {}) as { userId?: unknown; runner?: unknown };
         if (typeof body.userId !== 'string' || typeof body.runner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.runner)) {
           throw new HttpError(400, 'Send {"userId": "user_…", "runner": "a-name"}.');
         }
@@ -487,7 +556,14 @@ export function createHub(options: HubOptions): Hub {
       response.end();
       return;
     }
-    createReadStream(path).pipe(response);
+    // Unhandled, a read error on a stream is an uncaught exception, and the
+    // file can be replaced or removed between the `stat` above and this read.
+    const file = createReadStream(path);
+    file.on('error', (error) => {
+      log({ level: 'error', msg: 'reading the runner package failed', error: errorMessage(error) });
+      response.destroy();
+    });
+    file.pipe(response);
   }
 
   return {
@@ -513,8 +589,9 @@ export function createHub(options: HubOptions): Hub {
   };
 }
 
-function pathOf(request: IncomingMessage): string {
-  return new URL(request.url ?? '/', 'http://hub.invalid').pathname;
+/** The request's path, or null when its request line holds something that is not one (`//`, another host). Never throws. */
+function pathOf(request: IncomingMessage): string | null {
+  return parseRequestTarget(request.url)?.pathname ?? null;
 }
 
 function send(response: ServerResponse, status: number, body: unknown): void {

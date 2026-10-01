@@ -73,6 +73,39 @@ export class RouteError extends Error {
   }
 }
 
+const TARGET_BASE = 'http://relay.invalid';
+
+/**
+ * A request's path and query, or null when the request line does not hold a
+ * plain path. `new URL` throws on some of what a client may send (`//`), and
+ * reads others as naming a different host (`//x/y`, `/\x`); both transports
+ * answer those with a 400 instead of routing on a path the client did not
+ * write, or failing where nothing catches it.
+ */
+export function parseRequestTarget(target: string | undefined): URL | null {
+  try {
+    const url = new URL(target ?? '/', TARGET_BASE);
+    return url.origin === TARGET_BASE ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** One path segment, percent-decoded; null when it is not valid percent-encoding. */
+export function decodeSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/** A JSON body that has to be an object: `null`, a list or a bare string is the client's mistake, not a crash. */
+function objectBody(body: unknown): Record<string, unknown> {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new RouteError(400, 'Expected a JSON object.');
+  return body as Record<string, unknown>;
+}
+
 export interface Router {
   hello(authorized: boolean): HelloResponse;
   handle(request: RouteRequest): Promise<RouteResult>;
@@ -117,7 +150,8 @@ export function createRouter(options: RouterOptions): Router {
   }
 
   async function handle(request: RouteRequest): Promise<RouteResult> {
-    const url = new URL(request.url, 'http://companion.invalid');
+    const url = parseRequestTarget(request.url);
+    if (url === null) throw new RouteError(400, 'That is not a path.');
     const parts = url.pathname.split('/').filter(Boolean);
     const route = `${request.method} /${parts.map((part, index) => (index >= 2 ? ':' : part)).join('/')}`;
     const [, , a, b, c] = parts;
@@ -146,7 +180,7 @@ export function createRouter(options: RouterOptions): Router {
         }
         if (action !== 'login') throw new RouteError(404, 'No such route.');
         const body = await request.json({ optional: true });
-        const mode = (body as { mode?: unknown } | undefined)?.mode ?? (account === 'github' ? 'device' : 'browser');
+        const mode = (body === undefined ? undefined : objectBody(body)['mode']) ?? (account === 'github' ? 'device' : 'browser');
         if (!isLoginMode(mode)) throw new RouteError(400, 'Unknown sign-in mode.');
         const started = await logins.start(account, mode);
         if (!started.ok) throw new RouteError(500, started.error);
@@ -165,8 +199,8 @@ export function createRouter(options: RouterOptions): Router {
 
       case 'POST /v1/logins/:/:': {
         if (b !== 'code') throw new RouteError(404, 'No such route.');
-        const body = (await request.json()) as { code?: unknown };
-        const result = logins.submitCode(a ?? '', typeof body.code === 'string' ? body.code : '');
+        const code = objectBody(await request.json())['code'];
+        const result = logins.submitCode(a ?? '', typeof code === 'string' ? code : '');
         return json(result.ok ? 200 : 400, result);
       }
 
@@ -212,9 +246,9 @@ export function createRouter(options: RouterOptions): Router {
         if (!capabilities.includes('install') || options.repository === null) {
           throw new RouteError(409, 'This companion was started outside a repository, so there is nowhere to install to.');
         }
-        const body = (await request.json()) as { files?: unknown };
+        const files = objectBody(await request.json())['files'];
         try {
-          const result = await install(options.repository.root, body.files);
+          const result = await install(options.repository.root, files);
           const changed = result.files.filter((file) => file.status !== 'unchanged').map((file) => file.path);
           log({ kind: 'installed', message: changed.length === 0 ? 'Installed an export; every file was already up to date.' : `Installed ${changed.join(', ')}.` });
           return json(200, result);
