@@ -32,8 +32,9 @@ export interface ProcessRunOptions {
    * reaches the first of those and nothing below it, so a timeout would leave
    * the rest running — and, because they hold the other end of the output
    * pipes, leave this call waiting on them for ever. With this set the child
-   * leads a process group of its own and a timeout or an abort signals the
-   * whole group.
+   * leads a session and process group of its own and a timeout or an abort
+   * signals the whole group. The price is that the tree has no controlling
+   * terminal, so nothing in it can prompt on `/dev/tty`.
    *
    * POSIX only. Windows has no process groups to signal, and what it offers
    * instead (a detached console, `taskkill /T`) changes more than this does, so
@@ -63,19 +64,54 @@ const DEFAULT_KILL_GRACE_MS = 5_000;
 /**
  * Process groups Relay started and has not seen finish, by group id.
  *
- * A child in a group of its own no longer hears the terminal's Ctrl-C, and it
- * does not die with Relay either. So the moment Relay itself goes — a forced
- * quit, an uncaught error, a normal exit that left a turn behind — whatever is
- * still in this set is killed on the way out, rather than left spending tokens
- * for a run that no longer exists.
+ * A child in a session of its own no longer hears the terminal's Ctrl-C or its
+ * hangup, and it does not die with Relay either. So the moment Relay itself
+ * goes, whatever is still in this set is killed on the way out, rather than
+ * left spending tokens for a run that no longer exists. There are two ways to
+ * go, and each needs its own hook:
+ *
+ * - **An exit Node performs** — a forced quit, an uncaught error, a normal exit
+ *   that left a turn behind — runs the `exit` handler.
+ * - **A signal nothing handles** kills the process without Node being asked,
+ *   and `exit` is never emitted. A command that owns a signal (`relay run`
+ *   cancelling on SIGINT) winds its own trees down; for every signal nobody
+ *   owns — a `kill` of `relay eval`, a terminal closed under `relay serve` —
+ *   `dieWithTrees` below is the listener of last resort.
  */
 const liveTrees = new Set<number>();
-let exitHookInstalled = false;
+let exitHooksInstalled = false;
 
 /** Kills every process tree still running. Synchronous, so an `exit` handler can call it. */
 export function killProcessTrees(): void {
   for (const group of liveTrees) signalTree(group, 'SIGKILL');
   liveTrees.clear();
+}
+
+/** The signals whose default action ends the process without telling Node. */
+const FATAL_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+/**
+ * What a fatal signal does when no command has claimed it: take the trees
+ * down, then die of that same signal, exactly as the process would have.
+ *
+ * A listener exists at all only because having one is the only way to run
+ * code before the default action. So it steps aside whenever anybody else is
+ * listening — that command has decided what the signal means, and cancelling
+ * its turns is part of what it does — and otherwise removes itself and raises
+ * the signal again, so the exit status is the one a shell expects.
+ */
+function dieWithTrees(signal: NodeJS.Signals): void {
+  if (process.listenerCount(signal) > 1) return;
+  killProcessTrees();
+  process.removeListener(signal, dieWithTrees);
+  process.kill(process.pid, signal);
+}
+
+function installExitHooks(): void {
+  if (exitHooksInstalled) return;
+  exitHooksInstalled = true;
+  process.on('exit', killProcessTrees);
+  for (const signal of FATAL_SIGNALS) process.on(signal, dieWithTrees);
 }
 
 /** Signals a whole process group. False when there was nothing left to signal. */
@@ -139,18 +175,20 @@ export async function runProcess(
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
     windowsHide: true,
-    // On POSIX `detached` means only "lead a new process group", which is what
-    // makes the tree signallable as one thing. The child is still awaited and
-    // never unref'd, so nothing about it is detached in the everyday sense.
+    // On POSIX `detached` is `setsid()`: the child leads a new session, and so
+    // a new process group, which is what makes the tree signallable as one
+    // thing. It also means the tree has no controlling terminal: it never
+    // hears the terminal's Ctrl-C or hangup (hence the hooks above), and
+    // anything in it that opens `/dev/tty` to ask a question — an ssh
+    // passphrase, `sudo` — fails at once instead of prompting. Its stdin was
+    // already a pipe, so nothing here could have been answered anyway. The
+    // child is still awaited and never unref'd.
     ...(ownGroup ? { detached: true } : {}),
   });
   const group = ownGroup ? child.pid : undefined;
   if (group !== undefined) {
     liveTrees.add(group);
-    if (!exitHookInstalled) {
-      exitHookInstalled = true;
-      process.on('exit', killProcessTrees);
-    }
+    installExitHooks();
   }
 
   let stdout = '';

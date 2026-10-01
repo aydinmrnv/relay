@@ -768,11 +768,12 @@ export interface RunSignals {
 }
 
 /**
- * The signals that mean "this run is over": Ctrl-C, a supervisor's stop, and
- * the terminal going away. All three take the same path, so a run ended by any
- * of them is recorded as cancelled with its work committed to its branch.
+ * The signals, other than Ctrl-C, that mean "this run is over": a supervisor's
+ * stop, and the terminal going away. They cancel the run the way the first
+ * Ctrl-C does, so a run ended by either is recorded as cancelled with its work
+ * committed to its branch — and unlike Ctrl-C, a repeat never forces a quit.
  */
-const INTERRUPT_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+const TERMINATION_SIGNALS: readonly NodeJS.Signals[] = ['SIGTERM', 'SIGHUP'];
 
 export async function executeRun(
   cli: CliContext,
@@ -803,24 +804,38 @@ export async function executeRun(
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight. A run started by
   // something that already owns the signals cancels through that instead.
+  let cancelling = false;
   const cancel = (note: string): void => {
+    if (cancelling) return;
+    cancelling = true;
     display.warn(note);
     controller.abort();
     void Promise.all(Object.values(cli.harnesses).map((harness) => harness.cancel()));
   };
-  let interrupted = false;
+
+  // Ctrl-C is the one signal a person sends twice on purpose, so it is the
+  // only one counted: the first asks the run to stop, the second says "now".
+  let interrupts = 0;
   const onInterrupt = (): void => {
-    if (interrupted) {
-      // The second one means "now": whatever is still running is abandoned.
-      // The terminal is put back first, and nothing a turn started is left
-      // behind to keep working for a run that no longer exists.
+    interrupts += 1;
+    if (interrupts > 1) {
+      // Whatever is still running is abandoned. The terminal is put back
+      // first, and nothing a turn started is left behind to keep working for
+      // a run that no longer exists.
       renderer?.teardown();
       killProcessTrees();
       process.exit(EXIT.cancelled);
     }
-    interrupted = true;
-    cancel('Cancelling… (press Ctrl-C again to force quit)');
+    if (cancelling) display.warn('Already cancelling… (press Ctrl-C again to force quit)');
+    else cancel('Cancelling… (press Ctrl-C again to force quit)');
   };
+  // SIGTERM and SIGHUP are sent by things that do not mean "now" by repeating
+  // themselves: a closing terminal delivers its hangup more than once, and a
+  // supervisor follows its SIGTERM with a SIGKILL of its own. However many
+  // arrive, they ask for the same clean cancellation and never cut it short —
+  // a force quit halfway through is exactly the stale run this is here to
+  // prevent.
+  const onTerminate = (): void => cancel('Cancelling…');
 
   // The dashboard reads single keys, which puts the terminal in raw mode — and
   // in raw mode Ctrl-C arrives as a byte on stdin rather than as SIGINT. So the
@@ -841,8 +856,10 @@ export async function executeRun(
   // claiming a phase is still in flight, with the agents still spending.
   const outer = signals.signal;
   const onOuterAbort = (): void => cancel('Cancelling…');
-  if (outer === undefined) for (const signal of INTERRUPT_SIGNALS) process.on(signal, onInterrupt);
-  else if (outer.aborted) onOuterAbort();
+  if (outer === undefined) {
+    process.on('SIGINT', onInterrupt);
+    for (const signal of TERMINATION_SIGNALS) process.on(signal, onTerminate);
+  } else if (outer.aborted) onOuterAbort();
   else outer.addEventListener('abort', onOuterAbort, { once: true });
 
   display.start();
@@ -866,8 +883,10 @@ export async function executeRun(
   } finally {
     renderer?.teardown();
     tracking.stop();
-    if (outer === undefined) for (const signal of INTERRUPT_SIGNALS) process.off(signal, onInterrupt);
-    else outer.removeEventListener('abort', onOuterAbort);
+    if (outer === undefined) {
+      process.off('SIGINT', onInterrupt);
+      for (const signal of TERMINATION_SIGNALS) process.off(signal, onTerminate);
+    } else outer.removeEventListener('abort', onOuterAbort);
   }
 
   printOutcome(finalState, store);

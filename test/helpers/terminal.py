@@ -10,7 +10,9 @@ Node has no pty of its own, so the test borrows Python's.
     terminal.py '<json spec>'
 
     spec    { "argv": [...], "cwd": "...", "env": { "NAME": "value" | null },
-              "steps": [{ "wait": "text", "send": "\\u0003", "delay": 0.2 }],
+              "steps": [{ "wait": "text", "send": "\\u0003", "delay": 0.2 },
+                        { "wait": "text", "remove": "/path/to/a/file" },
+                        { "wait": "text", "signal": "TERM" }],
               "timeout": 30, "columns": 100, "rows": 40 }
     prints  { "status": 130 | null, "signal": 2 | null, "timedOut": false,
               "stepsDone": 2, "output": "..." }
@@ -18,6 +20,12 @@ Node has no pty of its own, so the test borrows Python's.
 Each step waits for its text to appear in what the command has printed since
 the previous step, then types `send`. A command that exits before a step's text
 appears simply ends the script: `stepsDone` says how far it got.
+
+A step with `remove` deletes that file instead of typing. It is how a test
+pulls something out from under a command at a moment only the terminal can
+name — "once the display is up" — which no timer in the test could hit. A
+step with `signal` sends the command that signal, by name without the `SIG`,
+which is what a supervisor or a closing terminal does and a keyboard cannot.
 """
 
 import fcntl
@@ -91,7 +99,12 @@ def main() -> None:
                 if not alive:
                     break
                 try:
-                    os.write(fd, step["send"].encode("utf-8"))
+                    if "remove" in step:
+                        os.remove(step["remove"])
+                    elif "signal" in step:
+                        os.kill(pid, getattr(signal, "SIG" + step["signal"]))
+                    else:
+                        os.write(fd, step["send"].encode("utf-8"))
                 except OSError:
                     break
                 done += 1

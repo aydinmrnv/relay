@@ -66,6 +66,9 @@ export async function serveCommand(options: ServeOptions = {}): Promise<number> 
   const runs = new AbortController();
   const stopping = { asked: false };
   const onSignal = (signal: NodeJS.Signals): void => {
+    // A closing terminal delivers its hangup more than once, so a repeat of
+    // it is not somebody asking twice: it stops the loop and never escalates.
+    if (stopping.asked && signal === 'SIGHUP') return;
     if (stopping.asked) {
       out(warning(`  ${signal} again — cancelling the runs still in flight.`));
       runs.abort();
@@ -77,7 +80,10 @@ export async function serveCommand(options: ServeOptions = {}): Promise<number> 
     hint('Press Ctrl-C again to cancel them, or run `relay stop <run>` for one of them.');
     controller.abort();
   };
-  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+  // SIGHUP as well: the runs this server started are in sessions of their own
+  // and would outlive it, so a closed terminal has to be a kill switch like
+  // the others rather than the end of the only process supervising them.
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   for (const signal of signals) process.on(signal, onSignal);
 
   try {

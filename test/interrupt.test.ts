@@ -43,8 +43,12 @@ interface PtyStep {
   /** Text to wait for in what the command prints. */
   wait: string;
   /** What to type once it has appeared. */
-  send: string;
-  /** Seconds to keep reading before typing. */
+  send?: string;
+  /** A file to delete once it has appeared, instead of typing. */
+  remove?: string;
+  /** A signal to send the command once it has appeared, without the `SIG`. */
+  signal?: 'TERM' | 'HUP' | 'INT';
+  /** Seconds to keep reading before acting. */
   delay?: number;
 }
 
@@ -57,7 +61,12 @@ interface PtyResult {
 }
 
 /** Runs `relay <args>` on a pseudo-terminal in `repo`, typing `steps` at it. */
-async function relayOnTerminal(repo: TempRepo, args: string[], steps: PtyStep[]): Promise<PtyResult> {
+async function relayOnTerminal(
+  repo: TempRepo,
+  args: string[],
+  steps: PtyStep[],
+  options: { timeout?: number } = {},
+): Promise<PtyResult> {
   const spec = {
     // The sources, through type stripping: the flag is what makes that work on
     // the Node floor, and it is accepted everywhere above it.
@@ -75,7 +84,7 @@ async function relayOnTerminal(repo: TempRepo, args: string[], steps: PtyStep[])
       NODE_TEST_CONTEXT: null,
     },
     steps,
-    timeout: 60,
+    timeout: options.timeout ?? 60,
   };
 
   const child = spawn('python3', [PTY, JSON.stringify(spec)], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -220,6 +229,82 @@ describe('Ctrl-C on a terminal', { concurrency: false }, () => {
 
       const pid = Number.parseInt(await readFile(pidFile, 'utf8'), 10);
       assert.ok(await waitUntilGone(pid, 5_000), 'a force quit left the agent running with nobody to stop it');
+    } finally {
+      await repo.cleanup();
+    }
+  });
+
+  // A second Ctrl-C is somebody saying "now". A second signal of any other
+  // kind is not: a closing terminal hangs up more than once, a supervisor
+  // sends SIGTERM and waits. Cutting the cancellation short for those leaves
+  // exactly the stale run the cancellation exists to prevent.
+  it('does not force quit on a repeated SIGTERM or a hangup, only on a second Ctrl-C', { skip }, async () => {
+    const { repo, pidFile } = await repoWithEndlessAgent({ ignoresSigterm: true });
+    try {
+      const result = await relayOnTerminal(
+        repo,
+        ['run', '--prompt', 'Add a greeting helper'],
+        [
+          { wait: 'AGENT-IS-WORKING', signal: 'TERM' },
+          // The agent ignores the polite signal, so the run is mid-cancel for
+          // the whole grace period. Everything below lands inside it.
+          { wait: 'Cancelling', signal: 'TERM', delay: 0.4 },
+          { wait: '', signal: 'HUP', delay: 0.4 },
+          // One Ctrl-C after a signal started the cancellation is still the
+          // first Ctrl-C.
+          { wait: '', send: CTRL_C, delay: 0.4 },
+          // The run wound down on its own and the session is at its prompt.
+          { wait: '^C exit', send: CTRL_C },
+        ],
+      );
+
+      assert.equal(result.timedOut, false, result.output);
+      assert.equal(result.stepsDone, 5, result.output);
+      assert.match(result.output, /Already cancelling/);
+      assert.match(result.output, /Run cancelled/, 'the cancellation was cut short');
+      assert.equal(result.status, EXIT_CANCELLED, result.output);
+
+      const [run] = await listRuns(repo.root);
+      assert.equal(run?.phase, 'CANCELLED');
+      const pid = Number.parseInt(await readFile(pidFile, 'utf8'), 10);
+      assert.ok(await waitUntilGone(pid, 5_000), 'the agent turn outlived the run it belonged to');
+    } finally {
+      await repo.cleanup();
+    }
+  });
+
+  // The display has the terminal in raw mode and stdin flowing. A watch that
+  // fails has to hand both back, or the error is followed by a process that
+  // never exits and a terminal where Ctrl-C no longer does anything.
+  it('gives the terminal back when `relay watch` fails part-way', { skip }, async () => {
+    const repo = await createTempRepo();
+    try {
+      const now = new Date();
+      const state = createRunState({
+        runId: createRunId(now),
+        shortId: 'abc235',
+        issueRef: '142',
+        repository: { root: repo.root, owner: 'acme', name: 'widgets', defaultBranch: 'main' },
+        config: structuredClone(DEFAULT_CONFIG),
+        now,
+      });
+      const store = new RunStore(repo.root, state.runId);
+      await store.init();
+      await store.saveState(state);
+
+      const result = await relayOnTerminal(
+        repo,
+        ['watch', state.runId, '--interval', '250'],
+        // Once the display is up, the run's state goes away underneath it.
+        [{ wait: 'Ctrl-C exit', remove: join(repo.root, '.relay', 'runs', state.runId, 'state.json') }],
+        { timeout: 20 },
+      );
+
+      assert.equal(result.stepsDone, 1, result.output);
+      assert.equal(result.timedOut, false, `the watch never exited after failing:\n${result.output}`);
+      assert.match(result.output, /has no state file/);
+      assert.notEqual(result.status, 0);
+      assert.notEqual(result.status, null, result.output);
     } finally {
       await repo.cleanup();
     }
