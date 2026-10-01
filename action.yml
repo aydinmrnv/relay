@@ -2,34 +2,65 @@
 #
 # For teams who would rather not run a daemon. It is the same pipeline `relay
 # serve` runs, on one issue, in CI: the trigger label, the allowlist, the
-# budgets, the delivery ceiling and the audit trail are all read from the
-# repository's own `.relay/config.json`, not from the inputs below. There is
-# deliberately no input that can loosen a guardrail, because a workflow file is
-# editable by anyone who can open a pull request against it.
+# per-run budget and the delivery ceiling are all read from the repository's
+# own `.relay/config.json`, not from the inputs below. There is deliberately no
+# input that can loosen a guardrail, because a workflow file is editable by
+# anyone who can open a pull request against it.
+#
+# ---------------------------------------------------------------------------
+# What a runner does not remember
+# ---------------------------------------------------------------------------
+# A hosted runner starts every job from a fresh checkout, so the run state
+# `relay serve` keeps on a long-lived machine — `.relay/runs/` and
+# `.relay/unattended.json` — is not there from one job to the next. Two things
+# that rest on it are therefore weaker here than under `relay serve`, and it is
+# better to know that than to find out:
+#
+# - `unattended.maxDailyCostUsd` still has to be set, but each job sees only
+#   its own run, so the day's total never accumulates and never stops anything.
+#   What bounds spending in CI is `unattended.maxRunCostUsd` per run, who is on
+#   the allowlist, and the workflow's own `concurrency:`.
+# - `relay stats` has no history to report. The record of a run made here is
+#   the comment Relay posts on the issue and this job's summary and log. To
+#   keep the whole run directory, upload `.relay/runs/` as an artifact in a
+#   step after this one.
+#
+# Removing the label before the run starts is what stops the same issue being
+# run twice; that part needs no memory.
 #
 # ---------------------------------------------------------------------------
 # Credentials
 # ---------------------------------------------------------------------------
-# This is the one place Relay's "never handles a credential" rule needs saying
-# precisely, because CI is where somebody will otherwise assume it is fine to
-# hand Relay a token.
+# This is the one place Relay's rule about credentials needs saying precisely,
+# because CI is where somebody will otherwise assume it is fine to hand Relay
+# a token.
 #
-# Relay reads no credential, here or anywhere. What this Action does is put
-# each vendor's own environment variable into that vendor's own process:
-# `GH_TOKEN` is read by `gh`, `ANTHROPIC_API_KEY` by Claude Code, `OPENAI_API_KEY`
-# by Codex. Relay spawns those CLIs and inherits the environment; it never
-# reads, logs, forwards or persists any of those values, and it has no input,
-# flag or config key that accepts one. If you find yourself looking for where to
-# give Relay a token, the answer is that there is nowhere, and that is the
-# design. Set the vendor's variable in the job's `env:` from repository secrets
-# and let the vendor's CLI find it.
+# Relay reads no model credential and no GitHub credential, here or anywhere.
+# What this Action does is put each vendor's own environment variable into
+# that vendor's own process: `GH_TOKEN` is read by `gh`, `ANTHROPIC_API_KEY` by
+# Claude Code, `OPENAI_API_KEY` by Codex. Relay spawns those CLIs and they
+# inherit the environment; it never reads, logs, forwards or persists any of
+# those values, and it has no input, flag or config key that accepts one. Set
+# the vendor's variable in the job's `env:` from repository secrets and let the
+# vendor's CLI find it.
+#
+# The one credential Relay does read itself is `LINEAR_API_KEY`, and only when
+# an issue lives in Linear: Linear has no CLI to delegate to. It is not used by
+# this Action, which acts on GitHub labels.
+#
+# A run started here has nobody watching it, so it also keeps secrets away from
+# the agents: variables whose names look like secrets are withheld from each
+# coding CLI and from the test suite, except that CLI's own sign-in. `gh` gets
+# `GH_TOKEN`; the model does not. `unattended.allowEnv` in `.relay/config.json`
+# names anything else they are allowed to see. See docs/cli.md, "Untrusted
+# input".
 #
 # The secret scan still runs between commit and push, so a change carrying
 # something credential-shaped stops at the branch in CI exactly as it does on a
 # laptop.
 name: Relay
 description: Run Relay on a labelled issue and open a draft pull request.
-author: Relay
+author: NullStack.one
 
 branding:
   icon: git-pull-request
@@ -57,8 +88,11 @@ inputs:
     default: '.'
   version:
     description: >-
-      Version of `relay-orchestrator` to install from npm. Use `local` to run
-      the copy in the checkout, which is what this repository's own CI does.
+      Which build of the Relay CLI to install. `latest` is the newest build of
+      main that passed CI; a version number such as `0.1.0` is that release,
+      which never changes once published. Both are downloaded from this
+      repository's GitHub releases, not from the npm registry. `local` runs the
+      copy in the checkout, which is what this repository's own CI does.
     required: false
     default: latest
   args:
@@ -83,6 +117,11 @@ outputs:
 runs:
   using: composite
   steps:
+    # Every value that comes from the workflow — an input, another step's
+    # output — reaches a script through `env:` and is read as a shell variable.
+    # None is written into a `run:` block as an expression: an expression is
+    # pasted into the script before the shell parses it, so an input of
+    # `$(curl … | sh)` would be a command, not a string.
     - name: Install Relay
       shell: bash
       env:
@@ -92,10 +131,33 @@ runs:
         set -euo pipefail
         if [ "$RELAY_VERSION" = "local" ]; then
           echo "RELAY_BIN=$ACTION_PATH/bin/relay.mjs" >> "$GITHUB_ENV"
-        else
-          npm install -g "relay-orchestrator@$RELAY_VERSION"
-          echo "RELAY_BIN=$(command -v relay)" >> "$GITHUB_ENV"
+          exit 0
         fi
+
+        # The CLI is published as a tarball on this repository's releases:
+        # `cli-latest` rolls forward with every build of main that passed CI,
+        # and `cli-v<version>` is cut once per version and never replaced.
+        # It is deliberately not installed from the npm registry by name — a
+        # name is whoever registered it, and what runs here has the job's
+        # tokens in its environment.
+        case "$RELAY_VERSION" in
+          latest) tag=cli-latest ;;
+          '' | *[!0-9A-Za-z.+-]*)
+            echo "::error::version must be 'latest', 'local' or a version number such as 0.1.0 (got '$RELAY_VERSION')."
+            exit 1
+            ;;
+          *) tag="cli-v${RELAY_VERSION#v}" ;;
+        esac
+        # Overridable so a mirror can serve the same layout — which is also how
+        # this repository's CI installs the tarball it has just built, through
+        # this exact path, before any release exists to download.
+        base="${RELAY_RELEASE_BASE:-https://github.com/aydinmrnv/relay/releases/download}"
+
+        # Into a prefix of its own rather than the runner's global one: nothing
+        # to be root for on a self-hosted runner, and nothing left on PATH.
+        prefix="${RUNNER_TEMP:-/tmp}/relay-cli"
+        npm install --global --prefix "$prefix" --no-audit --no-fund "$base/$tag/relay.tgz"
+        echo "RELAY_BIN=$(npm root --global --prefix "$prefix")/relay-orchestrator/bin/relay.mjs" >> "$GITHUB_ENV"
 
     - name: Identify the committer
       shell: bash
@@ -118,6 +180,7 @@ runs:
         RELAY_ARGS: ${{ inputs.args }}
       run: |
         set -uo pipefail
+        node "$RELAY_BIN" --version
         stream="${RUNNER_TEMP:-/tmp}/relay-serve.jsonl"
         label_args=()
         if [ -n "$RELAY_LABEL" ]; then label_args=(--label "$RELAY_LABEL"); fi
@@ -163,6 +226,12 @@ runs:
       if: always()
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        RELAY_ISSUE: ${{ inputs.issue }}
+        RELAY_STARTED: ${{ steps.relay.outputs.started }}
+        RELAY_RUN_ID: ${{ steps.relay.outputs.run-id }}
+        RELAY_EXIT_CODE: ${{ steps.relay.outputs.exit-code }}
+        RELAY_STOPPED_BY: ${{ steps.relay.outputs.stopped-by }}
       run: |
         set -uo pipefail
         # Relay posts its own summary to the issue — an unattended run always
@@ -171,17 +240,20 @@ runs:
         {
           echo "## Relay"
           echo
-          if [ "${{ steps.relay.outputs.started }}" = "true" ]; then
-            echo "Started \`${{ steps.relay.outputs.run-id }}\` for issue #${{ inputs.issue }}, exit ${{ steps.relay.outputs.exit-code }}."
+          if [ "$RELAY_STARTED" = "true" ]; then
+            echo "Started \`$RELAY_RUN_ID\` for issue #$RELAY_ISSUE, exit $RELAY_EXIT_CODE."
             echo
             echo '```'
-            node "$RELAY_BIN" status "${{ steps.relay.outputs.run-id }}" 2>&1 || true
+            node "$RELAY_BIN" status "$RELAY_RUN_ID" 2>&1 || true
             echo '```'
+            echo
+            echo "This summary, the job log and Relay's comment on the issue are the record of this run."
+            echo "The run directory under \`.relay/runs/\` is gone when the job ends unless a later step uploads it."
           else
-            echo "Nothing was started for issue #${{ inputs.issue }} (${{ steps.relay.outputs.stopped-by }})."
+            echo "Nothing was started for issue #$RELAY_ISSUE (${RELAY_STOPPED_BY:-no result})."
             echo
-            echo "Relay refuses an issue whose trigger label came from somebody outside"
-            echo "\`unattended.authors\`/\`unattended.teams\`, and stops starting runs once"
-            echo "\`unattended.maxDailyCostUsd\` is committed. The job log above says which."
+            echo "Relay ignores an issue that does not carry the trigger label, and refuses one whose"
+            echo "label came from somebody outside \`unattended.authors\`/\`unattended.teams\`. The job log"
+            echo "above says which."
           fi
         } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
