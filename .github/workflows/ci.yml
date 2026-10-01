@@ -372,6 +372,9 @@ jobs:
 
       - run: npm run typecheck
 
+      # The pure modules: the redirect check, the compiler, redaction, validation.
+      - run: npm test
+
       - run: npm run build
 
   # Publishing is the last job of the run that tested the code, not a workflow

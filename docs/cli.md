@@ -90,27 +90,44 @@ paired studio uses to
   (below), and streams the engine's [JSON lines](#machine-readable-output)
   back verbatim. The canvas lights up from measured phases, costs and diffs,
   and the studio can stop the run the way Ctrl-C would.
-- **install an export.** The files Export produces are written into the
-  repository — `.relay/config.json` merged into the existing one rather than
-  replacing it, so the tracker, harnesses and test command `relay init` wrote
-  survive.
+- **install an export.** The three files Export produces are written into the
+  repository, and nothing else can be: `.relay/config.json`, merged into the
+  existing one rather than replacing it, so the tracker, harnesses and test
+  command `relay init` wrote survive, and only the sections an export produces
+  are taken from it; `.github/workflows/<name>.yml`; and `<product>-workflow.json`.
+  A workflow or graph file already there that an export did not write is left
+  as it is, and a path that goes through a symbolic link is refused.
 
 Started outside a repository it still serves sign-ins, and says that runs and
 installs need one.
 
-**Pairing is one link.** The first `relay connect` creates a pairing token in
-`~/.relay/studio.json` (readable only by you) and opens
+**Pairing is one link, good for one start.** `relay connect` opens
 `<studio>/connect#port=4477&token=…`. The token rides in the URL fragment,
 which a browser never sends to a server; the studio reads it once, takes it out
 of the address bar, checks it against the companion and keeps it in its own
-storage key, apart from your exported data. After that the studio finds the
-companion whenever it is running: an open studio tab whose machine has gone
-away checks every five seconds, so a later `relay connect` is picked up by it,
-and opens the studio itself only if no paired tab has reconnected within a few
-seconds. `--new-token` rotates the token and unpairs every studio that had the
-old one. The studio never probes for a companion it was not paired with, so a
-visitor who never ran `relay connect` is never asked by their browser about
-reaching their machine.
+storage key, apart from your exported data.
+
+Two secrets are involved, and only one leaves the machine. The machine's own
+secret is in `~/.relay/studio.json` (readable only by you) and never goes to a
+browser; `--new-token` replaces it. What the link carries is a session token
+derived from that secret and from this start of `relay connect`: it is
+different every time and stops being good when the process ends. So a studio
+pairs again after every restart, by opening the new link, and a token lifted
+from a browser's storage is worth nothing once `relay connect` has stopped.
+The link is opened through a single-use address on 127.0.0.1, so the token is
+not on a command line for other users of the machine to read.
+
+**The first run is confirmed in the terminal.** A token alone does not start
+agents. The first time a studio asks this `relay connect` to start a run or
+install an export, it asks in its own terminal, once per studio per start, and
+waits two minutes for a `y`. Input typed before the question is ignored. Three
+refusals from one studio stop it asking until the next start. Where there is
+no terminal to ask in (`--json` into another program, a service) the answer is
+no, unless `RELAY_CONNECT_CONFIRM=never` says a paired studio is enough.
+
+The studio never probes for a companion it was not paired with, so a visitor
+who never ran `relay connect` is never asked by their browser about reaching
+their machine.
 
 **The browser asks once.** Chrome, Edge and Brave ask before a website may
 reach a service on your own computer ("Local network access"). The first time
@@ -125,17 +142,25 @@ this machine's token, so the second one names the repository the first serves;
 anything else is another program, and `--port` moves the companion (the
 pairing link carries the port).
 
-**Three locks, because it can start agents that write code.**
+**Four locks, because it can start agents that write code.**
 
 1. It binds to 127.0.0.1 and refuses any request whose `Host` is not this port
    on a loopback name, which defeats DNS rebinding.
 2. It answers only studio origins: the hosted studio (or `--studio <url>` /
-   `RELAY_STUDIO_URL`), a studio running from a checkout on
-   `localhost:3000`, and any `--allow-origin`. Every other page is refused
+   `RELAY_STUDIO_URL`) and any `--allow-origin`. A studio on this machine
+   itself, such as one running from a checkout on `localhost:3000`, is answered
+   only in development, with `RELAY_STUDIO_DEV=1`. Every other page is refused
    before the token is looked at, and gets no CORS headers to read the refusal
    with.
-3. Every route but the greeting needs the token, compared in constant time,
-   and the greeting says nothing about the machine without it.
+3. Every route but the greeting needs this start's session token, compared in
+   constant time, and the greeting says nothing about the machine without it.
+4. Starting a run or installing an export is confirmed in the terminal, the
+   first time each studio asks.
+
+The studio it trusts by default is one address, written in one place
+(`TRUSTED_STUDIO_ORIGIN` in `src/studio/protocol.ts`). Whoever controls that
+hostname can ask a paired machine for a run, which is what the fourth lock is
+for.
 
 **What a studio run takes from the workflow.** The agents, the review level
 and rounds, the base branch and branch prefix, whether tests run (and a test
@@ -154,7 +179,9 @@ the exported workflow. The studio marks those nodes skipped and says why.
 
 **Stopping.** Ctrl-C stops the companion. With runs in flight the first one
 only warns; the second stops them as `relay stop` would — their work so far
-stays committed on their branches — and quits. Runs started from the studio
+stays committed on their branches — and quits. A closed terminal or a `kill`
+stops the runs and the companion without asking. At most two runs go at once
+(`RELAY_COMPANION_MAX_RUNS`), with twenty more waiting. Runs started from the studio
 run in their own process group, so a Ctrl-C meant for the companion never
 reaches them by accident. A studio that reloads mid-run picks the run back up
 from its first line.
@@ -162,18 +189,19 @@ from its first line.
 | | |
 |---|---|
 | `relay connect --port <n>` | listen elsewhere (default 4477, or `RELAY_COMPANION_PORT`); the pairing link carries the port |
-| `relay connect --studio <url>` | pair with another studio, e.g. `http://localhost:3000` |
+| `relay connect --studio <url>` | pair with another studio. One on this machine, e.g. `http://localhost:3000`, also needs `RELAY_STUDIO_DEV=1` |
 | `relay connect --allow-origin <origin>` | let another studio origin connect (repeatable) |
-| `relay connect --no-open` / `--open` | never / always open the pairing page (default: at once when the token is new, otherwise only if no paired studio reconnects within a few seconds) |
-| `relay connect --new-token` | rotate the pairing token |
-| `relay connect --json` | one line when listening — URL, port, pairing link, repository — then one per event |
+| `relay connect --no-open` / `--open` | never / always open the pairing page (default: opened for a person at a terminal, every start) |
+| `relay connect --new-token` | replace this machine's secret in `~/.relay/studio.json` |
+| `relay connect --json` | one line when listening — URL, port, allowed origins, repository — then one per event. The pairing link is not printed, because it holds the token; `--open` pairs a browser |
 | `relay connect --hub <url>` | be a Relay Cloud runner: dial out to that hub instead of listening ([below](#a-cloud-runner)); `RELAY_HUB_URL` also works |
-| `relay connect --token-from <source>` | with `--hub`: `env` (`RELAY_RUNNER_TOKEN`, the default), `azure` or `file:<path>` |
+| `relay connect --token-from <source>` | with `--hub`: `env` (`RELAY_RUNNER_TOKEN`, the default), `stdin`, `file:<path>` or `azure` |
 
 Browsers ask before a web page may reach a service on your own machine; allow
 it for the studio. If yours will not let an HTTPS page reach
-`http://127.0.0.1`, run the studio from a checkout (`cd web && npm run dev`)
-and pair that instead.
+`http://127.0.0.1`, use Chrome, Edge or Firefox, or run the studio from a
+checkout (`cd web && npm run dev`) and pair that with
+`RELAY_STUDIO_DEV=1 relay connect --studio http://localhost:3000`.
 
 ### A cloud runner
 
@@ -203,8 +231,10 @@ nothing on it needs:
 
 The runner token says which machine this is and whose, signed by the hub.
 `--token-from env` reads `RELAY_RUNNER_TOKEN` and removes it from the
-environment; `azure` reads the VM's user data from the instance metadata
-service at every connect, so it is never on disk; `file:<path>` reads a file.
+environment; `stdin` reads it from standard input, which is how a hub-made
+machine hands it over, from root, to a runner that cannot reach the metadata
+service itself; `file:<path>` reads a file; `azure` reads the VM's user data
+from the instance metadata service at every connect.
 An operator mints one for a machine they start by hand with
 `relay hub token --user <clerk id> --runner <name>`.
 

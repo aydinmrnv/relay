@@ -90,8 +90,9 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link href="/" />} tooltip={`${brand.name} home`}>
-              <BrandMark className="size-8" />
-              <div className="grid flex-1 text-left leading-tight">
+              <BrandMark className="size-8 shrink-0" />
+              {/* Collapsed to icons, the rail is as wide as the mark: the words would be cut to their first letters. */}
+              <div className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold tracking-tight">{brand.name}</span>
                 <span className="truncate text-xs text-muted-foreground">Workflow studio</span>
               </div>

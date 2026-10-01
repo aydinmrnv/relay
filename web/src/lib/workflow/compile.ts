@@ -668,20 +668,30 @@ function renderActionYaml(input: {
           } >> "$GITHUB_OUTPUT"`);
 
   if (pipeline !== undefined) {
-    steps.push(`      - uses: actions/checkout@v5
+    steps.push(`      # Pinned to a commit, with the release it is in the comment: a tag can be moved.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           token: \${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
       - name: Install the reviewer sandbox
-        # Read-only reviewer turns run under bubblewrap on Linux. The runner image
-        # does not ship it; without it the pipeline still runs and says the
-        # sandbox was unavailable.
-        run: sudo apt-get update -q && sudo apt-get install -y -q bubblewrap jq
+        # Claude Code's read-only turns (planning, reviewing) run under
+        # bubblewrap on Linux, and the runner image does not ship it. Ubuntu
+        # 24.04 also restricts the user namespaces it needs. A sandbox that is
+        # installed and cannot start would fail every one of those turns, so
+        # it is tried here, and if it does not work the run falls back to the
+        # CLI's own deny list and says so in its log.
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q bubblewrap || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          if ! bwrap --ro-bind / / true 2>/dev/null; then
+            echo "bubblewrap cannot start on this runner: reviewer turns rely on the deny list."
+            echo "RELAY_NO_OS_SANDBOX=1" >> "$GITHUB_ENV"
+          fi
 
       - name: Install the agent CLIs
         run: npm install -g @anthropic-ai/claude-code @openai/codex
@@ -861,7 +871,7 @@ ${warnings.length > 0 ? `\n## Things the canvas said that the files could not\n\
 | Part | Where |
 |---|---|
 | Trigger | ${start.by === 'dispatch' ? 'You, with an issue number: Actions → Run workflow, or `repository_dispatch`' : `A GitHub issue event, on an issue labelled \`${start.label}\``} |
-| Agents | ${input.agents ? 'The Actions runner, under bubblewrap for reviewer turns' : 'None: this workflow has no agent pipeline'} |
+| Agents | ${input.agents ? 'The Actions runner. Claude Code’s read-only turns run under bubblewrap when it can start there, and under its deny list when it cannot; Codex runs in its own sandbox' : 'None: this workflow has no agent pipeline'} |
 | Delivery | Your repository, as far as the policy in config.json allows |
 | Notifications | Direct webhooks (Slack, Discord, HTTP), or an endpoint of yours for other apps |
 `;

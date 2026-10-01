@@ -35,7 +35,7 @@ export const TEMPLATES: TemplateMeta[] = [
   {
     id: 'ticket-to-pr',
     name: 'Linear ticket to pull request',
-    description: 'Assign a Linear issue to the bot. Claude plans, Codex implements, each reviews the other, the tests run, and a draft PR opens; the ticket moves to In Review with the PR attached and #eng is asked for review.',
+    description: 'Assign a Linear issue to the bot. Claude Code plans, Codex implements, each reviews the other, the tests run, and a draft PR opens; the ticket moves to In Review with the PR attached and #eng is asked for review.',
     when: 'Your team writes good tickets and the small ones sit in the backlog because nobody picks them up.',
     job: 'tickets',
     connectors: ['linear', 'gates', 'pipeline', 'delivery', 'slack'],
