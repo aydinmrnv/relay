@@ -17,9 +17,12 @@ import { unattendedOf } from './policy.ts';
  * variable is withheld when its *name* says it is a secret. Three things are
  * let through:
  *
- * - **The CLI's own sign-in.** Claude Code still gets `ANTHROPIC_API_KEY` and
- *   Codex still gets `OPENAI_API_KEY`; each gets only its own, and the test
- *   suite gets neither.
+ * - **A shipped CLI's own sign-in.** Claude Code still gets `ANTHROPIC_API_KEY`
+ *   and Codex still gets `OPENAI_API_KEY`; each gets only its own, and the
+ *   test suite gets neither. A harness defined in config keeps nothing by
+ *   this rule — Relay does not know which variable it signs in with — so its
+ *   key has to be named in `unattended.allowEnv`, which shows it to every
+ *   agent and to the suite.
  * - **What the repository names.** `unattended.allowEnv` lists variables the
  *   agents and the suite are allowed to see, for the project whose tests need
  *   one.
@@ -38,9 +41,8 @@ import { unattendedOf } from './policy.ts';
  * rather than commands a model chose.
  */
 
-/** Words that mark a secret wherever they appear in a name: `PGPASSWORD`, `NPM_AUTHTOKEN`. */
-const SECRET_SUBSTRINGS = [
-  'TOKEN',
+/** Fragments that mark a secret wherever they appear in a name: `PGPASSWORD`, `MYAPIKEY`. */
+const SECRET_FRAGMENTS = [
   'SECRET',
   'PASSWORD',
   'PASSWD',
@@ -49,7 +51,6 @@ const SECRET_SUBSTRINGS = [
   'APIKEY',
   'PRIVATEKEY',
   'ACCESSKEY',
-  'WEBHOOK',
 ] as const;
 
 /**
@@ -57,7 +58,18 @@ const SECRET_SUBSTRINGS = [
  * secret in `STRIPE_KEY` and nothing of the kind in `KEYBOARD_LAYOUT`; `AUTH`
  * is one in `SSH_AUTH_SOCK` and not in `XAUTHORITY`.
  */
-const SECRET_WORDS: ReadonlySet<string> = new Set(['KEY', 'KEYS', 'AUTH', 'PAT', 'PASS', 'CREDS', 'COOKIE', 'DSN']);
+const SECRET_WORDS: ReadonlySet<string> = new Set([
+  'KEY',
+  'KEYS',
+  'AUTH',
+  'PAT',
+  'PASS',
+  'CREDS',
+  'COOKIE',
+  'DSN',
+  'PEM',
+  'JWT',
+]);
 
 /** `DATABASE_URL`, `REDIS_URI`: an address that carries its own password. */
 const STORE_WORDS: ReadonlySet<string> = new Set([
@@ -75,14 +87,76 @@ const STORE_WORDS: ReadonlySet<string> = new Set([
 ]);
 const ADDRESS_WORDS: ReadonlySet<string> = new Set(['URL', 'URI', 'DSN']);
 
-/** Whether a variable's name says it holds a secret. The value is never looked at. */
+/**
+ * Last words that say a variable is *about* a secret rather than holding one:
+ * where a password store lives, how many tokens a model may use, the URL a
+ * token is requested from. `PASSWORD_STORE_DIR` is a directory, and
+ * `ACTIONS_ID_TOKEN_REQUEST_URL` is useless without the token beside it —
+ * which is withheld. Withholding these as well buys nothing and quietly
+ * changes how a toolchain behaves.
+ */
+const DESCRIPTOR_WORDS: ReadonlySet<string> = new Set([
+  'DIR',
+  'DIRECTORY',
+  'PATH',
+  'URL',
+  'URI',
+  'ENDPOINT',
+  'HOST',
+  'PORT',
+  'COUNT',
+  'LIMIT',
+  'TIMEOUT',
+  'TTL',
+  'TYPE',
+  'NAME',
+  'EMAIL',
+  'VERSION',
+  'REGION',
+  'ENABLED',
+  'MODE',
+  'FORMAT',
+  'LENGTH',
+  'SIZE',
+  'PARALLELISM',
+]);
+
+/**
+ * Whether a variable's name says it holds a secret. The value is never looked at.
+ *
+ * A name is a guess at a value, and this guesses in both directions on
+ * purpose: it would rather withhold `STRIPE_KEY` from an agent that did not
+ * need it than hand over a key because its name was unusual. What it must not
+ * do is break the toolchain for nothing, so the exceptions are the names that
+ * are certainly not secrets, each for a reason given where it is made.
+ */
 export function looksSecret(name: string): boolean {
   const upper = name.toUpperCase();
-  if (SECRET_SUBSTRINGS.some((word) => upper.includes(word))) return true;
-
   const words = upper.split(/[^A-Z0-9]+/).filter((word) => word.length > 0);
+  const has = (word: string): boolean => words.includes(word);
+
+  // Git's configuration-by-environment: `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0`,
+  // `GIT_CONFIG_VALUE_0`. "KEY" here is the name of a setting, and the three
+  // only mean anything together — with the count kept and a key withheld,
+  // every `git` the agent or the suite ran would fail on the missing one.
+  if (upper.startsWith('GIT_CONFIG_')) return false;
+
+  // An address that carries its own password: a data store's URL, a webhook,
+  // a connection string. Checked before the descriptor rule below, because
+  // these end in `URL` and are the secret itself.
+  if (words.some((word) => STORE_WORDS.has(word)) && words.some((word) => ADDRESS_WORDS.has(word))) return true;
+  if (upper.includes('WEBHOOK') || upper.includes('CONNECTIONSTRING') || (has('CONNECTION') && has('STRING'))) return true;
+
+  if (DESCRIPTOR_WORDS.has(words.at(-1) ?? '')) return false;
+
+  if (SECRET_FRAGMENTS.some((fragment) => upper.includes(fragment))) return true;
+  // `GH_TOKEN`, `NPM_AUTHTOKEN` — and not `MAX_THINKING_TOKENS`, which is a
+  // number of them, nor `TOKENIZERS_PARALLELISM`.
+  if (words.some((word) => word.endsWith('TOKEN'))) return true;
   if (words.some((word) => SECRET_WORDS.has(word))) return true;
-  return words.some((word) => STORE_WORDS.has(word)) && words.some((word) => ADDRESS_WORDS.has(word));
+  // `MYSQL_PWD` is a password; `PWD` and `OLDPWD` are where the shell is.
+  if (has('PWD') && words.length > 1) return true;
+  return has('SERVICE') && has('ACCOUNT');
 }
 
 export interface WithheldEnvironment {
@@ -97,8 +171,10 @@ export interface WithheldEnvironment {
 
 export interface WithholdOptions {
   /**
-   * The harness whose turn this is, so its CLI keeps its own sign-in. Absent
-   * for the test suite, which is nobody's CLI and keeps none.
+   * The harness whose turn this is, so that Claude Code or Codex keeps its own
+   * sign-in. Absent for the test suite, which is nobody's CLI and keeps none —
+   * and a harness defined in config keeps none either: it has no registration
+   * to say which variables are its own.
    */
   provider?: string;
   /** `unattended.allowEnv`: names the repository lets through deliberately. */

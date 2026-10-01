@@ -130,10 +130,12 @@ export function applyUnattendedPolicy(config: RelayConfig): RelayConfig {
 }
 
 /**
- * The relationships to a repository that are worth a commenter's word: people
- * who can already write to it, or who belong to the organisation that owns
- * it. `CONTRIBUTOR` is deliberately not here — one merged typo fix makes a
- * contributor of anybody.
+ * The relationships to a repository that are worth a commenter's word: its
+ * owner, members of the organisation that owns it, and people invited to it
+ * as collaborators. That is "somebody chose to let this person in", not
+ * "this person can push": GitHub reports `COLLABORATOR` for a read-only or
+ * triage invitation as well as for write access. `CONTRIBUTOR` is deliberately
+ * not here — one merged typo fix makes a contributor of anybody.
  */
 const TRUSTED_ASSOCIATIONS: ReadonlySet<string> = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
@@ -157,8 +159,8 @@ export interface TrustedComments {
  *
  * So a comment reaches the agents only when there is a reason to trust its
  * author: they are on `unattended.authors`, they are the person who applied
- * the label, or the tracker itself says they can already write to the
- * repository or belong to the organisation that owns it. Everything else is
+ * the label, or the tracker itself says they own the repository, were
+ * invited to it, or belong to the organisation that owns it. Everything else is
  * left out, counted, and said — in the run's notes and in `issue.md` — because
  * a discussion the agents silently did not see is a different problem.
  *

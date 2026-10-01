@@ -50,10 +50,12 @@
 #
 # A run started here has nobody watching it, so it also keeps secrets away from
 # the agents: variables whose names look like secrets are withheld from each
-# coding CLI and from the test suite, except that CLI's own sign-in. `gh` gets
-# `GH_TOKEN`; the model does not. `unattended.allowEnv` in `.relay/config.json`
-# names anything else they are allowed to see. See docs/cli.md, "Untrusted
-# input".
+# coding CLI and from the test suite. Claude Code and Codex each keep their own
+# sign-in; a harness defined in `.relay/config.json` keeps nothing, because
+# Relay does not know which variable it signs in with. `gh` gets `GH_TOKEN`;
+# the model does not. `unattended.allowEnv` names anything else the agents and
+# the suite are allowed to see — and shows it to all of them. See docs/cli.md,
+# "Untrusted input".
 #
 # The secret scan still runs between commit and push, so a change carrying
 # something credential-shaped stops at the branch in CI exactly as it does on a

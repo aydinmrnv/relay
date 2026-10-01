@@ -11,8 +11,10 @@ import { trustedComments, unattendedOf } from '../src/unattended/policy.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { createRunId, shortId } from '../src/util/ids.ts';
 import { WorkflowEngine } from '../src/workflow/engine.ts';
+import { initializing } from '../src/workflow/phases/setup.ts';
 import { createRunState, type RunState } from '../src/workflow/state.ts';
 import { buildEngineContext, happyPathHarnesses } from './helpers/engine.ts';
+import { FakeAgentHarness } from './helpers/fakeHarness.ts';
 import { createTempRepo, FakeIssueProvider, type TempRepo } from './helpers/tempRepo.ts';
 
 /**
@@ -71,9 +73,54 @@ describe('which environment variables look like secrets', () => {
       'npm_config__authToken',
       'CLIENT_SECRET',
       'SIGNING_PASSPHRASE',
+      // Shapes a name ending in `KEY` or `TOKEN` does not cover.
+      'MYSQL_PWD',
+      'DB_PWD',
+      'AZURE_STORAGE_CONNECTION_STRING',
+      'SQLCONNSTR_CONNECTIONSTRING',
+      'GITHUB_APP_PEM',
+      'CI_JOB_JWT',
+      'FIREBASE_SERVICE_ACCOUNT',
+      // An address is the secret when it is a data store's or a webhook's,
+      // whatever word it ends in.
+      'PG_URL',
+      'DISCORD_WEBHOOK',
     ]) {
       assert.equal(looksSecret(name), true, name);
     }
+  });
+
+  // A name that is *about* a secret holds none, and withholding it changes how
+  // a toolchain behaves for nothing: a model capped at a different number of
+  // tokens, a tokenizer that forks, a password manager that cannot find its
+  // store.
+  it('does not mistake a setting about secrets for one', () => {
+    for (const name of [
+      'MAX_THINKING_TOKENS',
+      'MAX_MCP_OUTPUT_TOKENS',
+      'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
+      'TOKENIZERS_PARALLELISM',
+      'PASSWORD_STORE_DIR',
+      'ACTIONS_ID_TOKEN_REQUEST_URL',
+      'VAULT_TOKEN_TTL',
+      'SSH_KEY_PATH',
+    ]) {
+      assert.equal(looksSecret(name), false, name);
+    }
+    // The URL a token is requested from is kept; the token is not.
+    assert.equal(looksSecret('ACTIONS_ID_TOKEN_REQUEST_TOKEN'), true);
+  });
+
+  // `GIT_CONFIG_COUNT=1` with `GIT_CONFIG_KEY_0` taken away is a `git` that
+  // refuses to start, in every turn and in the suite.
+  it("keeps git's configuration-by-environment whole", () => {
+    for (const name of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_12', 'GIT_CONFIG_GLOBAL']) {
+      assert.equal(looksSecret(name), false, name);
+    }
+    const withheld = withholdSecrets({
+      env: { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: '*', GH_TOKEN: 'x' },
+    });
+    assert.deepEqual(withheld.names, ['GH_TOKEN']);
   });
 
   it('leaves alone what an agent needs to build anything at all', () => {
@@ -122,7 +169,7 @@ describe('what an unattended run withholds from a process', () => {
     STRIPE_TEST_KEY: 'x',
   };
 
-  it('keeps each CLI its own sign-in, and only its own', () => {
+  it('keeps Claude Code and Codex each their own sign-in, and only their own', () => {
     const claude = withholdSecrets({ provider: 'claude', env });
     assert.deepEqual(claude.names, ['AWS_SECRET_ACCESS_KEY', 'GH_TOKEN', 'NPM_TOKEN', 'OPENAI_API_KEY', 'STRIPE_TEST_KEY']);
     // `undefined` is how a caller tells `runProcess` to drop a variable.
@@ -199,7 +246,9 @@ describe('whose comments an unattended run reads', () => {
     ...(association === undefined ? {} : { association }),
   });
 
-  it('keeps the allowlist, the labeller and people who can already write to the repository', () => {
+  // `COLLABORATOR` is an invitation at any level, read-only included — which
+  // is why the docs say "invited", not "can write".
+  it("keeps the allowlist, the labeller, and the repository's owner, members and collaborators", () => {
     const result = trustedComments(
       settings,
       {
@@ -321,6 +370,47 @@ describe('an unattended run, end to end', () => {
     } finally {
       if (home === undefined) delete process.env['RELAY_HOME'];
       else process.env['RELAY_HOME'] = home;
+      await repo.cleanup();
+    }
+  });
+
+  // "Each CLI keeps its own sign-in" is true of the two Relay ships and of
+  // nothing else: a harness from config signs in with a variable Relay cannot
+  // recognise, so its key is withheld like any other. The run has to say so,
+  // by name, or the first sign of it is a turn failing on a missing key.
+  it('says that a harness defined in config kept no sign-in of its own', async () => {
+    const repo = await createTempRepo();
+    try {
+      const notesFor = async (implementer: string): Promise<string[]> => {
+        const config = structuredClone(DEFAULT_CONFIG);
+        (config.agents as Record<string, string>)['implementer'] = implementer;
+        const state = createRunState({
+          runId: createRunId(new Date()),
+          shortId: shortId(),
+          issueRef: '142',
+          repository: { root: repo.root, owner: 'acme', name: 'widgets', defaultBranch: 'main' },
+          config,
+          trigger: { source: 'action', label: 'relay:go', actor: 'maintainer', at: '2026-09-01T12:00:00Z' },
+        });
+        const harnesses = { ...happyPathHarnesses(), mytool: new FakeAgentHarness('mytool') };
+        const built = buildEngineContext(repo, harnesses as never, { state });
+        await withEnv({ GH_TOKEN: 'x', MYTOOL_API_KEY: 'x' }, () => initializing(built.context));
+        return built.observer.notes;
+      };
+
+      const custom = await notesFor('mytool');
+      const withheld = custom.find((note) => /secret-looking environment variable\(s\) are withheld/.test(note));
+      assert.ok(withheld !== undefined, custom.join('\n'));
+      assert.match(withheld, /Claude Code and Codex each keep their own sign-in/);
+      assert.match(withheld, /unattended\.allowEnv/);
+      const named = custom.find((note) => /is defined in config/.test(note));
+      assert.ok(named !== undefined, custom.join('\n'));
+      assert.match(named, /^Unattended: mytool is defined in config/);
+      assert.match(named, /kept none for it/);
+
+      // The two shipped CLIs are not told this: it is not true of them.
+      assert.ok(!(await notesFor('codex')).some((note) => /is defined in config/.test(note)));
+    } finally {
       await repo.cleanup();
     }
   });

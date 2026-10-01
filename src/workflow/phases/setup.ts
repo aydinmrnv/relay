@@ -6,6 +6,7 @@ import { discoverRepository } from '../../git/repository.ts';
 import { RUN_FILES } from '../../storage/runs.ts';
 import type { EngineContext, PhaseResult } from '../context.ts';
 import { assembleBrief, renderBriefArtifact } from '../../agents/brief.ts';
+import { harnessRegistration } from '../../agents/index.ts';
 import { describeWithheld, unattendedEnvironment } from '../../unattended/environment.ts';
 import { trustedComments, unattendedOf } from '../../unattended/policy.ts';
 
@@ -44,9 +45,21 @@ export async function initializing(context: EngineContext): Promise<PhaseResult>
   if (withheld !== undefined && withheld.names.length > 0) {
     observer.note(
       `Unattended: ${withheld.names.length} secret-looking environment variable(s) are withheld from the agents ` +
-        `and the test suite (${describeWithheld(withheld.names)}). Each CLI keeps its own sign-in; ` +
-        'unattended.allowEnv lets others through.',
+        `and the test suite (${describeWithheld(withheld.names)}). Claude Code and Codex each keep their own ` +
+        'sign-in; anything else an agent or the suite needs has to be named in unattended.allowEnv.',
     );
+    // A harness from config signs in with a variable Relay cannot recognise,
+    // so nothing was kept for it — said by name, because the alternative is a
+    // turn that fails on a missing key with no word about where it went.
+    const unknown = [...new Set(roles.map((role) => state.config.agents[role]))].filter(
+      (provider) => harnessRegistration(provider)?.ownEnvironment === undefined,
+    );
+    if (unknown.length > 0) {
+      observer.note(
+        `Unattended: ${unknown.join(', ')} is defined in config, so Relay does not know which variable it signs in ` +
+          'with and kept none for it. If it signs in from the environment, name that variable in unattended.allowEnv.',
+      );
+    }
   }
 
   const assignments = roles.map((role) => `${role}=${state.config.agents[role]}`).join('  ');
@@ -73,7 +86,8 @@ export async function fetchingIssue(context: EngineContext): Promise<PhaseResult
       );
       omitted =
         `\n_${comments.dropped} comment(s) on this issue are not shown here. This run started without a person, ` +
-        `so it reads only comments from people on the repository's allowlist or with write access to it; ` +
+        `so it reads only comments from people on the repository's allowlist, its owner, its collaborators ` +
+        `and members of the organisation that owns it; ` +
         `the rest (from ${who}) were left out._\n`;
     }
   }
