@@ -128,6 +128,12 @@ describe('theme detection', () => {
       interactive: false,
     });
     assert.equal(withEnv({ ...clean, RELAY_ASCII: '1' }, () => detectTheme(tty)).unicode, false);
+    // Set to off is off: only the variable's presence used to be looked at,
+    // so `RELAY_ASCII=0` turned on the thing it was written to turn off.
+    for (const off of ['0', 'false', 'FALSE', '']) {
+      assert.equal(withEnv({ ...clean, RELAY_ASCII: off }, () => detectTheme(tty)).unicode, true, `RELAY_ASCII=${off}`);
+    }
+    assert.equal(withEnv({ ...clean, RELAY_ASCII: 'true' }, () => detectTheme(tty)).unicode, false);
   });
 
   // Windows terminals that can render ANSI announce themselves; a legacy
