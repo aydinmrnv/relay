@@ -36,9 +36,9 @@ export async function checkConnection(connectorId: string): Promise<Connection> 
   return keep(connection);
 }
 
-export async function sendTestMessage(connectorId: string, product: string): Promise<Connection> {
+export async function sendTestMessage(connectorId: string): Promise<Connection> {
   try {
-    const { connection } = await api<{ connection: Connection }>(path(connectorId, 'test'), { method: 'POST', body: { product }, headers: headers() });
+    const { connection } = await api<{ connection: Connection }>(path(connectorId, 'test'), { method: 'POST', headers: headers() });
     return keep(connection);
   } catch (error) {
     // Refused: the server marked the connection failing and says how it looks now.

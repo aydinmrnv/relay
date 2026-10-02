@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { BrandMark } from '@/components/app/brand-mark';
+import { ThemeToggle } from '@/components/app/theme-toggle';
 import { LiquidGlass } from '@/components/glass/liquid-glass';
 import { useScrollSpy } from '@/components/guide/use-scroll-spy';
 import { useBrand } from '@/hooks/use-brand';
@@ -18,8 +19,11 @@ import type { AccountUser } from '@/lib/cloud/types';
 import { cn } from '@/lib/utils';
 import { AppMark, REPO_URL, SECTIONS, useCalmMotion, useStudioEntry } from './primitives';
 
-// The hero first, so no section is marked while the reader is still above them all.
-const SPY = ['top', ...SECTIONS.map((section) => section.id)];
+// Every section on the page, in the order it is on the page: the hero first,
+// so nothing is marked while the reader is still above them all, and
+// "features", which has no link of its own, so that reading it does not leave
+// the link before it lit.
+const SPY = ['top', 'how', 'builder', 'features', 'different', 'integrations', 'pricing', 'faq'];
 const NONE: string[] = [];
 // A wide bar: a flat, frosted middle, with the bend kept to the rim as in Apple's bars.
 const HEADER_OPTICS = { strength: 0.02, depth: 0.3, curvature: 0.04, bend: 0.85, bendWidth: 0.26, frost: 14 };
@@ -86,6 +90,7 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
           </nav>
 
           <div className="flex items-center gap-1.5">
+            <ThemeToggle className="hidden size-10 hover:bg-foreground/[0.07] sm:inline-flex dark:hover:bg-foreground/[0.07]" />
             <Button
               variant="ghost"
               size="icon"
@@ -144,6 +149,10 @@ export function SiteHeader({ overlay = false }: { overlay?: boolean }) {
                   <SheetTitle>{brand.name}</SheetTitle>
                   <SheetDescription>Jump to a section, or get started.</SheetDescription>
                 </SheetHeader>
+                <div className="flex items-center justify-between px-5 pb-2 text-sm text-muted-foreground">
+                  Theme
+                  <ThemeToggle className="size-9" />
+                </div>
                 <nav aria-label="Sections" className="flex flex-col px-2">
                   {SECTIONS.map((section) => (
                     <SheetClose

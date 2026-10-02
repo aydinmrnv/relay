@@ -31,6 +31,8 @@ import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import { launchRun } from '@/lib/run-launcher';
 import { saveBlob } from '@/lib/zip';
+import { slugify } from '@/lib/brand';
+import { useImportFlow } from '@/components/workflows/import-flow';
 import { timeAgo } from '@/lib/format';
 import type { Run, Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
@@ -49,7 +51,7 @@ export default function WorkflowsPage() {
   const toggleWorkflow = useStudio((state) => state.toggleWorkflow);
   const deleteWorkflow = useStudio((state) => state.deleteWorkflow);
   const duplicateWorkflow = useStudio((state) => state.duplicateWorkflow);
-  const importAll = useStudio((state) => state.importAll);
+  const { importFile, dialog: importDialog } = useImportFlow();
   const auth = useStudio((state) => state.settings.auth);
   const create = useCreateWorkflow();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -110,6 +112,9 @@ export default function WorkflowsPage() {
         description: `${workflow.name} · $${run.costUsd.toFixed(2)}`,
         action: { label: 'View', onClick: () => router.push(`/runs/${run.id}`) },
       });
+    } catch (error) {
+      // The launcher has already closed the run as failed; say why here too.
+      toast.error(`“${workflow.name}” could not be test-run`, { description: error instanceof Error ? error.message : String(error) });
     } finally {
       setStarting(null);
     }
@@ -118,21 +123,16 @@ export default function WorkflowsPage() {
   const downloadJson = (workflow: Workflow) => {
     const bundle = compileWorkflow(workflow, brand, { auth }).files.find((file) => file.path.endsWith('-workflow.json'));
     if (bundle === undefined) return;
-    saveBlob(new Blob([bundle.content], { type: 'application/json' }), bundle.path);
-    toast.success(`Downloaded ${bundle.path}`, { description: 'Import it here or in another browser to get the same workflow.' });
+    // Named after the workflow, so two downloads do not land on the same file.
+    const name = `${slugify(workflow.name)}.${brand.slug}.json`;
+    saveBlob(new Blob([bundle.content], { type: 'application/json' }), name);
+    toast.success(`Downloaded ${name}`, { description: 'Import it here or in another browser to get the same workflow. Secret fields are left empty.' });
   };
 
   const onImport = async (file: File | undefined) => {
-    if (file === undefined) return;
-    try {
-      const result = importAll(JSON.parse(await file.text()));
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
-    } catch {
-      toast.error('That file is not valid JSON.');
-    } finally {
-      if (fileInput.current !== null) fileInput.current.value = '';
-    }
+    // Clear the input first, so choosing the same file again still fires a change.
+    if (fileInput.current !== null) fileInput.current.value = '';
+    await importFile(file);
   };
 
   return (
@@ -147,6 +147,7 @@ export default function WorkflowsPage() {
               <Upload data-icon="inline-start" /> Import
             </Button>
             <input ref={fileInput} type="file" accept="application/json,.json" className="hidden" onChange={(event) => void onImport(event.target.files?.[0])} />
+            {importDialog}
             <Button variant="outline" nativeButton={false} render={<Link href="/templates" />}>
               From a template
             </Button>
@@ -234,13 +235,13 @@ export default function WorkflowsPage() {
               .
             </div>
           ) : (
-            <Stagger key={`${filter}-${sort}`} className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <Stagger key={`${filter}-${sort}`} className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {shown.map((workflow) => {
                 const run = lastRun.get(workflow.id);
                 const problems = errors.get(workflow.id) ?? 0;
                 const trigger = workflow.nodes.map((node) => getNodeType(node.data.typeId)).find((def) => def?.kind === 'trigger');
                 return (
-                  <StaggerItem key={workflow.id}>
+                  <StaggerItem key={workflow.id} className="min-w-0">
                     <article className="group relative flex h-full flex-col overflow-hidden rounded-xl border bg-card shadow-xs transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
                       <Link href={`/workflows/${workflow.id}`} className="absolute inset-0 z-0" aria-label={`Open ${workflow.name}`} />
                       <GraphThumbnail workflow={workflow} className="pointer-events-none h-28 rounded-none border-0 border-b" />
@@ -350,7 +351,7 @@ export default function WorkflowsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deleting?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              The workflow and its {runs.filter((run) => run.workflowId === deleting?.id).length} recorded test run(s) are removed from this browser. Files you already exported to a repository are not affected. Download it as JSON first if you might want it back.
+              The workflow and its {runs.filter((run) => run.workflowId === deleting?.id).length} recorded run(s) are deleted. Files you already exported to a repository are not affected. Download it as JSON first if you might want it back.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

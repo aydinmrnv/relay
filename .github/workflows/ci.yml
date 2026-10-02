@@ -1,20 +1,37 @@
-# Three jobs, and they check different kinds of thing.
+# Seven jobs, and they check different kinds of thing.
 #
 # `check` is the typecheck and the test suite on every platform Relay claims to
 # support; the windows-latest leg is what keeps Windows support honest (#41),
 # because executable resolution, shim spawning and the worktree guard regress
-# silently without it.
+# silently without it. One more leg runs the same suite on Node 22.6.0, the
+# oldest Node `engines` promises, so that promise is tested rather than stated.
+#
+# `package` builds what people actually install: `npm run build`, `npm pack`,
+# and the resulting tarball installed and run. Nothing else here would notice a
+# source file missing from the package, or a build that no longer compiles.
 #
 # `unattended` is an integration test of the product as a whole (#38): Relay's
 # own GitHub Action, driving a real pipeline on a fixture repository, checked
 # against what it left behind rather than what it printed.
 #
+# `action-install` is the same pipeline through the door everybody else uses:
+# the Action with its default `version`, installing a tarball over HTTP. The
+# `unattended` job runs the checkout (`version: local`), which never touches
+# the install step — and that step is the one that was broken.
+#
 # `studio` is the workflow studio under web/, a separate Next.js app with its
 # own lockfile: lint (including the React Compiler rules), a typecheck against
 # the route types Next generates, and a production build.
 #
+# `release` publishes the tarball `package` built, on main, and only after
+# every job above it passed. `published` then installs it from the public URL,
+# exactly as a user's workflow would.
+#
 # Every job has a timeout. A test that waits on an event which never comes
 # hangs rather than fails, and without one it holds a runner for six hours.
+#
+# Actions are pinned to a commit, with the release it is in a comment. A tag
+# can be moved to different code after this file was reviewed; a commit cannot.
 name: CI
 
 on:
@@ -22,12 +39,25 @@ on:
     branches: [main]
   pull_request:
 
+# Nothing here needs more than to read the repository, so nothing gets more.
+# The one job that publishes asks for `contents: write` itself.
+permissions:
+  contents: read
+
 jobs:
   check:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['22']
+        include:
+          # The floor in package.json's `engines`. An exact version, not a
+          # range: `22.6` would be satisfied by whatever 22.6.x is newest, and
+          # the claim is about the oldest.
+          - os: ubuntu-latest
+            node: '22.6.0'
+    name: check (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -38,11 +68,11 @@ jobs:
       - name: Keep line endings as committed
         run: git config --global core.autocrlf false
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - run: npm ci
@@ -50,6 +80,83 @@ jobs:
       - run: npm run typecheck
 
       - run: npm test
+
+  # What people install, built and tried: the compiled output, the tarball, and
+  # the tarball installed somewhere and run.
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # `npm pack` runs `prepack`: a clean build, the commit stamped into it,
+      # and the man page.
+      - name: Pack
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --pack-destination "$RUNNER_TEMP/pack"
+          mv "$RUNNER_TEMP"/pack/relay-orchestrator-*.tgz "$RUNNER_TEMP/pack/relay.tgz"
+
+      - name: The tarball holds what it should, and nothing it should not
+        run: |
+          set -euo pipefail
+          # Listed to a file and searched there. Piped straight into `grep -q`,
+          # grep exits at its first match, tar dies writing to a closed pipe,
+          # and `pipefail` reports the listing as failed — which is how this
+          # check once failed every release it was meant to guard.
+          tar tzf "$RUNNER_TEMP/pack/relay.tgz" > "$RUNNER_TEMP/pack/listing.txt"
+          for wanted in package/dist/index.js package/dist/build.json package/bin/relay.mjs package/man/relay.1 package/package.json; do
+            grep -qxF "$wanted" "$RUNNER_TEMP/pack/listing.txt" || { echo "::error::the tarball has no $wanted"; exit 1; }
+          done
+          if grep -E '\.map$|^package/(src|test|web)/' "$RUNNER_TEMP/pack/listing.txt"; then
+            echo "::error::the tarball carries files that are not part of the package"
+            exit 1
+          fi
+
+      - name: The tarball installs and runs
+        run: |
+          set -euo pipefail
+          npm install -g --prefix "$RUNNER_TEMP/prefix" "$RUNNER_TEMP/pack/relay.tgz"
+          version=$("$RUNNER_TEMP/prefix/bin/relay" --version)
+          echo "relay --version: $version"
+          # The build says which commit it is, or two installs of the same
+          # version number cannot be told apart.
+          case "$version" in
+            *"+${GITHUB_SHA::7}") ;;
+            *) echo "::error::relay --version does not name the commit it was built from"; exit 1 ;;
+          esac
+          "$RUNNER_TEMP/prefix/bin/relay" connect --help > /dev/null
+          "$RUNNER_TEMP/prefix/bin/relay" --help > /dev/null
+
+      # The same installed package on the oldest Node it claims to support,
+      # where the compiled output has to run with nothing newer to lean on.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.6.0'
+
+      - name: The tarball runs on the Node floor
+        run: |
+          set -euo pipefail
+          node --version
+          "$RUNNER_TEMP/prefix/bin/relay" --version
+          "$RUNNER_TEMP/prefix/bin/relay" run --help > /dev/null
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: relay-tgz
+          path: ${{ runner.temp }}/pack/relay.tgz
+          if-no-files-found: error
+          retention-days: 7
 
   # The unattended path, end to end, on a repository built for the purpose (#38).
   #
@@ -62,16 +169,17 @@ jobs:
   # than against a log: the label came off before the run, the issue nobody was
   # allowed to trigger was ignored, and `main` did not move.
   #
-  # No credential is involved, which is the other thing it demonstrates: the
-  # Action puts vendors' environment variables in vendors' processes, and there
-  # is nowhere here for Relay to be handed a token even if somebody wanted to.
+  # No model or GitHub credential is involved, which is the other thing it
+  # demonstrates: the Action puts vendors' environment variables in vendors'
+  # processes, and there is nowhere here for Relay to be handed a token even if
+  # somebody wanted to.
   unattended:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -96,12 +204,18 @@ jobs:
           RELAY_FIXTURE_GH_STATE: ${{ runner.temp }}/fixture/gh-state.json
           RELAY_FIXTURE_AGENT_LOG: ${{ runner.temp }}/fixture/agent-turns.jsonl
 
+      # Outputs reach the script through `env:`, never as an expression inside
+      # it: the same rule the Action itself keeps, for the same reason.
       - name: The Action reported what it did
+        env:
+          STARTED: ${{ steps.relay.outputs.started }}
+          RUN_ID: ${{ steps.relay.outputs.run-id }}
+          STOPPED_BY: ${{ steps.relay.outputs.stopped-by }}
         run: |
           set -euo pipefail
-          test "${{ steps.relay.outputs.started }}" = "true"
-          test -n "${{ steps.relay.outputs.run-id }}"
-          test "${{ steps.relay.outputs.stopped-by }}" = "once"
+          test "$STARTED" = "true"
+          test -n "$RUN_ID"
+          test "$STOPPED_BY" = "once"
 
       - name: A second pass must start nothing, even relabelled
         env:
@@ -118,7 +232,8 @@ jobs:
             state.issues.find((issue) => issue.number === 142).labels.push("relay:go");
             fs.writeFileSync(path, JSON.stringify(state, null, 2));
           '
-          node "$GITHUB_WORKSPACE/bin/relay.mjs" serve --once --json | tee "$RUNNER_TEMP/second.jsonl"
+          node "$GITHUB_WORKSPACE/bin/relay.mjs" serve --once --json > "$RUNNER_TEMP/second.jsonl"
+          cat "$RUNNER_TEMP/second.jsonl"
           grep -q '"reason":"already started as ' "$RUNNER_TEMP/second.jsonl"
 
       - name: The pipeline did what it promised
@@ -150,6 +265,89 @@ jobs:
           cat "$RUNNER_TEMP/fixture/agent-turns.jsonl" || true
           find "$RUNNER_TEMP/fixture/work/.relay/runs" -name events.jsonl -exec cat {} + || true
 
+  # The Action, the way a user's workflow runs it: no `version`, so the default,
+  # so the install step — a tarball fetched over HTTP and installed with npm.
+  #
+  # The tarball is the one `package` just built, served from this runner at the
+  # same path a release serves it from, and `RELAY_RELEASE_BASE` points the
+  # Action there. Everything else about the install is the default path, which
+  # is the point: this is the job that fails when the Action cannot install
+  # Relay, and it has to be able to pass before the first release exists.
+  # `published`, below, is the same check against the real URL.
+  action-install:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: relay-tgz
+          path: ${{ runner.temp }}/releases/cli-latest
+
+      - name: Serve the tarball where a release would
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/releases/cli-latest/relay.tgz"
+          nohup python3 -m http.server 8787 --bind 127.0.0.1 --directory "$RUNNER_TEMP/releases" \
+            > "$RUNNER_TEMP/http.log" 2>&1 &
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --silent --fail --head http://127.0.0.1:8787/cli-latest/relay.tgz > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "::error::the local release server never answered"
+          cat "$RUNNER_TEMP/http.log" || true
+          exit 1
+
+      - name: Build the fixture repository
+        run: node scripts/unattended-fixture.mjs build "$RUNNER_TEMP/fixture"
+
+      - name: Put the fixture's gh on PATH
+        run: echo "$RUNNER_TEMP/fixture/bin" >> "$GITHUB_PATH"
+
+      - name: Run the Action with its default version
+        id: relay
+        uses: ./
+        with:
+          issue: '142'
+          working-directory: ${{ runner.temp }}/fixture/work
+        env:
+          RELAY_RELEASE_BASE: http://127.0.0.1:8787
+          RELAY_HOME: ${{ runner.temp }}/fixture/home
+          RELAY_FIXTURE_GH_STATE: ${{ runner.temp }}/fixture/gh-state.json
+          RELAY_FIXTURE_AGENT_LOG: ${{ runner.temp }}/fixture/agent-turns.jsonl
+
+      - name: It ran the installed package, not the checkout
+        env:
+          STARTED: ${{ steps.relay.outputs.started }}
+          RUN_ID: ${{ steps.relay.outputs.run-id }}
+        run: |
+          set -euo pipefail
+          test "$STARTED" = "true"
+          test -n "$RUN_ID"
+          case "$RELAY_BIN" in
+            "$GITHUB_WORKSPACE"/*) echo "::error::the Action ran the checkout ($RELAY_BIN)"; exit 1 ;;
+          esac
+          test -f "$RELAY_BIN"
+          # The checkout has no build in it, so only an installed package can
+          # name the commit it was built from.
+          node "$RELAY_BIN" --version | grep -F "+${GITHUB_SHA::7}"
+
+      - name: The pipeline did what it promised
+        run: node scripts/unattended-fixture.mjs verify "$RUNNER_TEMP/fixture"
+
+      - name: Show what happened, when it did not
+        if: failure()
+        run: |
+          cat "$RUNNER_TEMP/http.log" || true
+          cat "$RUNNER_TEMP/fixture/gh-state.json" || true
+          find "$RUNNER_TEMP/fixture/work/.relay/runs" -name events.jsonl -exec cat {} + || true
+
   studio:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -157,12 +355,12 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The studio is not bound to Relay's Node 22 floor, and its lockfile is
       # written by npm 11, which leaves out optional peers npm 10's `npm ci`
       # insists on. Node 24 brings npm 11.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -174,4 +372,66 @@ jobs:
 
       - run: npm run typecheck
 
+      # The pure modules: the redirect check, the compiler, redaction, validation.
+      - run: npm test
+
       - run: npm run build
+
+  # Publishing is the last job of the run that tested the code, not a workflow
+  # of its own beside it: what reaches users is the tarball `package` built and
+  # `action-install` ran, and it reaches them only if every CLI job passed.
+  release:
+    needs: [check, package, unattended, action-install]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/cli-release.yml
+    with:
+      artifact: relay-tgz
+
+  # The check that would have caught a 404 on the install command: the Action
+  # with nothing overridden, installing from the public release URL, the way
+  # every exported workflow does.
+  published:
+    needs: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: The documented install command works
+        run: |
+          set -euo pipefail
+          npm install -g --prefix "$RUNNER_TEMP/documented" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/cli-latest/relay.tgz"
+          "$RUNNER_TEMP/documented/bin/relay" --version
+
+      - name: Build the fixture repository
+        run: node scripts/unattended-fixture.mjs build "$RUNNER_TEMP/fixture"
+
+      - name: Put the fixture's gh on PATH
+        run: echo "$RUNNER_TEMP/fixture/bin" >> "$GITHUB_PATH"
+
+      - name: Run the Action exactly as a user's workflow would
+        id: relay
+        uses: ./
+        with:
+          issue: '142'
+          working-directory: ${{ runner.temp }}/fixture/work
+        env:
+          RELAY_HOME: ${{ runner.temp }}/fixture/home
+          RELAY_FIXTURE_GH_STATE: ${{ runner.temp }}/fixture/gh-state.json
+          RELAY_FIXTURE_AGENT_LOG: ${{ runner.temp }}/fixture/agent-turns.jsonl
+
+      - name: The Action reported what it did
+        env:
+          STARTED: ${{ steps.relay.outputs.started }}
+        run: test "$STARTED" = "true"
+
+      - name: The pipeline did what it promised
+        run: node scripts/unattended-fixture.mjs verify "$RUNNER_TEMP/fixture"

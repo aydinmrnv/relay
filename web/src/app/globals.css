@@ -245,8 +245,30 @@
   background-size: 28px 28px;
 }
 
+/*
+ * The Animations setting, for everything that moves in CSS (sheets, dialogs,
+ * menus, the canvas edges). `data-motion` is set from Settings: `reduced`
+ * always stills them, `full` never does, and anything else follows the
+ * system. Durations shrink instead of dropping to none so that the
+ * `animationend` and `transitionend` events components wait on still fire.
+ * Spinners keep turning: a still one reads as a frozen page.
+ */
+html[data-motion='reduced'] *:not(.animate-spin),
+html[data-motion='reduced'] *::before,
+html[data-motion='reduced'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .react-flow__edge.animated path {
-    animation: none;
+  html:not([data-motion='full']) *:not(.animate-spin),
+  html:not([data-motion='full']) *::before,
+  html:not([data-motion='full']) *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -59,8 +59,19 @@ export class RunnerLink implements FleetLink {
     return this.pending.size;
   }
 
+  /**
+   * Called once, the moment this end decides to close the connection. The
+   * socket itself may stay up for a couple of seconds while the close is
+   * exchanged; whoever routes to this link must stop doing so now, not then.
+   */
+  onClosing: (() => void) | null = null;
+  private closing = false;
+
   close(code: number, reason: string): void {
     this.ws.close(code, reason);
+    if (this.closing) return;
+    this.closing = true;
+    this.onClosing?.();
   }
 
   private send(frame: HubFrame): boolean {
@@ -161,13 +172,13 @@ export class RunnerLink implements FleetLink {
     this.lost = true;
     for (const [id, entry] of this.pending) {
       this.pending.delete(id);
-      if (entry.kind === 'json') {
-        clearTimeout(entry.timer);
-        entry.reject(new LinkLost('Lost the connection to your cloud machine.'));
-      } else {
-        if (entry.timer !== null) clearTimeout(entry.timer);
-        if (entry.started) entry.onEnd('lost');
+      if (entry.timer !== null) clearTimeout(entry.timer);
+      // Each waiter hears it, whatever the one before it did with the news.
+      try {
+        if (entry.kind === 'stream' && entry.started) entry.onEnd('lost');
         else entry.reject(new LinkLost('Lost the connection to your cloud machine.'));
+      } catch {
+        // A waiter that throws on being told has already been told.
       }
     }
   }

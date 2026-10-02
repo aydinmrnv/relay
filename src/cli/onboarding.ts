@@ -8,8 +8,19 @@ import { relayDir } from '../storage/config.ts';
  * Everything under `.relay/` that is machine-local rather than project state.
  * `config.json` is deliberately absent: it records deliberate choices and is
  * meant to be committed.
+ *
+ * The last three are what `relay serve` leaves behind: the ledger of issues
+ * this machine has already picked up, the kill-switch file, and the locks that
+ * serialise both. A STOP file that got committed would stop every clone's
+ * server, and a ledger that did would tell them the work was already done.
  */
-export const RELAY_IGNORE_ENTRIES = ['.relay/runs/', '.relay/onboarding.json'] as const;
+export const RELAY_IGNORE_ENTRIES = [
+  '.relay/runs/',
+  '.relay/onboarding.json',
+  '.relay/unattended.json',
+  '.relay/STOP',
+  '.relay/*.lock',
+] as const;
 
 /**
  * What onboarding remembers between invocations. Only enough to make `relay
@@ -56,7 +67,7 @@ export async function ensureRelayIgnored(repoRoot: string): Promise<string[]> {
   if (missing.length === 0) return [];
 
   const separator = current.length === 0 || current.endsWith('\n') ? '' : '\n';
-  const block = `\n# Relay run state (machine-local)\n${missing.join('\n')}\n`;
+  const block = `\n# Relay state that belongs to this machine, not to the project\n${missing.join('\n')}\n`;
   await writeFile(path, `${current}${separator}${block}`, 'utf8');
   return missing;
 }

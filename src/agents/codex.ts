@@ -427,7 +427,9 @@ export class CodexHarness implements AgentHarness {
           stdin: options.prompt,
           timeoutMs,
           signal: controller.signal,
-          env: { NO_COLOR: '1', ...(plan === undefined ? {} : { [CODEX_PLAN_ENV]: plan.accessToken }) },
+          // A turn is the CLI and everything it started; see `killTree`.
+          killTree: true,
+          env: { ...options.env, NO_COLOR: '1', ...(plan === undefined ? {} : { [CODEX_PLAN_ENV]: plan.accessToken }) },
           onStdoutLine: (line) => {
             const parsed = parseJsonLine(line);
             if (parsed === undefined) return;

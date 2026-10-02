@@ -19,6 +19,8 @@ export type AccountStatus =
   | 'guest'
   /** Signed in, and the workspace is being fetched. */
   | 'loading'
+  /** Signed in, but the workspace could not be fetched and this browser has no copy of it. Asked for again in the background. */
+  | 'unreachable'
   | 'signed-in';
 
 export interface AccountState {

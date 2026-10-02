@@ -1,4 +1,4 @@
-import { createHmac, createPublicKey, createVerify, timingSafeEqual, type JsonWebKey, type KeyObject } from 'node:crypto';
+import { createHmac, createPublicKey, createVerify, randomBytes, timingSafeEqual, type JsonWebKey, type KeyObject } from 'node:crypto';
 
 /**
  * Who is calling the hub.
@@ -6,17 +6,28 @@ import { createHmac, createPublicKey, createVerify, timingSafeEqual, type JsonWe
  * Two kinds of caller, two kinds of proof:
  *
  *   - **A runner** presents a token the hub made for it: which machine it is
- *     and whose, signed with the hub's secret. The hub keeps no list of
- *     tokens — it checks the signature, and the identity is in the token — so
- *     a hub that restarts with an empty memory still knows every runner.
- *     Managed runners get theirs through the VM's user data, never on disk.
+ *     and whose, signed with the hub's secret. The signature says the hub made
+ *     it; it does not say the token is still good. That is the fleet's to
+ *     decide (`Fleet.admits`): a machine the hub manages has exactly one
+ *     current token, named by its `id`, re-issued every time the machine is
+ *     made or started and recorded on the machine itself, so a hub that
+ *     restarts with an empty memory reads it back from the cloud. A runner
+ *     someone starts themselves gets a token with an expiry instead.
  *   - **A person in the studio** presents their Clerk session token, a
  *     short-lived JWT the browser already has. The hub checks it against the
  *     Clerk instance's published keys; there is no secret shared with the
  *     studio's server and no token-minting route to guard.
  */
 
-const RUNNER_TOKEN_VERSION = 'rr1';
+const RUNNER_TOKEN_VERSION = 'rr2';
+/** A token says when it was made; a hub and a runner may disagree about now by this much. */
+const CLOCK_LEEWAY_MS = 5 * 60_000;
+/**
+ * A managed machine's token is replaced at its next start, long before this.
+ * The expiry is the backstop for a token that somehow is not.
+ */
+const MANAGED_TTL_MS = 30 * 24 * 60 * 60_000;
+export const DEFAULT_OWN_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 
 export interface RunnerIdentity {
   /** The machine's name: the VM's, for a managed runner. */
@@ -25,26 +36,73 @@ export interface RunnerIdentity {
   userId: string;
 }
 
+/**
+ * `managed`: for a machine the hub made. Good only while it is that machine's
+ * current token. `own`: minted by the operator for a runner someone starts
+ * themselves. Good until it expires.
+ */
+export type RunnerTokenKind = 'managed' | 'own';
+
+export interface RunnerToken extends RunnerIdentity {
+  kind: RunnerTokenKind;
+  /** Random, per token. What makes two tokens for the same machine different, and what the fleet compares. */
+  id: string;
+  /** Milliseconds since the epoch, to the second. */
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export interface MintedRunnerToken extends RunnerToken {
+  token: string;
+}
+
 function sign(secret: string, payload: string): string {
-  return createHmac('sha256', secret).update(`relay-runner:${payload}`).digest('base64url');
+  return createHmac('sha256', secret).update(`relay-runner:${RUNNER_TOKEN_VERSION}:${payload}`).digest('base64url');
 }
 
-export function mintRunnerToken(secret: string, identity: RunnerIdentity): string {
-  const payload = Buffer.from(JSON.stringify({ r: identity.runner, u: identity.userId })).toString('base64url');
-  return `${RUNNER_TOKEN_VERSION}.${payload}.${sign(secret, payload)}`;
+/**
+ * Makes a runner token. No two are the same, even for the same machine a
+ * moment apart: each carries a fresh random id and the time it was made, so
+ * a token cannot be worked out from knowing whose machine it is for, and an
+ * old one can be told from the current one.
+ */
+export function mintRunnerToken(secret: string, identity: RunnerIdentity, options: { kind?: RunnerTokenKind; ttlMs?: number; now?: number } = {}): MintedRunnerToken {
+  const kind = options.kind ?? 'own';
+  const iat = Math.floor((options.now ?? Date.now()) / 1000);
+  const exp = iat + Math.max(1, Math.floor((options.ttlMs ?? (kind === 'managed' ? MANAGED_TTL_MS : DEFAULT_OWN_TOKEN_TTL_MS)) / 1000));
+  const id = randomBytes(16).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ r: identity.runner, u: identity.userId, k: kind === 'managed' ? 'm' : 'o', n: id, iat, exp })).toString('base64url');
+  return { runner: identity.runner, userId: identity.userId, kind, id, issuedAt: iat * 1000, expiresAt: exp * 1000, token: `${RUNNER_TOKEN_VERSION}.${payload}.${sign(secret, payload)}` };
 }
 
-export function verifyRunnerToken(secret: string, token: string | null | undefined): RunnerIdentity | null {
+/**
+ * Reads a runner token: null unless one of the hub's secrets signed it, it
+ * is well formed, and it has not expired. The first secret is the current
+ * one; the rest are earlier secrets still honoured while the tokens they
+ * signed are replaced (`RELAY_HUB_SECRET_PREVIOUS`). Whether the token is
+ * still its machine's current one is not decided here.
+ */
+export function verifyRunnerToken(secrets: string | readonly string[], token: string | null | undefined, now: number = Date.now()): RunnerToken | null {
   if (typeof token !== 'string') return null;
   const [version, payload, signature, extra] = token.split('.');
   if (version !== RUNNER_TOKEN_VERSION || payload === undefined || signature === undefined || extra !== undefined) return null;
-  const expected = Buffer.from(sign(secret, payload));
   const presented = Buffer.from(signature);
-  if (expected.length !== presented.length || !timingSafeEqual(expected, presented)) return null;
+  let signed = false;
+  // Every secret is tried whichever matches, so how long this takes says nothing about which did.
+  for (const secret of typeof secrets === 'string' ? [secrets] : secrets) {
+    const expected = Buffer.from(sign(secret, payload));
+    if (expected.length === presented.length && timingSafeEqual(expected, presented)) signed = true;
+  }
+  if (!signed) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { r?: unknown; u?: unknown };
-    if (typeof parsed.r !== 'string' || typeof parsed.u !== 'string' || parsed.r.length === 0 || parsed.u.length === 0) return null;
-    return { runner: parsed.r, userId: parsed.u };
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown> | null;
+    if (parsed === null || typeof parsed !== 'object') return null;
+    const { r, u, k, n, iat, exp } = parsed;
+    if (typeof r !== 'string' || typeof u !== 'string' || r.length === 0 || u.length === 0) return null;
+    if ((k !== 'm' && k !== 'o') || typeof n !== 'string' || n.length < 16) return null;
+    if (typeof iat !== 'number' || typeof exp !== 'number' || !Number.isFinite(iat) || !Number.isFinite(exp)) return null;
+    if (iat * 1000 > now + CLOCK_LEEWAY_MS || exp * 1000 <= now) return null;
+    return { runner: r, userId: u, kind: k === 'm' ? 'managed' : 'own', id: n, issuedAt: iat * 1000, expiresAt: exp * 1000 };
   } catch {
     return null;
   }
@@ -85,7 +143,11 @@ interface Jwk extends JsonWebKey {
 
 export interface ClerkVerifierOptions {
   issuer: string;
-  /** Origins the token may have been issued to (its `azp`). Empty accepts any. */
+  /**
+   * Origins the token may have been issued to (its `azp`). A token must name
+   * one of them: an empty list authorises nothing, and a token with no `azp`
+   * is refused.
+   */
   authorizedParties: readonly string[];
   /** Where the keys are; defaults to the issuer's `/.well-known/jwks.json`. */
   jwksUrl?: string;
@@ -93,19 +155,34 @@ export interface ClerkVerifierOptions {
   now?: () => number;
   /** Clock skew allowed on `exp` and `nbf`, in seconds. */
   leewaySeconds?: number;
+  /** How old the keys may be before they are read again. Default one hour. */
+  refreshMs?: number;
+  /** How long the keys are still used when Clerk cannot be reached to re-read them. Default one day. */
+  maxStaleMs?: number;
 }
 
+/** How soon another read of the keys may follow one that was just tried. */
+const JWKS_RETRY_MS = 60_000;
+
 /**
- * Verifies Clerk session JWTs (RS256) against the instance's JWKS, which is
- * fetched once and again only when a token names a key the hub has not seen —
- * at most once a minute, so a stream of forged `kid`s cannot make the hub
- * hammer Clerk.
+ * Verifies Clerk session JWTs (RS256) against the instance's JWKS.
+ *
+ * The keys are read again when they are an hour old, not only when a token
+ * names one the hub has not seen. Reading only on an unknown `kid` meant a
+ * key Clerk had withdrawn stayed good here until the hub restarted. A read is
+ * tried at most once a minute, so neither an outage at Clerk nor a stream of
+ * forged `kid`s makes the hub hammer it. If Clerk cannot be reached, the
+ * keys already held are used for up to a day, and after that nothing is: a
+ * hub that cannot learn which keys are still good stops accepting sessions
+ * rather than trusting old keys for ever.
  */
 export class ClerkVerifier {
   private readonly options: ClerkVerifierOptions;
   private readonly fetchImpl: typeof fetch;
   private keys = new Map<string, KeyObject>();
-  private fetchedAt = 0;
+  /** When the keys were last read successfully, and when a read was last tried. */
+  private freshAt = Number.NEGATIVE_INFINITY;
+  private triedAt = Number.NEGATIVE_INFINITY;
   private inflight: Promise<void> | null = null;
 
   constructor(options: ClerkVerifierOptions) {
@@ -124,15 +201,19 @@ export class ClerkVerifier {
         const url = this.options.jwksUrl ?? `${this.options.issuer}/.well-known/jwks.json`;
         const response = await this.fetchImpl(url, { signal: AbortSignal.timeout(8_000) });
         if (!response.ok) throw new Error(`JWKS answered ${response.status}`);
-        const body = (await response.json()) as { keys?: Jwk[] };
+        const body = (await response.json()) as { keys?: Jwk[] } | null;
         const next = new Map<string, KeyObject>();
-        for (const jwk of body.keys ?? []) {
+        for (const jwk of body?.keys ?? []) {
           if (jwk.kty !== 'RSA' || typeof jwk.kid !== 'string') continue;
           next.set(jwk.kid, createPublicKey({ key: jwk, format: 'jwk' }));
         }
-        if (next.size > 0) this.keys = next;
+        // An answer with no usable key is a failed read, not an instruction to trust nothing.
+        if (next.size === 0) throw new Error('JWKS held no RSA key');
+        // Replaced whole: a key that is no longer published is no longer accepted.
+        this.keys = next;
+        this.freshAt = this.now();
       } finally {
-        this.fetchedAt = this.now();
+        this.triedAt = this.now();
         this.inflight = null;
       }
     })();
@@ -140,9 +221,14 @@ export class ClerkVerifier {
   }
 
   private async key(kid: string): Promise<KeyObject | undefined> {
+    const refreshMs = this.options.refreshMs ?? 60 * 60_000;
+    const maxStaleMs = this.options.maxStaleMs ?? 24 * 60 * 60_000;
+    const due = (): boolean => this.now() - this.triedAt > JWKS_RETRY_MS;
+    if (this.now() - this.freshAt > refreshMs && due()) await this.refresh().catch(() => undefined);
+    if (this.now() - this.freshAt > maxStaleMs) this.keys = new Map();
     const known = this.keys.get(kid);
     if (known !== undefined) return known;
-    if (this.now() - this.fetchedAt > 60_000) await this.refresh().catch(() => undefined);
+    if (due()) await this.refresh().catch(() => undefined);
     return this.keys.get(kid);
   }
 
@@ -159,6 +245,8 @@ export class ClerkVerifier {
     } catch {
       throw new AuthError('That is not a session token.');
     }
+    // `null` and a list are JSON too, and neither has a header or a claim to read.
+    if (header === null || typeof header !== 'object' || claims === null || typeof claims !== 'object') throw new AuthError('That is not a session token.');
     if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw new AuthError('That session token is not signed the way Clerk signs.');
     const key = await this.key(header.kid);
     if (key === undefined) throw new AuthError('That session token was not signed by this studio.');
@@ -171,10 +259,13 @@ export class ClerkVerifier {
     if (typeof claims['exp'] !== 'number' || claims['exp'] + leeway < now) throw new AuthError('Your session expired. Reload the studio.');
     if (typeof claims['nbf'] === 'number' && claims['nbf'] - leeway > now) throw new AuthError('That session token is not valid yet.');
     if (claims['iss'] !== this.options.issuer) throw new AuthError('That session token is from another Clerk instance.');
+    // `azp` is the origin the token was issued to. It has to be there and it
+    // has to be one of the hub's studios: a token minted for any other site
+    // that shares this Clerk instance is somebody's session, but not with us.
+    // (A token with no `azp` used to pass this check untested.)
     const azp = claims['azp'];
-    if (this.options.authorizedParties.length > 0 && typeof azp === 'string' && !this.options.authorizedParties.includes(azp)) {
-      throw new AuthError('That session token was issued to another site.');
-    }
+    if (typeof azp !== 'string' || azp.length === 0) throw new AuthError('That session token does not say which site it was issued to.');
+    if (!this.options.authorizedParties.includes(azp)) throw new AuthError('That session token was issued to another site.');
     const sub = claims['sub'];
     if (typeof sub !== 'string' || sub.length === 0) throw new AuthError('That session token names no user.');
     return { userId: sub, sessionId: typeof claims['sid'] === 'string' ? claims['sid'] : null, expiresAt: claims['exp'] * 1000 };

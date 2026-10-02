@@ -82,6 +82,12 @@ export type ServeEvent =
       maxConcurrentRuns: number;
       maxRunCostUsd: number;
       maxDailyCostUsd: number;
+      /**
+       * False in CI. A job there starts from a fresh checkout, so the runs the
+       * daily total is summed from are not on disk and the total is always
+       * zero: the ceiling is configured and cannot stop anything.
+       */
+      dailyBudgetEnforced: boolean;
       once: boolean;
     }
   | { type: 'considered'; issueRef: string; count: number }
@@ -128,6 +134,7 @@ export async function serve(deps: ServeDeps): Promise<ServeOutcome> {
     maxConcurrentRuns: config.workflow.maxConcurrentRuns,
     maxRunCostUsd: settings.maxRunCostUsd ?? 0,
     maxDailyCostUsd: settings.maxDailyCostUsd ?? 0,
+    dailyBudgetEnforced: deps.source === 'serve',
     once: deps.maxPasses === 1,
   });
 

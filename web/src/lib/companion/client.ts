@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { sessionToken } from '../cloud/sync';
+import { hubToken, onAccountForgotten } from '../cloud/sync';
 import { DEFAULT_COMPANION_PORT, type CloudRunnerStatus, type CompanionRepository, type HelloResponse } from './types';
 
 /**
@@ -67,6 +67,22 @@ export type LoopbackAccess = 'granted' | 'prompt' | 'denied' | 'unsupported';
  */
 export type PairingFailure = 'blocked' | 'dismissed' | 'unreachable' | 'rejected';
 
+/** The version of the companion protocol this studio speaks. Mirrors `PROTOCOL_VERSION` in the engine. */
+export const COMPANION_PROTOCOL = 1;
+
+/**
+ * The browser, when it is one that will not let a secure page reach a plain
+ * `http://127.0.0.1` at all, whatever the person allows: Safari. Chrome, Edge
+ * and Brave ask first; Firefox treats loopback as secure. Told apart so "relay
+ * connect did not answer" is not what someone is told when it was never asked.
+ */
+export function loopbackBlockedBy(): string | null {
+  if (typeof window === 'undefined' || window.location.protocol !== 'https:') return null;
+  const agent = navigator.userAgent;
+  const safari = /Safari\//.test(agent) && !/Chrom(e|ium)\/|Edg\/|OPR\/|Firefox\/|FxiOS|CriOS/.test(agent);
+  return safari ? 'Safari' : null;
+}
+
 export class CompanionError extends Error {
   readonly status: number | null;
   constructor(message: string, status: number | null = null) {
@@ -86,6 +102,8 @@ interface CompanionStore {
   /** The cloud machine's own state, from the hub's last answer. */
   cloud: CloudRunnerStatus | null;
   status: CompanionStatus;
+  /** Why the status is what it is, when the status alone does not say: a version mismatch, a browser that cannot reach loopback. */
+  notice: string | null;
   hello: HelloResponse | null;
   checkedAt: string | null;
   hydrated: boolean;
@@ -177,7 +195,7 @@ async function endpoint(runner: RunnerTarget): Promise<{ base: string; headers: 
   const state = useCompanion.getState();
   if (runner === 'cloud') {
     if (state.cloudHub === null) throw new CompanionError('This studio has no Relay Cloud.');
-    const token = await sessionToken();
+    const token = await hubToken();
     if (token === null) throw new CompanionError('Sign in to use Relay Cloud.');
     return { base: state.cloudHub, headers: { authorization: `Bearer ${token}` } };
   }
@@ -201,6 +219,16 @@ async function hello(port: number, token: string, timeoutMs: number): Promise<He
   if (!response.ok) throw new CompanionError(`The companion answered ${response.status}.`, response.status);
   const body = (await response.json()) as HelloResponse;
   if (body.product !== 'relay') throw new CompanionError('Something else is listening on that port.');
+  // The protocol number changes only when a field is removed or changes
+  // meaning, so a different one is a pair that would misunderstand each other.
+  if (typeof body.protocol === 'number' && body.protocol !== COMPANION_PROTOCOL) {
+    throw new CompanionError(
+      body.protocol > COMPANION_PROTOCOL
+        ? `relay connect is newer than this studio (protocol ${body.protocol}, this page speaks ${COMPANION_PROTOCOL}). Reload the page to get the current studio.`
+        : `relay connect is older than this studio (protocol ${body.protocol}, this page speaks ${COMPANION_PROTOCOL}). Update the Relay CLI and start it again.`,
+      426,
+    );
+  }
   return body;
 }
 
@@ -212,6 +240,7 @@ export const useCompanion = create<CompanionStore>()(
       cloudHub: null,
       cloud: null,
       status: 'unpaired',
+      notice: null,
       hello: null,
       checkedAt: null,
       hydrated: false,
@@ -244,13 +273,15 @@ export const useCompanion = create<CompanionStore>()(
                 ? BLOCKED
                 : reason === 'dismissed'
                   ? 'Your browser asked whether this site may reach apps on your device, and it was not allowed.'
-                  : `Nothing answered on 127.0.0.1:${port}.`;
+                  : loopbackBlockedBy() !== null
+                    ? `${loopbackBlockedBy()} does not let this site reach relay connect on your computer, so it was never asked. Open this link in Chrome, Edge or Firefox${get().cloudHub === null ? '' : ', or use Relay Cloud, which needs no connection to your computer'}.`
+                    : `Nothing answered on 127.0.0.1:${port}.`;
           set({ attempt: { state: 'failed', reason, error: message, port, token } });
           throw new CompanionError(message);
         }
         // Pairing a machine is choosing it: sign-ins and runs go there from now on.
         const pairing = remembered({ port, token, pairedAt: new Date().toISOString() }, answer);
-        set({ pairing, target: 'machine', status: 'connected', hello: answer, checkedAt: new Date().toISOString(), attempt: { state: 'idle' } });
+        set({ pairing, target: 'machine', status: 'connected', notice: null, hello: answer, checkedAt: new Date().toISOString(), attempt: { state: 'idle' } });
         return answer;
       },
 
@@ -287,7 +318,7 @@ export const useCompanion = create<CompanionStore>()(
       refresh: async () => {
         if (get().target === 'cloud') {
           const hub = get().cloudHub;
-          const token = hub === null ? null : await sessionToken();
+          const token = hub === null ? null : await hubToken();
           if (hub === null || token === null) {
             set({ status: 'unpaired', hello: null, cloud: null, checkedAt: new Date().toISOString() });
             return;
@@ -321,13 +352,25 @@ export const useCompanion = create<CompanionStore>()(
           const current = get().pairing;
           set({
             status: answer.authorized ? 'connected' : 'rejected',
+            notice: null,
             hello: answer.authorized ? answer : null,
             checkedAt: new Date().toISOString(),
             // Only the pairing this answer was for; a new link may have replaced it meanwhile.
             ...(answer.authorized && current !== null && current.token === pairing.token && current.port === pairing.port ? { pairing: remembered(current, answer) } : {}),
           });
-        } catch {
-          set({ status: (await readAccess()) === 'denied' ? 'blocked' : 'unreachable', hello: null, checkedAt: new Date().toISOString() });
+        } catch (error) {
+          // Something answered, and it cannot be used: say what it said, rather than "not running".
+          if (error instanceof CompanionError && error.status === 426) {
+            set({ status: 'rejected', notice: error.message, hello: null, checkedAt: new Date().toISOString() });
+            return;
+          }
+          const blocker = loopbackBlockedBy();
+          set({
+            status: (await readAccess()) === 'denied' ? 'blocked' : 'unreachable',
+            notice: blocker === null ? null : `${blocker} does not let this site reach relay connect on your computer. Use Chrome, Edge or Firefox here.`,
+            hello: null,
+            checkedAt: new Date().toISOString(),
+          });
         }
       },
     }),
@@ -341,6 +384,12 @@ export const useCompanion = create<CompanionStore>()(
     },
   ),
 );
+
+// The pairing is this browser's key to somebody's machine. It goes when the
+// account does: signing out on a shared computer must not leave it behind.
+onAccountForgotten(() => {
+  useCompanion.setState({ pairing: null, target: 'machine', status: 'unpaired', notice: null, hello: null, cloud: null, checkedAt: null, attempt: { state: 'idle' } });
+});
 
 export interface CompanionRequestInit {
   method?: string;

@@ -2,6 +2,14 @@ export interface IssueComment {
   author: string;
   createdAt: string;
   body: string;
+  /**
+   * How the tracker relates the commenter to the repository, when it says:
+   * GitHub's `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE`… A run
+   * nobody is watching reads only the comments of people it has a reason to
+   * trust, and this is one of the two reasons it accepts — see
+   * `trustedComments` in `src/unattended/policy.ts`.
+   */
+  association?: string;
 }
 
 export interface Issue {

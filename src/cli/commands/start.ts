@@ -8,6 +8,7 @@ import {
   type AuthSupport,
   type OwnSignIn,
 } from '../../auth/delegated.ts';
+import { harnessRegistration } from '../../agents/index.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
 import { workspacesRoot } from '../../git/worktree.ts';
 import {
@@ -21,7 +22,7 @@ import { LINEAR_KEY_VARIABLE } from '../../issues/linear.ts';
 import { describeReview } from '../../reviews/level.ts';
 import { RelayError } from '../../util/errors.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
-import { agentChecks, authStateCheck, ownSignInCheck, type AgentCheck, type Check } from '../checks.ts';
+import { agentChecks, authStateCheck, ownSignInCheck, seatedAgents, type AgentCheck, type Check } from '../checks.ts';
 import { checksToJson } from '../doctorJson.ts';
 import { EXIT } from '../exit.ts';
 import { emitJson } from '../json.ts';
@@ -91,11 +92,14 @@ export interface StartDeps {
 /**
  * One command from a fresh clone to a first run.
  *
- * The hard rule this flow is built around: it handles no credential. Every
- * sign-in step below delegates to the vendor's own login command with the
- * terminal handed over, then re-asks that vendor whether it worked. There is
- * no path here that prompts for a secret, and nothing it learns is written to
- * `.relay/config.json`. Sign in with ChatGPT, the one sign-in Relay holds
+ * The hard rule this flow is built around: Relay has no API keys, reads no
+ * model or GitHub credential and never sees one of their tokens. Every sign-in
+ * step below delegates to the vendor's own login command with the terminal
+ * handed over, then re-asks that vendor whether it worked. There is no path
+ * here that prompts for a secret, and nothing it learns is written to
+ * `.relay/config.json`. Linear's key is the stated exception — it has no CLI
+ * to delegate to — and even there this flow names the variable Relay reads
+ * and prompts for nothing. Sign in with ChatGPT, the one sign-in Relay holds
  * itself, is its own command (`relay chatgpt login`); onboarding only says so.
  *
  * Each step is idempotent, so re-running is both the resume path and the repair
@@ -194,13 +198,20 @@ async function guidedStart(repo: RepositoryInfo, deps: StartDeps, options: Start
     command('relay run --prompt "A CLI that renders markdown tables"', '    ');
   }
 
-  const agentBlockers = await ensureAgents(repo, deps);
+  const agentProblems = await ensureAgents(repo, deps);
   const tracker = await ensureIssueProvider(repo, deps);
-  const blockers = [...agentBlockers, ...tracker.blockers];
 
   const configCode = await ensureConfig(repo, deps);
   if (configCode !== 0) return configCode;
   const config = await rememberTracker(repo, tracker);
+
+  // Judged against the config that now exists, not against the registry: a CLI
+  // no role is seated on cannot stop a run, so it does not stop this either.
+  const seated = seatedAgents(config);
+  const blockers = [
+    ...agentProblems.filter((problem) => seated.has(problem.agent)).map((problem) => problem.message),
+    ...tracker.blockers,
+  ];
 
   section('5. How a run works');
   const onboarding = await loadOnboarding(repo.root);
@@ -214,40 +225,71 @@ async function guidedStart(repo: RepositoryInfo, deps: StartDeps, options: Start
   return firstRun(repo, config, blockers, deps, options);
 }
 
+/** A coding CLI that is not usable yet, and the sentence that says so. */
+interface AgentProblem {
+  agent: string;
+  message: string;
+}
+
 /**
  * Step 2 — the coding CLIs. Missing is the user's job to fix; signed out is
  * something onboarding can drive, by running the vendor's login itself.
+ *
+ * Relay runs on whichever of them the roles are seated on, and one is enough:
+ * `relay init` puts every role on the CLIs that are installed. So a CLI that
+ * is absent is only a problem when the config names it — which is decided by
+ * the caller, once there is a config to ask. Here, a repository that is
+ * already configured simply is not asked about a CLI it does not use.
  */
-async function ensureAgents(repo: RepositoryInfo, deps: StartDeps): Promise<string[]> {
+async function ensureAgents(repo: RepositoryInfo, deps: StartDeps): Promise<AgentProblem[]> {
   section('2. Coding agents');
 
-  const blockers: string[] = [];
-  for (const { entry, check } of await deps.checkAgents()) {
+  const existing = (await fileExists(configPath(repo.root)))
+    ? await loadConfig(repo.root).catch(() => undefined)
+    : undefined;
+  const seated = existing === undefined ? undefined : seatedAgents(existing);
+  const agents = await deps.checkAgents();
+  const anyInstalled = agents.some(({ check }) => check.status === 'ok');
+
+  const problems: AgentProblem[] = [];
+  for (const { entry, check } of agents) {
+    const used = seated === undefined || seated.has(entry.name);
+
     if (check.status !== 'ok') {
+      if (!used) {
+        warn(`${entry.label}  ${dim(`${check.detail} · no role uses it`)}`);
+        continue;
+      }
       fail(`${entry.label}  ${dim(check.detail)}`);
       hint('Install it, then run `relay start` again:', '    ');
       command(entry.installCommand, '    ');
-      blockers.push(`${entry.label} is not installed.`);
+      // Only worth saying while it is still true: with no config yet and
+      // another CLI here, setup below seats every role on that one.
+      if (seated === undefined && anyInstalled) {
+        hint('Or carry on without it: setup puts every role on the CLIs that are installed.', '    ');
+      }
+      problems.push({ agent: entry.name, message: `${entry.label} is not installed.` });
       continue;
     }
 
     let state = await deps.authState(entry.auth, repo.root);
-    printAuthRow(entry.label, check.detail, state);
+    printAuthRow(entry.label, used ? check.detail : `${check.detail} · no role uses it`, state, used);
 
-    if (state !== 'authenticated') {
+    // Nobody is walked through a sign-in for a CLI no run here will call.
+    if (state !== 'authenticated' && used) {
       // A sign-in of Relay's own that ran out is not something the vendor's
       // login renews: offering it would send the person round in a circle.
       const own = await deps.ownSignIn?.(entry.auth);
       if (own?.state === 'unauthenticated') {
         hint(`${own.detail}.${own.hint === undefined ? '' : ` ${own.hint}`}`, '    ');
-        blockers.push(`${entry.label}: ${own.detail}.`);
+        problems.push({ agent: entry.name, message: `${entry.label}: ${own.detail}.` });
         continue;
       }
       state = await offerLogin(entry.label, entry.auth, state, repo.root, deps);
     }
-    if (state === 'unauthenticated') blockers.push(`${entry.label} is not signed in.`);
+    if (state === 'unauthenticated') problems.push({ agent: entry.name, message: `${entry.label} is not signed in.` });
   }
-  return blockers;
+  return problems;
 }
 
 /**
@@ -503,9 +545,9 @@ function showTour(config: RelayConfig): void {
         label: 'Time',
         value: inline
           ? 'typically 5–10 minutes; a large issue takes longer'
-          : 'typically 8–15 minutes; `relay run <issue> --fast` skips both reviews',
+          : 'typically 10–20 minutes; `relay run <issue> --fast` skips both reviews',
       },
-      { label: 'Tokens', value: 'billed to your own Claude Code and Codex accounts' },
+      { label: 'Tokens', value: `billed to your own ${billedAccounts(config)}` },
       { label: 'Reporting', value: '`relay status <run>` shows tokens, and cost when the CLI reports one' },
     ],
     '    ',
@@ -531,12 +573,24 @@ function showTour(config: RelayConfig): void {
     [
       { label: 'Past the policy', value: `nothing beyond \`${config.workflow.deliver}\` — no merge unless you set one` },
       { label: 'Your tree', value: `untouched — a run works in a throwaway worktree under ${workspacesRoot()}` },
-      { label: 'Credentials', value: 'never read, never prompted for, never stored — each CLI owns its own' },
+      // Scoped to what it is true of. A Linear key is the one credential Relay
+      // reads itself, because Linear has no CLI to delegate to — docs/cli.md.
+      {
+        label: 'Credentials',
+        value: 'your model and GitHub sign-ins are never read, prompted for or stored — each CLI owns its own',
+      },
     ],
     '    ',
   );
   out();
   hint('`relay stop <run>` cancels a run; `relay run <issue> --deliver branch` keeps the work local.');
+}
+
+/** `Claude Code and Codex accounts` — the CLIs this config's roles are seated on, by name. */
+function billedAccounts(config: RelayConfig): string {
+  const labels = [...seatedAgents(config)].map((name) => harnessRegistration(name)?.label ?? name);
+  const last = labels.pop() ?? 'coding CLI';
+  return labels.length === 0 ? `${last} account` : `${labels.join(', ')} and ${last} accounts`;
 }
 
 /** Step 6 — the run itself, or a rehearsal of one that spends nothing. */
@@ -772,21 +826,49 @@ async function reportReadiness(
     },
   ];
 
-  for (const { entry, check } of await deps.checkAgents()) {
-    checks.push({ ...check, label: entry.label, ...(check.status === 'ok' ? {} : { hint: entry.installCommand }) });
-    if (check.status !== 'ok') continue;
+  // The same rule the guided flow applies: a CLI is required when a role is
+  // seated on it. Before there is a config, one installed CLI is enough —
+  // `relay init --yes` seats every role on what is here — so only a machine
+  // with none of them is missing something.
+  const path = configPath(repo.root);
+  const configured = await fileExists(path);
+  const seated = configured ? await loadConfig(repo.root).then(seatedAgents, () => undefined) : undefined;
+  const agents = await deps.checkAgents();
+  const anyInstalled = agents.some(({ check }) => check.status === 'ok');
+
+  for (const { entry, check } of agents) {
+    const required = seated === undefined ? !anyInstalled : seated.has(entry.name);
+    if (check.status !== 'ok') {
+      checks.push({
+        ...check,
+        label: entry.label,
+        status: required ? 'fail' : 'warn',
+        hint: required
+          ? entry.installCommand
+          : seated === undefined
+            ? `${entry.installCommand}\nOptional: \`relay init --yes\` puts every role on the CLIs that are installed.`
+            : `${entry.installCommand}\nOptional: no role in .relay/config.json uses it.`,
+      });
+      continue;
+    }
+    checks.push({ ...check, label: entry.label });
     const own = await deps.ownSignIn?.(entry.auth);
-    checks.push(
+    const auth =
       own !== undefined
         ? ownSignInCheck(`${entry.label} sign-in`, own)
-        : authStateCheck(`${entry.label} sign-in`, entry.auth, await deps.authState(entry.auth, repo.root)),
+        : authStateCheck(`${entry.label} sign-in`, entry.auth, await deps.authState(entry.auth, repo.root));
+    const used = seated === undefined || seated.has(entry.name);
+    checks.push(
+      auth.status === 'fail' && !used
+        ? { ...auth, status: 'warn', hint: `${auth.hint ?? ''}\nOptional: no role in .relay/config.json uses it.`.trim() }
+        : auth,
     );
   }
 
   // A tracker is a warning, not a failure: a run can start from a file or a
   // prompt without one, so `--check` must not claim Relay is unusable.
-  const configured = (await loadConfig(repo.root).catch(() => undefined))?.issues?.provider ?? 'github';
-  const provider = issueTrackerRegistration(configured) ?? ISSUE_TRACKER_REGISTRY[0]!;
+  const tracker = (await loadConfig(repo.root).catch(() => undefined))?.issues?.provider ?? 'github';
+  const provider = issueTrackerRegistration(tracker) ?? ISSUE_TRACKER_REGISTRY[0]!;
   const withoutIt = 'Or work without a tracker: `relay run ./spec.md`, `relay run --prompt "…"`.';
   if (provider.binary !== undefined && !(await deps.installed(provider.binary))) {
     checks.push({
@@ -811,9 +893,8 @@ async function reportReadiness(
     });
   }
 
-  const path = configPath(repo.root);
   checks.push(
-    (await fileExists(path))
+    configured
       ? { label: 'Configuration', status: 'ok', detail: path }
       : { label: 'Configuration', status: 'fail', detail: 'no .relay/config.json', hint: 'Run `relay init --yes`.' },
   );
@@ -848,10 +929,11 @@ async function reportReadiness(
   return failed.length === 0 ? EXIT.success : EXIT.preconditions;
 }
 
-function printAuthRow(label: string, detail: string, state: AuthState): void {
+function printAuthRow(label: string, detail: string, state: AuthState, used = true): void {
   if (state === 'authenticated') ok(`${label}  ${dim(`${detail} · signed in`)}`);
   else if (state === 'unknown') warn(`${label}  ${dim(`${detail} · sign-in state unknown`)}`);
-  else fail(`${label}  ${dim(`${detail} · not signed in`)}`);
+  // Signed out is a failure only for a CLI a run is going to call.
+  else (used ? fail : warn)(`${label}  ${dim(`${detail} · not signed in`)}`);
 }
 
 function printNextSteps(dry: boolean): void {

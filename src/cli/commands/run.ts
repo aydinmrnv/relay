@@ -55,6 +55,7 @@ import { runToJson } from '../runJson.ts';
 import { RunJsonStream } from '../runStream.ts';
 import { landingOf } from './inspect.ts';
 import { createTracking } from '../../tracking/index.ts';
+import { killProcessTrees } from '../../process/runner.ts';
 import { runQueue } from '../../workflow/queue.ts';
 import { waitForAdmission } from '../../workflow/admission.ts';
 import { pruneArtifacts } from '../../storage/retention.ts';
@@ -766,6 +767,14 @@ export interface RunSignals {
   signal?: AbortSignal;
 }
 
+/**
+ * The signals, other than Ctrl-C, that mean "this run is over": a supervisor's
+ * stop, and the terminal going away. They cancel the run the way the first
+ * Ctrl-C does, so a run ended by either is recorded as cancelled with its work
+ * committed to its branch — and unlike Ctrl-C, a repeat never forces a quit.
+ */
+const TERMINATION_SIGNALS: readonly NodeJS.Signals[] = ['SIGTERM', 'SIGHUP'];
+
 export async function executeRun(
   cli: CliContext,
   state: RunState,
@@ -792,32 +801,65 @@ export async function executeRun(
     note: (text) => out(`  [${state.shortId}] ${text}`),
     warn: (text) => out(warning(`  [${state.shortId}] ${text}`)),
   };
-  const renderer =
-    stream === undefined && options.compact !== true
-      ? rendererFor(state, options, {
-          onStop: () => store.requestCancel(`stopped by user at ${new Date().toISOString()}`),
-        })
-      : undefined;
-  const display: RunDisplay = stream ?? renderer ?? compact;
-
   // Ctrl-C stops the agents and lets the engine record a CANCELLED run rather
   // than leaving state that claims a phase is still in flight. A run started by
   // something that already owns the signals cancels through that instead.
+  let cancelling = false;
   const cancel = (note: string): void => {
+    if (cancelling) return;
+    cancelling = true;
     display.warn(note);
     controller.abort();
     void Promise.all(Object.values(cli.harnesses).map((harness) => harness.cancel()));
   };
-  let interrupted = false;
-  const onSigint = (): void => {
-    if (interrupted) process.exit(EXIT.cancelled);
-    interrupted = true;
-    cancel('Cancelling… (press Ctrl-C again to force quit)');
+
+  // Ctrl-C is the one signal a person sends twice on purpose, so it is the
+  // only one counted: the first asks the run to stop, the second says "now".
+  let interrupts = 0;
+  const onInterrupt = (): void => {
+    interrupts += 1;
+    if (interrupts > 1) {
+      // Whatever is still running is abandoned. The terminal is put back
+      // first, and nothing a turn started is left behind to keep working for
+      // a run that no longer exists.
+      renderer?.teardown();
+      killProcessTrees();
+      process.exit(EXIT.cancelled);
+    }
+    if (cancelling) display.warn('Already cancelling… (press Ctrl-C again to force quit)');
+    else cancel('Cancelling… (press Ctrl-C again to force quit)');
   };
+  // SIGTERM and SIGHUP are sent by things that do not mean "now" by repeating
+  // themselves: a closing terminal delivers its hangup more than once, and a
+  // supervisor follows its SIGTERM with a SIGKILL of its own. However many
+  // arrive, they ask for the same clean cancellation and never cut it short —
+  // a force quit halfway through is exactly the stale run this is here to
+  // prevent.
+  const onTerminate = (): void => cancel('Cancelling…');
+
+  // The dashboard reads single keys, which puts the terminal in raw mode — and
+  // in raw mode Ctrl-C arrives as a byte on stdin rather than as SIGINT. So the
+  // display is handed the same function the signal reaches: without that the
+  // handler below is unreachable from the keyboard for as long as a run draws.
+  const renderer =
+    stream === undefined && options.compact !== true
+      ? rendererFor(state, options, {
+          onStop: () => store.requestCancel(`stopped by user at ${new Date().toISOString()}`),
+          ...(signals.signal === undefined ? { onInterrupt } : {}),
+        })
+      : undefined;
+  const display: RunDisplay = stream ?? renderer ?? compact;
+
+  // SIGTERM and SIGHUP end a run the way Ctrl-C does. A supervisor stopping the
+  // process and a terminal window being closed are both somebody deciding the
+  // run is over, and dying on the default action would leave state.json
+  // claiming a phase is still in flight, with the agents still spending.
   const outer = signals.signal;
   const onOuterAbort = (): void => cancel('Cancelling…');
-  if (outer === undefined) process.on('SIGINT', onSigint);
-  else if (outer.aborted) onOuterAbort();
+  if (outer === undefined) {
+    process.on('SIGINT', onInterrupt);
+    for (const signal of TERMINATION_SIGNALS) process.on(signal, onTerminate);
+  } else if (outer.aborted) onOuterAbort();
   else outer.addEventListener('abort', onOuterAbort, { once: true });
 
   display.start();
@@ -841,8 +883,10 @@ export async function executeRun(
   } finally {
     renderer?.teardown();
     tracking.stop();
-    if (outer === undefined) process.off('SIGINT', onSigint);
-    else outer.removeEventListener('abort', onOuterAbort);
+    if (outer === undefined) {
+      process.off('SIGINT', onInterrupt);
+      for (const signal of TERMINATION_SIGNALS) process.off(signal, onTerminate);
+    } else outer.removeEventListener('abort', onOuterAbort);
   }
 
   printOutcome(finalState, store);
@@ -863,15 +907,15 @@ export async function executeRun(
 /**
  * The renderer a run is displayed through, built from the run itself.
  *
- * `relay run` and `relay attach` show the same picture of the same run, so they
+ * `relay run` and `relay watch` show the same picture of the same run, so they
  * build it the same way. Only the live run can stop the engine, which is why
- * `hooks` is separate: attaching to someone else's run gets the display without
- * the controls.
+ * `hooks` is separate: watching someone else's run gets the display without
+ * the controls — and its own meaning for Ctrl-C, which is to stop watching.
  */
 export function rendererFor(
   state: RunState,
   options: Pick<RunOptions, 'verbose'> = {},
-  hooks: { onStop?: () => void | Promise<void> } = {},
+  hooks: { onStop?: () => void | Promise<void>; onInterrupt?: () => void } = {},
 ): RunRenderer {
   return new RunRenderer({
     // The renderer supplies the mark; this is only what the run is about. A

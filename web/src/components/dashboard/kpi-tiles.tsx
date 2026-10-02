@@ -29,6 +29,8 @@ interface Props {
   successRate: number | null;
   finished: number;
   spend: number;
+  /** The part of `spend` real runs reported. */
+  realSpend: number;
   connected: number;
   /** Real connections the app accepted, markers, real ones it refused, and apps workflows use with no connection. */
   connections: { verified: number; marked: number; failing: number; missing: number };
@@ -72,16 +74,30 @@ export function KpiTiles(props: Props) {
           </>
         ),
     },
-    {
-      href: '/runs',
-      label: 'Simulated spend, 7 days',
-      icon: <CircleDollarSign />,
-      term: 'cost',
-      value: props.spend,
-      prefix: '$',
-      decimals: 2,
-      hint: props.runs === 0 ? 'Nothing played this week' : `≈ $${(props.spend / Math.max(1, props.runs)).toFixed(2)} per run · nothing was billed`,
-    },
+    // Two different kinds of money. What test runs "cost" was never spent;
+    // what real runs cost came out of somebody's Claude or ChatGPT plan. Once
+    // there is any of the second, it leads, and the first is named beside it.
+    props.realSpend > 0
+      ? {
+          href: '/runs',
+          label: 'Real spend, 7 days',
+          icon: <CircleDollarSign />,
+          term: 'cost',
+          value: props.realSpend,
+          prefix: '$',
+          decimals: 2,
+          hint: `Reported by the coding CLIs, on your own plans${props.spend - props.realSpend > 0.005 ? ` · plus $${(props.spend - props.realSpend).toFixed(2)} simulated in test runs` : ''}`,
+        }
+      : {
+          href: '/runs',
+          label: 'Simulated spend, 7 days',
+          icon: <CircleDollarSign />,
+          term: 'cost',
+          value: props.spend,
+          prefix: '$',
+          decimals: 2,
+          hint: props.runs === 0 ? 'Nothing played this week' : `≈ $${(props.spend / Math.max(1, props.runs)).toFixed(2)} per run · nothing was billed`,
+        },
     {
       href: '/integrations',
       label: 'Connected apps',

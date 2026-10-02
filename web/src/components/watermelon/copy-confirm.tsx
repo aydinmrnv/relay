@@ -1,119 +1,34 @@
-import {
-  Boxes,
-  CheckIcon,
-  CopyIcon,
-  Settings2,
-} from 'lucide-react';
+import { CheckIcon, CopyIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { type ReactNode, useState } from 'react';
+import { useState } from 'react';
+import { toast } from 'sonner';
 
-interface SkillCardProps {
-  title?: string;
-  icon?: ReactNode;
-  valueToCopy?: string;
-
-  copiedText?: string;
-  copyText?: string;
-
-  showSettings?: boolean;
-  loading?: boolean;
-
-  onSettingsClick?: () => void;
-}
-
-export default function CopyConfirm({
-  title = 'Clay Skill',
-  icon = <Boxes size={16} />,
-  valueToCopy = 'Clay Skill',
-
-  copiedText = 'Copied',
+/** An animated copy button, in the theme's colours and at toolbar size. */
+export function CopyConfirmButton({
+  value,
   copyText = 'Copy',
-
-  showSettings = true,
-  loading = false,
-
-  onSettingsClick = () => {},
-}: SkillCardProps) {
+  copiedText = 'Copied',
+  onCopied,
+  disabled = false,
+  className = '',
+}: {
+  value: string;
+  copyText?: string;
+  copiedText?: string;
+  onCopied?: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(valueToCopy);
-
-    setCopied(true);
-
-    setTimeout(() => {
-      setCopied(false);
-    }, 1800);
-  }
-
-  return (
-    <div className="flex h-screen w-full items-center justify-center">
-      <div className="flex items-center gap-2">
-        <div className="flex gap-0.5 rounded-full">
-          <div className="border-border/20 flex items-center gap-1.5 rounded-l-full border bg-zinc-100 p-3">
-            <div className="text-zinc-500">{icon}</div>
-
-            <span className="text-sm font-semibold text-zinc-800">
-              {title}
-            </span>
-          </div>
-
-          {showSettings && (
-            <button
-              onClick={onSettingsClick}
-              className="flex items-center justify-center rounded-r-full bg-zinc-100 px-3 transition"
-            >
-              <Settings2 size={20} className="text-zinc-700" />
-            </button>
-          )}
-        </div>
-
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.97 }}
-          disabled={loading}
-          animate={{
-            backgroundColor: copied ? '#15803d' : '#000000', // green-500 : black
-          }}
-          onClick={handleCopy}
-          className="relative flex  items-center justify-center gap-2 overflow-hidden rounded-full bg-[#0C3415] py-2 px-4 text-white"
-        >
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.div
-              key={copied ? 'check' : 'copy'}
-              initial={{ opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
-              animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-              exit={{ opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
-              transition={{
-                type: 'spring',
-                duration: 0.3,
-                bounce: 0,
-              }}
-                          className='text-sm'
-            >
-              {copied ? (
-                <CheckIcon className="stoke-2 size-4" />
-              ) : (
-                <CopyIcon className="stroke-2 size-4" />
-              )}
-            </motion.div>
-          </AnimatePresence>
-          <AnimatedText from={copyText} to={copiedText} isCopied={copied} />
-        </motion.button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Adapted for the studio: the animated copy button from the card above, on
- * its own, in the theme's colours and at toolbar size.
- */
-export function CopyConfirmButton({ value, copyText = 'Copy', copiedText = 'Copied', onCopied, className = '' }: { value: string; copyText?: string; copiedText?: string; onCopied?: () => void; className?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function handleCopy() {
-    await navigator.clipboard.writeText(value);
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // No permission, or a page that is not focused: say so rather than animate a copy that did not happen.
+      toast.error('Could not copy', { description: 'The browser refused access to the clipboard. Select the text and copy it by hand.' });
+      return;
+    }
     setCopied(true);
     onCopied?.();
     setTimeout(() => setCopied(false), 1800);
@@ -122,10 +37,11 @@ export function CopyConfirmButton({ value, copyText = 'Copy', copiedText = 'Copi
   return (
     <motion.button
       type="button"
-      whileTap={{ scale: 0.97 }}
+      whileTap={disabled ? undefined : { scale: 0.97 }}
       onClick={() => void handleCopy()}
+      disabled={disabled}
       aria-label={copied ? copiedText : copyText}
-      className={`relative flex h-6 items-center justify-center gap-1.5 overflow-hidden rounded-full px-2.5 text-xs font-medium transition-colors ${copied ? 'bg-success text-white' : 'bg-foreground text-background hover:bg-foreground/85'} ${className}`}
+      className={`relative flex h-6 items-center justify-center gap-1.5 overflow-hidden rounded-full px-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${copied ? 'bg-success text-white' : 'bg-foreground text-background hover:bg-foreground/85'} ${className}`}
     >
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.span

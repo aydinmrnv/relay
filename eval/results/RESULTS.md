@@ -5,9 +5,11 @@
 Relay claims that specialized agents reviewing each other's engineering work produce better
 changes than one agent working alone. This file is where that claim gets measured.
 
-**No session has been recorded yet, so there are no numbers here.**
+**No session has been recorded yet, so there are no numbers here.** Until there are, the claim
+is the hypothesis the design rests on and not a result: nothing Relay publishes reports a
+measured improvement, because none has been measured.
 
-Producing them costs real model calls and real wall-clock. The estimate is printed first:
+Producing the numbers costs real model calls and real wall-clock. The estimate is printed first:
 
 ```bash
 relay eval --check-fixtures                          # verify the fixture set — free

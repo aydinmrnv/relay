@@ -10,6 +10,7 @@ import type { Phase } from './phases.ts';
 import { recordAgentSession } from './state.ts';
 import { recordTurnUsage } from './usage.ts';
 import { canResumeAfterFailure, classifyFailure, retryDelayMs, sleep } from './retry.ts';
+import { unattendedEnvironment } from '../unattended/environment.ts';
 
 export interface AgentTurnOptions {
   role: Role;
@@ -53,6 +54,10 @@ export async function runAgentTurn(context: EngineContext, options: AgentTurnOpt
   // not have its events and tokens land wherever the run happens to be later.
   const phase = options.phase ?? state.phase;
   const model = modelFor(context, options.role);
+  // A run nobody is watching keeps secret-looking variables from its agents,
+  // each CLI's own sign-in excepted. A run somebody started hands over nothing
+  // it did not hand over before.
+  const withheld = unattendedEnvironment(state, provider);
 
   const pending: Array<Promise<void>> = [];
   const onEvent = (event: AgentEvent): void => {
@@ -94,6 +99,7 @@ export async function runAgentTurn(context: EngineContext, options: AgentTurnOpt
       ...(model === undefined ? {} : { model }),
       ...(options.outputSchema === undefined ? {} : { outputSchema: options.outputSchema }),
       ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
+      ...(withheld === undefined ? {} : { env: withheld.env }),
     };
 
     try {

@@ -17,12 +17,11 @@ import { getConnector } from '@/lib/connectors';
 import { useAgentsStore, type BridgeState } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
+import { AGENT_MARKS } from '@/lib/agents/marks';
 import { ACCOUNT_META, AGENT_IDS, AGENT_META, CHATGPT_USAGE_URL, type AccountId, type AgentAccount, type AgentId, type GithubAccount, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
 import { useCompanion } from '@/lib/companion/client';
 import { machineStatusText } from '@/components/companion/machine-card';
 import { cloudStatusText } from '@/components/companion/cloud-card';
-
-const CONNECTOR_FOR: Record<AgentId, string> = { claude: 'claude-code', codex: 'codex-cli' };
 
 /** Set once the person has been told, the first time, whose plan Codex now spends. */
 const PLAN_NOTICE_KEY = 'relay:chatgpt-plan-notice';
@@ -61,8 +60,8 @@ export function AgentAccountsCard() {
           {bridge === 'unavailable'
             ? `${cloud ? cloudStatusText(companion, cloudStatus) : machineStatusText(companion, host)}, so the studio cannot ask the CLIs.`
             : status === null
-              ? `Asking the CLIs on ${host ?? 'your machine'}…`
-              : `Read live from the CLIs on ${host ?? 'your machine'}, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
+              ? `Asking the CLIs on ${host ?? 'your runner'}…`
+              : `Read live from the CLIs on ${host ?? 'your runner'}, ${timeAgo(status.checkedAt, now)}. Rechecked every 30 seconds and when you return to this tab.`}
         </CardDescription>
         <CardAction>
           <Tooltip>
@@ -90,7 +89,7 @@ export function AgentAccountsCard() {
         {withGithub ? <GithubRow account={github} bridge={bridge} onSignIn={() => setSigning({ agent: 'github', mode: 'device' })} /> : null}
       </CardContent>
       <CardFooter className="flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-        <span>{cloud ? 'These sign-ins live in the CLIs on your own cloud machine, which nobody else’s runs touch.' : 'These sign-ins live in the CLIs on your machine.'} GitHub Actions needs its own secrets.</span>
+        <span>{cloud ? 'These sign-ins live in the CLIs on your own cloud machine, which nobody else’s runs touch.' : 'These sign-ins live in the CLIs on your runner.'} GitHub Actions needs its own secrets.</span>
         <Link href="/settings#credentials" className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline">
           Credentials for exported workflows <ArrowRight className="size-3" aria-hidden />
         </Link>
@@ -102,7 +101,6 @@ export function AgentAccountsCard() {
 
 function AgentRow({ id, account, bridge, cloud, chatgpt, onSignIn }: { id: AgentId; account: AgentAccount | null; bridge: BridgeState; cloud: boolean; chatgpt: boolean; onSignIn: (mode: LoginMode) => void }) {
   const meta = AGENT_META[id];
-  const connector = getConnector(CONNECTOR_FOR[id]);
   const logout = useAgentsStore((state) => state.logout);
   const [busy, setBusy] = useState(false);
 
@@ -127,7 +125,7 @@ function AgentRow({ id, account, bridge, cloud, chatgpt, onSignIn }: { id: Agent
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
-      {connector === undefined ? null : <ConnectorIcon connector={connector} size={18} />}
+      <ConnectorIcon icon={AGENT_MARKS[id].icon} name={meta.name} size={18} />
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
           {meta.name}

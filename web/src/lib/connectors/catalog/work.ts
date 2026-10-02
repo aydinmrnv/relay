@@ -38,9 +38,9 @@ export const WORK_CONNECTORS: Connector[] = [
       'A refused run explains itself on the issue, where the person who asked will look.',
     ],
     triggers: [
-      { id: 'issue-labelled', name: 'Label added', description: 'Someone adds the trigger label to an issue. The usual way to say "this one is for the agents".', outputs: PORTS.issueOut, fields: LABEL('agent:go'), sample: ticket('acme/api#1287', 'https://github.com/acme/api/issues/1287', { labels: ['bug', 'agent:go'] }) },
+      { id: 'issue-labelled', name: 'Label added', description: 'Someone adds the trigger label to an issue. The usual way to say “this one is for the agents”.', outputs: PORTS.issueOut, fields: LABEL('agent:go'), sample: ticket('acme/api#1287', 'https://github.com/acme/api/issues/1287', { labels: ['bug', 'agent:go'] }) },
       { id: 'issue-assigned', name: 'Assigned to the bot', description: 'An issue is assigned to the bot account.', outputs: PORTS.issueOut, fields: [FIELDS.text('assignee', 'Assigned to', BOT)], sample: ticket('acme/api#1287', 'https://github.com/acme/api/issues/1287') },
-      { id: 'issue-comment', name: 'Asked in a comment', description: 'A comment mentions the bot, as in "@relay-bot take this one". The comment is added to the task.', outputs: PORTS.issueOut, fields: [FIELDS.text('mention', 'Mention', BOT)], sample: ticket('acme/api#1287', 'https://github.com/acme/api/issues/1287', { comment: '@relay-bot take this one, the repro is in the description' }) },
+      { id: 'issue-comment', name: 'Asked in a comment', description: 'A comment mentions the bot, as in “@relay-bot take this one”. The comment is added to the task.', outputs: PORTS.issueOut, fields: [FIELDS.text('mention', 'Mention', BOT)], sample: ticket('acme/api#1287', 'https://github.com/acme/api/issues/1287', { comment: '@relay-bot take this one, the repro is in the description' }) },
       { id: 'issue-opened', name: 'Issue opened', description: 'A new issue is opened. Pair it with a triage step rather than running the pipeline on everything.', outputs: PORTS.issueOut, fields: [FIELDS.text('label', 'Only with label', '')], sample: ticket('acme/api#1288', 'https://github.com/acme/api/issues/1288', { assignee: '' }) },
     ],
     actions: [
@@ -70,7 +70,7 @@ export const WORK_CONNECTORS: Connector[] = [
     triggers: [
       { id: 'issue-assigned', name: 'Assigned to the bot', description: 'An issue is assigned to the bot user.', outputs: PORTS.issueOut, fields: [FIELDS.text('assignee', 'Assigned to', BOT), FIELDS.text('team', 'Team key', 'ENG')], sample: ticket('ENG-142', 'https://linear.app/acme/issue/ENG-142') },
       { id: 'issue-labelled', name: 'Label added', description: 'A label is added to an issue.', outputs: PORTS.issueOut, fields: LABEL('agent:go'), sample: ticket('ENG-142', 'https://linear.app/acme/issue/ENG-142', { labels: ['bug', 'agent:go'] }) },
-      { id: 'issue-state-changed', name: 'Moved to a state', description: 'An issue enters a workflow state, such as a "Ready for agent" column.', outputs: PORTS.issueOut, fields: [FIELDS.text('state', 'State', 'Ready for agent')], sample: ticket('ENG-142', 'https://linear.app/acme/issue/ENG-142') },
+      { id: 'issue-state-changed', name: 'Moved to a state', description: 'An issue enters a workflow state, such as a “Ready for agent” column.', outputs: PORTS.issueOut, fields: [FIELDS.text('state', 'State', 'Ready for agent')], sample: ticket('ENG-142', 'https://linear.app/acme/issue/ENG-142') },
       { id: 'issue-created', name: 'Issue created', description: 'A new issue lands in a team. Good for triage, not for running the pipeline on everything.', outputs: PORTS.issueOut, fields: [FIELDS.text('team', 'Team key', 'ENG')], sample: ticket('ENG-143', 'https://linear.app/acme/issue/ENG-143', { assignee: '' }) },
       { id: 'comment-mention', name: 'Asked in a comment', description: 'A comment mentions the bot. The comment is added to the task.', outputs: PORTS.issueOut, fields: [FIELDS.text('mention', 'Mention', BOT)], sample: ticket('ENG-142', 'https://linear.app/acme/issue/ENG-142', { comment: '@relay-bot can you take this? Keep the fix to the export handler.' }) },
     ],
@@ -94,11 +94,11 @@ export const WORK_CONNECTORS: Connector[] = [
     tags: ['issues', 'sprints', 'atlassian'],
     popular: true,
     uses: [
-      'Move a ticket to "Ready for agent" and it comes back in Code Review with the PR in the development panel.',
+      'Move a ticket to “Ready for agent” and it comes back in Code Review with the PR in the development panel.',
       'Support escalations become Jira bugs with the reproduction steps filled in.',
     ],
     triggers: [
-      { id: 'issue-transitioned', name: 'Moved to a status', description: 'An issue moves to a status, such as a "Ready for agent" column on the board.', outputs: PORTS.issueOut, fields: [FIELDS.text('status', 'Status', 'Ready for agent'), FIELDS.text('project', 'Project key', 'PROJ')], sample: ticket('PROJ-1187', 'https://acme.atlassian.net/browse/PROJ-1187') },
+      { id: 'issue-transitioned', name: 'Moved to a status', description: 'An issue moves to a status, such as a “Ready for agent” column on the board.', outputs: PORTS.issueOut, fields: [FIELDS.text('status', 'Status', 'Ready for agent'), FIELDS.text('project', 'Project key', 'PROJ')], sample: ticket('PROJ-1187', 'https://acme.atlassian.net/browse/PROJ-1187') },
       { id: 'issue-assigned', name: 'Assigned to the bot', description: 'An issue is assigned to the bot user.', outputs: PORTS.issueOut, fields: [FIELDS.text('assignee', 'Assigned to', BOT)], sample: ticket('PROJ-1187', 'https://acme.atlassian.net/browse/PROJ-1187') },
       { id: 'issue-labelled', name: 'Label added', description: 'A label is added to an issue.', outputs: PORTS.issueOut, fields: LABEL('agent-go'), sample: ticket('PROJ-1187', 'https://acme.atlassian.net/browse/PROJ-1187', { labels: ['bug', 'agent-go'] }) },
       { id: 'issue-created', name: 'Issue created', description: 'A new issue is created in a project. Pair it with a triage step.', outputs: PORTS.issueOut, fields: [FIELDS.text('project', 'Project key', 'PROJ'), FIELDS.text('type', 'Issue type', 'Bug')], sample: ticket('PROJ-1188', 'https://acme.atlassian.net/browse/PROJ-1188', { assignee: '' }) },
@@ -121,7 +121,7 @@ export const WORK_CONNECTORS: Connector[] = [
     icon: { si: 'SiShortcut', color: '#58B1E4' },
     docsUrl: 'https://developer.shortcut.com/api/rest/v3',
     tags: ['stories', 'iterations'],
-    uses: ['Make the bot a story\'s owner and the story comes back with a pull request linked.'],
+    uses: ['Make the bot a story’s owner and the story comes back with a pull request linked.'],
     triggers: [
       { id: 'story-assigned', name: 'Bot made owner', description: 'The bot is added as an owner of a story.', outputs: PORTS.issueOut, fields: [FIELDS.text('assignee', 'Owner', BOT)], sample: ticket('sc-3141', 'https://app.shortcut.com/acme/story/3141') },
       { id: 'story-state-changed', name: 'Moved to a state', description: 'A story enters a workflow state.', outputs: PORTS.issueOut, fields: [FIELDS.text('state', 'State', 'Ready for agent')], sample: ticket('sc-3141', 'https://app.shortcut.com/acme/story/3141') },
@@ -143,9 +143,9 @@ export const WORK_CONNECTORS: Connector[] = [
     icon: { si: 'SiNotion', color: '#000000' },
     docsUrl: 'https://developers.notion.com/',
     tags: ['database', 'tracker', 'specs'],
-    uses: ['Small teams that track work in a Notion database set a row to "Ready for agent" and get the PR link written back to it.'],
+    uses: ['Small teams that track work in a Notion database set a row to “Ready for agent” and get the PR link written back to it.'],
     triggers: [
-      { id: 'property-changed', name: 'Status changed', description: 'A row\'s status property changes to a value.', outputs: PORTS.issueOut, fields: [FIELDS.text('database', 'Database', 'Engineering tasks'), FIELDS.text('property', 'Property', 'Status'), FIELDS.text('value', 'New value', 'Ready for agent')], sample: ticket('a1b2c3d4', 'https://www.notion.so/acme/a1b2c3d4') },
+      { id: 'property-changed', name: 'Status changed', description: 'A row’s status property changes to a value.', outputs: PORTS.issueOut, fields: [FIELDS.text('database', 'Database', 'Engineering tasks'), FIELDS.text('property', 'Property', 'Status'), FIELDS.text('value', 'New value', 'Ready for agent')], sample: ticket('a1b2c3d4', 'https://www.notion.so/acme/a1b2c3d4') },
       { id: 'database-row-added', name: 'Row added', description: 'A row is added to the database.', outputs: PORTS.issueOut, fields: [FIELDS.text('database', 'Database', 'Engineering tasks')], sample: ticket('a1b2c3d5', 'https://www.notion.so/acme/a1b2c3d5', { assignee: '' }) },
     ],
     actions: [
@@ -165,7 +165,7 @@ export const WORK_CONNECTORS: Connector[] = [
     tags: ['git', 'pull requests', 'repos'],
     popular: true,
     uses: [
-      'Ask the owning team for review as soon as an agent\'s pull request opens.',
+      'Ask the owning team for review as soon as an agent’s pull request opens.',
       'When the fix merges, tell the channel or the customer it has shipped.',
     ],
     triggers: [
@@ -248,7 +248,7 @@ export const WORK_CONNECTORS: Connector[] = [
       { id: 'comment-added', name: 'Asked in a comment', description: 'A comment on a frame mentions the bot.', outputs: PORTS.issueOut, fields: [FIELDS.text('mention', 'Mention', '@relay')], sample: taskSample('cmt_1901', 'Tighten the padding on the settings cards', 'https://www.figma.com/design/abc/Settings?node-id=4-2', '@relay the cards should use space-4 like the frame, not space-6.', { author: 'design@acme.com' }) },
     ],
     actions: [
-      { id: 'link-pr', name: 'Reply with the pull request', description: 'Reply on the frame\'s thread with the implementing PR, so design can review the preview.', inputs: PORTS.changeIn, fields: [FIELDS.template('body', 'Comment', 'Implemented in {{run.prUrl}}. Preview is on the PR.')] },
+      { id: 'link-pr', name: 'Reply with the pull request', description: 'Reply on the frame’s thread with the implementing PR, so design can review the preview.', inputs: PORTS.changeIn, fields: [FIELDS.template('body', 'Comment', 'Implemented in {{run.prUrl}}. Preview is on the PR.')] },
     ],
   }),
 ];

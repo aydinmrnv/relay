@@ -122,6 +122,34 @@ export function wrapWithOsSandbox(
 }
 
 /**
+ * What to say when the wrapper itself is what failed, or undefined when the
+ * failure was the CLI's own.
+ *
+ * A sandbox that is installed and cannot start — bubblewrap on a machine that
+ * restricts unprivileged user namespaces, `sandbox-exec` inside another
+ * sandbox — fails the turn before the CLI ever runs, and the turn is not
+ * quietly run without it: somebody installed that sandbox on purpose. But
+ * "claude exited with code 1" sends the reader to the wrong program. The
+ * wrapper's own complaint is recognisable by its prefix, and the way out is one
+ * environment variable, so both are said.
+ */
+export function describeSandboxFailure(mechanism: SandboxMechanism, stderr: string): string | undefined {
+  const prefix = mechanism === 'bubblewrap' ? 'bwrap:' : 'sandbox-exec:';
+  const complaint = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(prefix));
+  if (complaint === undefined) return undefined;
+  return (
+    `the OS sandbox around this read-only turn could not start (${complaint}). ` +
+    (mechanism === 'bubblewrap'
+      ? 'bubblewrap needs unprivileged user namespaces, which some systems restrict (Ubuntu 24.04 does by default). '
+      : '') +
+    'Fix the sandbox, or set RELAY_NO_OS_SANDBOX=1 to run read-only turns on the tool deny list alone.'
+  );
+}
+
+/**
  * Wraps a read-only turn in the platform's OS sandbox, or returns the
  * invocation untouched with the reason it could not — which the harness must
  * surface, because a sandbox that silently is not there is the failure mode

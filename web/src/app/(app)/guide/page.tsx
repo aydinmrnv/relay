@@ -1,7 +1,11 @@
 import type { Metadata } from 'next';
 import { GuideView } from '@/components/guide/guide-view';
 
-export const metadata: Metadata = { title: 'Guide' };
+export const metadata: Metadata = {
+  title: 'Guide',
+  description: 'How Relay works: what a workflow is made of, what happens between a ticket and a pull request, what is real today and what is simulated.',
+  alternates: { canonical: '/guide' },
+};
 
 /**
  * "What does everything do": the getting-started path, the anatomy of a

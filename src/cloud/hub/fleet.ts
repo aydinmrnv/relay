@@ -29,10 +29,31 @@ import { CloudError, type CloudDriver, type CloudMachine } from './driver.ts';
  *   - **Nothing stuck.** A machine that is running but never dials in is
  *     restarted once, then put to sleep with an error the person can see. A
  *     machine left `stopped` (still billed) is deallocated.
+ *   - **Awake on the hub's evidence, not only the runner's word.** A runner
+ *     says whether it is busy, and that keeps its machine awake; but the
+ *     runner is a machine running code an agent wrote. So two clocks only the
+ *     hub can move bound it: how long since a person last asked the machine
+ *     for anything (`maxUnattendedMs`), and how long the machine has been
+ *     awake today (`dailyAwakeMs`).
+ *   - **Only for people who are let in.** `admit` is asked on every wake and
+ *     every tick, not only when a machine is first made: someone taken off the
+ *     list cannot start their machine again, and one that is awake is put to
+ *     sleep. Its disk and sign-ins stay until the operator, or the person,
+ *     removes it.
  *
  * A runner that dials in without a cloud machine behind it — someone's own
  * server, or a development VM with a token minted by hand — is "unmanaged":
- * routed to like any other, never started or stopped.
+ * routed to like any other, never started or stopped. A person has one or
+ * the other: a runner of their own is refused while the hub manages a
+ * machine for them, so it can never take that machine's place and leave the
+ * VM awake outside the allow-list and the limits.
+ *
+ * The fleet is also what decides whether a runner's token is still good
+ * (`admits`). Each managed machine has one current token. It is re-issued
+ * whenever the machine is made or started, and its id is kept on the machine
+ * in the cloud, so the rule survives a hub restart: a token from an earlier
+ * start, or for a machine that has been removed, or presented while the hub
+ * has the machine asleep, is refused however good its signature is.
  */
 
 export type RunnerState = CloudRunnerState;
@@ -50,12 +71,31 @@ export interface FleetOptions {
   coresPerRunner: number;
   /** Machine names are `<prefix>-<hash of the user id>`. */
   namePrefix?: string;
-  tokenFor: (runner: string, userId: string) => string;
+  /** A new runner token for a machine, and that token's id. Called for every create and every start. */
+  tokenFor: (runner: string, userId: string) => { token: string; id: string };
   /** Null to admit, or the reason a person may not have a machine. */
   admit?: (userId: string) => string | null;
+  /** Machines the hub will ever make, asleep ones included. */
   maxMachines?: number;
   idleMs?: number;
   pressureIdleMs?: number;
+  /**
+   * How long a machine may stay awake with no request from a person reaching
+   * it through the hub, whatever its runner reports. Long enough for a queue
+   * of runs someone started and walked away from; short enough that a runner
+   * claiming to be busy for ever is not believed for ever.
+   *
+   * Said plainly, because it stops real work: a run, or a queue of runs, that
+   * goes on for longer than this with nobody starting, stopping or signing in
+   * to anything is stopped with the machine. Reading does not count, and that
+   * includes following a run's stream: the stream being open says a browser
+   * tab is, and the records in it are the runner's own word, which is the
+   * thing this limit exists not to take. Raise the limit for longer work
+   * (`RELAY_CLOUD_MAX_UNATTENDED_MINUTES`); the daily allowance still applies.
+   */
+  maxUnattendedMs?: number;
+  /** How long one person's machine may be awake in a UTC day. Zero for no limit. Kept in memory: a hub restart starts the day again. */
+  dailyAwakeMs?: number;
   /** How long a started machine has to dial in; a first boot installs everything and gets longer. */
   bootTimeoutMs?: number;
   firstBootTimeoutMs?: number;
@@ -66,7 +106,7 @@ export interface FleetOptions {
 }
 
 export interface FleetEvent {
-  kind: 'create' | 'start' | 'restart' | 'deallocate' | 'remove' | 'connected' | 'disconnected' | 'queued' | 'error' | 'reconciled';
+  kind: 'create' | 'start' | 'restart' | 'deallocate' | 'remove' | 'connected' | 'disconnected' | 'queued' | 'error' | 'reconciled' | 'revoked';
   userId?: string;
   runner?: string;
   region?: string;
@@ -87,6 +127,10 @@ interface Machine {
   /** Requests the hub is carrying to this runner right now, and the streams it is following. */
   inflight: number;
   lastUsedAt: number;
+  /** When a person last asked this machine for something through the hub. The runner's own reports never move it. */
+  lastAskedAt: number;
+  /** Whether it has been said, once, that this machine's owner is no longer admitted. */
+  revokedSaid: boolean;
   /** Someone asked for it to be awake and it is not yet. */
   wanted: boolean;
   wantedAt: number;
@@ -99,9 +143,34 @@ interface Machine {
   busy: boolean;
   /** Not before this time: a create or start the cloud refused. */
   retryAt: number;
+  /** The id of the one runner token this machine may present, or null when it has none the hub will take. */
+  tokenId: string | null;
+  /** Set when the machine is removed: its token stays refused whatever the cloud still lists. */
+  tokenRevoked: boolean;
+  /** How many times removal has been asked for. A create or start that was in flight compares it before and after. */
+  removals: number;
 }
 
+/** What `Fleet.admits` needs of a runner token. */
+export interface PresentedToken {
+  runner: string;
+  userId: string;
+  kind: 'managed' | 'own';
+  id: string;
+}
+
+export type Admission = { ok: true } | { ok: false; status: 401 | 409 | 503; reason: string };
+
 const IDLE_ACTIVITY: RunnerActivity = { runs: 0, queued: 0, logins: 0 };
+/**
+ * Machines the hub will ever make unless told otherwise. One number, used by
+ * the fleet, by `relay hub serve` and (by leaving the setting out) by
+ * `scripts/azure/deploy-hub.sh`. Sized for an invite-only beta: each machine
+ * is a disk that bills whether or not it is awake.
+ */
+export const DEFAULT_MAX_MACHINES = 10;
+/** Past its daily allowance a machine may finish what it is doing for this long, and is then stopped. */
+const DAILY_OVERRUN_MS = 30 * 60_000;
 /** How long the fleet trusts its own last step over a listing that contradicts it. */
 const SETTLE_MS = 90_000;
 /** Extra time a runner that dropped mid-run gets to come back before its machine is restarted under it. */
@@ -142,18 +211,24 @@ export class Fleet {
   private listedOnce = false;
   private lastListed = -1;
   private ticking = false;
+  /** Awake time per person for the current UTC day. */
+  private readonly awake = new Map<string, { day: string; ms: number }>();
+  private accruedAt: number;
 
   constructor(options: FleetOptions) {
     this.options = {
       namePrefix: 'relay',
-      maxMachines: 50,
+      maxMachines: DEFAULT_MAX_MACHINES,
       idleMs: 10 * 60_000,
       pressureIdleMs: 2 * 60_000,
+      maxUnattendedMs: 6 * 60 * 60_000,
+      dailyAwakeMs: 12 * 60 * 60_000,
       bootTimeoutMs: 6 * 60_000,
       firstBootTimeoutMs: 25 * 60_000,
       retryMs: 60_000,
       ...options,
     };
+    this.accruedAt = this.now();
   }
 
   private now(): number {
@@ -213,14 +288,60 @@ export class Fleet {
     if (machine === undefined) return () => undefined;
     const touch = options.touch !== false;
     machine.inflight += 1;
-    if (touch) machine.lastUsedAt = this.now();
+    if (touch) machine.lastUsedAt = machine.lastAskedAt = this.now();
     let done = false;
     return () => {
       if (done) return;
       done = true;
       machine.inflight = Math.max(0, machine.inflight - 1);
-      if (touch) machine.lastUsedAt = this.now();
+      if (touch) machine.lastUsedAt = machine.lastAskedAt = this.now();
     };
+  }
+
+  /**
+   * Null when this person may put new work on their machine, or why not: they
+   * are no longer admitted, or their machine has been awake for today's
+   * allowance. The hub asks before it carries a request that starts something.
+   */
+  refusal(userId: string): string | null {
+    const machine = this.machines.get(userId);
+    if (machine !== undefined && !machine.managed) return null;
+    if (this.options.driver === null) return null;
+    return this.options.admit?.(userId) ?? this.overAllowance(userId);
+  }
+
+  private overAllowance(userId: string): string | null {
+    const limit = this.options.dailyAwakeMs;
+    if (limit <= 0 || this.awakeToday(userId) < limit) return null;
+    const hours = Math.round((limit / 3_600_000) * 10) / 10;
+    return `Your cloud machine has been awake for today's ${hours} hour${hours === 1 ? '' : 's'}. It can start again after midnight UTC; until then, run on your own computer with \`relay connect\`.`;
+  }
+
+  /** How long this person's machine has been awake since midnight UTC. */
+  awakeToday(userId: string): number {
+    const entry = this.awake.get(userId);
+    return entry !== undefined && entry.day === this.day() ? entry.ms : 0;
+  }
+
+  private day(): string {
+    return new Date(this.now()).toISOString().slice(0, 10);
+  }
+
+  /** Adds the time since the last tick to every machine that is holding CPUs. */
+  private accrue(): void {
+    const now = this.now();
+    const since = this.accruedAt;
+    this.accruedAt = now;
+    if (now <= since) return;
+    const day = this.day();
+    for (const machine of this.machines.values()) {
+      if (!machine.managed) continue;
+      if (machine.state !== 'ready' && machine.state !== 'starting' && machine.state !== 'creating') continue;
+      const entry = this.awake.get(machine.userId);
+      if (entry === undefined || entry.day !== day) this.awake.set(machine.userId, { day, ms: now - since });
+      else entry.ms += now - since;
+    }
+    for (const [userId, entry] of this.awake) if (entry.day !== day) this.awake.delete(userId);
   }
 
   /** Asks for the person's machine to be awake: made if they have none, started if asleep, queued if the region is full. */
@@ -236,9 +357,12 @@ export class Fleet {
     if (!this.listedOnce) await this.reconcile().catch(() => undefined);
     machine = this.machines.get(userId);
 
+    // Asked every time, not only before a first machine is made: someone
+    // taken off the list keeps their machine's disk, but cannot start it.
+    const refusal = this.options.admit?.(userId) ?? this.overAllowance(userId);
+    if (refusal !== null) return { ...this.status(userId), error: refusal };
+
     if (machine === undefined) {
-      const refusal = this.options.admit?.(userId) ?? null;
-      if (refusal !== null) return { ...this.status(userId), error: refusal };
       const managed = [...this.machines.values()].filter((entry) => entry.managed).length;
       if (managed >= this.options.maxMachines) {
         return { ...this.status(userId), error: 'Relay Cloud is full right now. Try again later, or run on your own machine with `relay connect`.' };
@@ -247,7 +371,7 @@ export class Fleet {
       machine.state = 'none';
     }
 
-    machine.lastUsedAt = this.now();
+    machine.lastUsedAt = machine.lastAskedAt = this.now();
     if (machine.state === 'ready' || machine.state === 'creating' || machine.state === 'starting' || machine.state === 'deleting') return this.status(userId);
     if (!machine.wanted) {
       machine.wanted = true;
@@ -299,7 +423,16 @@ export class Fleet {
     if (machine === undefined || !machine.managed || this.options.driver === null) return this.status(userId);
     machine.wanted = false;
     this.dequeue(machine);
-    if (machine.cloud === null && machine.state === 'none') {
+    // First, and whatever the cloud then says: the machine's token is no
+    // longer one the hub takes. The VM lives on for some seconds while Azure
+    // deletes it, and its runner would otherwise dial straight back in.
+    machine.tokenId = null;
+    machine.tokenRevoked = true;
+    // A create or a start may be in flight for this machine right now. It
+    // sees this count change when it lands, and removes what it made.
+    machine.removals += 1;
+    const inFlight = machine.busy;
+    if (machine.cloud === null && machine.state === 'none' && !inFlight) {
       this.forget(machine);
       return this.status(userId);
     }
@@ -314,7 +447,8 @@ export class Fleet {
         this.log({ kind: 'error', userId, runner: machine.name, message: machine.error });
       }
     } finally {
-      machine.busy = false;
+      // Still busy if another call owns the flag: it clears it when it is done.
+      machine.busy = inFlight;
     }
     machine.link?.close(4410, 'machine removed');
     return this.status(userId);
@@ -325,22 +459,75 @@ export class Fleet {
   /* -------------------------------------------------------------- */
 
   /**
+   * Whether a runner token that carries a good signature may connect.
+   *
+   * A signature only says the hub made the token at some point. What the
+   * hub has to know is whether it is the token the machine holds *now*:
+   *
+   *   - **A managed machine's token** must be the one the fleet last issued
+   *     for that machine. Every create and every start issues a new one, so a
+   *     token copied off a machine is good until that machine next sleeps and
+   *     wakes, and no longer; and removing a machine ends its token at once.
+   *   - **The machine must be one the hub expects to hear from**: being made,
+   *     starting, or already connected. A copied token presented while the
+   *     machine sleeps would otherwise turn "asleep" into "ready", and the
+   *     person's requests would go to whoever presented it.
+   *   - **A hand-minted token** (`own`) cannot name a managed machine, so it is
+   *     never a way around the first two rules. It is good until it expires.
+   *
+   * 503 is for a hub that has not read its machines from the cloud yet: the
+   * runner is told to come back, not that its token is bad.
+   */
+  admits(token: PresentedToken): Admission {
+    const managedName = this.options.driver === null ? null : runnerName(this.options.namePrefix, token.userId);
+    if (token.kind === 'own') {
+      if (managedName === null) return { ok: true };
+      if (token.runner === managedName) return { ok: false, status: 401, reason: 'That name belongs to the machine the hub makes for this person.' };
+      // A person is served by a machine the hub manages or by a runner of
+      // their own, never both. The managed machine is the one that is
+      // admitted, limited and put to sleep; a runner of their own taking its
+      // place would be none of those. Until the hub has read its machines it
+      // cannot tell which this person has, so it says "later".
+      if (!this.listedOnce) return { ok: false, status: 503, reason: 'The hub has not read its machines yet. Try again in a moment.' };
+      if (this.machines.get(token.userId)?.managed === true) {
+        return { ok: false, status: 409, reason: 'This person has a machine the hub manages. Remove it before connecting a runner of their own.' };
+      }
+      return { ok: true };
+    }
+    if (managedName === null || token.runner !== managedName) return { ok: false, status: 401, reason: 'This hub manages no machine by that name.' };
+    if (!this.listedOnce) return { ok: false, status: 503, reason: 'The hub has not read its machines yet. Try again in a moment.' };
+    const machine = this.machines.get(token.userId);
+    if (machine === undefined || machine.tokenId === null) return { ok: false, status: 401, reason: 'That machine has no token this hub takes: it was removed, or made by an earlier hub.' };
+    // Ids are not secret, so there is nothing for timing to give away here.
+    if (machine.tokenId !== token.id) return { ok: false, status: 401, reason: 'That runner token is from an earlier start of this machine.' };
+    if (machine.state !== 'creating' && machine.state !== 'starting' && machine.state !== 'ready' && machine.state !== 'stopping') {
+      return { ok: false, status: 409, reason: 'The hub has not asked this machine to be awake.' };
+    }
+    return { ok: true };
+  }
+
+  /**
    * A runner dialed in. False when the fleet is putting that machine to sleep:
    * its runner reconnects in the seconds before the power goes, and must not
    * be mistaken for a machine that is awake.
    */
   connected(identity: { runner: string; userId: string }, link: FleetLink, activity: RunnerActivity): boolean {
     let machine = this.machines.get(identity.userId);
-    if (machine !== undefined && machine.managed && machine.name === identity.runner && machine.state === 'stopping') return false;
-    if (machine === undefined) {
-      const managedName = this.options.driver === null ? null : runnerName(this.options.namePrefix, identity.userId);
-      machine = this.track(identity.userId, identity.runner, null, identity.runner === managedName);
+    const managedName = this.options.driver === null ? null : runnerName(this.options.namePrefix, identity.userId);
+    // The same rules `admits` applied when the socket opened, applied again
+    // now that the runner has said hello: the machine may have been put to
+    // sleep, removed or forgotten in the seconds between the two.
+    if (identity.runner === managedName) {
+      // The managed machine's own runner: only for a machine the fleet is
+      // tracking, has not removed, and expects to hear from.
+      if (machine === undefined || !machine.managed || machine.name !== identity.runner || machine.tokenRevoked) return false;
+      if (machine.state !== 'creating' && machine.state !== 'starting' && machine.state !== 'ready') return false;
+    } else if (machine !== undefined && machine.managed) {
+      // A runner of the person's own never stands in for their managed machine.
+      return false;
     }
+    if (machine === undefined) machine = this.track(identity.userId, identity.runner, null, false);
     if (machine.link !== null && machine.link !== link) machine.link.close(4409, 'replaced by a newer connection');
-    if (machine.name !== identity.runner && machine.managed) {
-      // A hand-started runner for someone whose managed machine is asleep: route to it.
-      machine.managed = false;
-    }
     machine.link = link;
     machine.connectedOnce = true;
     machine.firstBoot = false;
@@ -404,9 +591,20 @@ export class Fleet {
         machine.bootedAt = this.now();
         machine.firstBoot = cloud.createdAt !== null && this.now() - cloud.createdAt < this.options.firstBootTimeoutMs;
       }
-      if (!machine.managed && machine.link !== null) continue;
+      if (!machine.managed) {
+        // The cloud holds a machine for this person, so the hub manages them.
+        // A runner of their own that connected first is let go: it would keep
+        // the managed machine from being admitted, limited or put to sleep.
+        const own = machine.link;
+        machine.link = null;
+        own?.close(4409, 'this person has a machine the hub manages');
+        if (own !== null) this.log({ kind: 'disconnected', userId: machine.userId, runner: machine.name, message: `${machine.name} was disconnected: ${cloud.name} is this person's managed machine.` });
+      }
       machine.managed = true;
       machine.cloud = cloud;
+      // What the fleet issued itself is what it knows best; the cloud's record
+      // is for a hub that has just started and remembers nothing.
+      if (machine.tokenId === null && !machine.tokenRevoked) machine.tokenId = cloud.tokenId;
       machine.region = cloud.region;
       if (machine.name !== cloud.name) {
         this.byName.delete(machine.name);
@@ -497,9 +695,47 @@ export class Fleet {
     this.ticking = true;
     try {
       const now = this.now();
+      this.accrue();
       for (const machine of [...this.machines.values()]) {
         if (!machine.managed || machine.busy) continue;
         const cloud = machine.cloud;
+        const awake = machine.state === 'ready' || machine.state === 'starting' || machine.state === 'creating';
+
+        // Someone who is no longer admitted: nothing of theirs stays awake or
+        // waits to be. The machine itself is left for the operator to remove.
+        const revoked = this.options.admit?.(machine.userId) ?? null;
+        if (revoked !== null) {
+          machine.wanted = false;
+          this.dequeue(machine);
+          if (!machine.revokedSaid) {
+            machine.revokedSaid = true;
+            this.log({ kind: 'revoked', userId: machine.userId, runner: machine.name, message: `${machine.name} belongs to someone who is no longer admitted. It stays asleep; remove it with DELETE /admin/v1/runners/<user id> to delete its disk and sign-ins.` });
+          }
+          if (awake) {
+            machine.error = revoked;
+            await this.deallocate(machine, 'its owner is no longer admitted');
+            continue;
+          }
+          if (machine.state === 'queued') this.transition(machine, machine.cloud === null ? 'none' : 'asleep');
+        } else machine.revokedSaid = false;
+
+        // The two limits a runner cannot talk its way past.
+        if (machine.state === 'ready' && now - machine.lastAskedAt >= this.options.maxUnattendedMs) {
+          const hours = Math.round(this.options.maxUnattendedMs / 360_000) / 10;
+          machine.error = `Your machine was put to sleep: nobody had asked it for anything in ${hours} hour${hours === 1 ? '' : 's'}. Anything still running on it was stopped.`;
+          await this.deallocate(machine, `nothing asked of it for ${hours} hours`);
+          continue;
+        }
+        if (awake && this.options.dailyAwakeMs > 0) {
+          const used = this.awakeToday(machine.userId);
+          const over = used >= this.options.dailyAwakeMs;
+          if (over && (used >= this.options.dailyAwakeMs + DAILY_OVERRUN_MS || (machine.state === 'ready' && this.idle(machine)))) {
+            machine.error = this.overAllowance(machine.userId);
+            machine.wanted = false;
+            await this.deallocate(machine, 'awake for its daily allowance');
+            continue;
+          }
+        }
 
         // Stopped but still allocated: finish the job, or it keeps billing.
         if (cloud?.power === 'stopped' && machine.link === null) {
@@ -693,6 +929,7 @@ export class Fleet {
     const driver = this.options.driver;
     if (driver === null || machine.region === null) return;
     const exists = machine.cloud !== null;
+    const removals = machine.removals;
     machine.busy = true;
     try {
       if (exists && machine.cloud?.provisioning === 'failed') {
@@ -703,19 +940,33 @@ export class Fleet {
         this.log({ kind: 'remove', userId: machine.userId, runner: machine.name, message: `Removing ${machine.name}, which Azure failed to make, to make it again.` });
         return;
       }
+      // A new token for every create and every start. If the cloud does not
+      // take it, the machine is not started: starting it on the token it had
+      // would leave an old token good for another stretch of being awake.
+      const issued = this.options.tokenFor(machine.name, machine.userId);
       if (!exists) {
-        await driver.create({ name: machine.name, userId: machine.userId, region: machine.region, token: this.options.tokenFor(machine.name, machine.userId) });
+        await driver.create({ name: machine.name, userId: machine.userId, region: machine.region, token: issued.token, tokenId: issued.id });
+        if (machine.removals !== removals) return await this.undo(machine, 'it was removed while it was being made');
+        machine.tokenId = issued.id;
+        machine.tokenRevoked = false;
         machine.firstBoot = true;
         this.transition(machine, 'creating');
         this.log({ kind: 'create', userId: machine.userId, runner: machine.name, region: machine.region, message: `Making ${machine.name} in ${machine.region}.` });
       } else {
+        await driver.rotateToken({ name: machine.name, region: machine.region, userId: machine.userId }, issued);
+        if (machine.removals !== removals) return await this.undo(machine, 'it was removed while it was being started');
+        machine.tokenId = issued.id;
+        machine.tokenRevoked = false;
         await driver.start({ name: machine.name, region: machine.region });
+        if (machine.removals !== removals) return await this.undo(machine, 'it was removed while it was being started');
         this.transition(machine, machine.firstBoot ? 'creating' : 'starting');
         this.log({ kind: 'start', userId: machine.userId, runner: machine.name, region: machine.region, message: `Starting ${machine.name}.` });
       }
       machine.bootedAt = this.now();
       machine.error = null;
     } catch (error) {
+      // Removed while the call was in flight: the failure is the removal's doing, and nothing is tried again.
+      if (machine.removals !== removals) return;
       const kind = error instanceof CloudError ? error.kind : 'transient';
       if (kind === 'quota' || kind === 'capacity') {
         // Someone else took the room, or Azure has none of this size here right now.
@@ -741,6 +992,29 @@ export class Fleet {
     }
   }
 
+  /**
+   * The person removed their machine while the cloud was still making or
+   * starting it. The removal's own delete found nothing, or was overtaken, so
+   * what this call made is deleted now: a removal is never undone by a
+   * request that was already on its way.
+   */
+  private async undo(machine: Machine, why: string): Promise<void> {
+    machine.tokenId = null;
+    machine.tokenRevoked = true;
+    machine.wanted = false;
+    this.dequeue(machine);
+    this.transition(machine, 'deleting');
+    try {
+      await this.options.driver?.remove({ name: machine.name, region: machine.region ?? '' });
+      this.log({ kind: 'remove', userId: machine.userId, runner: machine.name, message: `Removing ${machine.name}: ${why}.` });
+    } catch (error) {
+      if (!(error instanceof CloudError && error.kind === 'not-found')) {
+        machine.error = `Could not remove your machine: ${errorMessage(error)}`;
+        this.log({ kind: 'error', userId: machine.userId, runner: machine.name, message: machine.error });
+      }
+    }
+  }
+
   /* -------------------------------------------------------------- */
 
   private track(userId: string, name: string, region: string | null, managed: boolean): Machine {
@@ -757,6 +1031,8 @@ export class Fleet {
       activity: { ...IDLE_ACTIVITY },
       inflight: 0,
       lastUsedAt: this.now(),
+      lastAskedAt: this.now(),
+      revokedSaid: false,
       wanted: false,
       wantedAt: 0,
       bootedAt: 0,
@@ -765,6 +1041,9 @@ export class Fleet {
       error: null,
       busy: false,
       retryAt: 0,
+      tokenId: null,
+      tokenRevoked: false,
+      removals: 0,
     };
     this.machines.set(userId, machine);
     this.byName.set(name, userId);
@@ -781,6 +1060,15 @@ export class Fleet {
     if (machine.state === state) return;
     machine.state = state;
     machine.since = this.now();
+  }
+
+  /** Managed machines whose owners are no longer admitted: the operator's list of what to remove. */
+  revoked(): Array<{ userId: string; runner: string; state: RunnerState; region: string | null }> {
+    const admit = this.options.admit;
+    if (admit === undefined) return [];
+    return [...this.machines.values()]
+      .filter((machine) => machine.managed && admit(machine.userId) !== null)
+      .map((machine) => ({ userId: machine.userId, runner: machine.name, state: machine.state, region: machine.region }));
   }
 
   /** A summary for the operator: counts by state and region. */

@@ -10,17 +10,6 @@ export function timeAgo(iso: string, now = Date.now()): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export function formatDuration(startIso: string, endIso?: string): string {
-  if (endIso === undefined) return 'running';
-  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
-  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  if (minutes < 60) return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
-}
-
 export function formatUsd(value: number): string {
   return `$${value.toFixed(2)}`;
 }

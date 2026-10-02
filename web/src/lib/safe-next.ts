@@ -11,7 +11,11 @@ export function safeNext(value: string | null | undefined, fallback: string): st
   try {
     const base = 'http://relay.invalid';
     const url = new URL(value, base);
-    return url.origin === base ? `${url.pathname}${url.search}${url.hash}` : fallback;
+    if (url.origin !== base) return fallback;
+    // Resolving removes dot segments, so `/.//evil.example` passes the check
+    // above and comes out as `//evil.example`: the result is checked too.
+    const path = `${url.pathname}${url.search}${url.hash}`;
+    return path.startsWith('//') ? fallback : path;
   } catch {
     return fallback;
   }

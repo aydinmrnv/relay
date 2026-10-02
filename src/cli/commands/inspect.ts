@@ -446,42 +446,81 @@ export async function watchCommand(
   const intervalMs = Math.max(250, Number.parseInt(options.interval ?? '1000', 10) || 1000);
   let seen = 0;
 
-  const renderer = json ? undefined : rendererFor(initial);
+  // Ctrl-C here means "stop watching", and nothing else: the run belongs to
+  // another process and is not this command's to cancel. The display reads
+  // single keys in raw mode, where Ctrl-C is a keystroke rather than a signal,
+  // so it is the display that has to say when to leave — a watch that only
+  // waited for SIGINT could not be exited from the keyboard at all.
+  const leaving = new AbortController();
+  const renderer = json ? undefined : rendererFor(initial, {}, { onInterrupt: () => leaving.abort() });
   renderer?.start();
 
-  for (;;) {
-    const events = await store.readEvents();
-    for (const event of events.slice(seen)) {
-      if (json) {
-        emitJsonLine('watch', { type: 'event', runId: initial.runId, event: eventToJson(event) });
-        continue;
+  // The display has the terminal in raw mode and is reading it. Whatever ends
+  // this loop has to give it back — including an event log that will not
+  // parse or a run directory deleted mid-watch, which leave by throwing.
+  // Otherwise stdin stays flowing and holds the process open after the command
+  // has failed, in a terminal still in raw mode — where Ctrl-C is a keystroke
+  // nobody is reading any more. `close` does nothing the second time.
+  try {
+    for (;;) {
+      const events = await store.readEvents();
+      for (const event of events.slice(seen)) {
+        if (json) {
+          emitJsonLine('watch', { type: 'event', runId: initial.runId, event: eventToJson(event) });
+          continue;
+        }
+        replayEvents([event], renderer!);
       }
-      replayEvents([event], renderer!);
-    }
-    seen = events.length;
+      seen = events.length;
 
-    const state = await store.loadState();
-    if (isTerminal(state.phase)) {
-      // The same verdict `relay run` would have exited with, so watching a run
-      // from another terminal answers the same question the run itself did.
-      const code = exitCodeForRun(state, await landingOf(cli.repo.root, state));
-      if (json) {
-        emitJsonLine('watch', {
-          type: 'finished',
-          runId: state.runId,
-          phase: state.phase,
-          phaseLabel: phaseLabel(state.phase),
-          exitCode: code,
-        });
+      const state = await store.loadState();
+      // The display was built around the first snapshot. Folding each new one in
+      // keeps the diff, cost and findings it shows as current as its phases.
+      Object.assign(initial, state);
+      if (isTerminal(state.phase)) {
+        // The same verdict `relay run` would have exited with, so watching a run
+        // from another terminal answers the same question the run itself did.
+        const code = exitCodeForRun(state, await landingOf(cli.repo.root, state));
+        if (json) {
+          emitJsonLine('watch', {
+            type: 'finished',
+            runId: state.runId,
+            phase: state.phase,
+            phaseLabel: phaseLabel(state.phase),
+            exitCode: code,
+          });
+          return code;
+        }
+        renderer!.finish(state.phase);
+        if (state.config.notify.bell && process.stdout.isTTY) process.stdout.write('\u0007');
         return code;
       }
-      renderer!.finish(state.phase);
-      if (state.config.notify.bell && process.stdout.isTTY) process.stdout.write('\u0007');
-      return code;
-    }
 
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      if (await interrupted(leaving.signal, intervalMs)) {
+        renderer?.close();
+        out(dim(`Stopped watching ${state.runId}. The run itself is untouched — \`relay stop ${state.runId}\` cancels it.`));
+        return EXIT.cancelled;
+      }
+    }
+  } finally {
+    renderer?.close();
   }
+}
+
+/** Waits out one poll interval. True when the signal fired first. */
+function interrupted(signal: AbortSignal, ms: number): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(false);
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export async function planCommand(runRef: string, options: { json?: boolean } = {}): Promise<number> {

@@ -2,14 +2,15 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { Duplex } from 'node:stream';
+import { pipeline, type Duplex } from 'node:stream';
 
 import { tokensMatch } from '../../studio/pairing.ts';
 import { PROTOCOL_VERSION, type HelloResponse, type RunStreamRecord } from '../../studio/protocol.ts';
+import { decodeSegment, parseRequestTarget } from '../../studio/router.ts';
 import { errorMessage } from '../../util/errors.ts';
-import { parseFrame, type RunnerFrame } from '../frames.ts';
+import { FrameError, parseRunnerFrame } from '../frames.ts';
 import { acceptWebSocket, isWebSocketUpgrade, refuseUpgrade } from '../ws.ts';
-import { AuthError, bearer, mintRunnerToken, verifyRunnerToken, type SessionClaims } from './auth.ts';
+import { AuthError, bearer, DEFAULT_OWN_TOKEN_TTL_MS, mintRunnerToken, verifyRunnerToken, type RunnerToken, type SessionClaims } from './auth.ts';
 import type { Fleet } from './fleet.ts';
 import { LinkLost, RunnerLink } from './link.ts';
 
@@ -54,7 +55,10 @@ export interface HubLogEntry {
 
 export interface HubOptions {
   fleet: Fleet;
+  /** Signs runner tokens. */
   secret: string;
+  /** Earlier secrets, whose tokens are still read while the machines holding them are re-keyed. */
+  previousSecrets?: readonly string[];
   sessions: SessionVerifier;
   /** Studio origins allowed to call from a browser. */
   origins: readonly string[];
@@ -63,6 +67,8 @@ export interface HubOptions {
   adminToken?: string | null;
   /** The Relay tarball runners install, served at `/runner/relay.tgz`. */
   tarballPath?: string | null;
+  /** The versions of the coding CLIs runner machines should have, stated beside the package so a changed pin reaches machines that already exist. */
+  cliVersions?: { claudeCode: string; codex: string };
   log?: (entry: HubLogEntry) => void;
   requestTimeoutMs?: number;
   /** How long a request that needs the machine waits for it to wake. */
@@ -72,6 +78,10 @@ export interface HubOptions {
   heartbeatMs?: number;
   /** Requests one person may have open at once. */
   maxInflightPerUser?: number;
+  /** Run streams one person may follow at once. A stream outlives the request that opened it, so it is counted on its own. */
+  maxStreamsPerUser?: number;
+  /** Bytes that may wait unread on a runner's socket, or on a browser's run stream, before it is cut. */
+  maxBuffered?: number;
 }
 
 export interface Hub {
@@ -83,6 +93,9 @@ export interface Hub {
 
 const MAX_BODY = 2_000_000;
 const MAX_FRAME = 4 * 1024 * 1024;
+/** The request line of anything the hub forwards; the runner's own limit is far above it. */
+const MAX_URL = 4_096;
+const FORWARDED_METHODS = new Set(['GET', 'POST', 'DELETE']);
 
 class HttpError extends Error {
   readonly status: number;
@@ -103,19 +116,46 @@ export function createHub(options: HubOptions): Hub {
   const resumeWindow = options.resumeWindowMs ?? 180_000;
   const heartbeatMs = options.heartbeatMs ?? 15_000;
   const maxInflight = options.maxInflightPerUser ?? 16;
+  const maxStreams = options.maxStreamsPerUser ?? 8;
+  const maxBuffered = options.maxBuffered ?? 16 * 1024 * 1024;
+  const streams = new Map<string, number>();
+  const secrets = [options.secret, ...(options.previousSecrets ?? [])];
   const links = new Map<string, RunnerLink>();
   const inflight = new Map<string, number>();
   const openResponses = new Set<ServerResponse>();
 
+  /**
+   * Nothing a caller sends may end the process. Every entry point — a request,
+   * an upgrade, a frame, a socket closing — runs inside a handler that turns a
+   * throw into an answer for that one caller, and none of these handlers can
+   * throw themselves: an exception here would be an unhandled rejection or an
+   * uncaught exception, and the hub going down takes every person's machine
+   * and every run stream with it. (`relay hub serve` adds process-level
+   * handlers as well, for whatever this still misses.)
+   */
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
-      const status = error instanceof HttpError ? error.status : error instanceof AuthError ? 401 : 500;
-      if (status === 500) log({ level: 'error', msg: 'request failed', path: pathOf(request), error: errorMessage(error) });
-      if (!response.headersSent) send(response, status, { error: errorMessage(error), ...(error instanceof HttpError ? error.extra : {}) });
-      else response.end();
+      try {
+        const status = error instanceof HttpError ? error.status : error instanceof AuthError ? 401 : 500;
+        // The path as sent, cut short: it may be the very thing that could not be parsed.
+        if (status === 500) log({ level: 'error', msg: 'request failed', path: pathOf(request) ?? (request.url ?? '').slice(0, 200), error: errorMessage(error) });
+        if (!response.headersSent) send(response, status, { error: errorMessage(error), ...(error instanceof HttpError ? error.extra : {}) });
+        else response.end();
+      } catch {
+        response.destroy();
+      }
     });
   });
-  server.on('upgrade', (request, socket, head) => onUpgrade(request, socket, head));
+  server.on('upgrade', (request, socket, head) => {
+    try {
+      onUpgrade(request, socket, head);
+    } catch (error) {
+      log({ level: 'error', msg: 'upgrade failed', error: errorMessage(error) });
+      socket.destroy();
+    }
+  });
+  // An error on the listening socket after start (out of file descriptors, say) is logged, not thrown.
+  server.on('error', (error) => log({ level: 'error', msg: 'server error', error: errorMessage(error) }));
   // Long-lived streams and sockets are the point; Node's defaults would cut them.
   server.requestTimeout = 0;
   server.headersTimeout = 30_000;
@@ -127,23 +167,53 @@ export function createHub(options: HubOptions): Hub {
 
   function onUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
     socket.on('error', () => undefined);
-    if (pathOf(request) !== '/v1/runner/connect') return refuseUpgrade(socket, 404, 'No such endpoint.');
+    const path = pathOf(request);
+    if (path === null) return refuseUpgrade(socket, 400, 'That is not a path.');
+    if (path !== '/v1/runner/connect') return refuseUpgrade(socket, 404, 'No such endpoint.');
     if (!isWebSocketUpgrade(request)) return refuseUpgrade(socket, 426, 'Connect with a WebSocket.');
-    const identity = verifyRunnerToken(options.secret, bearer(request.headers.authorization));
-    if (identity === null) {
+    const verified = verifyRunnerToken(secrets, bearer(request.headers.authorization));
+    if (verified === null) {
       log({ level: 'warn', msg: 'refused a runner: bad token', ip: request.socket.remoteAddress });
-      return refuseUpgrade(socket, 401, 'That runner token is not one this hub made.');
+      return refuseUpgrade(socket, 401, 'That runner token is not one this hub made, or it has expired.');
     }
-    const ws = acceptWebSocket(request, socket, head, { maxPayload: MAX_FRAME, pingIntervalMs: 20_000 });
+    // Signed by the hub is not the same as still good: the fleet knows which
+    // token each machine holds now (see `Fleet.admits`).
+    const admission = fleet.admits(verified);
+    if (!admission.ok) {
+      log({ level: 'warn', msg: 'refused a runner: its token is not current', runner: verified.runner, reason: admission.reason, ip: request.socket.remoteAddress });
+      return refuseUpgrade(socket, admission.status, admission.reason);
+    }
+    const identity: RunnerToken = verified;
+    const ws = acceptWebSocket(request, socket, head, { maxPayload: MAX_FRAME, pingIntervalMs: 20_000, maxBuffered });
     const link = new RunnerLink(ws, identity);
+    // A link the hub has decided to close is out of the routing table and out
+    // of the fleet's count at once. The socket can stay up for two more
+    // seconds while the close is exchanged, and for those seconds the fleet
+    // used to call the machine ready with nothing to reach it through.
+    link.onClosing = () => {
+      if (links.get(identity.userId) === link) links.delete(identity.userId);
+      fleet.disconnected(identity.userId, link);
+    };
     let greeted = false;
     const greeting = setTimeout(() => {
       if (!greeted) link.close(4408, 'no hello');
     }, 15_000);
     greeting.unref();
 
+    // A frame that is not what its type promises ends this connection and
+    // nothing else: the runner dials back, and no other person's link notices.
     ws.onMessage((text) => {
-      const frame = parseFrame<RunnerFrame>(text);
+      try {
+        onFrame(text);
+      } catch (error) {
+        const malformed = error instanceof FrameError;
+        log({ level: malformed ? 'warn' : 'error', msg: malformed ? 'closed a runner that sent a malformed frame' : 'a runner frame failed', runner: identity.runner, error: errorMessage(error) });
+        link.close(malformed ? 1007 : 1011, malformed ? 'malformed frame' : 'internal error');
+      }
+    });
+
+    function onFrame(text: string): void {
+      const frame = parseRunnerFrame(text);
       if (frame === null) return;
       if (frame.t === 'hello') {
         if (greeted) return;
@@ -152,14 +222,24 @@ export function createHub(options: HubOptions): Hub {
         link.hello = frame.hello;
         link.activity = frame.activity;
         const previous = links.get(identity.userId);
+        // Asked now: the fleet closes the earlier connection as it takes the new one.
+        const displaced = previous !== undefined && previous !== link && previous.open;
         links.set(identity.userId, link);
-        if (!fleet.connected(identity, link, frame.activity)) {
+        // Asked again, now that it has said hello: the token was good when the
+        // socket opened, and the machine may have been removed or put to sleep since.
+        if (!fleet.admits(identity).ok || !fleet.connected(identity, link, frame.activity)) {
           links.delete(identity.userId);
-          if (previous !== undefined) links.set(identity.userId, previous);
+          if (previous !== undefined && previous.open) links.set(identity.userId, previous);
           link.close(4000, 'going to sleep');
           return;
         }
-        if (previous !== undefined && previous !== link) previous.close(4409, 'replaced by a newer connection');
+        if (previous !== undefined && previous !== link) {
+          // Normal when a runner's network blinked and its old socket has not
+          // noticed. Two live holders of one token is also what a copied token
+          // looks like, so it is said, at a level someone reads.
+          if (displaced) log({ level: 'warn', msg: 'a runner connected while its earlier connection was still open; the earlier one is closed', runner: identity.runner });
+          previous.close(4409, 'replaced by a newer connection');
+        }
         ws.send(JSON.stringify({ t: 'welcome', runner: identity.runner }));
         log({ level: 'info', msg: 'runner connected', runner: identity.runner, version: frame.hello.version ?? null });
         return;
@@ -167,14 +247,20 @@ export function createHub(options: HubOptions): Hub {
       if (!greeted) return;
       if (frame.t === 'activity') {
         link.activity = frame.activity;
-        fleet.reportActivity(identity.userId, frame.activity);
+        // Only from the connection the fleet is routing to: one it refused or replaced says nothing about the machine.
+        if (links.get(identity.userId) === link) fleet.reportActivity(identity.userId, frame.activity);
         return;
       }
       link.receive(frame);
-    });
+    }
+
     ws.onClose((code) => {
       clearTimeout(greeting);
-      link.failAll();
+      try {
+        link.failAll();
+      } catch (error) {
+        log({ level: 'error', msg: 'failing the requests of a lost runner failed', runner: identity.runner, error: errorMessage(error) });
+      }
       if (links.get(identity.userId) === link) links.delete(identity.userId);
       fleet.disconnected(identity.userId, link);
       if (greeted) log({ level: 'info', msg: 'runner disconnected', runner: identity.runner, code });
@@ -187,11 +273,14 @@ export function createHub(options: HubOptions): Hub {
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const path = pathOf(request);
+    if (path === null) throw new HttpError(400, 'That is not a path.');
     const method = request.method ?? 'GET';
 
+    // Open to anyone, so it says the hub is up and nothing about who uses it:
+    // how many machines exist, are awake or are queued is the operator's to
+    // read, behind the admin token, at /admin/v1/fleet.
     if (path === '/healthz' && method === 'GET') {
-      const summary = fleet.summary();
-      send(response, 200, { ok: true, version: options.version, runners: { connected: links.size, machines: summary.machines, byState: summary.byState, queued: summary.queued } });
+      send(response, 200, { ok: true, version: options.version });
       return;
     }
     if (path === '/runner/relay.tgz' && (method === 'GET' || method === 'HEAD')) return serveTarball(response, method);
@@ -222,7 +311,7 @@ export function createHub(options: HubOptions): Hub {
     inflight.set(userId, open + 1);
     try {
       if (path.startsWith('/cloud/v1/')) return await cloud(request, response, method, path, userId);
-      return await proxy(request, response, method, userId);
+      return await proxy(request, response, method, path, userId);
     } finally {
       const now = (inflight.get(userId) ?? 1) - 1;
       if (now <= 0) inflight.delete(userId);
@@ -256,9 +345,11 @@ export function createHub(options: HubOptions): Hub {
     }
   }
 
-  async function proxy(request: IncomingMessage, response: ServerResponse, method: string, userId: string): Promise<void> {
+  async function proxy(request: IncomingMessage, response: ServerResponse, method: string, path: string, userId: string): Promise<void> {
     const url = request.url ?? '/';
-    const path = pathOf(request);
+    // Refused here rather than forwarded: the runner has nothing to answer them with.
+    if (!FORWARDED_METHODS.has(method)) throw new HttpError(405, 'Relay Cloud answers GET, POST and DELETE.');
+    if (url.length > MAX_URL) throw new HttpError(414, 'That address is longer than any the studio sends.');
 
     if (method === 'GET' && path.replace(/\/+$/, '') === '/v1/hello') {
       const status = fleet.status(userId);
@@ -273,13 +364,22 @@ export function createHub(options: HubOptions): Hub {
 
     const events = /^\/v1\/runs\/([^/]+)\/events\/?$/.exec(path);
     if (method === 'GET' && events !== null) {
-      const since = Number(new URL(url, 'http://hub.invalid').searchParams.get('since') ?? '0');
-      return followRun(response, userId, decodeURIComponent(events[1]!), Number.isInteger(since) && since > 0 ? since : 0);
+      const runId = decodeSegment(events[1]!);
+      if (runId === null) throw new HttpError(400, 'That is not a run.');
+      const since = Number(parseRequestTarget(url)?.searchParams.get('since') ?? '0');
+      return followRun(response, userId, runId, Number.isInteger(since) && since > 0 ? since : 0);
     }
 
     // The body is read first, so a request that waits for the machine to wake
     // is not also holding an unread upload open.
     const body = method === 'POST' ? await readJson(request) : (await drain(request), undefined);
+    // A request that starts something is refused for someone who is no longer
+    // admitted, or whose machine has had its day: stopping a run and reading
+    // are still allowed, so work in flight can be watched to its end.
+    if (method === 'POST') {
+      const refusal = fleet.refusal(userId);
+      if (refusal !== null) throw new HttpError(403, refusal, { cloud: fleet.status(userId) });
+    }
     const link = await runnerFor(userId, method === 'POST');
     const release = fleet.use(userId, { touch: method !== 'GET' });
     try {
@@ -318,87 +418,138 @@ export function createHub(options: HubOptions): Hub {
    * is back the hub asks again from the first record the browser has not seen.
    */
   function followRun(response: ServerResponse, userId: string, runId: string, since: number): void {
+    // A stream stays open long after `handle` has returned and given back the
+    // request's place in `inflight`, so streams have a count of their own:
+    // without one, a person could hold any number open.
+    // The browser may have gone while its session was being checked. Its
+    // `close` has then already fired, nothing below would ever hear it, and
+    // the stream's place would be held for good.
+    if (response.destroyed || response.closed || response.socket === null || response.socket.destroyed) return;
+    const open = streams.get(userId) ?? 0;
+    if (open >= maxStreams) throw new HttpError(429, 'Too many run streams open at once. Close a studio tab that is following a run.');
+    streams.set(userId, open + 1);
+
     let next = since;
-    let closed = false;
+    /** Nothing more is written, and the stream's place has been given back. */
+    let done = false;
     let cancel: (() => void) | null = null;
     let started = false;
+
+    /** Ends the stream's bookkeeping, once. False when it had already ended. */
+    const settle = (): boolean => {
+      if (done) return false;
+      done = true;
+      clearInterval(heartbeat);
+      cancel?.();
+      openResponses.delete(response);
+      const left = (streams.get(userId) ?? 1) - 1;
+      if (left <= 0) streams.delete(userId);
+      else streams.set(userId, left);
+      return true;
+    };
+    /** Ends it with a JSON answer if nothing was streamed yet, and by closing the stream if something was. */
+    const answer = (status: number, body: unknown): void => {
+      if (!settle()) return;
+      if (!started && !response.headersSent) send(response, status, body);
+      else response.end();
+    };
+    const finish = (): void => answer(503, { error: 'Your cloud machine is not connected.', cloud: fleet.status(userId) });
 
     const begin = (): void => {
       if (started) return;
       started = true;
       response.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      // Sent now, not with the first record: a run that is quiet for a while has still been found.
+      response.flushHeaders();
       openResponses.add(response);
     };
     const write = (record: RunStreamRecord): void => {
-      if (closed || response.writableEnded) return;
+      if (done || response.writableEnded) return;
       begin();
+      // A browser that has stopped reading gets no more: the records would
+      // wait in this process instead. The studio picks a cut stream back up
+      // from the first record it has not seen.
+      if (response.writableLength > maxBuffered) {
+        log({ level: 'warn', msg: 'cut a run stream nobody was reading', user: userId });
+        settle();
+        response.destroy();
+        return;
+      }
       response.write(`${JSON.stringify(record)}\n`);
     };
     const heartbeat = setInterval(() => {
       if (started) write({ seq: -1, type: 'ping' });
     }, heartbeatMs);
     heartbeat.unref();
-    const finish = (): void => {
-      if (closed) return;
-      closed = true;
-      clearInterval(heartbeat);
-      cancel?.();
-      openResponses.delete(response);
-      if (!started && !response.headersSent) send(response, 503, { error: 'Your cloud machine is not connected.', cloud: fleet.status(userId) });
-      else response.end();
-    };
     // The response's close, not the request's: a request's fires as soon as its (empty) body is read.
     response.on('close', () => {
-      if (!response.writableEnded) {
-        closed = true;
-        clearInterval(heartbeat);
-        cancel?.();
-        openResponses.delete(response);
-      }
+      settle();
     });
 
+    // The stream's steps run on their own, with nobody awaiting them: a step
+    // that throws ends this one stream instead of becoming an unhandled rejection.
+    const step = (work: () => Promise<void>): void => {
+      void work().catch((error: unknown) => {
+        log({ level: 'error', msg: 'following a run failed', user: userId, error: errorMessage(error) });
+        try {
+          finish();
+        } catch {
+          response.destroy();
+        }
+      });
+    };
+
+    const usable = (): boolean => links.get(userId)?.open === true;
+    const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /**
+     * Waits for a connection that can carry the stream, for as long as the
+     * resume window allows. "The fleet says ready" is not that: a link can be
+     * closing while the fleet still counts it. Waiting on the fleet's answer
+     * alone then resolves at once, every time, and this loop would run on
+     * resolved promises without the event loop ever turning — which froze
+     * the whole hub. So a wait that did not find a usable link sleeps on a
+     * real timer before it looks again.
+     */
     const waitForRunner = async (): Promise<void> => {
-      const back = await fleet.whenReady(userId, resumeWindow);
-      if (closed) return;
-      if (back) void attach();
-      else finish();
+      const deadline = Date.now() + resumeWindow;
+      for (;;) {
+        if (done) return;
+        if (usable()) return attach();
+        const left = deadline - Date.now();
+        if (left <= 0) return finish();
+        await fleet.whenReady(userId, left);
+        if (!usable()) await pause(Math.min(250, Math.max(1, deadline - Date.now())));
+      }
     };
 
     const attach = async (): Promise<void> => {
       const link = links.get(userId);
       if (link === undefined || !link.open) {
-        if (!started) {
-          // Nothing to resume: the first ask of a stream does not wait for a sleeping machine.
-          send(response, 503, { error: 'Your cloud machine is asleep.', cloud: fleet.status(userId) });
-          closed = true;
-          clearInterval(heartbeat);
-          return;
-        }
+        // Nothing to resume: the first ask of a stream does not wait for a sleeping machine.
+        if (!started) return answer(503, { error: 'Your cloud machine is asleep.', cloud: fleet.status(userId) });
+        // On a timer, never straight back: see `waitForRunner`.
+        await pause(50);
         return waitForRunner();
       }
       const follow = link.follow(
         `/v1/runs/${encodeURIComponent(runId)}/events?since=${next}`,
         (record) => {
           if (record.type === 'ping') return;
-          next = record.seq + 1;
+          next = Math.max(next, record.seq + 1);
           write(record);
         },
         (reason) => {
           if (reason === 'exit') finish();
-          else if (reason === 'lost' && !closed) void waitForRunner();
+          else if (reason === 'lost' && !done) step(waitForRunner);
         },
       );
       cancel = follow.cancel;
       try {
-        const answer = await follow.started;
-        if (closed) return follow.cancel();
-        if (!answer.stream) {
-          if (!started) {
-            closed = true;
-            clearInterval(heartbeat);
-            send(response, answer.status, answer.body);
-            return;
-          }
+        const opened = await follow.started;
+        if (done) return follow.cancel();
+        if (!opened.stream) {
+          if (!started) return answer(opened.status, opened.body);
           // The runner came back without this run: its process restarted, and the run went with it.
           write({ seq: next, type: 'exit', code: null, error: 'Your cloud machine restarted while this run was going, and the run did not survive it.' });
           finish();
@@ -406,17 +557,13 @@ export function createHub(options: HubOptions): Hub {
         }
         begin();
       } catch (error) {
-        if (closed) return;
+        if (done) return;
         if (error instanceof LinkLost) return waitForRunner();
-        if (!started) {
-          closed = true;
-          clearInterval(heartbeat);
-          send(response, 504, { error: errorMessage(error) });
-        } else finish();
+        answer(504, { error: errorMessage(error) });
       }
     };
 
-    void attach();
+    step(attach);
   }
 
   /* -------------------------------------------------------------- */
@@ -429,10 +576,16 @@ export function createHub(options: HubOptions): Hub {
     }
     const parts = path.split('/').filter(Boolean); // admin v1 ...
     const route = `${method} /${parts.map((part, index) => (index >= 3 ? ':' : part)).join('/')}`;
-    const target = parts[3] === undefined ? '' : decodeURIComponent(parts[3]);
+    const target = parts[3] === undefined ? '' : decodeSegment(parts[3]);
+    if (target === null) throw new HttpError(400, 'That is not a user id.');
     switch (route) {
       case 'GET /admin/v1/fleet':
-        send(response, 200, { summary: fleet.summary(), links: [...links.values()].map((link) => ({ runner: link.identity.runner, userId: link.identity.userId, since: new Date(link.connectedAt).toISOString(), activity: link.activity })) });
+        send(response, 200, {
+          summary: fleet.summary(),
+          // Machines of people who are no longer admitted: asleep, still on disk, and the operator's to remove.
+          revoked: fleet.revoked(),
+          links: [...links.values()].map((link) => ({ runner: link.identity.runner, userId: link.identity.userId, since: new Date(link.connectedAt).toISOString(), activity: link.activity })),
+        });
         return;
       case 'GET /admin/v1/runners/:':
         send(response, 200, fleet.status(target));
@@ -454,11 +607,23 @@ export function createHub(options: HubOptions): Hub {
         return;
       case 'POST /admin/v1/tokens': {
         // A token for a runner the operator starts by hand: someone's own server, or a development VM.
-        const body = (await readJson(request)) as { userId?: unknown; runner?: unknown };
+        const sent = await readJson(request);
+        // `null`, a list or nothing at all is still something an operator may send by mistake.
+        const body = (sent !== null && typeof sent === 'object' ? sent : {}) as { userId?: unknown; runner?: unknown; ttlDays?: unknown };
         if (typeof body.userId !== 'string' || typeof body.runner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.runner)) {
-          throw new HttpError(400, 'Send {"userId": "user_…", "runner": "a-name"}.');
+          throw new HttpError(400, 'Send {"userId": "user_…", "runner": "a-name"}, and "ttlDays" from 1 to 365 if thirty is not right.');
         }
-        send(response, 200, { token: mintRunnerToken(options.secret, { runner: body.runner, userId: body.userId }) });
+        if (body.ttlDays !== undefined && (typeof body.ttlDays !== 'number' || !Number.isFinite(body.ttlDays) || body.ttlDays < 1 || body.ttlDays > 365)) {
+          throw new HttpError(400, '"ttlDays" is a number from 1 to 365.');
+        }
+        const minted = mintRunnerToken(options.secret, { runner: body.runner, userId: body.userId }, { kind: 'own', ttlMs: body.ttlDays === undefined ? DEFAULT_OWN_TOKEN_TTL_MS : body.ttlDays * 24 * 60 * 60_000 });
+        // A name the fleet would refuse at the door whatever happens later is
+        // better refused here, where the operator is looking. ("Not now" is
+        // not that: the person's managed machine may be gone by the time the
+        // token is used.)
+        const admission = fleet.admits(minted);
+        if (!admission.ok && admission.status === 401) throw new HttpError(400, admission.reason);
+        send(response, 200, { token: minted.token, expiresAt: new Date(minted.expiresAt).toISOString() });
         return;
       }
       default:
@@ -471,7 +636,7 @@ export function createHub(options: HubOptions): Hub {
    * bytes: a rebuilt hub with the same version number is still a different
    * Relay, and runners compare this name to decide whether to update.
    */
-  let tarballTag: { key: string; tag: string } | null = null;
+  let tarballTag: { key: string; tag: string; sha256: string } | null = null;
   async function serveTarball(response: ServerResponse, method: string): Promise<void> {
     const path = options.tarballPath;
     if (path === null || path === undefined) throw new HttpError(404, 'This hub serves no runner package.');
@@ -479,15 +644,32 @@ export function createHub(options: HubOptions): Hub {
     if (info === null) throw new HttpError(404, 'The runner package is missing.');
     const key = `${info.size}:${info.mtimeMs}`;
     if (tarballTag?.key !== key) {
-      const digest = createHash('sha256').update(await readFile(path)).digest('hex').slice(0, 12);
-      tarballTag = { key, tag: `${options.version}+${digest}` };
+      const sha256 = createHash('sha256').update(await readFile(path)).digest('hex');
+      tarballTag = { key, tag: `${options.version}+${sha256.slice(0, 12)}`, sha256 };
     }
-    response.writeHead(200, { 'content-type': 'application/gzip', 'content-length': info.size, 'cache-control': 'no-store', 'x-relay-version': tarballTag.tag });
+    response.writeHead(200, {
+      'content-type': 'application/gzip',
+      'content-length': info.size,
+      'cache-control': 'no-store',
+      'x-relay-version': tarballTag.tag,
+      // The whole hash: a runner installs the file only if what it downloaded matches.
+      'x-relay-sha256': tarballTag.sha256,
+      ...(options.cliVersions === undefined ? {} : { 'x-relay-claude-code': options.cliVersions.claudeCode, 'x-relay-codex': options.cliVersions.codex }),
+    });
     if (method === 'HEAD') {
       response.end();
       return;
     }
-    createReadStream(path).pipe(response);
+    // `pipeline`, not `pipe`: it destroys the file's stream when the response
+    // goes away, so a download nobody finished does not keep a descriptor open
+    // (this route needs no sign-in, and `pipe` left one behind per aborted
+    // request), and it hands a read error to the callback instead of leaving
+    // it to be an uncaught exception.
+    pipeline(createReadStream(path), response, (error) => {
+      if (error !== undefined && error !== null && (error as NodeJS.ErrnoException).code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+        log({ level: 'error', msg: 'sending the runner package failed', error: errorMessage(error) });
+      }
+    });
   }
 
   return {
@@ -513,8 +695,9 @@ export function createHub(options: HubOptions): Hub {
   };
 }
 
-function pathOf(request: IncomingMessage): string {
-  return new URL(request.url ?? '/', 'http://hub.invalid').pathname;
+/** The request's path, or null when its request line holds something that is not one (`//`, another host). Never throws. */
+function pathOf(request: IncomingMessage): string | null {
+  return parseRequestTarget(request.url)?.pathname ?? null;
 }
 
 function send(response: ServerResponse, status: number, body: unknown): void {

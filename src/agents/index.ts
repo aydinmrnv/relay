@@ -58,6 +58,20 @@ export interface HarnessRegistration {
   /** What enforces `read_only` for this harness. `relay doctor` reports it. */
   readonly enforcement: EnforcementInfo;
   /**
+   * The environment variables this CLI signs in with, as name prefixes.
+   *
+   * An unattended run withholds secret-looking variables from its agents
+   * (`src/unattended/environment.ts`), and a CLI that authenticates from the
+   * environment — every one of them does, in CI — would be signed out by that.
+   * These are the names that stay. It is a function of the environment because
+   * what a CLI needs depends on how it was pointed: Claude Code reads AWS
+   * credentials only when it has been told to use Bedrock.
+   *
+   * Relay matches names against these and reads no value: the variables go
+   * from the job's environment to the vendor's process, as they always have.
+   */
+  readonly ownEnvironment?: (env: NodeJS.ProcessEnv) => readonly string[];
+  /**
    * Whether the harness can actually enforce `read_only`. Absent means yes —
    * every shipped CLI can. Config-defined harnesses without `readOnly` flags
    * set this to `false` (their `enforcement.readOnly` is `none`), which is
@@ -65,6 +79,11 @@ export interface HarnessRegistration {
    */
   readonly enforcesReadOnly?: boolean;
   create(options: HarnessOptions): AgentHarness;
+}
+
+/** A switch variable that is set to something other than off. */
+function switchedOn(value: string | undefined): boolean {
+  return value !== undefined && value !== '' && value !== '0' && value.toLowerCase() !== 'false';
 }
 
 /**
@@ -91,6 +110,14 @@ export const AGENT_REGISTRY: readonly HarnessRegistration[] = [
       readOnly: 'deny-list',
       detail: 'tool deny list (--disallowed-tools)',
     },
+    ownEnvironment: (env) => [
+      'ANTHROPIC_',
+      'CLAUDE_',
+      // Only when Claude Code has been pointed at a cloud provider's hosting of
+      // the model: otherwise the cloud account's keys are not its to see.
+      ...(switchedOn(env['CLAUDE_CODE_USE_BEDROCK']) ? ['AWS_'] : []),
+      ...(switchedOn(env['CLAUDE_CODE_USE_VERTEX']) ? ['GOOGLE_', 'GCLOUD_', 'CLOUD_ML_'] : []),
+    ],
     create: (options) => new ClaudeHarness(options),
   },
   {
@@ -108,6 +135,7 @@ export const AGENT_REGISTRY: readonly HarnessRegistration[] = [
       readOnly: 'os-sandbox',
       detail: 'OS sandbox (codex --sandbox read-only)',
     },
+    ownEnvironment: () => ['OPENAI_', 'CODEX_', 'AZURE_OPENAI_'],
     create: (options) => new CodexHarness({ ...options, planAccess: (minValidMs) => chatgptPlanAccess({ minValidMs }) }),
   },
 ];

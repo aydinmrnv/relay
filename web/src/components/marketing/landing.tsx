@@ -1,5 +1,3 @@
-'use client';
-
 import { DemoBanner } from '@/components/app/demo-banner';
 import { SiteHeader } from './site-header';
 import { Hero } from './hero';
@@ -14,8 +12,10 @@ import { FinalCta, SiteFooter } from './closing';
 
 /**
  * The public landing page. It explains what the product does and how, then
- * hands off to the studio. Every section reads the brand, the catalog and the
- * compiler live, so renaming the product or adding a connector updates it.
+ * hands off to the studio. The sections read the catalog, the templates and
+ * the compiler rather than repeating them, so the page cannot drift from
+ * what the studio does. Rendered on the server: only the parts that move or
+ * know who is signed in are sent as code.
  */
 export function Landing() {
   return (

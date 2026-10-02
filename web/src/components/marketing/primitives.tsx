@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { motion } from 'motion/react';
 import { useCalmMotion } from '@/components/motion/use-calm-motion';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
+import { agentMark } from '@/lib/agents/marks';
 import { getConnector, type Connector } from '@/lib/connectors';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { signInThenTo } from '@/lib/studio-routes';
@@ -11,8 +12,18 @@ import { cn } from '@/lib/utils';
 
 /** The engine's public repository. The only external product link on the page. */
 export { REPO_URL } from '@/lib/links';
+export { SAMPLE } from './sample';
 
 /** In-page anchors, shared by the header, the mobile menu and the footer so none can point at nothing. */
+/**
+ * Whether this deployment offers Relay Cloud. The public pages mention it
+ * only then: advertising a machine nobody can be given is worse than not
+ * mentioning one.
+ */
+export function useCloudOffered(): boolean {
+  return useCapabilities().cloudHub != null;
+}
+
 export const SECTIONS = [
   { id: 'how', label: 'How it works' },
   { id: 'builder', label: 'The studio' },
@@ -124,24 +135,30 @@ export function SectionHeading({
   );
 }
 
-function resolve(connector: Connector | string): Connector | undefined {
-  return typeof connector === 'string' ? getConnector(connector) : connector;
+type Marked = Pick<Connector, 'name' | 'icon'>;
+
+/**
+ * An app from the catalog, or one of the coding agents (`claude`, `codex`),
+ * by id. An id that is neither still draws something: a monogram of the id,
+ * never an empty box.
+ */
+function resolve(connector: Marked | string): Marked {
+  if (typeof connector !== 'string') return connector;
+  return agentMark(connector) ?? getConnector(connector) ?? { name: connector, icon: { color: '#64748b' } };
 }
 
 /**
  * A connector's mark, in the text colour. The page names a dozen apps; in
  * their own brand colours they would outshout everything they sit next to.
  */
-export function AppMark({ connector, size = 16, className }: { connector: Connector | string; size?: number; className?: string }) {
+export function AppMark({ connector, size = 16, className }: { connector: Marked | string; size?: number; className?: string }) {
   const resolved = resolve(connector);
-  if (resolved === undefined) return null;
   return <ConnectorIcon connector={resolved} variant="mark" size={size} colored={false} className={cn('text-foreground', className)} />;
 }
 
 /** The mark on a plain square, the size the builder's nodes show it at. */
-export function AppTile({ connector, size = 16, className }: { connector: Connector | string; size?: number; className?: string }) {
+export function AppTile({ connector, size = 16, className }: { connector: Marked | string; size?: number; className?: string }) {
   const resolved = resolve(connector);
-  if (resolved === undefined) return null;
   const tile = Math.round(size * 1.9);
   return (
     <span

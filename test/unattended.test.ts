@@ -459,6 +459,24 @@ function harness(
 }
 
 describe('serve', () => {
+  // The daily total is summed from the runs on disk, and a CI job starts with
+  // none: the ceiling is configured there and can never be reached. A budget
+  // that is not being kept is not reported as one.
+  it('says whether the daily budget can stop anything where it is running', async () => {
+    const tracker = new FakeTracker([]);
+    const daemon = harness(tracker);
+    await serve(daemon.deps);
+    const watching = daemon.events.find((event) => event.type === 'watching');
+    assert.ok(watching?.type === 'watching' && watching.dailyBudgetEnforced === true);
+
+    const job = harness(tracker, { source: 'action' });
+    await serve(job.deps);
+    const inCi = job.events.find((event) => event.type === 'watching');
+    assert.ok(inCi?.type === 'watching' && inCi.dailyBudgetEnforced === false);
+    // The ceiling is still required and still reported, for whoever parses it.
+    assert.ok(inCi.maxDailyCostUsd > 0);
+  });
+
   it('starts a run per labelled issue and takes the label off first', async () => {
     const tracker = new FakeTracker([issue(), issue({ id: 'github:acme/widgets#143', number: 143 })]);
     tracker.actors.set('142', 'maintainer');

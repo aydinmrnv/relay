@@ -97,6 +97,22 @@ export const PUBLIC_URL: string | undefined = (() => {
 })();
 
 /**
+ * The origin for links that must be absolute: the configured one, or the one
+ * this request arrived at. A deployment with no `NEXT_PUBLIC_SITE_URL` and no
+ * Vercel variables still has a host, and a sitemap without a `Sitemap:` line
+ * in robots.txt is one nobody is told about.
+ */
+export function siteOrigin(headers: { get(name: string): string | null }): string {
+  if (PUBLIC_URL !== undefined) return PUBLIC_URL;
+  const vercel = (process.env.VERCEL_PROJECT_PRODUCTION_URL ?? '').trim();
+  if (vercel.length > 0) return `https://${vercel}`;
+  const host = headers.get('x-forwarded-host') ?? headers.get('host');
+  if (host === null) return 'http://localhost:3000';
+  const proto = headers.get('x-forwarded-proto') ?? (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? 'http' : 'https');
+  return `${proto}://${host}`;
+}
+
+/**
  * The Relay Cloud hub, when this deployment has one: where a signed-in
  * person's cloud machine is reached. The browser calls it directly with its
  * Clerk session token; nothing here holds a secret for it.
@@ -112,7 +128,25 @@ export const CLOUD_HUB_URL: string | null = (() => {
   }
 })();
 
+/**
+ * A Clerk JWT template made for the hub (Clerk dashboard → JWT templates),
+ * by name. With it the browser hands the hub a token of that template, not
+ * the session token the studio's own API accepts. Unset: the session token.
+ */
+const CLOUD_TOKEN_TEMPLATE: string | null = (() => {
+  const raw = (process.env.RELAY_CLOUD_JWT_TEMPLATE ?? '').trim();
+  return /^[A-Za-z0-9_-]{1,60}$/.test(raw) ? raw : null;
+})();
+
 /** What the browser is told about accounts: whether they exist here, nothing secret. */
 export function authCapabilities(): AuthCapabilities {
-  return { enabled: ACCOUNTS_ENABLED, guests: GUEST_STUDIO, reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON, cloudHub: ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null, credentials: CREDENTIALS_ENABLED };
+  const cloudHub = ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null;
+  return {
+    enabled: ACCOUNTS_ENABLED,
+    guests: GUEST_STUDIO,
+    reason: PRODUCTION ? null : ACCOUNTS_UNAVAILABLE_REASON,
+    cloudHub,
+    credentials: CREDENTIALS_ENABLED,
+    cloudTokenTemplate: cloudHub === null ? null : CLOUD_TOKEN_TEMPLATE,
+  };
 }

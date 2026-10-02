@@ -4,11 +4,15 @@ import { resolveExecutable, runProcess } from '../process/runner.ts';
 /**
  * Delegated authentication: how Relay treats every tool that can sign itself in.
  *
- * Relay holds no API keys and reads none of these tools' credentials. The
- * coding CLIs, `gh`, whatever an issue provider needs — each owns its own
- * auth. This module can therefore do exactly two things: ask a vendor's CLI
- * whether it is signed in, and hand the terminal to that vendor's own login
- * command. There is deliberately no third capability.
+ * Relay holds no API keys for the tools it drives, reads none of their
+ * credentials and never sees one of their tokens. Every such tool — the coding
+ * CLIs, `gh` — owns its own auth. This module can therefore do exactly two
+ * things: ask a vendor's CLI whether it is signed in, and hand the terminal to
+ * that vendor's own login command. There is deliberately no third capability.
+ *
+ * A tracker with no CLI to drive is the one exception, and it lives elsewhere:
+ * `src/issues/linear.ts` reads `LINEAR_API_KEY`, because there is no login
+ * command to hand a terminal to.
  *
  * The one sign-in that cannot be delegated lives next door, in `chatgpt.ts`,
  * and reaches this module only as `own`: an answer about its state, never the

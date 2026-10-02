@@ -1,7 +1,6 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { motion, type Variants } from 'motion/react';
 import { ArrowUpRight } from 'lucide-react';
@@ -46,9 +45,9 @@ export function Hero1Art({ side = 'left', className }: { side?: 'left' | 'right'
       transition={{ duration: calm ? 0 : 1.2, ease: 'easeOut' }}
       className={cn('pointer-events-none overflow-hidden select-none', className)}
     >
+      {/* As backgrounds, so a browser fetches the one the theme shows and never the other: two eager images loaded both, twice. */}
       <div className={cn('absolute inset-0', side === 'right' && '-scale-x-100')}>
-        <Image src="/marketing/hero-grid-light.avif" alt="" fill unoptimized loading="eager" className="object-cover object-bottom-left dark:hidden" />
-        <Image src="/marketing/hero-grid-dark.avif" alt="" fill unoptimized loading="eager" className="hidden object-cover object-bottom-left dark:block" />
+        <div className="absolute inset-0 bg-[url(/marketing/hero-grid-light.avif)] bg-cover bg-bottom-left dark:bg-[url(/marketing/hero-grid-dark.avif)]" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_70%_at_20%_80%,transparent_40%,var(--background)_85%)]" />
       </div>
     </motion.div>

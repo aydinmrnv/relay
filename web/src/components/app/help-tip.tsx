@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { CircleHelp } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RichText } from '@/components/app/rich-text';
 import { useBrand } from '@/hooks/use-brand';
 import { explain, type Term } from '@/lib/glossary';
 import { cn } from '@/lib/utils';
@@ -28,7 +29,8 @@ export function HelpTip({ term, title, children, detailed = false, side = 'botto
   const brand = useBrand();
   const entry = term === undefined ? undefined : explain(term, brand.name);
   const heading = title ?? entry?.title;
-  const body = children ?? (detailed ? entry?.long : entry?.short);
+  const text = detailed ? entry?.long : entry?.short;
+  const body = children ?? (text === undefined ? undefined : <RichText text={text} className="[&+p]:mt-2" />);
 
   return (
     <Popover>

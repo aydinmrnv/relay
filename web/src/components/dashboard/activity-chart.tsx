@@ -26,7 +26,7 @@ const CONFIG = {
   succeeded: { label: 'Succeeded', color: 'var(--chart-2)' },
   refused: { label: 'Refused', color: 'var(--warning)' },
   failed: { label: 'Failed', color: 'var(--destructive)' },
-  cancelled: { label: 'Cancelled', color: 'color-mix(in oklch, var(--muted-foreground) 40%, transparent)' },
+  cancelled: { label: 'Stopped', color: 'color-mix(in oklch, var(--muted-foreground) 40%, transparent)' },
 } satisfies ChartConfig;
 
 const GAP = 2;

@@ -2,8 +2,25 @@
   "name": "relay-orchestrator",
   "version": "0.1.0",
   "description": "Local multi-agent software-engineering orchestrator. Coordinates already-installed coding CLIs (Claude Code, Codex) to plan, review, implement and critique work on a GitHub issue inside an isolated git worktree.",
+  "keywords": [
+    "ai",
+    "agents",
+    "coding-agents",
+    "claude-code",
+    "codex",
+    "code-review",
+    "orchestration",
+    "cli",
+    "automation",
+    "pull-requests"
+  ],
   "type": "module",
   "license": "MIT",
+  "author": "NullStack.one <support@nullstack.one>",
+  "homepage": "https://github.com/aydinmrnv/relay#readme",
+  "bugs": {
+    "url": "https://github.com/aydinmrnv/relay/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aydinmrnv/relay.git"
@@ -23,13 +40,14 @@
     "man"
   ],
   "scripts": {
+    "clean": "node scripts/clean.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --experimental-strip-types \"test/**/*.test.ts\"",
     "test:watch": "node --test --watch --experimental-strip-types \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
     "generate:man": "node scripts/generate-man.mjs",
-    "prepack": "npm run build && npm run generate:man && npm pack --dry-run --ignore-scripts"
+    "prepack": "npm run clean && npm run build && node scripts/stamp-build.mjs && npm run generate:man && npm pack --dry-run --ignore-scripts"
   },
   "dependencies": {
     "commander": "^12.1.0"

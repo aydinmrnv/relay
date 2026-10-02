@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Cloud, Copy, Server, Workflow as WorkflowIcon } from 'lucide-react';
+import { Check, Copy, Workflow as WorkflowIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -10,13 +10,10 @@ import { Separator } from '@/components/ui/separator';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { HelpTip } from '@/components/app/help-tip';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
-import { useBrand } from '@/hooks/use-brand';
-import { getConnector } from '@/lib/connectors';
+import { AGENT_MARKS } from '@/lib/agents/marks';
 import { useStudio } from '@/lib/store';
-import type { AuthPreference, ExecutionTier } from '@/lib/workflow/schema';
-import { ChoiceCards, SettingBlock, type Choice } from './settings-section';
-
-const REPOSITORY = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+import { isRepository, type AuthPreference } from '@/lib/workflow/schema';
+import { SettingBlock } from './settings-section';
 
 type AgentKey = 'claude' | 'codex';
 
@@ -27,10 +24,9 @@ interface Credential {
 }
 
 /** What each agent needs in GitHub Actions for each choice. Mirrors the secrets compileWorkflow asks for. */
-const CREDENTIALS: Record<AgentKey, { name: string; connectorId: string } & Record<AuthPreference, Credential>> = {
+const CREDENTIALS: Record<AgentKey, { name: string } & Record<AuthPreference, Credential>> = {
   claude: {
     name: 'Claude Code',
-    connectorId: 'claude-code',
     subscription: {
       secret: 'CLAUDE_CODE_OAUTH_TOKEN',
       what: 'A one-year token from claude setup-token, tied to the Claude Pro, Max, Team or Enterprise plan of whoever creates it. Runs count against that plan’s usage.',
@@ -44,7 +40,6 @@ const CREDENTIALS: Record<AgentKey, { name: string; connectorId: string } & Reco
   },
   codex: {
     name: 'Codex',
-    connectorId: 'codex-cli',
     subscription: {
       secret: 'CODEX_AUTH_JSON',
       what: 'The sign-in file Codex keeps at ~/.codex/auth.json after codex login with a ChatGPT plan. OpenAI documents this for CI but asks that it not be used on public repositories. The file rotates: if runs stop signing in, log in again and re-seed the secret.',
@@ -59,42 +54,9 @@ const CREDENTIALS: Record<AgentKey, { name: string; connectorId: string } & Reco
 };
 
 export function RunningSettings() {
-  const brand = useBrand();
-  const tier = useStudio((state) => state.settings.executionTier);
-  const updateSettings = useStudio((state) => state.updateSettings);
-
-  const tiers: Array<Choice<ExecutionTier>> = [
-    {
-      value: 'actions',
-      title: 'Your GitHub Actions',
-      icon: WorkflowIcon,
-      badge: { label: 'Available', tone: 'ok' },
-      description: 'Exported workflows run in your repository on your own Actions minutes: free on public repositories, included minutes on private ones. This is the only way a workflow starts by itself today.',
-    },
-    {
-      value: 'hosted',
-      title: 'Hosted microVMs',
-      icon: Cloud,
-      badge: { label: 'Later', tone: 'muted' },
-      disabled: true,
-      description: 'One isolated VM per exported run, with every connector bridged. Not built yet. Relay Cloud is the hosted runner you can use today: one machine per person, started by hand.',
-    },
-    {
-      value: 'self-hosted',
-      title: 'Self-hosted runner',
-      icon: Server,
-      badge: { label: 'Later', tone: 'muted' },
-      disabled: true,
-      description: (
-        <>
-          A runner of your own — a Mac mini, a Linux box — joined to Relay Cloud by hand with <code className="font-mono text-[11px]">{brand.slug} connect --hub</code>. Not offered in the studio yet.
-        </>
-      ),
-    },
-  ];
-
   return (
     <Card className="gap-0 py-0">
+      {/* A statement, not a setting: there is one place an export runs today, and a picker with one live option changed nothing. */}
       <SettingBlock
         title={
           <span className="inline-flex items-center gap-1.5">
@@ -103,15 +65,18 @@ export function RunningSettings() {
         }
         description={
           <>
-            Only about exports. An exported workflow does its unattended work on your repository’s own GitHub Actions, where a label, a ticket or a schedule can start it. A run you press in the builder happens on the runner you picked in{' '}
+            On your repository’s own GitHub Actions: free on public repositories, included minutes on private ones. A label on a GitHub issue starts an exported workflow there, which is the only way a workflow starts
+            by itself today. A run you press in the builder happens on the runner you picked in{' '}
             <a href="/runners" className="font-medium text-foreground underline underline-offset-4">
               Where agents run
-            </a>{' '}
-            — your computer or Relay Cloud — and a test run is played back in this browser.
+            </a>
+            , and a test run is played back in this browser.
           </>
         }
       >
-        <ChoiceCards name="tier" label="Where exported workflows run" value={tier} onValueChange={(value) => updateSettings({ executionTier: value })} options={tiers} />
+        <p className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+          <WorkflowIcon className="size-4 text-muted-foreground" aria-hidden /> Your GitHub Actions
+        </p>
       </SettingBlock>
       <Separator />
       <RepositorySetting />
@@ -126,7 +91,7 @@ function RepositorySetting() {
   const updateSettings = useStudio((state) => state.updateSettings);
   const [value, setValue] = useState(saved);
   const trimmed = value.trim();
-  const valid = REPOSITORY.test(trimmed);
+  const valid = isRepository(trimmed);
 
   const commit = () => {
     if (trimmed === saved) return;
@@ -189,11 +154,10 @@ function Credentials() {
           const agent = CREDENTIALS[key];
           const choice = auth[key];
           const credential = agent[choice];
-          const connector = getConnector(agent.connectorId);
           return (
             <div key={key} className="grid grid-cols-1 gap-3 rounded-lg border p-3">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                {connector === undefined ? null : <ConnectorIcon connector={connector} size={14} />}
+                <ConnectorIcon icon={AGENT_MARKS[key].icon} name={agent.name} size={14} />
                 <p className="text-sm font-medium">{agent.name}</p>
                 <ToggleGroup
                   aria-label={`How ${agent.name} signs in on GitHub Actions`}

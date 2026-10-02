@@ -66,6 +66,9 @@ export async function serveCommand(options: ServeOptions = {}): Promise<number> 
   const runs = new AbortController();
   const stopping = { asked: false };
   const onSignal = (signal: NodeJS.Signals): void => {
+    // A closing terminal delivers its hangup more than once, so a repeat of
+    // it is not somebody asking twice: it stops the loop and never escalates.
+    if (stopping.asked && signal === 'SIGHUP') return;
     if (stopping.asked) {
       out(warning(`  ${signal} again — cancelling the runs still in flight.`));
       runs.abort();
@@ -77,7 +80,10 @@ export async function serveCommand(options: ServeOptions = {}): Promise<number> 
     hint('Press Ctrl-C again to cancel them, or run `relay stop <run>` for one of them.');
     controller.abort();
   };
-  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+  // SIGHUP as well: the runs this server started are in sessions of their own
+  // and would outlive it, so a closed terminal has to be a kill switch like
+  // the others rather than the end of the only process supervising them.
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   for (const signal of signals) process.on(signal, onSignal);
 
   try {
@@ -234,13 +240,22 @@ function printEvent(event: ServeEvent, options: ServeOptions): void {
         { label: 'Trigger', value: `issues labelled ${event.label}` },
         {
           label: 'Budget',
-          value: `${formatCost(event.maxRunCostUsd)} per run  ·  ${formatCost(event.maxDailyCostUsd)} per day`,
+          value: event.dailyBudgetEnforced
+            ? `${formatCost(event.maxRunCostUsd)} per run  ·  ${formatCost(event.maxDailyCostUsd)} per day`
+            : `${formatCost(event.maxRunCostUsd)} per run`,
         },
         { label: 'Concurrency', value: `${event.maxConcurrentRuns} run(s) at once` },
         !event.once && { label: 'Polling', value: `every ${event.pollSeconds}s` },
         { label: 'Delivery', value: 'capped at a draft pull request — nothing merges without a person' },
       ]);
       if (options.dryRun === true) out(dim('  Dry run: deciding everything, starting nothing, moving no labels.'));
+      // Said where the budget is printed, because the line above it reads as
+      // a promise: on a runner that keeps no run history the day's total is
+      // always zero, and only the per-run figure limits anything.
+      if (!event.dailyBudgetEnforced) {
+        out(warning('  The daily budget is not enforced here: a CI job starts with no record of earlier runs.'));
+        out(dim('  The per-run budget still is. See docs/cli.md, "The GitHub Action".'));
+      }
       out();
       hint('To stop it:');
       command(`touch .relay/${STOP_FILE}`);

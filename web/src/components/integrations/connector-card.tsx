@@ -101,7 +101,8 @@ export const ConnectorCard = memo(function ConnectorCard({ match, connection, us
           {state === 'missing' || nothingToConnect(state) ? (
             <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               <AuthIcon className="size-3.5 shrink-0" aria-hidden />
-              <span className="truncate">{builtIn ? 'Always available' : state === 'runner' ? 'Runs on your runner' : authLabel(connector)}</span>
+              {/* An app with no sign-in built yet says so on the card, not only in its sheet: "OAuth sign-in" on its own reads as something that works. */}
+              <span className="truncate">{builtIn ? 'Always available' : state === 'runner' ? 'Runs on your runner' : state === 'open' || real ? authLabel(connector) : `Planned: ${authLabel(connector).toLowerCase()}`}</span>
             </span>
           ) : (
             <ConnectionStatus state={state} connection={connection} />

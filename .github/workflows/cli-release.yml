@@ -1,77 +1,242 @@
-# Publishes the CLI as one prebuilt tarball, so installing it is one command:
+# Publishes the CLI as a prebuilt tarball on this repository's GitHub releases,
+# so installing it is one command:
 #
 #   npm install -g https://github.com/aydinmrnv/relay/releases/download/cli-latest/relay.tgz
 #
 # Relay is not on the npm registry, and installing it straight from the
 # repository does not work: `npm install -g github:aydinmrnv/relay` leaves an
 # empty package on current npm (git dependencies no longer run the build that
-# produces dist/). `npm pack` here runs `prepack` — the build and the man page —
-# and the result is attached to a rolling `cli-latest` release, replaced on
-# every push to main that touches the CLI.
+# produces dist/). So CI packs it — `npm pack` runs `prepack`: the build, the
+# commit stamped into it, the man page — and this workflow publishes that
+# tarball.
+#
+# There are two kinds of release, and one tag for the Action:
+#
+#   cli-latest      rolling. Replaced by every build of main that passed CI and
+#                   changed something the CLI is made from. `relay --version`
+#                   says which commit a copy is: 0.1.0+8cb9739.
+#   cli-v<version>  one per `version` in package.json, cut the first time a
+#                   build carrying that version is published and never touched
+#                   again. Bump the version to cut the next one.
+#                     …/releases/download/cli-v0.1.0/relay.tgz
+#   v1              the tag workflows reference as `aydinmrnv/relay@v1`. Moved
+#                   to each commit published as cli-latest, so the Action and
+#                   the CLI it installs by default are always the same commit.
+#                   A change to action.yml that would break existing workflows
+#                   is the moment to change ACTION_TAG to v2 and leave v1 alone.
+#
+# This workflow has no trigger of its own. It is called by CI as its last job,
+# after the test suite, the package check and both runs of the Action have
+# passed, and it publishes the tarball those jobs tested rather than building
+# another. To publish a commit again, re-run its CI run.
 name: CLI release
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'bin/**'
-      - 'eval/**'
-      - 'scripts/generate-man.mjs'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig.build.json'
-      - '.github/workflows/cli-release.yml'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      artifact:
+        description: Name of the artifact holding relay.tgz, uploaded earlier in the calling run.
+        type: string
+        required: true
 
 permissions:
   contents: write
 
-concurrency:
-  group: cli-release
-  cancel-in-progress: true
+env:
+  ACTION_TAG: v1
+  # What the tarball is built from. A push that touches none of it — the
+  # studio, the docs — publishes nothing, so `cli-latest` only moves when the
+  # CLI did.
+  CLI_PATHS: >-
+    src bin eval scripts/generate-man.mjs scripts/stamp-build.mjs scripts/clean.mjs
+    package.json package-lock.json tsconfig.json tsconfig.build.json
+    action.yml README.md LICENSE
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One at a time, and a publish that has started is never cancelled halfway
+    # through a swap. That is all this promises. GitHub keeps one run waiting
+    # per group and drops an older waiting run when a newer one queues, and it
+    # does not promise the order they start in — so a commit can be skipped, or
+    # arrive after a newer one. Neither moves `cli-latest` backwards: the plan
+    # step below refuses a commit older than the one already published.
+    concurrency:
+      group: cli-release
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      # Full history and tags: deciding whether to publish means comparing this
+      # commit with the one already published.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
-      - uses: actions/setup-node@v4
+      # The steps below read package.json with `node` and install the tarball
+      # with `npm`. Whatever the runner image happens to ship is not the Node
+      # the tarball was built and tested on.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
 
-      - run: npm ci
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/pack
 
-      - name: Pack
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/pack"
-          npm pack --pack-destination "$RUNNER_TEMP/pack"
-          mv "$RUNNER_TEMP"/pack/relay-orchestrator-*.tgz "$RUNNER_TEMP/pack/relay.tgz"
-          tar tzf "$RUNNER_TEMP/pack/relay.tgz" | grep -qx 'package/dist/index.js'
-
-      - name: The tarball installs and runs
-        run: |
-          set -euo pipefail
-          npm install -g --prefix "$RUNNER_TEMP/prefix" "$RUNNER_TEMP/pack/relay.tgz"
-          "$RUNNER_TEMP/prefix/bin/relay" --version
-          "$RUNNER_TEMP/prefix/bin/relay" connect --help > /dev/null
-
-      - name: Publish to the cli-latest release
+      - name: Decide what to publish
+        id: plan
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          notes="The Relay CLI, built from ${GITHUB_SHA::7}. Install or update with:
+          test -f "$RUNNER_TEMP/pack/relay.tgz"
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # Three things the published commit can be to this one, and "not an
+          # ancestor" is two of them. Told apart, because they want opposite
+          # answers:
+          #
+          #   behind    it is in this commit's history. The ordinary case:
+          #             publish if anything the CLI is built from changed.
+          #   ahead     this commit is in *its* history — a newer build finished
+          #             first, or an old run was re-run. Publishing now would
+          #             move every install back to older code, so leave it.
+          #   elsewhere neither: main was rewritten, or the tag was moved by
+          #             hand to a commit main never had. Nothing on main will
+          #             ever descend from it, so waiting for one that does would
+          #             stop every release from here on. This commit passed CI
+          #             on main; it is the one to publish.
+          rolling=true
+          published=$(git rev-parse --quiet --verify "refs/tags/cli-latest^{commit}" || true)
+          if [ -n "$published" ]; then
+            if [ "$published" = "$GITHUB_SHA" ]; then
+              rolling=false
+              echo "::notice::cli-latest is already this commit."
+            elif git merge-base --is-ancestor "$published" "$GITHUB_SHA"; then
+              # shellcheck disable=SC2086
+              if git diff --quiet "$published" "$GITHUB_SHA" -- $CLI_PATHS; then
+                rolling=false
+                echo "::notice::Nothing the CLI is built from changed since ${published::7}."
+              fi
+            elif git merge-base --is-ancestor "$GITHUB_SHA" "$published"; then
+              rolling=false
+              echo "::notice::cli-latest (${published::7}) is already a newer commit than this one, so it is left alone."
+            else
+              echo "::warning::cli-latest (${published::7}) is not in this branch's history at all — rewritten history, or a tag moved by hand. Publishing ${GITHUB_SHA::7} over it."
+            fi
+          fi
+          echo "rolling=$rolling" >> "$GITHUB_OUTPUT"
+
+          # A versioned release is cut once and is then immutable. It is only
+          # ever cut from a commit that is also going out as cli-latest, so it
+          # cannot be an older build than the rolling one.
+          versioned=false
+          if [ "$rolling" = "true" ] && ! gh release view "cli-v$version" > /dev/null 2>&1; then
+            versioned=true
+          fi
+          echo "versioned=$versioned" >> "$GITHUB_OUTPUT"
+
+      # Step outputs reach a script through `env:`, never as an expression
+      # written into it.
+      - name: The tarball is the build of this commit
+        if: steps.plan.outputs.rolling == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm install -g --prefix "$RUNNER_TEMP/prefix" "$RUNNER_TEMP/pack/relay.tgz"
+          version=$("$RUNNER_TEMP/prefix/bin/relay" --version)
+          echo "relay --version: $version"
+          test "$version" = "$VERSION+${GITHUB_SHA::7}"
+
+      - name: Cut cli-v${{ steps.plan.outputs.version }}
+        if: steps.plan.outputs.versioned == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="The Relay CLI $VERSION, built from ${GITHUB_SHA::7}. This release is never replaced. Install exactly this build with:
 
           \`\`\`
-          npm install -g https://github.com/${GITHUB_REPOSITORY}/releases/download/cli-latest/relay.tgz
+          npm install -g https://github.com/${GITHUB_REPOSITORY}/releases/download/cli-v$VERSION/relay.tgz
           \`\`\`"
-          if gh release view cli-latest > /dev/null 2>&1; then
-            gh release upload cli-latest "$RUNNER_TEMP/pack/relay.tgz" --clobber
-            gh release edit cli-latest --notes "$notes"
-          else
-            gh release create cli-latest "$RUNNER_TEMP/pack/relay.tgz" --title 'Relay CLI (latest)' --notes "$notes" --target "$GITHUB_SHA" --prerelease
+          gh release create "cli-v$VERSION" "$RUNNER_TEMP/pack/relay.tgz" \
+            --title "Relay CLI $VERSION" --notes "$notes" --target "$GITHUB_SHA"
+
+      - name: Publish to the cli-latest release
+        if: steps.plan.outputs.rolling == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          notes="The Relay CLI, built from ${GITHUB_SHA::7} (\`relay --version\` prints \`$VERSION+${GITHUB_SHA::7}\`). Install or update with:
+
+          \`\`\`
+          npm install -g https://github.com/$repo/releases/download/cli-latest/relay.tgz
+          \`\`\`
+
+          This release is replaced by every build of main that passes CI. For a build that never changes, install a versioned release: \`cli-v$VERSION\`."
+
+          if ! gh release view cli-latest > /dev/null 2>&1; then
+            gh release create cli-latest "$RUNNER_TEMP/pack/relay.tgz" \
+              --title 'Relay CLI (latest)' --notes "$notes" --target "$GITHUB_SHA" --prerelease
+            exit 0
           fi
+
+          # Upload first, swap second. `gh release upload --clobber` deletes the
+          # old asset and then uploads the new one: for the length of the
+          # upload the install URL is a 404, and if the upload fails it stays
+          # one. Here the new tarball is fully uploaded under another name
+          # before the old one is touched, and the swap is two renames.
+          asset_id() {
+            gh api "repos/$repo/releases/tags/cli-latest" --jq ".assets[] | select(.name == \"$1\") | .id"
+          }
+          for leftover in relay.next.tgz relay.previous.tgz; do
+            id=$(asset_id "$leftover")
+            if [ -n "$id" ]; then gh api -X DELETE "repos/$repo/releases/assets/$id"; fi
+          done
+
+          cp "$RUNNER_TEMP/pack/relay.tgz" "$RUNNER_TEMP/pack/relay.next.tgz"
+          gh release upload cli-latest "$RUNNER_TEMP/pack/relay.next.tgz"
+          next=$(asset_id relay.next.tgz)
+          test -n "$next"
+
+          current=$(asset_id relay.tgz)
+          if [ -n "$current" ]; then
+            gh api -X PATCH "repos/$repo/releases/assets/$current" -f name=relay.previous.tgz > /dev/null
+          fi
+          if ! gh api -X PATCH "repos/$repo/releases/assets/$next" -f name=relay.tgz > /dev/null; then
+            # Put the old one back rather than leave the URL pointing at nothing.
+            if [ -n "$current" ]; then
+              gh api -X PATCH "repos/$repo/releases/assets/$current" -f name=relay.tgz > /dev/null
+            fi
+            echo "::error::could not swap the new tarball in; cli-latest still serves the previous build"
+            exit 1
+          fi
+          if [ -n "$current" ]; then gh api -X DELETE "repos/$repo/releases/assets/$current"; fi
+
+          gh release edit cli-latest --notes "$notes"
+
+      # Last, and only once the tarball is in place: the tags are what the next
+      # run reads to learn what has been published.
+      - name: Move the cli-latest and Action tags to this commit
+        if: steps.plan.outputs.rolling == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          for tag in cli-latest "$ACTION_TAG"; do
+            if gh api "repos/$repo/git/ref/tags/$tag" > /dev/null 2>&1; then
+              gh api -X PATCH "repos/$repo/git/refs/tags/$tag" -f sha="$GITHUB_SHA" -F force=true > /dev/null
+            else
+              gh api -X POST "repos/$repo/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+            fi
+            echo "$tag -> ${GITHUB_SHA::7}"
+          done

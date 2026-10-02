@@ -35,7 +35,7 @@ export const TEMPLATES: TemplateMeta[] = [
   {
     id: 'ticket-to-pr',
     name: 'Linear ticket to pull request',
-    description: 'Assign a Linear issue to the bot. Claude plans, Codex implements, each reviews the other, the tests run, and a draft PR opens; the ticket moves to In Review with the PR attached and #eng is asked for review.',
+    description: 'Assign a Linear issue to the bot. Claude Code plans, Codex implements, each reviews the other, the tests run, and a draft PR opens; the ticket moves to In Review with the PR attached and #eng is asked for review.',
     when: 'Your team writes good tickets and the small ones sit in the backlog because nobody picks them up.',
     job: 'tickets',
     connectors: ['linear', 'gates', 'pipeline', 'delivery', 'slack'],
@@ -132,7 +132,7 @@ interface Builder {
 const COL = 320;
 const ROW = 190;
 
-export function instantiateTemplate(templateId: string, brand: Brand, repository = 'acme/api'): Workflow | undefined {
+export function instantiateTemplate(templateId: string, brand: Brand, repository = ''): Workflow | undefined {
   const meta = TEMPLATES.find((template) => template.id === templateId);
   if (meta === undefined) return undefined;
   const nodes: WorkflowNode[] = [];
@@ -180,7 +180,8 @@ export function instantiateTemplate(templateId: string, brand: Brand, repository
     description: meta.description,
     nodes,
     edges,
-    enabled: true,
+    // Paused, like a blank or a described workflow: nothing made here is switched on until its owner says so.
+    enabled: false,
     createdAt: now,
     updatedAt: now,
     templateId,
@@ -363,7 +364,7 @@ const BUILDERS: Record<string, (b: Builder, brand: Brand) => void> = {
 };
 
 /** A blank workflow with one manual trigger, for "New workflow". */
-export function blankWorkflow(brand: Brand, repository = 'acme/api'): Workflow {
+export function blankWorkflow(brand: Brand, repository = ''): Workflow {
   const now = new Date().toISOString();
   const typeId = 'logic.trigger.manual';
   const def = getNodeType(typeId);
@@ -380,17 +381,12 @@ export function blankWorkflow(brand: Brand, repository = 'acme/api'): Workflow {
   };
 }
 
-export { brandSlugFor };
-function brandSlugFor(brand: Brand): string {
-  return brand.slug;
-}
-
 /**
  * A new workflow that starts from one specific trigger instead of the manual
  * one, for "Start a workflow with this" on the Integrations page. Disabled,
  * like a blank workflow, until somebody wires up what should happen next.
  */
-export function workflowFromTrigger(triggerTypeId: string, brand: Brand, repository = 'acme/api'): Workflow | undefined {
+export function workflowFromTrigger(triggerTypeId: string, brand: Brand, repository = ''): Workflow | undefined {
   const def = getNodeType(triggerTypeId);
   if (def === undefined || def.kind !== 'trigger') return undefined;
   const base = blankWorkflow(brand, repository);

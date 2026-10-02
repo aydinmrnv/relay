@@ -1,5 +1,7 @@
 import { divertHumanOutput, setTheme } from './output.ts';
 import { detectTheme } from '../ui/theme.ts';
+import { errorMessage, isRelayError } from '../util/errors.ts';
+import { redact } from '../util/redact.ts';
 
 /**
  * Machine-readable output.
@@ -79,4 +81,41 @@ export function emitJson<T extends object>(command: string, body: T): void {
  */
 export function emitJsonLine<T extends object>(command: string, body: T): void {
   process.stdout.write(`${JSON.stringify(jsonDocument(command, body))}\n`);
+}
+
+/** What a command that failed under `--json` puts on stdout. */
+export interface ErrorJson {
+  type: 'error';
+  /** The code the command is about to exit with, from the documented table. */
+  exitCode: number;
+  error: {
+    /** Stable and machine-readable: `RUN_NOT_FOUND`, `BAD_CONFIG`, … */
+    code: string;
+    message: string;
+    /** The next step, when Relay knows one. */
+    hint: string | null;
+  };
+}
+
+/**
+ * A failure, as a document.
+ *
+ * Under `--json` stdout is the only stream a consumer parses, and a command
+ * that failed used to leave it empty: the reason was prose on stderr, and what
+ * was piped into `jq` was nothing at all. The prose still goes to stderr for
+ * whoever is reading the log; this is the same failure for whatever is reading
+ * the pipe. One line, so it parses as the last record of a stream and as the
+ * whole document of a command that reports once.
+ */
+export function errorToJson(error: unknown, exitCode: number): ErrorJson {
+  const relay = isRelayError(error) ? error : undefined;
+  return {
+    type: 'error',
+    exitCode,
+    error: {
+      code: relay?.code ?? 'ERROR',
+      message: redact(errorMessage(error)),
+      hint: relay?.hint === undefined ? null : redact(relay.hint),
+    },
+  };
 }

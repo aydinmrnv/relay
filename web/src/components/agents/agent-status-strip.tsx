@@ -3,17 +3,19 @@
 import Link from 'next/link';
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { AGENT_IDS, AGENT_META } from '@/lib/agents/types';
+import { useCompanion } from '@/lib/companion/client';
 import { cn } from '@/lib/utils';
 
 /** Small "who is signed in on the paired machine" line, for the pipeline inspector. */
 export function AgentStatusStrip({ used }: { used: string[] }) {
   const bridge = useAgentsStore((state) => state.bridge);
   const status = useAgentsStore((state) => state.status);
+  const cloud = useCompanion((state) => state.target === 'cloud');
   if (bridge !== 'available' || status === null) return null;
   const missing = AGENT_IDS.filter((id) => used.includes(id) && !status.agents[id].loggedIn);
   return (
     <div className={cn('rounded-lg border p-2.5 text-xs', missing.length > 0 ? 'border-warning/40 bg-warning/10' : 'bg-muted/40')}>
-      <p className="mb-1 font-medium">Agents on your machine</p>
+      <p className="mb-1 font-medium">Agents on {cloud ? 'your cloud machine' : 'your computer'}</p>
       <ul className="flex flex-wrap gap-x-3 gap-y-1">
         {AGENT_IDS.map((id) => {
           const account = status.agents[id];

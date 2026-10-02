@@ -1,9 +1,10 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { join, win32 } from 'node:path';
-import { rm, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { rm, readFile, writeFile, mkdir, mkdtemp } from 'node:fs/promises';
 
-import { runProcess } from '../src/process/runner.ts';
+import { clearExecutableCache, runProcess } from '../src/process/runner.ts';
 
 import {
   assertRemovableWorktreePath,
@@ -242,6 +243,48 @@ describe('git integration', () => {
     assert.equal(info.defaultBranch, 'main');
     assert.equal(info.isDirty, false);
     assert.equal(info.owner, null);
+  });
+
+  // With no git on PATH every question asked of it fails the same way, and
+  // the first of them used to be reported as "not inside a git repository —
+  // run `git init`": advice that cannot be followed where git is not a command.
+  it('says git is missing when it is, rather than that this is not a repository', async () => {
+    const empty = await mkdtemp(join(tmpdir(), 'relay-no-git-'));
+    const path = process.env['PATH'];
+    process.env['PATH'] = empty;
+    clearExecutableCache();
+    try {
+      await assert.rejects(
+        () => discoverRepository(repo.root),
+        (error: unknown) =>
+          error instanceof RelayError &&
+          error.code === 'EXECUTABLE_NOT_FOUND' &&
+          /git is not installed/.test(error.message) &&
+          !/git init/.test(error.hint ?? ''),
+      );
+    } finally {
+      process.env['PATH'] = path;
+      clearExecutableCache();
+      await rm(empty, { recursive: true, force: true });
+    }
+  });
+
+  it('gives a remote that is not on GitHub no GitHub owner or name', async () => {
+    const elsewhere = await createTempRepo();
+    try {
+      await elsewhere.git('remote', 'add', 'origin', 'git@gitlab.com:acme/widgets.git');
+      const info = await discoverRepository(elsewhere.root);
+      assert.equal(info.remoteUrl, 'git@gitlab.com:acme/widgets.git');
+      assert.equal(info.owner, null);
+      assert.equal(info.name, null);
+
+      await elsewhere.git('remote', 'set-url', 'origin', 'https://github.com/acme/widgets.git');
+      const hosted = await discoverRepository(elsewhere.root);
+      assert.equal(hosted.owner, 'acme');
+      assert.equal(hosted.name, 'widgets');
+    } finally {
+      await elsewhere.cleanup();
+    }
   });
 
   it('detects a dirty working tree', async () => {

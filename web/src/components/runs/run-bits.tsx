@@ -32,27 +32,7 @@ export function RunTrigger({ run, className }: { run: Run; className?: string })
  */
 export function RunResult({ run, linkPr = true, className }: { run: Run; /** False inside another link, where a nested anchor is not allowed. */ linkPr?: boolean; className?: string }) {
   if (isLive(run.status)) return <LiveStep run={run} className={cn('max-w-64', className)} />;
-  if (run.prUrl !== undefined && !linkPr) {
-    return (
-      <span className={cn('inline-flex items-center gap-1.5 text-sm font-medium text-primary', className)}>
-        <GitPullRequest className="size-3.5" /> PR #{prNumber(run.prUrl)}
-      </span>
-    );
-  }
-  if (run.prUrl !== undefined) {
-    return (
-      <a
-        href={run.prUrl}
-        target="_blank"
-        rel="noreferrer"
-        onClick={(event) => event.stopPropagation()}
-        title={run.source === 'machine' ? `Opened by the run on ${run.machine?.host ?? 'your machine'}` : 'Simulated pull request: the number is made up, so GitHub will not find it'}
-        className={cn('inline-flex items-center gap-1.5 text-sm font-medium text-signal underline-offset-4 hover:underline', className)}
-      >
-        <GitPullRequest className="size-3.5" /> PR #{prNumber(run.prUrl)}
-      </a>
-    );
-  }
+  if (run.prUrl !== undefined) return <PullRequestLink run={run} link={linkPr} className={cn('text-sm', className)} />;
   if (run.status === 'failed' || run.status === 'refused') {
     const Icon = run.status === 'failed' ? XCircle : ShieldAlert;
     const reason = outcomeReason(run);
@@ -74,6 +54,42 @@ export function RunResult({ run, linkPr = true, className }: { run: Run; /** Fal
   return <span className={cn('text-sm text-muted-foreground', className)}>—</span>;
 }
 
+/**
+ * The pull request a run ended with. A real one is a link. A test run's is
+ * not: its number is made up, the repository may be somebody else's, and a
+ * link to github.com says "this exists" louder than any tooltip can take
+ * back. It is written as text, and tagged for what it is.
+ */
+export function PullRequestLink({ run, link = true, className }: { run: Run; /** False inside another link, where a nested anchor is not allowed. */ link?: boolean; className?: string }) {
+  if (run.prUrl === undefined) return null;
+  const label = (
+    <>
+      <GitPullRequest className="size-3.5" /> PR #{prNumber(run.prUrl)}
+    </>
+  );
+  if (run.source !== 'machine') {
+    return (
+      <span className={cn('inline-flex items-center gap-1.5 font-medium text-muted-foreground', className)} title="A test run opens nothing: this is the pull request a real run would end with.">
+        {label}
+        <span className="rounded border px-1 text-[10px] font-normal tracking-wide uppercase">simulated</span>
+      </span>
+    );
+  }
+  if (!link) return <span className={cn('inline-flex items-center gap-1.5 font-medium text-primary', className)}>{label}</span>;
+  return (
+    <a
+      href={run.prUrl}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(event) => event.stopPropagation()}
+      title={`Opened by the run on ${run.machine?.host ?? 'your runner'}`}
+      className={cn('inline-flex items-center gap-1.5 font-medium text-signal underline-offset-4 hover:underline', className)}
+    >
+      {label}
+    </a>
+  );
+}
+
 /** Relative start time, with the exact one on hover. */
 export function StartedAt({ iso, now, className }: { iso: string; now: number; className?: string }) {
   return (
@@ -88,7 +104,7 @@ export function StartedAt({ iso, now, className }: { iso: string; now: number; c
 export function RunSourceBadge({ run, className }: { run: Run; className?: string }) {
   if (run.source !== 'machine') return null;
   return (
-    <Badge variant="outline" className={cn('h-5 gap-1 text-[10px] font-medium', className)} title={`Ran for real on ${run.machine?.host ?? 'your machine'}${run.machine?.repository ? `, in ${run.machine.repository}` : ''}`}>
+    <Badge variant="outline" className={cn('h-5 gap-1 text-[10px] font-medium', className)} title={`Ran for real on ${run.machine?.host ?? 'your runner'}${run.machine?.repository ? `, in ${run.machine.repository}` : ''}`}>
       <Laptop className="size-3" aria-hidden /> {run.machine?.host ?? 'Your machine'}
     </Badge>
   );

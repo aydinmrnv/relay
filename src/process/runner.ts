@@ -24,6 +24,23 @@ export interface ProcessRunOptions {
   maxCaptureChars?: number;
   /** Grace period between SIGTERM and SIGKILL when terminating. */
   killGraceMs?: number;
+  /**
+   * Terminate everything the child started, not only the child.
+   *
+   * An agent CLI and a test command are both trees: `npm test` is npm, then a
+   * shell, then node, then its workers. Signalling the process Relay spawned
+   * reaches the first of those and nothing below it, so a timeout would leave
+   * the rest running — and, because they hold the other end of the output
+   * pipes, leave this call waiting on them for ever. With this set the child
+   * leads a session and process group of its own and a timeout or an abort
+   * signals the whole group. The price is that the tree has no controlling
+   * terminal, so nothing in it can prompt on `/dev/tty`.
+   *
+   * POSIX only. Windows has no process groups to signal, and what it offers
+   * instead (a detached console, `taskkill /T`) changes more than this does, so
+   * there the direct child is terminated exactly as before.
+   */
+  killTree?: boolean;
 }
 
 export interface ProcessResult {
@@ -43,6 +60,69 @@ export interface ProcessResult {
 
 const DEFAULT_MAX_CAPTURE_CHARS = 4_000_000;
 const DEFAULT_KILL_GRACE_MS = 5_000;
+
+/**
+ * Process groups Relay started and has not seen finish, by group id.
+ *
+ * A child in a session of its own no longer hears the terminal's Ctrl-C or its
+ * hangup, and it does not die with Relay either. So the moment Relay itself
+ * goes, whatever is still in this set is killed on the way out, rather than
+ * left spending tokens for a run that no longer exists. There are two ways to
+ * go, and each needs its own hook:
+ *
+ * - **An exit Node performs** — a forced quit, an uncaught error, a normal exit
+ *   that left a turn behind — runs the `exit` handler.
+ * - **A signal nothing handles** kills the process without Node being asked,
+ *   and `exit` is never emitted. A command that owns a signal (`relay run`
+ *   cancelling on SIGINT) winds its own trees down; for every signal nobody
+ *   owns — a `kill` of `relay eval`, a terminal closed under `relay serve` —
+ *   `dieWithTrees` below is the listener of last resort.
+ */
+const liveTrees = new Set<number>();
+let exitHooksInstalled = false;
+
+/** Kills every process tree still running. Synchronous, so an `exit` handler can call it. */
+export function killProcessTrees(): void {
+  for (const group of liveTrees) signalTree(group, 'SIGKILL');
+  liveTrees.clear();
+}
+
+/** The signals whose default action ends the process without telling Node. */
+const FATAL_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+/**
+ * What a fatal signal does when no command has claimed it: take the trees
+ * down, then die of that same signal, exactly as the process would have.
+ *
+ * A listener exists at all only because having one is the only way to run
+ * code before the default action. So it steps aside whenever anybody else is
+ * listening — that command has decided what the signal means, and cancelling
+ * its turns is part of what it does — and otherwise removes itself and raises
+ * the signal again, so the exit status is the one a shell expects.
+ */
+function dieWithTrees(signal: NodeJS.Signals): void {
+  if (process.listenerCount(signal) > 1) return;
+  killProcessTrees();
+  process.removeListener(signal, dieWithTrees);
+  process.kill(process.pid, signal);
+}
+
+function installExitHooks(): void {
+  if (exitHooksInstalled) return;
+  exitHooksInstalled = true;
+  process.on('exit', killProcessTrees);
+  for (const signal of FATAL_SIGNALS) process.on(signal, dieWithTrees);
+}
+
+/** Signals a whole process group. False when there was nothing left to signal. */
+function signalTree(group: number, signal: NodeJS.Signals): boolean {
+  try {
+    process.kill(-group, signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Spawns a process with an explicit argv. There is no shell involved anywhere
@@ -86,6 +166,7 @@ export async function runProcess(
   // From here to the listener below there is no await, so no second gap.
   if (options.signal?.aborted) return abortedBeforeStart();
 
+  const ownGroup = options.killTree === true && process.platform !== 'win32';
   const child = spawn(invocation.command, [...invocation.args], {
     cwd,
     env: options.env ? { ...process.env, ...options.env } : process.env,
@@ -94,7 +175,21 @@ export async function runProcess(
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
     windowsHide: true,
+    // On POSIX `detached` is `setsid()`: the child leads a new session, and so
+    // a new process group, which is what makes the tree signallable as one
+    // thing. It also means the tree has no controlling terminal: it never
+    // hears the terminal's Ctrl-C or hangup (hence the hooks above), and
+    // anything in it that opens `/dev/tty` to ask a question — an ssh
+    // passphrase, `sudo` — fails at once instead of prompting. Its stdin was
+    // already a pipe, so nothing here could have been answered anyway. The
+    // child is still awaited and never unref'd.
+    ...(ownGroup ? { detached: true } : {}),
   });
+  const group = ownGroup ? child.pid : undefined;
+  if (group !== undefined) {
+    liveTrees.add(group);
+    installExitHooks();
+  }
 
   let stdout = '';
   let stderr = '';
@@ -136,13 +231,20 @@ export async function runProcess(
     stderrSplitter.push(chunk);
   });
 
-  // Terminate politely first; escalate only if the child ignores SIGTERM.
+  // Terminate politely first; escalate only if the child ignores SIGTERM. With
+  // a group of its own the signal goes to the whole tree; the direct child is
+  // the fallback for the moment between `spawn` and the group existing.
   let killTimer: NodeJS.Timeout | undefined;
+  let terminating = false;
+  const send = (signal: NodeJS.Signals): void => {
+    if (group === undefined || !signalTree(group, signal)) child.kill(signal);
+  };
   const terminate = (): void => {
-    if (settled || child.killed) return;
-    child.kill('SIGTERM');
+    if (settled || terminating) return;
+    terminating = true;
+    send('SIGTERM');
     killTimer = setTimeout(() => {
-      if (!settled) child.kill('SIGKILL');
+      if (!settled) send('SIGKILL');
     }, killGraceMs);
     killTimer.unref?.();
   };
@@ -225,6 +327,7 @@ export async function runProcess(
     if (timeoutTimer) clearTimeout(timeoutTimer);
     if (killTimer) clearTimeout(killTimer);
     options.signal?.removeEventListener('abort', onAbort);
+    if (group !== undefined) liveTrees.delete(group);
   }
 }
 

@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useAgentsStore } from '@/hooks/use-agent-accounts';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { useCompanion, type RunnerTarget } from '@/lib/companion/client';
+import { SUPPORT_EMAIL } from '@/lib/links';
 import { cn } from '@/lib/utils';
 
 /**
@@ -43,7 +44,7 @@ interface RunnerFacts {
 }
 
 /** Row labels shared by both columns, in the order the table reads. */
-const ROW_LABELS = ['Setting up', 'Who starts it', 'When it is there', 'Where your code is', 'Where the sign-ins sit', 'Who holds your code', 'Needs an account', 'What it costs you', 'Local-only work', 'Who can reach it', 'Runs nobody is watching'];
+const ROW_LABELS = ['Setting up', 'Who starts it', 'When it is there', 'Where your code is', 'Where the sign-ins sit', 'Who holds your code', 'Needs an account', 'What it costs you', 'Limits', 'Local-only work', 'Who can reach it', 'Runs nobody is watching'];
 
 const MACHINE: RunnerFacts = {
   key: 'machine',
@@ -67,8 +68,9 @@ const MACHINE: RunnerFacts = {
     'In a worktree beside your own checkout. Your working copy is only read.',
     "In the CLIs' own files on this computer — the Claude and Codex you already signed in to.",
     'Only on your computer. Nothing of yours is copied onto Relay infrastructure.',
-    'Not for the machine itself: Relay never registers it, or knows it exists.',
+    'The studio does. The computer itself needs none: Relay never registers it, or knows it exists.',
     'Nothing but your own hardware. Model usage counts against your Claude and ChatGPT plans.',
+    'Whatever your computer can take: each run has its own worktree.',
     'Xcode builds, simulators, local services, private networks, localhost dependencies.',
     '127.0.0.1 only, and only a studio holding the token from your terminal.',
     'Not yet: nothing can reach a computer that is switched off. Exported workflows on GitHub Actions run unattended.',
@@ -81,14 +83,14 @@ const CLOUD: RunnerFacts = {
   subject: 'Relay Cloud',
   use: 'Use Relay Cloud',
   icon: Cloud,
-  tagline: 'A Linux machine of your own that Relay makes for you, wakes when you run something and puts itself to sleep.',
-  needs: 'A free account. The hub knows your machine by your sign-in, so there is nothing to copy out.',
+  tagline: 'Invite-only beta. A Linux machine of your own that Relay makes for you, wakes when you run something and puts to sleep when it is idle.',
+  needs: 'An account and, for now, an invitation. Relay Cloud knows your machine by your sign-in, so there is nothing to copy out.',
   good: 'Good for running from anywhere: another browser, another machine, a laptop that is shut.',
   points: [
     'There when your computer is not. About a minute to wake, and it sleeps by itself after ten idle minutes.',
     'You name the repository on each run. It is checked out once and fetched after that, and the pull request opens as you.',
     'Nothing to install and no terminal: no Azure account, no SSH key, no cloud console.',
-    'Nothing in API fees: the agents still use your own plans. Asleep, the machine is only a disk.',
+    'Nothing in API fees, and nothing billed for the machine during the beta: the agents still use your own plans.',
   ],
   rows: [
     'None. Press Make my machine and it is made for you, in about five minutes the first time.',
@@ -97,8 +99,9 @@ const CLOUD: RunnerFacts = {
     'In a worktree on that machine’s disk, from the repository you name on the run. It stays there between runs, and goes with the machine when you remove it.',
     "In the CLIs' own files on that machine, signed in once through the browser and kept. Relay's code has no route that reads them.",
     'On your cloud machine, and nowhere else: one VM per person, holding your checkout and your sign-ins. Relay operates the machine; your code and credentials sit on it until you remove it.',
-    'Yes. The hub verifies your session, so the machine is provably yours and nobody else’s.',
-    'No API fees, as on your own computer. Awake, it costs the machine’s own price; asleep, only its disk.',
+    'Yes. Relay Cloud verifies your session, so the machine is yours and nobody else’s.',
+    'Nothing is billed to you during the beta. No API fees either, as on your own computer: model usage counts against your own plans.',
+    'One run at a time, on a small Linux machine. Places are limited during the beta: when every machine in a region is awake, yours waits for room.',
     'The Linux command line and the repository. No Xcode, no local services, no private network.',
     'No public address. It dials out to Relay, and only your own signed-in studio reaches it.',
     'Not yet: waking a machine from an event comes later. Exported workflows on GitHub Actions run unattended.',
@@ -115,14 +118,14 @@ const RUNNERS: Record<RunnerTarget, RunnerFacts> = { machine: MACHINE, cloud: CL
  */
 const SAME = [
   'Your Claude and ChatGPT subscriptions do the work. No API keys to paste.',
-  'Relay never asks you for a model credential, and there is no route that reads one.',
+  'The studio never asks you for a model credential, and has no route that reads one.',
   'Runs land in your own repository: a branch, a secret scan, and a pull request for you to merge.',
   'Test runs are free and stay in this browser, whichever runner you pick.',
   'The same guardrails, budgets and refusals — the runner only changes where the agents work.',
 ];
 
 const PICK = [
-  { title: 'Pick your computer if…', body: 'you work on macOS, need Xcode or a private network, or would rather not sign up to try a workflow out.', icon: Laptop, href: '/connect', cta: 'Connect your machine' },
+  { title: 'Pick your computer if…', body: 'you work on macOS, need Xcode or a private network, or want your code and sign-ins to stay on hardware you own.', icon: Laptop, href: '/connect', cta: 'Connect your computer' },
   { title: 'Pick Relay Cloud if…', body: 'you want to start a run from any browser, keep working while it runs, or never install anything at all.', icon: Cloud, href: '/settings#machine', cta: 'Set up Relay Cloud' },
   { title: 'Pick either if…', body: 'the work is just “open a reviewed pull request”. You can set both up and switch between them; each run remembers where it started.', icon: Plug, href: '/settings#machine', cta: 'Switch in Settings' },
 ];
@@ -145,9 +148,9 @@ const CLOUD_BUSY = new Set(['queued', 'creating', 'starting', 'stopping', 'delet
 
 /** Why Relay Cloud is not on offer, and what — if anything — a person can do about it. */
 const BLOCKED = {
-  'no-accounts': 'Not on this deployment: it has no accounts, so there is no way for Relay to know whose machine this is. Your own computer is the runner here, and it needs no account.',
-  'no-hub': 'Not on this deployment: there is no Relay Cloud hub behind it. Your own computer is the runner here.',
-  'sign-in': 'Sign in first: the hub knows your machine by your sign-in, which is how it knows it is yours.',
+  'no-accounts': 'Not offered here: this studio has no accounts, so there is no way for Relay to know whose machine it would be. Your own computer is the runner here.',
+  'no-hub': 'Not offered on this studio. Your own computer is the runner here.',
+  'sign-in': 'Sign in first: Relay Cloud knows your machine by your sign-in, which is how it knows it is yours.',
 } as const;
 
 /**
@@ -170,8 +173,18 @@ export function RunnerStatus({ target }: { target: RunnerTarget }) {
     if (hub === null) return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Not on this studio</Badge>;
     if (!signedIn) return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Sign in to use</Badge>;
     // Nothing has asked the hub about this machine, so there is nothing true to say yet.
-    if (!inUse && cloud === null) return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Not in use</Badge>;
-    const state = cloud?.state ?? 'asleep';
+    if (!inUse && cloud === null) return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Not selected</Badge>;
+    // Selected, and Relay Cloud has not said anything about the machine: say that, not "Asleep", which is a guess.
+    if (cloud === null) {
+      return status === 'connecting' ? (
+        <Badge variant="outline" className="h-5 gap-1 text-[10px] text-muted-foreground">
+          <Spinner className="size-2.5" /> Checking
+        </Badge>
+      ) : (
+        <Badge variant="outline" className="h-5 border-warning/40 bg-warning/10 text-[10px] text-amber-700 dark:text-warning">Not answering</Badge>
+      );
+    }
+    const state = cloud.state;
     if (CLOUD_BUSY.has(state))
       return (
         <Badge variant="outline" className="h-5 gap-1 border-signal/30 bg-signal/5 text-[10px] text-signal">
@@ -184,8 +197,8 @@ export function RunnerStatus({ target }: { target: RunnerTarget }) {
   }
 
   // The pairing outlives a switch to the cloud, so it says something about the computer even then.
-  if (!inUse && pairing === null) return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Not in use</Badge>;
-  if (!inUse) return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Paired, not in use</Badge>;
+  if (!inUse && pairing === null) return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Not selected</Badge>;
+  if (!inUse) return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Paired, not selected</Badge>;
   if (status === 'connected') return <Badge variant="outline" className="h-5 border-success/40 bg-success/10 text-[10px] text-success">Connected</Badge>;
   if (status === 'connecting')
     return (
@@ -195,7 +208,7 @@ export function RunnerStatus({ target }: { target: RunnerTarget }) {
     );
   if (status === 'blocked') return <Badge variant="outline" className="h-5 border-warning/40 bg-warning/10 text-[10px] text-amber-700 dark:text-warning">Blocked by the browser</Badge>;
   if (status === 'unreachable') return <Badge variant="outline" className="h-5 border-warning/40 bg-warning/10 text-[10px] text-amber-700 dark:text-warning">Not running</Badge>;
-  if (status === 'rejected') return <Badge variant="outline" className="h-5 border-destructive/40 bg-destructive/10 text-[10px] text-destructive">Refused the pairing</Badge>;
+  if (status === 'rejected') return <Badge variant="outline" className="h-5 border-destructive/40 bg-destructive/10 text-[10px] text-destructive">Pair again</Badge>;
   return <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">Not paired</Badge>;
 }
 
@@ -218,14 +231,15 @@ function RunnerCard({ runner }: { runner: RunnerFacts }) {
   const blocked = runner.key !== 'cloud' ? null : !accounts ? 'no-accounts' : hub === null ? 'no-hub' : !signedIn ? 'sign-in' : null;
 
   return (
-    <Card className={cn('gap-0 overflow-hidden py-0', chosen && 'border-primary/60 ring-1 ring-primary/30')}>
+    <Card className={cn('gap-4 overflow-hidden', chosen && 'border-primary/60 ring-1 ring-primary/30')}>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           <runner.icon className="size-4 text-muted-foreground" aria-hidden />
           {runner.title}
           {chosen ? (
             <Badge className="h-5 gap-1 px-1.5 text-[10px]">
-              <Check className="size-3" aria-hidden /> In use
+              {/* "Selected", not "In use": it can be the chosen runner and still not be paired or awake, which the badge beside it says. */}
+              <Check className="size-3" aria-hidden /> Selected
             </Badge>
           ) : null}
           <span className="ml-auto">
@@ -260,6 +274,11 @@ function RunnerCard({ runner }: { runner: RunnerFacts }) {
           }}>
             {chosen ? 'Sign-ins and runs go here' : runner.use}
           </Button>
+        ) : null}
+        {runner.key === 'cloud' && blocked === null ? (
+          <a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Relay Cloud access')}`} className="text-xs font-medium text-foreground underline-offset-4 hover:underline">
+            Request access
+          </a>
         ) : null}
         {runner.key === 'cloud' && blocked === 'sign-in' ? (
           <Button size="sm" nativeButton={false} render={<Link href="/sign-up?next=/runners" />}>
@@ -343,7 +362,7 @@ export function RunnerComparison({ className }: { className?: string }) {
             ))}
           </ul>
           <p className="mt-1 text-xs text-pretty text-muted-foreground">
-            There is a third place, for work that starts by itself: an exported workflow runs on your repository’s own GitHub Actions minutes, on your plan, with no Relay involved. That is what a label, a ticket or a schedule triggers today.
+            There is a third place, for work that starts by itself: an exported workflow runs on your repository’s own GitHub Actions minutes, on your plan, with no Relay server involved. That is what a label on a GitHub issue starts today.
           </p>
         </div>
         <div className="grid content-start gap-3">
@@ -390,7 +409,7 @@ export function RunnerNote({ className }: { className?: string }) {
       <Link href="/runners" className="font-medium text-foreground underline-offset-4 hover:underline">
         Compare the two
       </Link>
-      {hub === null ? '. Relay Cloud is not available on this deployment' : '.'}
+      {hub === null ? '. Relay Cloud is not offered on this studio' : '.'}
     </p>
   );
 }

@@ -21,11 +21,6 @@ export function lookup(context: Record<string, unknown>, path: string): unknown 
   return current;
 }
 
-/** Every `{{path}}` a template mentions, for the inspector's variable hints. */
-export function templateVariables(template: string): string[] {
-  return [...template.matchAll(/\{\{\s*([a-zA-Z0-9_.\-]+)\s*\}\}/g)].map((match) => match[1]!);
-}
-
 /** The variables the inspector offers, grouped by where they come from. */
 export const VARIABLE_HINTS: Array<{ group: string; variables: Array<{ path: string; description: string }> }> = [
   {

@@ -13,7 +13,7 @@ export const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'succeeded', label: 'Succeeded' },
   { value: 'failed', label: 'Failed' },
   { value: 'refused', label: 'Refused' },
-  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'cancelled', label: 'Stopped' },
 ];
 
 export function isStatusFilter(value: unknown): value is StatusFilter {

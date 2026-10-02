@@ -77,6 +77,56 @@ describe('config', () => {
     assert.throws(() => mergeConfig(DEFAULT_CONFIG, { agents: { architect: 'claude' } }), RelayError);
   });
 
+  // A key Relay does not read is a decision nobody is honouring. The one that
+  // matters most is a budget: `maxCostUSD` used to load without a word and
+  // leave the run with no ceiling at all.
+  it('rejects a misspelled key instead of ignoring it, and says what it probably meant', () => {
+    const unknown = (raw: unknown): RelayError => {
+      let thrown: unknown;
+      try {
+        mergeConfig(DEFAULT_CONFIG, raw);
+      } catch (error) {
+        thrown = error;
+      }
+      assert.ok(thrown instanceof RelayError, `expected ${JSON.stringify(raw)} to be refused`);
+      assert.equal(thrown.code, 'BAD_CONFIG');
+      return thrown;
+    };
+
+    const budget = unknown({ workflow: { maxCostUSD: 2.5 } });
+    assert.match(budget.message, /config\.workflow: unknown key "maxCostUSD"\. Did you mean "maxCostUsd"\?/);
+    assert.match(budget.hint ?? '', /maxCostUsd/);
+
+    assert.match(unknown({ unattended: { maxDailyCost: 20 } }).message, /Did you mean "maxDailyCostUsd"\?/);
+    assert.match(unknown({ unattended: { author: ['alice'] } }).message, /config\.unattended: unknown key "author"\. Did you mean "authors"\?/);
+    assert.match(unknown({ workflows: {} }).message, /config: unknown key "workflows"\. Did you mean "workflow"\?/);
+    assert.match(unknown({ github: { protectedBranch: ['main'] } }).message, /Did you mean "protectedBranches"\?/);
+    assert.match(unknown({ timeouts: { testMs: 1000 } }).message, /Did you mean "testsMs"\?/);
+    assert.match(unknown({ notify: { webhookUrl: 'https://example.com' } }).message, /config\.notify: unknown key "webhookUrl"/);
+
+    // Nothing near it, so nothing is suggested — a wrong guess reads as advice.
+    const far = unknown({ workflow: { colour: 'blue' } });
+    assert.doesNotMatch(far.message, /Did you mean/);
+    assert.match(far.hint ?? '', /Valid keys: .*triggerLabel/);
+
+    // Not a typo but a key with a deliberate reason to be absent.
+    assert.match(unknown({ delivery: { allowSecrets: ['.env'] } }).message, /--allow-secret/);
+  });
+
+  it('accepts every key it writes itself', async () => {
+    // What `relay init` writes is the whole default document, so every key in
+    // it has to be one the reader knows — or a config Relay wrote would be a
+    // config Relay refuses.
+    assert.deepEqual(mergeConfig(DEFAULT_CONFIG, structuredClone(DEFAULT_CONFIG)), DEFAULT_CONFIG);
+    const repo = await createTempRepo();
+    try {
+      await writeConfig(repo.root, structuredClone(DEFAULT_CONFIG));
+      assert.deepEqual(await loadConfig(repo.root), DEFAULT_CONFIG);
+    } finally {
+      await repo.cleanup();
+    }
+  });
+
   it('accepts every registered agent for every role, without a hardcoded union', () => {
     for (const provider of AGENT_PROVIDERS) {
       for (const role of ROLES) {

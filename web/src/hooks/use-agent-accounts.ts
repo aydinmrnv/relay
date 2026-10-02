@@ -44,7 +44,13 @@ export const useAgentsStore = create<AgentsStore>()((set, get) => ({
       return;
     }
     set({ loading: true });
-    await companion.refresh();
+    try {
+      await companion.refresh();
+    } catch {
+      // A check that throws must not leave `loading` set: every later check returns early while it is.
+      set({ bridge: 'unavailable', status: null, github: null, loading: false });
+      return;
+    }
     const now = useCompanion.getState();
     if (now.status !== 'connected') {
       set({ bridge: 'unavailable', status: null, github: null, loading: false });

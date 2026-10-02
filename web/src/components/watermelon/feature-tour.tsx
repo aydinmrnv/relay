@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
     motion,
     AnimatePresence,
-    useReducedMotion,
+    useReducedMotionConfig,
     type Transition,
 } from "motion/react";
 import { X } from "lucide-react";
@@ -54,7 +54,7 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
     loop = false,
     closeOnBackdrop = true,
 }) => {
-    const shouldReduceMotion = useReducedMotion();
+    const shouldReduceMotion = useReducedMotionConfig();
     const containerRef = useRef<HTMLDivElement>(null);
     const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -80,6 +80,21 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
             if (e.key === "ArrowRight") goNext();
             if (e.key === "ArrowLeft") goPrev();
             if (e.key === "Escape") onClose();
+            // Keep Tab inside the tour: it covers the page, so focus behind it is focus on nothing visible.
+            if (e.key === "Tab") {
+                const items = Array.from(containerRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), a[href]") ?? []);
+                if (items.length === 0) return;
+                const first = items[0];
+                const last = items[items.length - 1];
+                const inside = containerRef.current?.contains(document.activeElement) ?? false;
+                if (e.shiftKey && (document.activeElement === first || !inside)) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && (document.activeElement === last || !inside)) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            }
         };
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
@@ -100,6 +115,7 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
             onClick={closeOnBackdrop ? onClose : undefined}
             role="dialog"
             aria-modal="true"
+            aria-label={currentStep === undefined ? "Tour" : `Tour, step ${currentIndex + 1} of ${steps.length}: ${currentStep.title}`}
         >
             <motion.div
                 ref={containerRef}
@@ -247,7 +263,7 @@ export const FeatureTour: React.FC<FeatureTourProps> = ({
                             aria-selected={index === currentIndex}
                             aria-label={`Go to ${step.title}`}
                             onClick={() => goToStep(index)}
-                            className="relative h-2 focus:outline-none"
+                            className="relative h-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                         >
                             <motion.div
                                 animate={{

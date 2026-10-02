@@ -1,7 +1,11 @@
 import type { Metadata } from 'next';
 import { RunnersView } from '@/components/companion/runners-view';
 
-export const metadata: Metadata = { title: 'Where your agents run', robots: { index: false } };
+export const metadata: Metadata = {
+  title: 'Where your agents run',
+  description: 'The two places a real run happens: your own computer through relay connect, or a Relay Cloud machine. What is the same, what differs, and which to pick.',
+  alternates: { canonical: '/runners' },
+};
 
 /**
  * The local-or-cloud question on its own page: your computer through

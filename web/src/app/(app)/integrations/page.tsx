@@ -75,7 +75,8 @@ function IntegrationsInner() {
   const tokens = useMemo(() => tokenize(query), [query]);
   const matches = useMemo(() => CONNECTORS.map((connector) => matchConnector(connector, tokens)).filter((match): match is ConnectorMatch => match !== null), [tokens]);
 
-  const isConnected = useCallback((id: string) => connections[id] !== undefined, [connections]);
+  // Connected means the app accepted a credential. A marker is a label somebody typed: it is counted and filtered on its own.
+  const isConnected = useCallback((id: string) => connections[id]?.credential !== undefined, [connections]);
   const is = useMemo(() => ({ connected: isConnected, used: (id: string) => usage.has(id) }), [isConnected, usage]);
 
   const counts = useMemo(() => {
@@ -113,7 +114,10 @@ function IntegrationsInner() {
     [connect, disconnect],
   );
 
-  const connectedCount = Object.keys(connections).length;
+  const connectedCount = Object.values(connections).filter((connection) => connection.credential !== undefined).length;
+  const markedCount = Object.values(connections).filter((connection) => connection.credential === undefined).length;
+  const appCount = CONNECTORS.filter((connector) => connector.category !== 'core').length;
+  const builtInCount = CONNECTORS.length - appCount;
   const filtered = filter !== 'all' || tokens.length > 0;
 
   return (
@@ -170,7 +174,7 @@ function IntegrationsInner() {
           <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span aria-live="polite">
               {visible.length === counts['all'] && filter === 'all' && tokens.length === 0
-                ? `${visible.length} apps · ${connectedCount} connected`
+                ? `${appCount} apps and ${builtInCount} built-in node sets · ${connectedCount} connected${markedCount > 0 ? ` · ${markedCount} marked ready` : ''}`
                 : `${visible.length} ${visible.length === 1 ? 'result' : 'results'}${filter === 'all' ? '' : ` in ${filterLabel(filter)}`}${tokens.length > 0 ? ` for “${query.trim()}”` : ''}`}
             </span>
             {filtered ? (

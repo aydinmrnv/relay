@@ -8,71 +8,26 @@
  */
 export interface Migration {
   id: string;
-  sql: string;
+  /**
+   * The SQL, or a function of the migrations this database had already
+   * applied before this start, for the one migration that must behave
+   * differently on a database it has never seen.
+   */
+  sql: string | ((appliedBefore: ReadonlySet<string>) => string);
 }
 
 export const MIGRATIONS: Migration[] = [
   {
+    // The studio's own tables. This once also made sign-in tables named
+    // `user`, `session`, `account`, `verification` and `rate_limit`, which
+    // the next migration dropped again when accounts moved to Clerk. A
+    // database that applied it then has already been through both; a new one
+    // never gets those tables, so nothing here can touch a table of the same
+    // name that belongs to something else in the same database.
     id: '0001_accounts_and_workspaces',
     sql: `
-      CREATE TABLE IF NOT EXISTS "user" (
-        id text PRIMARY KEY,
-        name text NOT NULL,
-        email text NOT NULL UNIQUE,
-        email_verified boolean NOT NULL DEFAULT false,
-        image text,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      );
-
-      CREATE TABLE IF NOT EXISTS session (
-        id text PRIMARY KEY,
-        expires_at timestamptz NOT NULL,
-        token text NOT NULL UNIQUE,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        ip_address text,
-        user_agent text,
-        user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS session_user_idx ON session (user_id);
-
-      CREATE TABLE IF NOT EXISTS account (
-        id text PRIMARY KEY,
-        account_id text NOT NULL,
-        provider_id text NOT NULL,
-        user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-        access_token text,
-        refresh_token text,
-        id_token text,
-        access_token_expires_at timestamptz,
-        refresh_token_expires_at timestamptz,
-        scope text,
-        password text,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE INDEX IF NOT EXISTS account_user_idx ON account (user_id);
-
-      CREATE TABLE IF NOT EXISTS verification (
-        id text PRIMARY KEY,
-        identifier text NOT NULL,
-        value text NOT NULL,
-        expires_at timestamptz NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE INDEX IF NOT EXISTS verification_identifier_idx ON verification (identifier);
-
-      CREATE TABLE IF NOT EXISTS rate_limit (
-        id text PRIMARY KEY,
-        key text NOT NULL UNIQUE,
-        count integer NOT NULL,
-        last_request bigint NOT NULL
-      );
-
       CREATE TABLE IF NOT EXISTS workspace (
-        user_id text PRIMARY KEY REFERENCES "user"(id) ON DELETE CASCADE,
+        user_id text PRIMARY KEY,
         settings jsonb,
         brand jsonb,
         connections jsonb,
@@ -85,7 +40,7 @@ export const MIGRATIONS: Migration[] = [
       );
 
       CREATE TABLE IF NOT EXISTS workflow (
-        user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+        user_id text NOT NULL,
         id text NOT NULL,
         name text NOT NULL,
         data jsonb NOT NULL,
@@ -95,7 +50,7 @@ export const MIGRATIONS: Migration[] = [
       );
 
       CREATE TABLE IF NOT EXISTS run (
-        user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+        user_id text NOT NULL,
         id text NOT NULL,
         workflow_id text NOT NULL,
         status text NOT NULL,
@@ -108,7 +63,7 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE TABLE IF NOT EXISTS workflow_version (
         id text PRIMARY KEY,
-        user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+        user_id text NOT NULL,
         workflow_id text NOT NULL,
         label text,
         auto boolean NOT NULL DEFAULT true,
@@ -121,7 +76,7 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE TABLE IF NOT EXISTS share (
         slug text PRIMARY KEY,
-        user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+        user_id text NOT NULL,
         workflow_id text NOT NULL,
         author_name text NOT NULL,
         data jsonb NOT NULL,
@@ -135,9 +90,14 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     // Accounts moved to Clerk: people are Clerk user ids now, with no row
-    // here to point at, and the old sign-in tables are no longer used.
+    // here to point at, and the old sign-in tables are no longer used. Only a
+    // database that was given those tables by the first migration, on an
+    // earlier start, has them dropped: on any other, `user` and `session`
+    // are somebody else's, and are left alone.
     id: '0002_accounts_on_clerk',
-    sql: `
+    sql: (appliedBefore) =>
+      appliedBefore.has('0001_accounts_and_workspaces')
+        ? `
       ALTER TABLE workspace DROP CONSTRAINT IF EXISTS workspace_user_id_fkey;
       ALTER TABLE workflow DROP CONSTRAINT IF EXISTS workflow_user_id_fkey;
       ALTER TABLE run DROP CONSTRAINT IF EXISTS run_user_id_fkey;
@@ -148,7 +108,8 @@ export const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS verification;
       DROP TABLE IF EXISTS rate_limit;
       DROP TABLE IF EXISTS "user";
-    `,
+    `
+        : 'SELECT 1;',
   },
   {
     // Apps connected for real: an encrypted credential per app per person.
@@ -167,6 +128,25 @@ export const MIGRATIONS: Migration[] = [
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (user_id, connector_id)
+      );
+    `,
+  },
+  {
+    // Request counters, so one account or one address cannot use the studio's
+    // server as a free probe or fill its database; and the ids of deleted
+    // accounts, so a tab still holding a session cannot write their data back.
+    id: '0004_rate_limits_and_deleted_users',
+    sql: `
+      CREATE TABLE IF NOT EXISTS relay_rate_limit (
+        key text PRIMARY KEY,
+        window_start bigint NOT NULL,
+        count integer NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS relay_rate_limit_window_idx ON relay_rate_limit (window_start);
+
+      CREATE TABLE IF NOT EXISTS relay_deleted_user (
+        user_id text PRIMARY KEY,
+        deleted_at timestamptz NOT NULL DEFAULT now()
       );
     `,
   },

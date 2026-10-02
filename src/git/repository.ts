@@ -1,7 +1,7 @@
 import { join, normalize } from 'node:path';
 
 import { RelayError } from '../util/errors.ts';
-import { runProcess } from '../process/runner.ts';
+import { resolveExecutable, runProcess } from '../process/runner.ts';
 
 export interface RepositoryInfo {
   /** Absolute path to the repository root (the user's checkout). */
@@ -84,6 +84,17 @@ async function gitQuiet(args: readonly string[], cwd: string): Promise<string | 
 }
 
 export async function discoverRepository(cwd: string): Promise<RepositoryInfo> {
+  // Asked before anything else, because every answer below comes from git: with
+  // no git on PATH each of them fails the same way, and the first one used to
+  // be reported as "not inside a git repository — run `git init`", advice that
+  // cannot be followed on a machine where `git` is not a command.
+  if ((await resolveExecutable('git')) === null) {
+    throw new RelayError('git is not installed, or is not on your PATH.', {
+      code: 'EXECUTABLE_NOT_FOUND',
+      hint: 'Relay does all of its work through git. Install it, then run `relay doctor`.',
+    });
+  }
+
   const reportedRoot = await gitQuiet(['rev-parse', '--show-toplevel'], cwd);
   if (reportedRoot === null) {
     throw new RelayError('Not inside a git repository.', {
@@ -111,7 +122,7 @@ export async function discoverRepository(cwd: string): Promise<RepositoryInfo> {
     .filter((line) => line.length > 0);
 
   const remoteUrl = await gitQuiet(['remote', 'get-url', 'origin'], root);
-  const slug = remoteUrl === null ? null : parseRemoteUrl(remoteUrl);
+  const slug = remoteUrl === null ? null : githubSlug(remoteUrl);
 
   return {
     root,
@@ -129,8 +140,32 @@ export async function discoverRepository(cwd: string): Promise<RepositoryInfo> {
 }
 
 /**
- * Parses github remotes in both SSH and HTTPS forms.
- * Returns null for hosts we cannot confidently interpret.
+ * Hosts that are known not to be GitHub. A remote on one of them has an owner
+ * and a name too, and they mean nothing to `gh`: handed to it as `--repo
+ * owner/name`, they name whichever GitHub repository happens to share the
+ * spelling — somebody else's issues, somebody else's pull requests.
+ *
+ * A list of what GitHub is not, rather than of what it is, because GitHub
+ * Enterprise Server lives at whatever hostname a company gave it, and `gh`
+ * reaches those through its own `GH_HOST`.
+ */
+const NOT_GITHUB = /(^|\.)(gitlab|bitbucket|codeberg|gitea|gitee)\.|^(ssh\.)?dev\.azure\.com$|\.visualstudio\.com$|(^|\.)sr\.ht$/i;
+
+/**
+ * The `owner/name` a remote names on GitHub, or null when it is somewhere
+ * else. Null is what "no GitHub remote" already means everywhere above this:
+ * issues, pull requests and `relay serve` say so instead of asking `gh` about a
+ * repository that is not there.
+ */
+export function githubSlug(url: string): { owner: string; name: string } | null {
+  const parsed = parseRemoteUrl(url);
+  if (parsed === null || NOT_GITHUB.test(parsed.host)) return null;
+  return { owner: parsed.owner, name: parsed.name };
+}
+
+/**
+ * Parses a git remote in both SSH and HTTPS forms, on any host.
+ * Returns null for a URL that does not have an owner and a name to give.
  */
 export function parseRemoteUrl(url: string): { host: string; owner: string; name: string } | null {
   const trimmed = url.trim().replace(/\.git$/, '');

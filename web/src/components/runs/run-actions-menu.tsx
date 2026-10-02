@@ -46,12 +46,13 @@ export function RunActionsMenu({ run, workflowExists, onDelete, className }: Pro
             <span className="text-xs text-muted-foreground">{workflowExists ? 'Same ticket, current version of the workflow' : 'Its workflow was deleted'}</span>
           </span>
         </DropdownMenuItem>
-        {run.prUrl !== undefined ? (
+        {/* Only a real run has a pull request to open; a test run's is a made-up number. */}
+        {run.prUrl !== undefined && run.source === 'machine' ? (
           <DropdownMenuItem onClick={() => window.open(run.prUrl, '_blank', 'noopener,noreferrer')}>
             <ExternalLink />
             <span className="flex flex-col">
               Open pull request #{prNumber(run.prUrl)}
-              <span className="text-xs text-muted-foreground">{run.source === 'machine' ? `Opened by the run on ${run.machine?.host ?? 'your machine'}` : 'Simulated: the number is made up'}</span>
+              <span className="text-xs text-muted-foreground">Opened by the run on {run.machine?.host ?? 'your machine'}</span>
             </span>
           </DropdownMenuItem>
         ) : null}

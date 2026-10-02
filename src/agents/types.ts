@@ -63,6 +63,14 @@ export interface AgentRunOptions {
    * anything that inspects a run rather than being inferred from its prompt.
    */
   purpose?: string;
+  /**
+   * Changes to the environment the CLI inherits. A value of `undefined`
+   * removes the variable rather than setting it, which is the only use Relay
+   * has for this: a run nobody is watching withholds secret-looking variables
+   * from the agent (`src/unattended/environment.ts`). A harness passes it to
+   * the process it spawns and never reads it.
+   */
+  env?: Record<string, string | undefined>;
 }
 
 export type ResumeOptions = Omit<AgentRunOptions, 'prompt'>;
