@@ -154,8 +154,12 @@ export class MachineRunFold {
   /** Where the pipeline's last event sits once delivery has begun, so late pipeline facts land inside its group. */
   private pipelineEnd: number | null = null;
 
-  constructor(run: Run, workflow: Workflow) {
+  /** The time of "now", for the two places a record carries none of its own. A recording being played back passes the run's own clock. */
+  private readonly now: () => string;
+
+  constructor(run: Run, workflow: Workflow, now: () => string = () => new Date().toISOString()) {
     this.run = run;
+    this.now = now;
     this.nodes = machineRunNodes(workflow);
     const pipeline = workflow.nodes.find((node) => node.id === this.nodes.pipeline);
     this.fast = pipeline?.data.typeId === 'pipeline.action.fast';
@@ -169,7 +173,7 @@ export class MachineRunFold {
     if (this.done || record.type === 'ping') return [];
     if (record.type === 'exit') return this.exit(record.code, record.error);
     const data = record.data;
-    const at = typeof data['at'] === 'string' && !Number.isNaN(Date.parse(data['at'])) ? data['at'] : new Date().toISOString();
+    const at = typeof data['at'] === 'string' && !Number.isNaN(Date.parse(data['at'])) ? data['at'] : this.now();
     switch (data['type']) {
       case 'run_started':
         return this.started(at, data);
@@ -261,10 +265,21 @@ export class MachineRunFold {
     }
 
     // Measured, not played back: every number below comes from the engine's own record.
+    // The engine reports cost per phase, not per round: a phase the run visited
+    // twice has one figure for both visits. It goes on the last visit, once,
+    // with the number of visits it covers — on every visit it would be counted
+    // again for each round, and the phases would add up to more than the run.
     const byPhase = json.usage?.byPhase ?? {};
+    const visits = new Map<string, number>();
+    for (const phase of run.phases) visits.set(phase.phase, (visits.get(phase.phase) ?? 0) + 1);
+    const seen = new Map<string, number>();
     run.phases = run.phases.map((phase): RunPhase => {
+      const visit = (seen.get(phase.phase) ?? 0) + 1;
+      seen.set(phase.phase, visit);
+      const total = visits.get(phase.phase) ?? 1;
       const cost = byPhase[phase.phase]?.costUsd;
-      return typeof cost === 'number' ? { ...phase, costUsd: round(cost) } : phase;
+      if (typeof cost !== 'number' || visit !== total) return phase;
+      return { ...phase, costUsd: round(cost), ...(total > 1 ? { rounds: total } : {}) };
     });
     const total = json.usage?.total?.costUsd;
     run.costUsd = typeof total === 'number' ? round(total) : 0;
@@ -317,7 +332,7 @@ export class MachineRunFold {
 
   private exit(code: number | null, error: string | null): RunEvent[] {
     this.done = true;
-    const at = new Date().toISOString();
+    const at = this.now();
     const events: RunEvent[] = [];
     const status: RunStatus = this.summarized ? statusFor(this.run.machine?.exitCode ?? code ?? EXIT.error) : code === EXIT.cancelled || code === null ? (error === null ? 'cancelled' : 'failed') : 'failed';
 

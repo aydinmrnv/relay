@@ -85,6 +85,7 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
   const allowlist = first('gates.action.allowlist');
   const concurrency = first('gates.action.concurrency');
   const killSwitch = first('gates.action.kill-switch');
+  const injectionScreen = first('gates.action.injection-screen');
   const commentSummary = first('delivery.action.comment-summary');
   const postJson = first('http.action.post-run-json');
   const unattended = trigger !== undefined && isUnattendedTrigger(trigger.node);
@@ -157,6 +158,8 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
       teams: allowed.teams,
       maxDailyCostUsd: numberOrNull(cfg(budget, 'maxDailyCostUsd', null)),
       maxRunCostUsd: numberOrNull(cfg(budget, 'maxRunCostUsd', null)),
+      // The engine screens by default; the node is where a workflow says so out loud, or chooses to be warned instead.
+      ...(injectionScreen === undefined ? {} : { injectionScreen: cfg(injectionScreen, 'mode', 'refuse') === 'warn' ? 'warn' : 'refuse' }),
       pollSeconds: 60,
       deliver: deliver === 'merge' ? 'pr' : deliver,
     },
@@ -435,7 +438,7 @@ function placeSteps(input: { workflow: Workflow; found: Found[]; trigger: Found 
         const handle = edge.sourceHandle ?? def.outputs[0]?.id;
         let next = state;
         if (def.id === 'gates.action.budget' && handle === 'refused') next = state === 0 ? 1 : 2;
-        else if ((def.id === 'gates.action.allowlist' && handle === 'refused') || (def.id === 'gates.action.approval' && handle === 'rejected')) next = 2;
+        else if (((def.id === 'gates.action.allowlist' || def.id === 'gates.action.injection-screen') && handle === 'refused') || (def.id === 'gates.action.approval' && handle === 'rejected')) next = 2;
         else if (def.id === 'logic.action.condition') {
           // The Action always runs the pipeline for the issue it is given, so
           // the branch that leads there is the one a run is on.

@@ -15,6 +15,19 @@ export type CanvasNode = Node<CanvasNodeData, 'wf'>;
 /** How a test run treated an edge: the run is crossing it, crossed it, never took it, or was refused on it. */
 export type EdgeRunState = 'active' | 'travelled' | 'skipped' | 'refused';
 
+/**
+ * What a run did with an edge, from the status of the nodes at its ends.
+ * `running` is whether the run is still going: an edge into a node that never
+ * started is only "skipped" once nothing more can happen.
+ */
+export function edgeRunState(from: NodeRunStatus | undefined, to: NodeRunStatus | undefined, running: boolean): EdgeRunState | undefined {
+  const left = from === 'done' || from === 'refused' || from === 'waiting';
+  if (left && to === 'running') return 'active';
+  if (left && (to === 'done' || to === 'failed' || to === 'refused' || to === 'waiting')) return to === 'refused' ? 'refused' : 'travelled';
+  if (to === 'skipped' || (!running && from !== undefined && to === 'pending')) return 'skipped';
+  return undefined;
+}
+
 export interface CanvasEdgeData extends Record<string, unknown> {
   state?: EdgeRunState;
   /** The source output's name when the source branches ("Refused", "True"). */

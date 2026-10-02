@@ -80,6 +80,14 @@ export function isUnattendedPolicy(value: unknown): value is UnattendedPolicy {
   return typeof value === 'string' && (UNATTENDED_POLICIES as readonly string[]).includes(value);
 }
 
+/**
+ * What an unattended run does when the issue it is about to read looks like a
+ * prompt injection (`src/unattended/injection.ts`): refuse to start, start and
+ * say so, or not look.
+ */
+export const INJECTION_SCREENS = ['refuse', 'warn', 'off'] as const;
+export type InjectionScreen = (typeof INJECTION_SCREENS)[number];
+
 export { MERGE_METHODS, type MergeMethod };
 
 function isMergeMethod(value: unknown): value is MergeMethod {
@@ -235,6 +243,12 @@ export interface RelayConfig {
      * agent nobody is watching only when the repository names it here.
      */
     allowEnv: string[];
+    /**
+     * The injection screen. `refuse` by default, like every other guardrail
+     * here: an issue whose text matches a known injection phrasing starts
+     * nothing until a person has read it and run it by hand.
+     */
+    injectionScreen: InjectionScreen;
   };
   github: {
     autoPush: boolean;
@@ -345,6 +359,7 @@ export const DEFAULT_CONFIG: RelayConfig = {
     pollSeconds: 60,
     deliver: 'pr',
     allowEnv: [],
+    injectionScreen: 'refuse',
   },
   github: {
     autoPush: false,
@@ -804,6 +819,13 @@ export function mergeConfig(base: RelayConfig, raw: unknown): RelayConfig {
         }
       }
       config.unattended.allowEnv = names;
+    }
+    if (unattended['injectionScreen'] !== undefined) {
+      const screen = unattended['injectionScreen'];
+      if (typeof screen !== 'string' || !(INJECTION_SCREENS as readonly string[]).includes(screen)) {
+        throw new RelayError(`config.unattended.injectionScreen must be one of ${INJECTION_SCREENS.join(' | ')}.`, { code: 'BAD_CONFIG' });
+      }
+      config.unattended.injectionScreen = screen as InjectionScreen;
     }
   }
 

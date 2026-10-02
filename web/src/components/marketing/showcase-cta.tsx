@@ -10,7 +10,7 @@ import { PILL, useStudioEntry } from './primitives';
 export function OpenBuilderButton() {
   const entry = useStudioEntry();
   return (
-    <Button className={cn('mt-6', PILL)} variant="outline" nativeButton={false} render={<Link href={entry.into('/workflows')} />}>
+    <Button className={cn('mt-6', PILL)} variant="outline" nativeButton={false} render={<Link href={entry.builder} />}>
       Open the builder
       <ArrowRight data-icon="inline-end" />
     </Button>

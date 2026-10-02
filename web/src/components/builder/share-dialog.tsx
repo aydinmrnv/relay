@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { CopyButton } from '@/components/runs/copy-button';
 import { useBrand } from '@/hooks/use-brand';
-import { useAccount } from '@/lib/cloud/account';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { api, CloudError, flushNow } from '@/lib/cloud/sync';
 import { withoutSecrets } from '@/lib/cloud/secrets';
 import type { ShareSummary } from '@/lib/cloud/types';
@@ -41,6 +41,9 @@ export function ShareDialog({ workflow, open, onOpenChange }: { workflow: Workfl
 
 function GuestShare() {
   const pathname = usePathname();
+  // A deployment without sign-in has nothing to send anyone to.
+  const accounts = useCapabilities().enabled;
+  if (!accounts) return <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">Share links live in an account, and accounts are not switched on for this copy of the studio. Export keeps the workflow as a file you can send instead.</p>;
   return (
     <div className="flex flex-col gap-4">
       <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">Share links live in your account, so they keep working after you close this browser. Create a free account — this workflow comes with you.</p>

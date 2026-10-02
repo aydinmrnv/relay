@@ -48,17 +48,18 @@ export function Hero() {
             <span className="text-muted-foreground">Reviewed PR out.</span>
           </motion.h1>
           <motion.p variants={item} className="mt-6 max-w-xl text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg">
-            Claude Code and Codex, working together on your repository. {brand.name} connects the plan, the code, and the
-            review. You decide what ships.
+            {brand.name} doesn’t take a coding agent’s word for it. Claude Code and Codex check each other’s plan and diff on
+            your repository, and you get the receipts: every claim beside what git and your tests say.
           </motion.p>
           <motion.div variants={item} className="mt-8 flex flex-wrap items-center gap-3">
             <Hero1Cta href={entry.href}>{entry.label}</Hero1Cta>
             <LiquidGlass className="rounded-full transition-[background-color,scale] duration-300 hover:bg-white/60 active:scale-[0.97] dark:hover:bg-white/[0.13]">
+              {/* Signed out, the second button is the builder itself: no account, nothing to install. */}
               <Link
-                href="/guide"
+                href={entry.playground ?? '/guide'}
                 className="inline-flex h-11 items-center rounded-full px-5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
-                Read the guide
+                {entry.playground === null ? 'Read the guide' : 'Open the playground'}
               </Link>
             </LiquidGlass>
           </motion.div>
@@ -74,6 +75,13 @@ export function Hero() {
                 Open source on GitHub
                 <ArrowUpRight className="size-3.5" />
               </a>
+            </li>
+            <li>
+              {/* Not a sample: runs {brand.name} made on its own repository, with the pull requests they opened. */}
+              <Link href="/r" className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline">
+                Watch a real run
+                <ArrowRight className="size-3.5" />
+              </Link>
             </li>
           </motion.ul>
         </motion.div>

@@ -26,6 +26,7 @@ import { defaultConfig, getNodeType, type NodeTypeDef, type PortSpec } from '@/l
 import { flushStorage, useStudio } from '@/lib/store';
 import { useAccount } from '@/lib/cloud/account';
 import { useSyncStatus } from '@/lib/cloud/sync';
+import { useStudioLinks } from '@/lib/studio-links';
 import { useSignedIn } from '@/hooks/use-agent-accounts';
 import { validateWorkflow, type ValidationIssue } from '@/lib/workflow/validate';
 import { launchRun, launchMachineRun, cancelRun } from '@/lib/run-launcher';
@@ -47,7 +48,7 @@ import { ForecastDialog } from './forecast-dialog';
 import { BuilderTour } from './builder-tour';
 import { NodePicker, compatibleInput, type PickerSource } from './node-picker';
 import { BuilderActionsContext, type BuilderActions } from './builder-context';
-import { fromCanvas, toCanvasEdges, toCanvasNodes, type CanvasEdge, type CanvasNode, type EdgeRunState } from './types';
+import { edgeRunState, fromCanvas, toCanvasEdges, toCanvasNodes, type CanvasEdge, type CanvasNode } from './types';
 
 export function Builder({ workflowId }: { workflowId: string }) {
   return (
@@ -88,6 +89,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   const speed = useStudio((state) => state.settings.simulationSpeed);
   const updateSettings = useStudio((state) => state.updateSettings);
   const combo = useCombo();
+  const playground = useStudioLinks().playground;
   const signedIn = useSignedIn();
   const signedInKey = `${signedIn.claude}|${signedIn.codex}`;
   const { fitView, screenToFlowPosition, setCenter, getZoom } = useReactFlow();
@@ -242,15 +244,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
       const source = byId.get(edge.source);
       const def = source === undefined ? undefined : getNodeType(source.data.typeId);
       const branch = def !== undefined && def.outputs.length > 1 ? def.outputs.find((port) => port.id === (edge.sourceHandle ?? def.outputs[0]?.id))?.label : undefined;
-      let state: EdgeRunState | undefined;
-      if (showRunState) {
-        const from = source?.data.status;
-        const to = byId.get(edge.target)?.data.status;
-        const left = from === 'done' || from === 'refused' || from === 'waiting';
-        if (left && to === 'running') state = 'active';
-        else if (left && (to === 'done' || to === 'failed' || to === 'refused' || to === 'waiting')) state = to === 'refused' ? 'refused' : 'travelled';
-        else if (to === 'skipped' || (!running && from !== undefined && to === 'pending')) state = 'skipped';
-      }
+      const state = showRunState ? edgeRunState(source?.data.status, byId.get(edge.target)?.data.status, running) : undefined;
       if (edge.data?.branch === branch && edge.data?.state === state) return edge;
       return { ...edge, data: { ...edge.data, branch, state } };
     });
@@ -620,7 +614,8 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
   /* Keyboard                                                           */
   /* ---------------------------------------------------------------- */
 
-  const tourOpen = toursSeen['builder'] !== true;
+  // Not in the playground: a visitor there came to see the canvas, and six cards in front of it are in the way.
+  const tourOpen = !playground && toursSeen['builder'] !== true;
   // Everything that covers the canvas. A shortcut pressed while one is open
   // is meant for it, not for the graph behind it.
   const dialogOpen = picker.open || exportOpen || payloadOpen || machineOpen || shareOpen || historyOpen || forecastOpen || tourOpen;
@@ -1019,6 +1014,8 @@ function ValidationButton({ issues, errors, warnings, onSelect }: { issues: Vali
 }
 
 function EmptyCanvas({ onAdd }: { onAdd: () => void }) {
+  // The playground has its own "Start from" menu above the canvas; the templates page needs an account.
+  const playground = useStudioLinks().playground;
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="pointer-events-auto flex max-w-sm flex-col items-center gap-3 rounded-lg border bg-card p-6 text-center shadow-sm">
       <Zap className="size-5 text-muted-foreground" />
@@ -1030,9 +1027,11 @@ function EmptyCanvas({ onAdd }: { onAdd: () => void }) {
         <Button size="sm" onClick={onAdd}>
           <Plus data-icon="inline-start" /> Add a trigger
         </Button>
-        <Button size="sm" variant="outline" nativeButton={false} render={<Link href="/templates" />}>
-          <LayoutTemplate data-icon="inline-start" /> Use a template
-        </Button>
+        {playground ? null : (
+          <Button size="sm" variant="outline" nativeButton={false} render={<Link href="/templates" />}>
+            <LayoutTemplate data-icon="inline-start" /> Use a template
+          </Button>
+        )}
       </div>
       <p className="text-[11px] text-muted-foreground">
         Or drag one from the list on the left. Press <Kbd>A</Kbd> any time to add a node.

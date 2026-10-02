@@ -2,6 +2,7 @@ import { RelayError } from '../util/errors.ts';
 import type { Issue, IssueComment } from '../github/types.ts';
 import type { RelayConfig, UnattendedPolicy } from '../storage/config.ts';
 import { DEFAULT_CONFIG } from '../storage/config.ts';
+import { describeFindings, screenIssue, type InjectionFinding } from './injection.ts';
 
 /**
  * The rules a run that nobody started has to obey.
@@ -215,6 +216,8 @@ export interface TriggerDecision {
   actor: string | null;
   /** The `org/team` that let them through, when that is what did. */
   team?: string;
+  /** What the injection screen matched in the text the run would read, whichever way that was decided. */
+  screened?: InjectionFinding[];
 }
 
 export interface TriggerContext {
@@ -252,18 +255,58 @@ export async function decideTrigger(
     };
   }
 
+  let allowed: TriggerDecision | undefined;
   if (settings.authors.some((login) => login.toLowerCase() === actor.toLowerCase())) {
-    return { allowed: true, actor, reason: `${actor} is on unattended.authors` };
-  }
-
-  if (settings.teams.length > 0 && context.teamMembership !== undefined) {
+    allowed = { allowed: true, actor, reason: `${actor} is on unattended.authors` };
+  } else if (settings.teams.length > 0 && context.teamMembership !== undefined) {
     const team = await context.teamMembership(actor, settings.teams);
-    if (team !== null) return { allowed: true, actor, team, reason: `${actor} is a member of ${team}` };
+    if (team !== null) allowed = { allowed: true, actor, team, reason: `${actor} is a member of ${team}` };
   }
 
+  if (allowed === undefined) {
+    return {
+      allowed: false,
+      actor,
+      reason: `${actor} labelled #${issue.number ?? '?'} with ${label} but is not on the allowlist`,
+    };
+  }
+
+  // Who may start a run is settled. What the run would then read is a second
+  // question, and the label only answers it if the person read the raw text.
+  const refusal = injectionRefusal(settings, issue, actor);
+  if (refusal === undefined) return allowed;
+  if (refusal.refuse) return { allowed: false, actor, reason: refusal.reason, screened: refusal.findings };
+  return { ...allowed, reason: `${allowed.reason}; ${refusal.reason}`, screened: refusal.findings };
+}
+
+export interface InjectionRefusal {
+  /** False under `warn`: the findings are reported and the run goes ahead. */
+  refuse: boolean;
+  reason: string;
+  findings: InjectionFinding[];
+}
+
+/**
+ * What the injection screen says about an issue an unattended run would read:
+ * nothing when it is clean or the screen is off, and otherwise the findings
+ * and whether they stop the run. The comments screened are the ones the run
+ * would be given; the rest never reach an agent.
+ */
+export function injectionRefusal(settings: UnattendedSettings, issue: Pick<Issue, 'title' | 'body' | 'comments' | 'number'>, actor: string | null): InjectionRefusal | undefined {
+  const mode = settings.injectionScreen ?? 'refuse';
+  if (mode === 'off') return undefined;
+  const findings = screenIssue(issue, trustedComments(settings, issue, actor).kept);
+  if (findings.length === 0) return undefined;
+  const number = `#${issue.number ?? '?'}`;
+  if (mode === 'warn') {
+    return { refuse: false, findings, reason: `the injection screen matched and is set to warn: ${describeFindings(findings)}` };
+  }
   return {
-    allowed: false,
-    actor,
-    reason: `${actor} labelled #${issue.number ?? '?'} with ${label} but is not on the allowlist`,
+    refuse: true,
+    findings,
+    reason:
+      `${number} looks like a prompt injection: ${describeFindings(findings)}. ` +
+      `Read the raw issue; if it is what it should be, run it yourself with \`relay run ${issue.number ?? '<issue>'}\`, ` +
+      'or set unattended.injectionScreen to "warn"',
   };
 }

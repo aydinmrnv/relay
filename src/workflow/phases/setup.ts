@@ -8,7 +8,7 @@ import type { EngineContext, PhaseResult } from '../context.ts';
 import { assembleBrief, renderBriefArtifact } from '../../agents/brief.ts';
 import { harnessRegistration } from '../../agents/index.ts';
 import { describeWithheld, unattendedEnvironment } from '../../unattended/environment.ts';
-import { trustedComments, unattendedOf } from '../../unattended/policy.ts';
+import { injectionRefusal, trustedComments, unattendedOf } from '../../unattended/policy.ts';
 
 async function ensureBrief(context: EngineContext, worktreePath: string): Promise<void> {
   if (context.state.brief === undefined) context.state.brief = await assembleBrief(worktreePath);
@@ -77,6 +77,17 @@ export async function fetchingIssue(context: EngineContext): Promise<PhaseResult
   let issue = fetched;
   let omitted = '';
   if (state.trigger !== undefined) {
+    // Screened again here, on the text this run is actually about to read: an
+    // issue can be edited between the label that was checked and this moment.
+    const screen = injectionRefusal(unattendedOf(state.config), fetched, state.trigger.actor);
+    if (screen?.refuse === true) {
+      throw new RelayError(`Stopped before any agent read it: ${screen.reason}.`, {
+        code: 'INJECTION_SCREEN',
+        hint: 'Nothing was run and nothing was spent. The screen is a list of patterns: it can be wrong about an issue that only discusses these phrasings.',
+      });
+    }
+    if (screen !== undefined) observer.warn(`Unattended: ${screen.reason}.`);
+
     const comments = trustedComments(unattendedOf(state.config), fetched, state.trigger.actor);
     if (comments.dropped > 0) {
       issue = { ...fetched, comments: comments.kept };

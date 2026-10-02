@@ -92,6 +92,7 @@ describe('docs/cli.md', () => {
       'timeouts.implementationMs',
       'timeouts.testsMs',
       'unattended.allowEnv',
+      'unattended.injectionScreen',
     ]) {
       assert.ok(text.includes(`\`${key}\``), `${key} is not documented`);
     }

@@ -18,6 +18,7 @@ import { updateCommand } from './commands/update.ts';
 import { resumeCommand, runDetachedChild, type RunOptions } from './commands/run.ts';
 import { homeCommand } from './commands/home.ts';
 import { statsCommand } from './commands/stats.ts';
+import { recordingCommand } from './commands/recording.ts';
 import { cleanCommand } from './commands/clean.ts';
 import { homeSession, runSession } from './session.ts';
 import {
@@ -106,7 +107,7 @@ const HELP_GROUPS = [
   ['Setup', ['start', 'init', 'doctor', 'chatgpt', 'notify']],
   ['Run', ['run', 'resume', 'stop']],
   ['Unattended', ['serve']],
-  ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats']],
+  ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats', 'recording']],
   ['Deliver', ['deliver']],
   ['Measure', ['eval']],
   ['Maintain', ['clean']],
@@ -433,6 +434,15 @@ export function buildProgram(version: string): Command {
     .option('-a, --all', 'show every event')
     .option('--json', JSON_FLAG)
     .action(wrap(logsCommand));
+
+  program
+    .command('recording')
+    .argument('[run-id]', 'run id, short id, or "latest"', 'latest')
+    .description('write a finished run to one file the studio can play back')
+    .option('-o, --out <file>', 'where to write it (default: relay-run-<short id>.json)')
+    .option('--no-patches', 'leave the diffs out: the receipts still say what changed, without the code')
+    .option('--json', JSON_FLAG)
+    .action(wrap(recordingCommand));
 
   program
     .command('stats')
