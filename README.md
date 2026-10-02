@@ -15,7 +15,14 @@
 and Codex plan, cross-review, implement and test your tickets, behind guardrails
 you draw on a canvas.
 
-**[Try it free →](https://relay-olive-omega.vercel.app)** — make a free account
+Relay does not take a coding agent's word for it: two rival ones check each
+other, and every claim is shown beside what git and your tests say.
+
+**[Watch a real run →](https://relay-olive-omega.vercel.app/r)** — Relay working
+on its own repository, played back step by step, with the pull request it
+opened. **[Open the playground →](https://relay-olive-omega.vercel.app/play)** — the
+builder in your browser, with no account and nothing to install. Or
+**[try it free](https://relay-olive-omega.vercel.app)**: make a free account
 and your workflows, share links and version history follow you to any browser.
 Relay is in beta, and free while it is.
 
@@ -45,8 +52,15 @@ as a commit, a branch or a draft pull request, as far as you allow.
 **Try it free:** <https://relay-olive-omega.vercel.app>. Sign in, or create a
 free account in the same form, answer four onboarding questions and get a
 first workflow built from your answers. Test runs are simulated, so it costs
-nothing to try. (Only a development copy, `npm run dev` without Clerk keys,
-opens the studio without an account, keeping your work in your browser.)
+nothing to try.
+
+To look before you sign up, the **playground** at
+[`/play`](https://relay-olive-omega.vercel.app/play) is the same builder with
+no account: start from a template, a sentence or a blank canvas, test-run it,
+read the spend forecast and export it. Your work stays in that browser, and
+what you changed is offered to you when you make an account there. Share links, version history and
+Relay Cloud need the account. (A development copy, `npm run dev` without Clerk
+keys, opens the whole studio without an account.)
 
 **Connect your computer** to make it real. The `relay` CLI is the studio's
 companion: run it in the repository your workflows work on, and the studio can
@@ -86,6 +100,17 @@ the studio uses.
 
 - **Two vendors check each other.** The model that reviews a plan or a diff is
   never the one that wrote it (below).
+- **Receipts.** Each check a run makes is kept as a row: what an agent claimed,
+  what Relay measured, where each came from, and whether they agree. A row with
+  no claim to compare says "measured"; a row with nothing measured says
+  "unverified". Neither is counted as agreement.
+- **Recordings.** `relay recording` writes a finished run to one file, cleaned
+  of this machine's paths and of anything shaped like a credential, and the
+  studio plays it back at [`/r`](https://relay-olive-omega.vercel.app/r): drag
+  to any moment and read the plan, each review and its answers, the diff and
+  the test log as they stood. The three on the site are Relay's own runs on
+  this repository, pull requests #43, #61 and #49, unedited: one passed, one
+  failed its own test run, one failed outright.
 - **Describe it, get a workflow.** Type one sentence — *"when a Sentry error is
   new, fix it under $3 and ping Discord"* — and the graph builds itself as you
   type. It is a parser over the live connector catalog, in your browser: no model
@@ -114,7 +139,7 @@ sense, like wiring a ticket into something that expects a pull request.
 | Building block | Nodes |
 |---|---|
 | **Triggers** | What hands the agents a task. A label on a GitHub issue starts an exported workflow by itself today, and a manual start works anywhere. The rest can be designed and test-run in the studio, and are not wired to real events yet: a ticket assigned (Linear, Jira, Shortcut), main going red (GitHub Actions, GitLab CI, CircleCI, Buildkite), a new error or crash (Sentry, Datadog, Crashlytics), a security alert (Dependabot, code scanning, Snyk), a flag that finished rolling out, a bug report in Slack or Zendesk, a schedule, a webhook |
-| **Guardrails** | Budget gate, author allowlist, human approval, concurrency limit, kill switch. Each refuses by default and says why |
+| **Guardrails** | Budget gate, author allowlist, injection screen, human approval, concurrency limit, kill switch. Each refuses by default and says why |
 | **Agent pipeline** | Run the pipeline (choose the planner, plan reviewer, implementer and code reviewer, the review depth and the round limits), a fast run with no reviews, or a cost estimate |
 | **Delivery** | Deliver the change — commit, branch or draft pull request — and comment the summary on the issue. A run started from the studio or by an event stops at a pull request; only `relay run` at a terminal, with a person there, can be allowed to merge |
 | **Logic** | Condition, filter, transform, an AI step for triage or classification, merge paths, wait, wait for business hours, notes. Played in test runs; the export cannot evaluate them, and says which it left out |
@@ -233,6 +258,14 @@ ones a graph can break before it lets you test-run or export:
   the daily budget and the audit trail work where `relay serve` keeps its state.
 - **Nothing leaves unscanned.** Delivery runs a secret scan between commit and
   push, and a hit stops the change at a local branch.
+- **An unattended run screens what it is about to read.** An issue whose text
+  matches a known prompt-injection phrasing (an instruction to ignore
+  instructions, a forged system message, text hidden in an HTML comment, a
+  network command paired with a credential) starts nothing until a person has
+  read it. It is a list of patterns, and it is not what makes a hostile issue
+  safe: the rules above and [the rest](docs/cli.md#untrusted-input) are. You
+  can attack it yourself in the [playground](https://relay-olive-omega.vercel.app/play):
+  *Start from → A hostile issue*.
 - **Your checkout is only read.** Agents work in a separate git worktree.
 
 What these rules do not do is contain the agents. Nobody is at the terminal to
@@ -252,8 +285,8 @@ reference.
 
 Relay is in beta at <https://relay-olive-omega.vercel.app>, and free while it
 is. The hosted studio needs a free account, which keeps your workflows, runs
-and settings in any browser, up to 300 workflows; a development copy without
-accounts keeps them in your browser's storage. Everything that needs your
+and settings in any browser, up to 300 workflows; the playground at `/play`
+and a development copy without accounts keep them in your browser's storage. Everything that needs your
 computer — agent sign-in, real runs, installing an export — goes through
 `relay connect`, which pairs with the hosted studio as readily as with a local
 one. Relay Cloud, a cloud machine per person signed in with that person's own
@@ -268,6 +301,7 @@ beta: write to support@nullstack.one to ask for access.
 | Connecting Slack and Discord: the webhook is checked with the app, kept encrypted, and rechecked from the dashboard | Other apps' connections: "Mark ready" records a label and signs in to nothing | Sign-in for every connector |
 | Relay Cloud (invite-only beta): a machine of your own on Azure, woken for a run and put to sleep when idle | Logic nodes and most app actions, which are marked "test runs only" | |
 | Exported workflows running on GitHub Actions, started by a label on a GitHub issue | Approvals: decided by the simulator; a real run does not wait for one | Approvals from Slack and email |
+| The playground (`/play`, no account), recordings of real runs (`/r`, `relay recording`) and their receipts | | |
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
 
 The engine reads issues from GitHub and Linear today. The studio lets you design
