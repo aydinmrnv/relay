@@ -833,7 +833,7 @@ instead" is the oldest trick there is, and it works on models often enough to
 plan for.
 
 The allowlist decides who may *start* a run. A run that started without a
-person does three more things about what it then reads and what its agents can
+person does four more things about what it then reads and what its agents can
 reach:
 
 | | |
@@ -841,15 +841,21 @@ reach:
 | **It reads only trusted comments.** | A comment reaches the agents only when its author is on `unattended.authors`, is the person who applied the trigger label, or is reported by GitHub as an owner, a member of the owning organisation, or a collaborator on the repository — people who were invited to it, at whatever level, including read-only. Every other comment is left out. The run says how many and whose, in its notes and at the foot of `issue.md`, because a discussion the agents silently did not see is its own problem. |
 | **It withholds secrets from the agents.** | Environment variables whose *names* say they are secrets — `…_TOKEN`, `…_KEY`, `…_AUTH…`, `…_PWD`, `…_PEM`, `…_JWT`, anything containing `SECRET`, `PASSWORD`, `CREDENTIAL` or `WEBHOOK`, a database or cache URL, a connection string, a service account — are removed from the environment of every agent turn and of the test suite, which runs code an agent has just written. A name that only describes a secret is left alone: `PASSWORD_STORE_DIR`, `MAX_THINKING_TOKENS`, a `…_TOKEN_…_URL`, and git's own `GIT_CONFIG_KEY_<n>`. Claude Code and Codex each keep their own sign-in and nothing else's: Claude Code keeps `ANTHROPIC_*` and `CLAUDE_*` (and `AWS_*` or `GOOGLE_*` only when it has been pointed at Bedrock or Vertex), Codex keeps `OPENAI_*`, `CODEX_*` and `AZURE_OPENAI_*`. A [harness defined in config](#design) keeps nothing by this rule, because Relay does not know which variable it signs in with. `GH_TOKEN` goes to `gh`, which Relay runs itself, and not to the model. `unattended.allowEnv` names any other variable the agents and the suite are allowed to see — a config harness's key, a key the tests need — and whatever it names is shown to all of them, not to one. The run lists what it withheld, by name, when it starts. |
 | **It cannot publish beyond a draft.** | The ceiling above: no merge, and a draft pull request that a person reads before anything lands. |
+| **It screens what it is about to read.** | The issue's title, its description and the comments that passed the rule above are checked against a list of the phrasings a prompt injection is usually written in: an instruction to ignore instructions, a forged system message, Relay's own section markers, instructions inside an HTML comment, characters a page does not draw, a network command paired with a credential, a request to hide something from reviewers or to switch a safeguard off. A match starts nothing: `relay serve` refuses the issue and says which part matched and what, with the label left in place, and a run that finds the issue changed since it was labelled stops before any agent has read it (`INJECTION_SCREEN`). `unattended.injectionScreen` is `refuse` by default; `warn` starts the run and reports the match, `off` does not look. |
 
 That narrows what a hostile issue can do. It does not make one safe, and these
 are the gaps:
 
-- **The issue's own title and description are not filtered.** Applying the
-  label is the act of vouching for them, so read the whole issue before you
+- **The screen is a list of patterns, and nothing more.** A hostile issue
+  written in words the list does not know walks past it, and an honest issue
+  *about* prompt injection trips it. It stops the lazy attempt before it costs
+  a run; it is not what makes a hostile issue safe, and the other three rows
+  are what bound one that gets through. So applying the label is still the act
+  of vouching for the title and description: read the whole issue before you
   label it — the raw markdown, not only the rendered page, where an HTML
   comment is invisible. Someone who can edit the issue can also change it
-  between your label and the run picking it up.
+  between your label and the run picking it up; the screen runs again then,
+  with the same limits.
 - **Only names are examined.** A secret in a variable called `CONFIG` is not
   withheld, and Relay does not read values to find out. The rule is a guess
   about names: `KUBE_CONFIG_DATA`, `BROKER_URL` and `SONAR_LOGIN` are secrets
@@ -871,8 +877,8 @@ before labelling it, give the job the narrowest token it works with, and do
 not put a secret in its environment that you could not afford to see in a pull
 request.
 
-A run a person started is unchanged by any of this: it reads every comment and
-its agents inherit the environment it was started in.
+A run a person started is unchanged by any of this: it reads every comment,
+nothing is screened, and its agents inherit the environment it was started in.
 
 ### The GitHub Action
 
@@ -1214,13 +1220,13 @@ jq` works while the run is still printing.
 | `relay plan [run] --json` | the approved plan as markdown |
 | `relay logs [run] --json` | the event log, with `data` as recorded, plus usage by phase |
 | `relay stats --json` | what this repository's runs have cost, taken, and caught, including the [unattended audit trail](#unattended) |
+| `relay recording [run] --json` | where the recording was written, its size, and its receipts counted by verdict |
 | `relay serve --json` | one object per line as it decides — considered, skipped, claimed, finished — then a summary |
 | `relay deliver [run] --json` | the run after delivery, ledger included |
 | `relay stop [run] --json` | what was signalled, and whether the process was still alive |
 
 **Every document carries `schema`.** The moment something parses this output the
 shape is a contract, and a contract needs a version to change under:
-| `relay recording [run] --json` | where the recording was written, its size, and its receipts counted by verdict |
 
 ```json
 { "schema": 1, "command": "status", "run": { "runId": "…", "phase": "COMPLETE" } }
@@ -1334,12 +1340,6 @@ describes one machine, and `relay init` and `relay start` add it to
 `.relay/STOP` and `.relay/*.lock`. A committed `STOP` would stop every clone's
 server, and a committed ledger would tell them the work had been picked up.
 
-### Cleaning up
-
-Every run leaves a worktree behind under `~/.relay/workspaces`, and they are
-not removed for you: a finished run's worktree is where its diff is recomputed
-from.
-
 ### Recordings
 
 `relay recording [run]` writes a finished run to one file,
@@ -1393,6 +1393,12 @@ where notifications were sent is left out. The command prints how much it
 changed. It does not hide the work: the issue, the plan and the diff are in the
 file as the run saw them, so read it before you publish it, and use
 `--no-patches` to leave the code out. A run that has not finished is refused.
+
+### Cleaning up
+
+Every run leaves a worktree behind under `~/.relay/workspaces`, and they are
+not removed for you: a finished run's worktree is where its diff is recomputed
+from.
 
 ```bash
 relay clean                  # list what would be removed — removes nothing
@@ -1453,7 +1459,8 @@ happens at the end of every run and on `relay clean --yes`; `state.json`,
     "maxDailyCostUsd": null,
     "pollSeconds": 60,
     "deliver": "pr",
-    "allowEnv": []
+    "allowEnv": [],
+    "injectionScreen": "refuse"
   },
   "timeouts": {
     "planningMs": 1200000,
@@ -1522,6 +1529,7 @@ reaching for before turning a review off.
 | `unattended.deliver` | how far an unattended run delivers: `none`, `branch`, `push`, `pr` (default). `merge` is not a value — nothing unattended ever merges |
 | `unattended.pollSeconds` | seconds between polls of the tracker (default `60`; `relay serve -i`) |
 | `unattended.allowEnv` | environment variables an unattended run's agents and test suite may see although their names look like secrets (default `[]`). Names, not patterns ([untrusted input](#untrusted-input)) |
+| `unattended.injectionScreen` | what an unattended run does when the text it is about to read matches a known prompt-injection phrasing: `refuse` (default), `warn`, or `off`. A list of patterns, not a guarantee ([untrusted input](#untrusted-input)) |
 | `workflow.concurrentTests` | run the suite during the code review rather than after it |
 | `timeouts.planningMs` | how long a planning turn may take before it is stopped and the run fails (default 20 minutes) |
 | `timeouts.reviewMs` | the same for a plan review or a code review turn (default 20 minutes) |
