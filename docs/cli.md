@@ -446,6 +446,7 @@ README — not a defended one.
 | `relay plan [run]` | print the approved plan |
 | `relay logs [run]` | print the event log |
 | `relay stats` | what this repository's runs have cost, taken, and caught |
+| `relay recording [run]` | write a finished run to one file the studio can [play back](#recordings) |
 | `relay serve` | watch the tracker and start a run per labelled issue, inside a budget and an allowlist |
 | `relay resume <run>` | continue an interrupted or failed run |
 | `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
@@ -1219,6 +1220,7 @@ jq` works while the run is still printing.
 
 **Every document carries `schema`.** The moment something parses this output the
 shape is a contract, and a contract needs a version to change under:
+| `relay recording [run] --json` | where the recording was written, its size, and its receipts counted by verdict |
 
 ```json
 { "schema": 1, "command": "status", "run": { "runId": "…", "phase": "COMPLETE" } }
@@ -1337,6 +1339,60 @@ server, and a committed ledger would tell them the work had been picked up.
 Every run leaves a worktree behind under `~/.relay/workspaces`, and they are
 not removed for you: a finished run's worktree is where its diff is recomputed
 from.
+
+### Recordings
+
+`relay recording [run]` writes a finished run to one file,
+`relay-run-<short id>.json` (`--out` names another), that the studio can play
+back on its canvas with a scrubber: the same phases, at the times the run
+recorded, beside the plan, each review and its answers, the patches and the
+test log. It reads the run directory and changes nothing in it.
+
+The file holds four things:
+
+- **`stream`**: the `relay run --json` lines, rebuilt from `events.jsonl` by the
+  class that prints the live stream, with each event's own timestamp. It is not
+  a copy of what the run printed: the engine's commentary is not kept in the
+  event log, so what comes back is the phase boundaries, each phase's closing
+  note, the test result and the delivery steps.
+- **`run`**: what `relay status <run> --json` reports.
+- **`artifacts`**: the issue, the plan, the implementer's notes, every review
+  round, every patch, and the end of the test log.
+- **`receipts`**: each check the run already made, as a row with the claim,
+  the measurement, where each came from, and a verdict.
+
+A receipt's verdict is one of four. `match`: the claim and the measurement
+agree. `mismatch`: they do not. `measured`: Relay measured it and nobody
+claimed anything to compare. `unverified`: something was claimed or expected,
+and the run holds nothing that settles it. Receipts add no check of their own;
+they are read from `state.json`, `events.jsonl`, the patches and the
+discussion files:
+
+| Receipt | Claim | Measured |
+|---|---|---|
+| Independent review | the model that reviews is not the one that wrote it | who wrote and who reviewed, for the plan and for the diff |
+| Files changed | the implementer's `file_changed` events | the files in git's diff against the base |
+| Finding accepted | the implementer's `ACCEPT` | whether the next patch changed the file the finding names |
+| Finding rejected | the implementer's `REJECT` | whether the reviewer approved the next round |
+| Plan revision | how many findings the planner accepted | whether `plan.md` was rewritten |
+| Review verdict | none | whether the plan review and the code review each ended in approval, or at the round limit |
+| Tests | the implementer's own run of the test command, when its CLI reported an exit code | Relay's run of it, judged by exit code |
+| Delivery | how far the workflow allowed delivery to go | how far it went |
+| Cost | none | what the CLIs reported, and how many turns reported no price |
+
+Two limits are stated on the rows themselves. Claude Code's command events
+carry no exit code, so a Claude implementer's test run is never a claim. Edits
+made by a shell command are not reported as file events, so a diff with more
+files than the implementer reported is `measured`, not a `mismatch`.
+
+A recording is made to be shown, so it is cleaned on the way out: the worktree,
+the repository root and your home directory become `<worktree>`, `<repo>` and
+`~`; anything shaped like a credential is redacted (in patches and the test
+log, only the near-certain shapes, so the code still reads as written); and
+where notifications were sent is left out. The command prints how much it
+changed. It does not hide the work: the issue, the plan and the diff are in the
+file as the run saw them, so read it before you publish it, and use
+`--no-patches` to leave the code out. A run that has not finished is refused.
 
 ```bash
 relay clean                  # list what would be removed — removes nothing
