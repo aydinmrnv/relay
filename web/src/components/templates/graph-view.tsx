@@ -6,9 +6,9 @@ import '@xyflow/react/dist/style.css';
 import { BuilderActionsContext, type BuilderActions } from '@/components/builder/builder-context';
 import { WorkflowEdge } from '@/components/builder/edge';
 import { WorkflowNode } from '@/components/builder/node';
-import type { CanvasEdge, CanvasNode } from '@/components/builder/types';
+import { edgeRunState, type CanvasEdge, type CanvasNode } from '@/components/builder/types';
 import { getNodeType } from '@/lib/connectors';
-import type { Workflow } from '@/lib/workflow/schema';
+import type { NodeRunStatus, Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
 
 const NODE_TYPES = { wf: WorkflowNode };
@@ -22,11 +22,34 @@ const READ_ONLY: BuilderActions = { addAfter: noop, duplicate: noop, remove: noo
  * The real builder nodes and edges, drawn read-only: pan and the zoom buttons
  * work, nothing can be dragged, connected or selected. Scroll-to-zoom is off
  * so the page around it still scrolls.
+ *
+ * Given a `run`, it is coloured the way the builder colours a run: each node
+ * by its status, each edge by whether the run crossed it, and the node at
+ * work says which phase it is in.
  */
-export function GraphView({ workflow, className }: { workflow: Workflow; className?: string }) {
+export interface GraphRunState {
+  nodeStatus: Record<string, NodeRunStatus>;
+  running: boolean;
+  /** What the running node is doing, shown on it. */
+  phase?: string;
+}
+
+export function GraphView({ workflow, run, className }: { workflow: Workflow; run?: GraphRunState; className?: string }) {
   const nodes = useMemo<CanvasNode[]>(
-    () => workflow.nodes.map((node) => ({ id: node.id, type: 'wf', position: node.position, data: { ...node.data }, draggable: false, selectable: false, connectable: false })),
-    [workflow],
+    () =>
+      workflow.nodes.map((node) => {
+        const status = run?.nodeStatus[node.id];
+        return {
+          id: node.id,
+          type: 'wf',
+          position: node.position,
+          data: { ...node.data, ...(status === undefined ? {} : { status }), ...(status === 'running' && run?.phase !== undefined ? { phase: run.phase } : {}) },
+          draggable: false,
+          selectable: false,
+          connectable: false,
+        };
+      }),
+    [workflow, run],
   );
   const edges = useMemo<CanvasEdge[]>(
     () =>
@@ -34,6 +57,7 @@ export function GraphView({ workflow, className }: { workflow: Workflow; classNa
         const source = workflow.nodes.find((node) => node.id === edge.source);
         const def = source === undefined ? undefined : getNodeType(source.data.typeId);
         const port = def !== undefined && def.outputs.length > 1 ? def.outputs.find((output) => output.id === (edge.sourceHandle ?? def.outputs[0]?.id)) : undefined;
+        const state = run === undefined ? undefined : edgeRunState(run.nodeStatus[edge.source], run.nodeStatus[edge.target], run.running);
         return {
           id: edge.id,
           type: 'wf',
@@ -43,10 +67,10 @@ export function GraphView({ workflow, className }: { workflow: Workflow; classNa
           targetHandle: edge.targetHandle ?? undefined,
           selectable: false,
           focusable: false,
-          data: port === undefined ? {} : { branch: port.label },
+          data: { ...(port === undefined ? {} : { branch: port.label }), ...(state === undefined ? {} : { state }) },
         };
       }),
-    [workflow],
+    [workflow, run],
   );
 
   return (

@@ -1,6 +1,6 @@
 'use client';
 
-import { ChartColumn, Check, History, Minus, Share2, Sparkles, X } from 'lucide-react';
+import { ChartColumn, Check, History, Minus, ReceiptText, Share2, Sparkles, Video, X } from 'lucide-react';
 import { BrandMark } from '@/components/app/brand-mark';
 import { useBrand } from '@/hooks/use-brand';
 import { cn } from '@/lib/utils';
@@ -18,6 +18,16 @@ export function Different() {
   const cloud = useCloudOffered();
 
   const highlights = [
+    {
+      icon: ReceiptText,
+      title: 'Receipts, not reassurance',
+      body: 'Every check a run makes is written down as a row: what the agent claimed, what git and the test command’s exit code showed, and whether they agree. Where nothing was measured, the row says so.',
+    },
+    {
+      icon: Video,
+      title: 'Replay any run, step by step',
+      body: `One command turns a finished run into a file you can play back: drag to any moment and see the plan, each review and its answers, the diff and the tests as they stood. The ones on this site are ${brand.name}’s own runs on its own repository.`,
+    },
     {
       icon: Sparkles,
       title: 'Describe it, get a workflow',
@@ -41,7 +51,9 @@ export function Different() {
   ];
 
   const rows: Array<{ label: string; ours: Mark; agents: Mark; canvases: Mark; note?: string }> = [
-    { label: 'Two vendors’ agents review each other’s plan and diff', ours: 'yes', agents: 'no', canvases: 'no' },
+    { label: 'The reviewer is the other vendor’s model, on every plan and every diff', ours: 'yes', agents: 'partial', canvases: 'no', note: 'Some hosted agents let you ask a second model for a review. Here it is the default, and a run says so when it did not happen.' },
+    { label: 'Receipts: each claim an agent made, beside what git and the test exit code showed', ours: 'yes', agents: 'no', canvases: 'no' },
+    { label: 'Play a finished run back step by step, from a file you can share', ours: 'yes', agents: 'partial', canvases: 'partial' },
     { label: 'Runs on the Claude and ChatGPT plans you already pay for', ours: 'yes', agents: 'partial', canvases: 'no', note: 'Hosted agents usually bill seats or credits of their own; canvases call APIs per key.' },
     { label: cloud ? 'Your code stays on your computer, on a machine of yours in Relay Cloud, or on your own CI runner' : 'Your code stays on your computer or on your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'A rough spend forecast before the first real run', ours: 'yes', agents: 'no', canvases: 'no' },
@@ -61,7 +73,7 @@ export function Different() {
           description="Hosted coding agents do the work in someone else’s cloud with one model checking itself. Automation canvases can call a model, but do not know what a pull request is. This is the space between them."
         />
 
-        <div className="mt-12 grid grid-cols-1 gap-x-10 gap-y-10 sm:mt-14 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-12 grid grid-cols-1 gap-x-10 gap-y-10 sm:mt-14 sm:grid-cols-2 lg:grid-cols-3">
           {highlights.map(({ icon: Icon, ...item }, index) => (
             <Reveal key={item.title} delay={index * 0.05} className="h-full">
               <article className="flex h-full flex-col gap-2 border-t pt-5">

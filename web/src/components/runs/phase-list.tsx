@@ -89,7 +89,13 @@ export function PhaseList({ phases, current = null, className }: Props) {
                 </span>
                 <span className="flex shrink-0 items-baseline gap-2 text-xs tabular-nums">
                   <span className={shown === 'time' ? 'text-foreground' : 'text-muted-foreground'}>{formatMs(phase.ms)}</span>
-                  <span className={shown === 'cost' ? 'text-foreground' : 'text-muted-foreground'}>{(phase.costUsd ?? 0) > 0 ? usd(phase.costUsd ?? 0) : '—'}</span>
+                  <span
+                    className={shown === 'cost' ? 'text-foreground' : 'text-muted-foreground'}
+                    // A real run's cost is reported per phase, so the last visit carries the figure for all of them.
+                    title={(phase.rounds ?? 1) > 1 && (phase.costUsd ?? 0) > 0 ? `For all ${phase.rounds} visits to this phase: the coding CLIs report cost per phase, not per round.` : undefined}
+                  >
+                    {(phase.costUsd ?? 0) > 0 ? `${usd(phase.costUsd ?? 0)}${(phase.rounds ?? 1) > 1 ? ` · ${phase.rounds} rounds` : ''}` : '—'}
+                  </span>
                 </span>
               </div>
               <div
@@ -131,7 +137,9 @@ export function PhaseList({ phases, current = null, className }: Props) {
           <div className="flex items-center justify-between">
             <span>Total{current !== null ? ' so far' : ''}</span>
             <span className="tabular-nums text-foreground">
-              {formatMs(totalMs)} · {usd(totalCost)}
+              {formatMs(totalMs)}
+              {/* A real run's costs arrive with its summary; until then there is no figure, which is not the same as $0.00. */}
+              {totalCost > 0 ? ` · ${usd(totalCost)}` : ''}
             </span>
           </div>
           {planRounds + codeRounds > 0 ? (
