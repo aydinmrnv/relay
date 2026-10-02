@@ -90,7 +90,7 @@ export function createRouter(options: RouterOptions): Router {
   const logout = options.logout ?? liveLogout;
   const install = options.installFiles ?? liveInstallFiles;
   const startedAt = new Date().toISOString();
-  const capabilities: CompanionCapability[] = options.capabilities ?? (options.runs === null ? ['agents'] : ['agents', 'runs', 'install']);
+  const capabilities: CompanionCapability[] = options.capabilities ?? (options.runs === null ? ['agents', 'chatgpt'] : ['agents', 'runs', 'install', 'chatgpt']);
   const repositoryPerRun = capabilities.includes('repositories');
 
   function hello(authorized: boolean): HelloResponse {
@@ -148,9 +148,15 @@ export function createRouter(options: RouterOptions): Router {
         const body = await request.json({ optional: true });
         const mode = (body as { mode?: unknown } | undefined)?.mode ?? (account === 'github' ? 'device' : 'browser');
         if (!isLoginMode(mode)) throw new RouteError(400, 'Unknown sign-in mode.');
+        if (mode === 'chatgpt' && !capabilities.includes('chatgpt')) {
+          throw new RouteError(409, 'Sign in with ChatGPT finishes in a browser on the machine that runs the agents, so it is not available here.');
+        }
         const started = await logins.start(account, mode);
         if (!started.ok) throw new RouteError(500, started.error);
-        log({ kind: 'login', message: `Started ${isAgentId(account) ? AGENT_META[account].name : ACCOUNT_NAMES[account]}'s own sign-in for the studio.` });
+        log({
+          kind: 'login',
+          message: mode === 'chatgpt' ? 'Started Sign in with ChatGPT for the studio.' : `Started ${isAgentId(account) ? AGENT_META[account].name : ACCOUNT_NAMES[account]}'s own sign-in for the studio.`,
+        });
         return json(200, (await logins.awaitDetails(started.session.id)) ?? started.session);
       }
 

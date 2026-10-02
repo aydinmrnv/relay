@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { AGENT_REGISTRY } from '../src/agents/index.ts';
-import { describeCommand, type AuthState, type AuthSupport } from '../src/auth/delegated.ts';
+import { describeCommand, type AuthState, type AuthSupport, type OwnSignIn } from '../src/auth/delegated.ts';
 import type { AgentCheck } from '../src/cli/checks.ts';
 import { runStart, type StartDeps, type StartOptions } from '../src/cli/commands/start.ts';
 import type { RunOptions } from '../src/cli/commands/run.ts';
@@ -38,6 +38,8 @@ interface WorldOptions {
   auth?: Record<string, AuthState>;
   /** Sign-in state each binary reports once its login command has been run. */
   afterLogin?: Record<string, AuthState>;
+  /** A sign-in Relay holds itself, per binary: Sign in with ChatGPT, for Codex. */
+  own?: Record<string, OwnSignIn>;
   ghAvailable?: boolean;
   /** Whether LINEAR_API_KEY resolves to a working key in this world. */
   linearKey?: boolean;
@@ -85,7 +87,8 @@ class World {
             ? { label: entry.label, status: 'ok' as const, detail: `${entry.name} 1.0.0` }
             : { label: entry.label, status: 'fail' as const, detail: 'not found' },
         })),
-      authState: async (support: AuthSupport) => this.stateOf(support.login.command),
+      authState: async (support: AuthSupport) => this.options.own?.[support.login.command]?.state ?? this.stateOf(support.login.command),
+      ownSignIn: async (support: AuthSupport) => this.options.own?.[support.login.command],
       login: async (support: AuthSupport) => {
         this.logins.push(describeCommand(support.login));
         this.loggedIn.add(support.login.command);
@@ -264,6 +267,34 @@ describe('relay start — guided flow', () => {
     assert.ok(world.prompter.asked.some((question) => question.includes('Run `codex login` now?')));
     assert.deepEqual(world.logins, ['codex login']);
     assert.match(output, /Codex is signed in\./);
+  });
+
+  it('mentions Sign in with ChatGPT beside Codex\'s own login, and does not run it', async () => {
+    const { output, world } = await start(['y'], {}, { auth: { codex: 'unauthenticated', claude: 'unauthenticated' } });
+
+    assert.equal(output.match(/relay chatgpt login/g)?.length, 1, 'said once, for the one CLI it applies to');
+    assert.deepEqual(world.logins, ['claude auth login', 'codex login'], 'onboarding still only ever runs a vendor\'s command');
+  });
+
+  it('needs no Codex login when Relay is signed in with ChatGPT', async () => {
+    const { world } = await start([], {}, { auth: { codex: 'unauthenticated' }, own: { codex: { state: 'authenticated', detail: 'signed in with ChatGPT' } } });
+
+    assert.deepEqual(world.logins, []);
+    assert.ok(!world.prompter.asked.some((question) => question.includes('codex login')));
+  });
+
+  it('does not offer Codex\'s login for a ChatGPT sign-in that expired, which it would not renew', async () => {
+    const lapsed: OwnSignIn = { state: 'unauthenticated', detail: 'ChatGPT plan sign-in expired', hint: 'Run `relay chatgpt login`.' };
+    const { output, world } = await start([], {}, { own: { codex: lapsed } });
+
+    assert.deepEqual(world.logins, []);
+    assert.ok(!world.prompter.asked.some((question) => question.includes('codex login')));
+    assert.match(output, /ChatGPT plan sign-in expired\. Run `relay chatgpt login`\./);
+
+    const check = await start([], { check: true }, { own: { codex: lapsed } });
+    assert.equal(check.exitCode, EXIT.preconditions);
+    assert.match(check.output, /ChatGPT plan sign-in expired/);
+    assert.doesNotMatch(check.output, /Run `codex login`/);
   });
 
   it('re-asks the vendor after a login and reports when it still has no session', async () => {

@@ -338,7 +338,7 @@ describe('the companion server', () => {
       assert.deepEqual(await (await fetch(`${base}/v1/hello`)).json(), { product: 'relay', protocol: 1, authorized: false });
       const paired = (await (await fetch(`${base}/v1/hello`, { headers: { ...auth, origin: 'https://studio.example' } })).json()) as Record<string, unknown>;
       assert.equal(paired['authorized'], true);
-      assert.deepEqual(paired['capabilities'], ['agents']);
+      assert.deepEqual(paired['capabilities'], ['agents', 'chatgpt']);
       assert.equal(paired['repository'], null);
       assert.ok(events.some((event) => event.kind === 'paired'));
     } finally {

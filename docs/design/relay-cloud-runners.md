@@ -62,6 +62,11 @@ vendors' rules need:
 - **Codex** keeps `~/.codex/auth.json` on that VM. OpenAI says one `auth.json`
   must live on one machine and never be shared across machines at once, because
   it rewrites itself when it refreshes. One VM per person gives exactly that.
+  Sign in with ChatGPT (`relay chatgpt login`, docs/cli.md) is deliberately not
+  offered on a runner: its callback is a loopback address, and OpenAI opens
+  that flow to open-source apps on a person's own machine. Offering it from a
+  hosted runner needs their approval first
+  (https://openai.com/form/sign-in-with-chatgpt-interest/).
 
 Runs on one machine take turns: one at a time by default
 (`RELAY_RUNNER_MAX_RUNS`), because 1 GiB of memory fits one Claude Code or

@@ -37,7 +37,7 @@ export function Features() {
     {
       icon: KeyRound,
       title: 'Bring your own subscription',
-      body: `Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. There are no API keys to paste, and no token ever passes through ${brand.name}.`,
+      body: `Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. There are no API keys to paste, and no sign-in ever leaves the machine that runs your agents.`,
       proof: 'claude auth login · codex login',
     },
     {

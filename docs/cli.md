@@ -36,9 +36,11 @@ anything on one, and then offers to start one. Every step is skipped when it is
 already satisfied, so re-running it is also the repair path when a CLI breaks
 later.
 
-**It never handles a credential.** Relay has no API keys and never sees a token:
-`start` only ever spawns `claude auth login`, `codex login` or `gh auth login`
-with the terminal handed over, and then asks that CLI again whether it worked.
+**It never handles a credential.** `start` only ever spawns `claude auth login`,
+`codex login` or `gh auth login` with the terminal handed over, and then asks
+that CLI again whether it worked. The one sign-in Relay holds itself is a
+separate command you run on purpose — [Sign in with ChatGPT](#sign-in-with-chatgpt)
+— and `start` only mentions it.
 
 | | |
 |---|---|
@@ -50,6 +52,54 @@ with the terminal handed over, and then asks that CLI again whether it worked.
 that actually shapes a run — which model reviews the work another model
 produced. `relay init --yes` skips every prompt and writes the detected
 defaults, which is what CI and scripts should use.
+
+## Sign in with ChatGPT
+
+```bash
+relay chatgpt login      # opens OpenAI's page; allow Relay to use your ChatGPT plan
+relay chatgpt status     # who is signed in, and what Codex turns are billed to
+relay chatgpt logout     # end the session at OpenAI and forget its tokens
+```
+
+`codex login` signs the Codex CLI in. `relay chatgpt login` signs **Relay** in,
+through OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc):
+you authorize Relay on OpenAI's page, and from then on every Codex turn Relay
+starts on this machine spends the usage included in your ChatGPT Plus or Pro
+plan. Codex needs no login of its own, Claude Code is unaffected, and the
+studio's Agent accounts card does the same thing with a **Continue with
+ChatGPT** button.
+
+What it changes, precisely:
+
+- **Whose limit applies.** Relay appears as its own app under
+  [Usage in ChatGPT's settings](https://chatgpt.com/settings/usage), where you
+  cap what it may use of your weekly allowance, or cut it off. A turn that hits
+  that cap, or your plan's, fails with a link there. Nothing falls back to
+  another bill.
+- **What Relay holds.** One OAuth credential, in `~/.relay/chatgpt.json`,
+  readable only by you. It is passed to the `codex` process of each turn in
+  that process's environment and to nothing else: not the studio, not
+  `.relay/`, not a log, not `--json`. It is renewed before a turn that would
+  outlast it, and `logout` revokes it at OpenAI.
+- **What happens when it ends.** If you sign out, Codex goes back to its own
+  sign-in. If OpenAI ends the session — thirty days unused, or you disconnected
+  Relay in ChatGPT's settings — Codex turns **fail** and say so, rather than
+  quietly moving to whatever `codex login` would have billed. `relay doctor`
+  reports which of the three states you are in.
+
+`--new` registers another ChatGPT account or workspace beside the saved one;
+`--no-open` prints the link instead of opening a browser. The sign-in finishes
+on a loopback address, so it has to be completed in a browser on the machine
+that runs Relay. That is also why a [cloud runner](#a-cloud-runner) does not
+offer it: OpenAI's flow is for open-source apps running on your own computer,
+and a hosted one needs their separate approval.
+
+Under the hood this is OAuth 2.0 with PKCE and OpenID Connect, as a public
+client with no secret. Relay checks the ID token's signature against OpenAI's
+published keys, along with its issuer, audience, expiry and nonce, before it
+saves anything. Codex is then run with a `model_providers` override that sends
+its Responses requests to `api.openai.com` with that token — OpenAI's
+documented configuration for an app spending a person's plan.
 
 ## The studio companion
 
@@ -66,7 +116,9 @@ paired studio uses to
 - **report and start sign-ins.** It asks `claude auth status` and `codex login
   status`, and starts each vendor's own login — the same delegated sign-in
   `relay start` does, with the browser where the terminal was. A pasted
-  authorization code goes to the CLI's stdin and is not kept.
+  authorization code goes to the CLI's stdin and is not kept. For Codex it can
+  also run [Sign in with ChatGPT](#sign-in-with-chatgpt); the studio is shown a
+  loopback link and whether it worked, and never the credential.
 - **run a workflow for real.** The studio sends the workflow compiled to a
   `.relay/config.json`; the companion runs `relay run --json` on the issue or
   description you gave it, with that config layered over the repository's own
@@ -261,7 +313,7 @@ Tune against that, not against this list.
 
 ## Design
 
-**Relay never calls a model API.** It has no API keys, reads no credentials, and never sees a token. It launches the official CLIs you have already authenticated (`claude`, `codex`, `gh`) as child processes and lets each one own its own auth.
+**Relay never calls a model API.** It has no API keys and reads none of the CLIs' credentials. It launches the official CLIs you have already authenticated (`claude`, `codex`, `gh`) as child processes and lets each one own its own auth. The single exception is opt-in: with [Sign in with ChatGPT](#sign-in-with-chatgpt), Relay holds the OAuth token OpenAI issued to it and hands it to Codex, which still makes every model call.
 
 **Agents are behind one interface.** `AgentHarness` (`src/agents/types.ts`) has `checkAvailability`, `start`, `resume` and `cancel`. Claude's `stream-json` and Codex's JSONL are normalized into one `AgentEvent` union at the harness boundary; nothing above `src/agents/` knows which CLI produced an event. Adding a third CLI means adding one file under `src/agents/`, one row in `AGENT_REGISTRY` (`src/agents/index.ts`), and one fixture set for the conformance suite — config validation, `relay doctor`, `relay init`, `relay start` and the `--planner` / `--implementer` flags all read that array, so none of them need touching. Each row also declares how that vendor is installed and how it is signed in, which is all onboarding needs to know to delegate. What a harness owes — event order, resume semantics, stdin-only prompts, failure shape, read-only enforcement, retry classification — is written as prose above the interface and enforced by a conformance suite (`test/helpers/conformance.ts`) that replays recorded stream fixtures against every registered harness, so a new harness is done when the suite passes.
 
@@ -357,7 +409,7 @@ README — not a defended one.
 8. Test commands are screened. A `scripts.test` or `Makefile` `test` recipe (including the targets it depends on) containing `rm -rf`, `sudo`, `curl | sh`, `docker`, `publish`, or `deploy` is reported and skipped, not run.
 9. Credential-shaped strings are redacted before anything reaches `events.jsonl`.
 10. Round limits are enforced (plan 3, code 2 by default), so two agents cannot debate forever.
-11. Authentication is delegated, never handled. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`. The same holds in CI: [the Action](#unattended) puts each vendor's own environment variable into that vendor's own process, and Relay reads none of them.
+11. Authentication is delegated wherever it can be. Onboarding can only spawn a vendor's own login command with the terminal inherited — Relay reads none of that exchange, prompts for no secret, and writes nothing about it to `.relay/`. The same holds in CI: [the Action](#unattended) puts each vendor's own environment variable into that vendor's own process, and Relay reads none of them. [Sign in with ChatGPT](#sign-in-with-chatgpt) is the one sign-in that cannot be delegated, because OpenAI grants it to the app. It is opt-in, its credential stays in an owner-only file outside the repository, and it goes only into the environment of the Codex process that spends it.
 12. Nothing starts without a person unless somebody deliberately configured that, and even then it cannot merge. [`relay serve`](#unattended) refuses to run until the repository has named an allowlist and two budgets; an issue labelled by anybody else is ignored with a log line; unattended runs cap at a draft pull request whatever `workflow.deliver` says; and three separate kill switches stop new runs without touching the ones in flight.
 
 ## Commands
@@ -370,6 +422,7 @@ README — not a defended one.
 | `relay start` | guided onboarding: dependencies, sign-in, config, tour, first run (`--check`, `--tour`, `--dry-run`) |
 | `relay init` | guided setup, writing `.relay/config.json` (`--yes` for the detected defaults) |
 | `relay doctor` | check git, gh, Claude Code, Codex, repo, sign-in state and auth, Linear, and the configured notification channels |
+| `relay chatgpt login` / `status` / `logout` | Sign in with ChatGPT, so Codex turns use your ChatGPT plan through Relay (`--new`, `--no-open`) ([details](#sign-in-with-chatgpt)) |
 | `relay notify [run]` | send a test notification on every configured channel, or re-send a finished run's |
 | `relay run <issue\|file>` | run the full workflow on a tracker issue or on work that has no ticket, deliver the result, then wait for the next issue |
 | `relay status [run]` | list runs, or print one run's summary |
@@ -982,6 +1035,7 @@ jq` works while the run is still printing.
 | `relay --json` | the home screen: repository, config, recent runs, next command |
 | `relay connect --json` | a `listening` line — URL, port, origins, pairing link, repository — then one `event` line per thing the studio did, and `stopped` |
 | `relay doctor --json` | every readiness check with its status, detail and remedy |
+| `relay chatgpt status --json` | `state` (`active`, `no-plan`, `lapsed`, `signed-out`), the account's `email`, and `usageUrl` — never a token; `login` and `logout` end with the same document |
 | `relay start --json` | the same checks (implies `--check`: a guided walkthrough has no JSON form) |
 | `relay init --json` | the config it wrote, the test command it detected, the agents it found (implies `--yes`) |
 | `relay run <issue\|file> --json` | one object per line as phases complete, then a summary |

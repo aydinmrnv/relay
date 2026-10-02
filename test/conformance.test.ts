@@ -12,6 +12,10 @@ import {
   runStart,
   type ConformanceSubject,
 } from './helpers/conformance.ts';
+import { isolateRelayHome } from './helpers/relayHome.ts';
+
+// The shipped Codex harness looks for a saved ChatGPT sign-in before a turn.
+isolateRelayHome();
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/harness', import.meta.url));
 

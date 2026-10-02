@@ -6,6 +6,7 @@ import {
   probeAuth,
   type AuthState,
   type AuthSupport,
+  type OwnSignIn,
 } from '../../auth/delegated.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
 import { workspacesRoot } from '../../git/worktree.ts';
@@ -20,7 +21,7 @@ import { LINEAR_KEY_VARIABLE } from '../../issues/linear.ts';
 import { describeReview } from '../../reviews/level.ts';
 import { RelayError } from '../../util/errors.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
-import { agentChecks, authStateCheck, type AgentCheck, type Check } from '../checks.ts';
+import { agentChecks, authStateCheck, ownSignInCheck, type AgentCheck, type Check } from '../checks.ts';
 import { checksToJson } from '../doctorJson.ts';
 import { EXIT } from '../exit.ts';
 import { emitJson } from '../json.ts';
@@ -74,6 +75,8 @@ export interface StartDeps {
   authState: (support: AuthSupport, cwd: string) => Promise<AuthState>;
   /** Hands the terminal to the vendor's own login command. */
   login: (support: AuthSupport, cwd: string) => Promise<boolean>;
+  /** The state of a sign-in Relay holds itself for this CLI, when it holds one. */
+  ownSignIn?: (support: AuthSupport) => Promise<OwnSignIn | undefined>;
   installed: (binary: string) => Promise<boolean>;
   providerCheck: (
     registration: IssueTrackerRegistration,
@@ -88,11 +91,12 @@ export interface StartDeps {
 /**
  * One command from a fresh clone to a first run.
  *
- * The hard rule this flow is built around: Relay has no API keys, reads no
- * credentials and never sees a token. Every sign-in step below delegates to the
- * vendor's own login command with the terminal handed over, then re-asks that
- * vendor whether it worked. There is no path here that prompts for a secret,
- * and nothing it learns is written to `.relay/config.json`.
+ * The hard rule this flow is built around: it handles no credential. Every
+ * sign-in step below delegates to the vendor's own login command with the
+ * terminal handed over, then re-asks that vendor whether it worked. There is
+ * no path here that prompts for a secret, and nothing it learns is written to
+ * `.relay/config.json`. Sign in with ChatGPT, the one sign-in Relay holds
+ * itself, is its own command (`relay chatgpt login`); onboarding only says so.
  *
  * Each step is idempotent, so re-running is both the resume path and the repair
  * path when one dependency breaks later.
@@ -103,6 +107,7 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
     checkAgents: agentChecks,
     authState: (support, cwd) => probeAuth(support, { cwd }),
     login: (support, cwd) => delegateLogin(support, { cwd }),
+    ownSignIn: async (support) => support.own?.().catch(() => undefined),
     installed: async (binary) => (await resolveExecutable(binary)) !== null,
     providerCheck: async (registration, cwd) =>
       registration.create({ cwd, issues: (await loadConfig(cwd).catch(() => undefined))?.issues }).checkAvailability(),
@@ -230,6 +235,14 @@ async function ensureAgents(repo: RepositoryInfo, deps: StartDeps): Promise<stri
     printAuthRow(entry.label, check.detail, state);
 
     if (state !== 'authenticated') {
+      // A sign-in of Relay's own that ran out is not something the vendor's
+      // login renews: offering it would send the person round in a circle.
+      const own = await deps.ownSignIn?.(entry.auth);
+      if (own?.state === 'unauthenticated') {
+        hint(`${own.detail}.${own.hint === undefined ? '' : ` ${own.hint}`}`, '    ');
+        blockers.push(`${entry.label}: ${own.detail}.`);
+        continue;
+      }
       state = await offerLogin(entry.label, entry.auth, state, repo.root, deps);
     }
     if (state === 'unauthenticated') blockers.push(`${entry.label} is not signed in.`);
@@ -358,6 +371,9 @@ async function offerLogin(
     '    ',
   );
   hint(`Relay hands the terminal to ${label} and reads none of it — no token reaches Relay.`, '    ');
+  if (support.ownLogin !== undefined) {
+    hint(`Or skip this and run \`${support.ownLogin}\`: ${label} then uses your ChatGPT plan through Relay.`, '    ');
+  }
 
   // Defaults to yes only when we know sign-in is missing; an unknown state is
   // usually a CLI that simply cannot be asked, and re-launching it every run
@@ -759,7 +775,12 @@ async function reportReadiness(
   for (const { entry, check } of await deps.checkAgents()) {
     checks.push({ ...check, label: entry.label, ...(check.status === 'ok' ? {} : { hint: entry.installCommand }) });
     if (check.status !== 'ok') continue;
-    checks.push(authStateCheck(`${entry.label} sign-in`, entry.auth, await deps.authState(entry.auth, repo.root)));
+    const own = await deps.ownSignIn?.(entry.auth);
+    checks.push(
+      own !== undefined
+        ? ownSignInCheck(`${entry.label} sign-in`, own)
+        : authStateCheck(`${entry.label} sign-in`, entry.auth, await deps.authState(entry.auth, repo.root)),
+    );
   }
 
   // A tracker is a warning, not a failure: a run can start from a file or a

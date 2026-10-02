@@ -43,7 +43,7 @@ export function Faq() {
     {
       id: 'keys',
       question: 'Do I need API keys?',
-      answer: `No. Claude Code signs in with your Claude plan and Codex with your ChatGPT plan; the studio can start each CLI’s own login and then asks it whether it worked. ${brand.name} never sees a token. In GitHub Actions the export uses the vendors’ supported methods: CLAUDE_CODE_OAUTH_TOKEN from claude setup-token, and CODEX_AUTH_JSON.`,
+      answer: `No. Claude Code signs in with your Claude plan and Codex with your ChatGPT plan; the studio can start each CLI’s own login and then asks it whether it worked. Codex can also use Continue with ChatGPT, where you allow ${brand.name} to use your plan and set its limit in ChatGPT’s settings. Either way the sign-in stays on the machine that runs your agents, and the studio never sees a token. In GitHub Actions the export uses the vendors’ supported methods: CLAUDE_CODE_OAUTH_TOKEN from claude setup-token, and CODEX_AUTH_JSON.`,
     },
     {
       id: 'merge',

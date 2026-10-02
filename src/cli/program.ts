@@ -3,6 +3,7 @@ import { Command, Help } from 'commander';
 import { AGENT_PROVIDERS, AGENT_REGISTRY } from '../agents/index.ts';
 import { DELIVERY_POLICIES, REVIEW_LEVELS } from '../storage/config.ts';
 import { deliverCommand } from './commands/deliver.ts';
+import { chatgptLoginCommand, chatgptLogoutCommand, chatgptStatusCommand, type ChatgptLoginOptions } from './commands/chatgpt.ts';
 import { doctorCommand } from './commands/doctor.ts';
 import { notifyCommand } from './commands/notify.ts';
 import { collect, evalCommand } from './commands/eval.ts';
@@ -85,7 +86,7 @@ export function defaultHelp(command: Command, width?: number): string {
 const HELP_GROUPS = [
   ['Studio', ['connect']],
   ['Cloud', ['hub']],
-  ['Setup', ['start', 'init', 'doctor', 'notify']],
+  ['Setup', ['start', 'init', 'doctor', 'chatgpt', 'notify']],
   ['Run', ['run', 'resume', 'stop']],
   ['Unattended', ['serve']],
   ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats']],
@@ -228,6 +229,27 @@ export function buildProgram(version: string): Command {
     .description(`check that git, gh, ${AGENT_LABELS} and the repo are installed and authenticated`)
     .option('--json', JSON_FLAG)
     .action(wrap(doctorCommand));
+
+  // Not `codex login`, which signs the Codex CLI in. This signs Relay in, and
+  // it is the only sign-in Relay holds itself — see src/auth/chatgpt.ts.
+  const chatgpt = program.command('chatgpt').description('Sign in with ChatGPT: Codex turns in Relay use your ChatGPT plan, with no `codex login`');
+  chatgpt
+    .command('login')
+    .description('continue with ChatGPT in your browser, and let Relay use your ChatGPT plan for Codex')
+    .option('--new', 'add another ChatGPT account or workspace instead of signing back in to the saved one')
+    .option('--no-open', 'never open a browser; print the sign-in link instead')
+    .option('--json', JSON_FLAG)
+    .action(wrap((options: ChatgptLoginOptions) => chatgptLoginCommand(options)));
+  chatgpt
+    .command('status')
+    .description('say whether Relay is signed in with ChatGPT, and what Codex turns are billed to')
+    .option('--json', JSON_FLAG)
+    .action(wrap((options: { json?: boolean }) => chatgptStatusCommand(options)));
+  chatgpt
+    .command('logout')
+    .description('end the ChatGPT session at OpenAI and forget its tokens; Codex goes back to its own sign-in')
+    .option('--json', JSON_FLAG)
+    .action(wrap((options: { json?: boolean }) => chatgptLogoutCommand(options)));
 
   program
     .command('notify')

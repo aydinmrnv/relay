@@ -191,7 +191,7 @@ export function MachineCard() {
         )}
       </CardContent>
       <CardFooter className="flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-        <span className="text-pretty">It listens on 127.0.0.1 only, answers only this studio, and never sees a token: the CLIs keep their own sign-ins.</span>
+        <span className="text-pretty">It listens on 127.0.0.1 only, answers only this studio, and never sends it a token: sign-ins stay on your computer.</span>
         {pairing !== null ? (
           <Button
             size="sm"

@@ -1,8 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import type { Writable } from 'node:stream';
 
+import { beginChatgptSignIn, chatgptSignOut, chatgptStatus, ChatgptSignInError, type PendingSignIn } from '../auth/chatgpt.ts';
 import { resolveExecutable, resolveInvocation, runProcess } from '../process/runner.ts';
 import { ACCOUNT_NAMES, configureGitForGithub, GITHUB_LOGIN_ARGS } from './accounts.ts';
+import { openInBrowser } from './open.ts';
 import type { AccountId, AgentAccount, AgentId, AgentsStatus, AuthMethod, LoginMode, LoginSessionView, LoginStatus } from './protocol.ts';
 
 /**
@@ -16,11 +19,18 @@ import type { AccountId, AgentAccount, AgentId, AgentsStatus, AuthMethod, LoginM
  *     code it prints. When the CLI asks for an authorization code to be pasted
  *     back, pass the paste straight to its stdin and never log it.
  *   - Never read, print, store or forward a token. There is no route for that.
+ *
+ * Sign in with ChatGPT is the one sign-in that is not a vendor's command: the
+ * companion runs it itself (`../auth/chatgpt.ts`). The last rule still holds
+ * here. What this file gets back is a loopback link and a yes or no, and the
+ * studio is sent nothing more.
  */
 
 const STATUS_TIMEOUT_MS = 20_000;
 const VERSION_TIMEOUT_MS = 8_000;
 const LOGIN_TTL_MS = 15 * 60_000;
+/** Long enough for a sign-in that was started and at once replaced to be gone before a tab opens on it. */
+const OPEN_DELAY_MS = 250;
 const CHILD_ENV = { NO_COLOR: '1', FORCE_COLOR: '0' };
 
 export const AGENT_META: Record<AgentId, { name: string; vendor: string; installCommand: string; loginCommand: string }> = {
@@ -39,14 +49,14 @@ export function isAgentId(value: unknown): value is AgentId {
 }
 
 export function isLoginMode(value: unknown): value is LoginMode {
-  return value === 'browser' || value === 'device' || value === 'console';
+  return value === 'browser' || value === 'device' || value === 'console' || value === 'chatgpt';
 }
 
 /* ------------------------------------------------------------------ */
 /* Status                                                              */
 /* ------------------------------------------------------------------ */
 
-type SignIn = Pick<AgentAccount, 'loggedIn' | 'method' | 'plan' | 'email'>;
+type SignIn = Pick<AgentAccount, 'loggedIn' | 'method' | 'plan' | 'email' | 'source'>;
 
 const SIGNED_OUT: SignIn = { loggedIn: false, method: 'none', plan: null, email: null };
 
@@ -99,7 +109,15 @@ async function claudeStatus(): Promise<SignIn> {
   return result === null ? SIGNED_OUT : parseClaudeStatus(result.stdout, result.ok);
 }
 
+/**
+ * Relay's own ChatGPT sign-in is what a Codex turn uses when there is one, so
+ * it answers before the CLI does. A lapsed one reads as signed out, because
+ * turns fail until it is renewed, whatever `codex login` would have said.
+ */
 async function codexStatus(): Promise<SignIn> {
+  const own = await chatgptStatus().catch(() => undefined);
+  if (own?.state === 'active') return { loggedIn: true, method: 'subscription', plan: null, email: own.email, source: 'relay' };
+  if (own?.state === 'lapsed') return { ...SIGNED_OUT, email: own.email, source: 'relay' };
   const result = await ask('codex', ['login', 'status'], STATUS_TIMEOUT_MS);
   return result === null ? SIGNED_OUT : parseCodexStatus(`${result.stdout}\n${result.stderr}`, result.ok);
 }
@@ -129,6 +147,14 @@ const LOGOUT_ARGS: Record<AccountId, string[]> = {
 };
 
 export async function logout(account: AccountId): Promise<{ ok: boolean; detail: string }> {
+  // Relay's own ChatGPT sign-in is the one in effect when it exists, so it is
+  // the one a sign-out ends. The CLI's own login, if any, is left as it was.
+  if (account === 'codex') {
+    const own = await chatgptSignOut().catch(() => undefined);
+    if (own?.signedOut === true) {
+      return { ok: true, detail: own.revoked ? 'Signed out of ChatGPT.' : 'Signed out here. OpenAI did not confirm it; disconnect Relay in ChatGPT’s settings to be sure.' };
+    }
+  }
   const name = ACCOUNT_NAMES[account];
   const binary = LOGIN_PROGRAMS[account].binary;
   if ((await resolveExecutable(binary)) === null) return { ok: false, detail: `${name} is not installed.` };
@@ -144,7 +170,10 @@ interface LoginSession {
   id: string;
   agent: AccountId;
   mode: LoginMode;
-  child: ChildProcess;
+  /** Ends whatever is waiting on the person: the CLI's process, or Relay's own listener. */
+  stop: () => void;
+  /** Where a pasted authorization code goes. Only a CLI's login has one. */
+  stdin: Writable | null;
   status: LoginStatus;
   url: string | null;
   code: string | null;
@@ -153,7 +182,7 @@ interface LoginSession {
   startedAt: number;
   /** Cleaned stdout+stderr, kept only long enough to find the URL / code / prompt. Never returned. */
   output: string;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 interface LoginProgram {
@@ -179,10 +208,30 @@ const LOGIN_PROGRAMS: Record<AccountId, LoginProgram> = {
   },
 };
 
+export interface LoginSessionsOptions {
+  /** Seams for the tests; the defaults talk to OpenAI and open the real browser. */
+  chatgpt?: () => Promise<PendingSignIn>;
+  open?: (url: string) => Promise<boolean>;
+  openDelayMs?: number;
+  codexInstalled?: () => Promise<boolean>;
+}
+
 export class LoginSessions {
   private readonly sessions = new Map<string, LoginSession>();
+  private readonly chatgpt: () => Promise<PendingSignIn>;
+  private readonly open: (url: string) => Promise<boolean>;
+  private readonly openDelayMs: number;
+  private readonly codexInstalled: () => Promise<boolean>;
+
+  constructor(options: LoginSessionsOptions = {}) {
+    this.chatgpt = options.chatgpt ?? (() => beginChatgptSignIn());
+    this.open = options.open ?? openInBrowser;
+    this.openDelayMs = options.openDelayMs ?? OPEN_DELAY_MS;
+    this.codexInstalled = options.codexInstalled ?? (async () => (await resolveExecutable(LOGIN_PROGRAMS.codex.binary)) !== null);
+  }
 
   async start(agent: AccountId, mode: LoginMode): Promise<{ ok: true; session: LoginSessionView } | { ok: false; error: string }> {
+    if (agent === 'codex' && mode === 'chatgpt') return this.startChatgpt();
     const program = LOGIN_PROGRAMS[agent];
     const args = program.args[mode];
     const meta = { name: ACCOUNT_NAMES[agent], installCommand: program.installCommand };
@@ -211,7 +260,8 @@ export class LoginSessions {
       id: randomBytes(9).toString('base64url'),
       agent,
       mode,
-      child,
+      stop: () => void child.kill('SIGTERM'),
+      stdin: child.stdin,
       status: 'pending',
       url: null,
       code: null,
@@ -223,11 +273,11 @@ export class LoginSessions {
         if (session.status === 'pending') {
           session.status = 'failed';
           session.error = 'Sign-in timed out after 15 minutes.';
-          child.kill('SIGTERM');
+          session.stop();
         }
       }, LOGIN_TTL_MS),
     };
-    session.timer.unref();
+    session.timer?.unref();
     this.sessions.set(session.id, session);
 
     const onData = (chunk: Buffer | string) => {
@@ -239,10 +289,10 @@ export class LoginSessions {
     child.on('error', (error) => {
       session.status = 'failed';
       session.error = (error as NodeJS.ErrnoException).code === 'ENOENT' ? `${meta.name} is not installed. Run: ${meta.installCommand}` : error.message;
-      clearTimeout(session.timer);
+      clearTimeout(session.timer ?? undefined);
     });
     child.on('close', (code) => {
-      clearTimeout(session.timer);
+      clearTimeout(session.timer ?? undefined);
       if (session.status === 'pending') {
         session.status = code === 0 ? 'succeeded' : 'failed';
         if (code !== 0) session.error = `${meta.name} exited with code ${code ?? 'unknown'} before sign-in finished.`;
@@ -252,6 +302,65 @@ export class LoginSessions {
       session.output = '';
     });
 
+    return { ok: true, session: view(session) };
+  }
+
+  /**
+   * Sign in with ChatGPT. There is no CLI behind this one: Relay listens on a
+   * loopback port, OpenAI's page returns there, and the session ends when that
+   * flow does. The link is opened here because the browser that can reach the
+   * listener is this machine's.
+   */
+  private async startChatgpt(): Promise<{ ok: true; session: LoginSessionView } | { ok: false; error: string }> {
+    // The sign-in needs no CLI, and is worth nothing without the one that spends it.
+    if (!(await this.codexInstalled())) return { ok: false, error: `Codex is not installed. Run: ${AGENT_META.codex.installCommand}` };
+    for (const existing of this.sessions.values()) {
+      if (existing.agent === 'codex' && existing.status === 'pending') this.cancel(existing.id);
+    }
+
+    let pending: PendingSignIn;
+    try {
+      pending = await this.chatgpt();
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+
+    const session: LoginSession = {
+      id: randomBytes(9).toString('base64url'),
+      agent: 'codex',
+      mode: 'chatgpt',
+      stop: pending.cancel,
+      stdin: null,
+      status: 'pending',
+      url: pending.url,
+      code: null,
+      needsCode: false,
+      error: null,
+      startedAt: Date.now(),
+      output: '',
+      // The flow carries its own fifteen-minute limit.
+      timer: null,
+    };
+    this.sessions.set(session.id, session);
+
+    pending.result.then(
+      (result) => {
+        if (session.status !== 'pending') return;
+        session.status = result.planEnabled ? 'succeeded' : 'failed';
+        if (!result.planEnabled) session.error = 'You are signed in, but Relay was not allowed to use your ChatGPT plan, so Codex keeps its own sign-in. Start again and allow it to change that.';
+      },
+      (error: unknown) => {
+        if (session.status !== 'pending') return;
+        session.status = error instanceof ChatgptSignInError && error.code === 'cancelled' ? 'cancelled' : 'failed';
+        session.error = error instanceof Error ? error.message : String(error);
+      },
+    );
+
+    // A moment later, and only if it is still wanted: a studio that starts a
+    // sign-in and replaces it at once must not leave a tab open on a dead link.
+    setTimeout(() => {
+      if (session.status === 'pending') void this.open(pending.url).catch(() => false);
+    }, this.openDelayMs).unref();
     return { ok: true, session: view(session) };
   }
 
@@ -285,7 +394,7 @@ export class LoginSessions {
     if (session.status !== 'pending') return { ok: false, error: `That sign-in already ${session.status}.` };
     const trimmed = code.trim();
     if (trimmed.length === 0 || trimmed.length > 512 || /\s/.test(trimmed)) return { ok: false, error: 'That does not look like an authorization code.' };
-    const stdin = session.child.stdin;
+    const stdin = session.stdin;
     if (stdin === null || stdin.destroyed) return { ok: false, error: 'The CLI is not accepting input.' };
     stdin.write(`${trimmed}\n`);
     return { ok: true };
@@ -296,9 +405,9 @@ export class LoginSessions {
     if (session === undefined) return false;
     if (session.status === 'pending') {
       session.status = 'cancelled';
-      session.child.kill('SIGTERM');
+      session.stop();
     }
-    clearTimeout(session.timer);
+    clearTimeout(session.timer ?? undefined);
     session.output = '';
     return true;
   }

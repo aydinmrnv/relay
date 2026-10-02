@@ -18,6 +18,10 @@ import {
 import { describeEvent, type AgentCapability } from '../src/agents/types.ts';
 import { AGENT_REGISTRY, AGENT_PROVIDERS, createHarnesses, isAgentProvider } from '../src/agents/index.ts';
 import { ROLES, type Role } from '../src/storage/config.ts';
+import { isolateRelayHome } from './helpers/relayHome.ts';
+
+// The shipped Codex harness looks for a saved ChatGPT sign-in before a turn.
+isolateRelayHome();
 
 describe('claude command construction', () => {
   it('requests a machine-readable stream and a caller-chosen session id', () => {
