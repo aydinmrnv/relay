@@ -145,6 +145,10 @@ function sentenceFor(node: WorkflowNode, def: NodeTypeDef): string {
       const authors = text(config['authors']).split('\n').map((line) => line.trim()).filter(Boolean);
       return authors.length === 0 ? 'Lets nobody through yet: the allowlist is empty.' : `Only continues if the request came from ${authors.slice(0, 3).join(', ')}${authors.length > 3 ? ` or ${authors.length - 3} more` : ''}.`;
     }
+    case 'gates.action.injection-screen':
+      return config['mode'] === 'warn'
+        ? 'Checks the ticket’s text against known prompt-injection phrasings, and says what matched without stopping the run.'
+        : 'Refuses a ticket whose text matches a known prompt-injection phrasing, before any agent reads it.';
     case 'gates.action.approval':
       return `Waits for ${text(config['approvers']).split('\n')[0] || 'a person'} to approve${text(config['via']) ? ` (${text(config['via'])})` : ''}, for up to ${text(config['timeoutHours']) || '24'} hours.`;
     case 'gates.action.kill-switch':

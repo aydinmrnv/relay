@@ -12,6 +12,7 @@
 import { getNodeType, type NodeTypeDef } from '../connectors';
 import type { Brand } from '../brand';
 import type { NodeRunStatus, Run, RunEvent, RunPhase, RunStatus, Workflow, WorkflowEdge, WorkflowNode } from './schema';
+import { INJECTION_RULES, screenText } from './injection';
 import { renderTemplate } from './template';
 
 export interface SimulateOptions {
@@ -268,6 +269,25 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
           return { status: 'done', message: `@${actor} is allowed${teams.length > 0 && !authors.includes(actor) ? ` (via ${teams[0]})` : ''}.`, nextHandles: ['pass'] };
         }
         return { status: 'refused', message: `Refused: @${actor} is not on the allowlist.`, nextHandles: ['refused'] };
+      }
+      case 'gates.action.injection-screen': {
+        // The engine's own patterns, on the text an agent would be handed: the ticket, and what was typed on the node to try.
+        const tried = typeof config['tryText'] === 'string' ? config['tryText'] : '';
+        const parts: Array<[string, string]> = [
+          ['title', String(payload['title'] ?? '')],
+          ['description', String(payload['body'] ?? payload['description'] ?? '')],
+          ['text you gave it to try', tried],
+        ];
+        const matches = parts.flatMap(([where, text]) => screenText(text).map((match) => `its ${where} ${match.what} (“${match.excerpt}”)`));
+        tick(120);
+        if (matches.length === 0) {
+          return { status: 'done', message: `Clean: nothing in the ticket matches the ${INJECTION_RULES.length} injection patterns.`, detail: 'A list of patterns, not a guarantee: text in words the list does not know passes it.', nextHandles: ['pass'] };
+        }
+        const said = `${matches.slice(0, 3).join('; ')}${matches.length > 3 ? `, and ${matches.length - 3} more` : ''}`;
+        if (config['mode'] === 'warn') {
+          return { status: 'done', message: `Warned, and let through: ${said}.`, detail: 'Set to warn, so the run starts and its notes say what matched.', nextHandles: ['pass'] };
+        }
+        return { status: 'refused', message: `Refused: looks like a prompt injection: ${said}.`, detail: 'No agent read it and nothing was spent. A person can read the raw issue and run it by hand.', nextHandles: ['refused'] };
       }
       case 'gates.action.approval': {
         const via = String(config['via'] ?? 'dashboard');

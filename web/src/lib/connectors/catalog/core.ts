@@ -99,7 +99,7 @@ export const CORE_CONNECTORS: Connector[] = [
     description: 'Budgets, allowlists and human approval. Every gate refuses by default.',
     auth: 'none',
     icon: { lucide: 'ShieldCheck', color: CORE_INK },
-    tags: ['budget', 'allowlist', 'approval', 'kill switch'],
+    tags: ['budget', 'allowlist', 'approval', 'kill switch', 'prompt injection'],
     popular: true,
     uses: ['Cap what a run and a day may cost, and refuse runs nobody on the allowlist asked for.', 'Hold a customer-reported fix until an engineer approves it.'],
     triggers: [],
@@ -131,6 +131,34 @@ export const CORE_CONNECTORS: Connector[] = [
         fields: [
           { key: 'authors', label: 'Allowed logins', type: 'textarea', placeholder: 'one per line', required: true },
           { key: 'teams', label: 'Allowed teams (org/team)', type: 'textarea', placeholder: 'acme/platform' },
+        ],
+      },
+      {
+        id: 'injection-screen',
+        name: 'Injection screen',
+        description: 'Refuses a ticket whose text matches a known prompt-injection phrasing, before any agent reads it. A list of patterns, not a guarantee.',
+        inputs: PORTS.anyIn,
+        outputs: [
+          { id: 'pass', label: 'Clean', type: 'any' },
+          { id: 'refused', label: 'Refused', type: 'event' },
+        ],
+        fields: [
+          FIELDS.select(
+            'mode',
+            'When the text matches',
+            [
+              { value: 'refuse', label: 'Refuse to start' },
+              { value: 'warn', label: 'Start, and say what matched' },
+            ],
+            'refuse',
+          ),
+          {
+            key: 'tryText',
+            label: 'Try it: an issue description to screen',
+            type: 'textarea',
+            placeholder: 'Paste text as it might arrive in an issue, then press Test run.',
+            help: 'Test runs only. A real run screens the issue it was given: its title, its description and the comments it trusts.',
+          },
         ],
       },
       {
