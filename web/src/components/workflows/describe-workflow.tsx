@@ -14,6 +14,7 @@ import { useBrand } from '@/hooks/use-brand';
 import { getNodeType } from '@/lib/connectors';
 import { useStudio } from '@/lib/store';
 import { DESCRIPTION_EXAMPLES, workflowFromDescription, type DescribedStep, type DescriptionResult } from '@/lib/workflow/from-description';
+import type { Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
 
 interface ComposerProps {
@@ -200,21 +201,23 @@ function Confidence({ value }: { value: number }) {
 interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Takes the new workflow instead of saving it and opening the studio's builder: the playground opens it on its own canvas. */
+  onCreate?: (workflow: Workflow) => void;
 }
 
 /** "Describe it": the composer in a dialog, and a button that saves the result and opens it in the builder. */
-export function DescribeWorkflowDialog({ open, onOpenChange }: DialogProps) {
+export function DescribeWorkflowDialog({ open, onOpenChange, onCreate }: DialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         {/* Remounted on every open (the popup unmounts when closed), so each visit starts blank. */}
-        <DescribeDialogBody onDone={() => onOpenChange(false)} />
+        <DescribeDialogBody onDone={() => onOpenChange(false)} onCreate={onCreate} />
       </DialogContent>
     </Dialog>
   );
 }
 
-function DescribeDialogBody({ onDone }: { onDone: () => void }) {
+function DescribeDialogBody({ onDone, onCreate }: { onDone: () => void; onCreate?: (workflow: Workflow) => void }) {
   const router = useRouter();
   const brand = useBrand();
   const repository = useStudio((state) => state.settings.defaultRepository);
@@ -226,10 +229,11 @@ function DescribeDialogBody({ onDone }: { onDone: () => void }) {
     if (blank) return;
     // Read again from the text as it stands, rather than from a preview that may be a keystroke behind.
     const { workflow, steps } = workflowFromDescription(text, brand, repository);
-    useStudio.getState().upsertWorkflow(workflow);
+    if (onCreate === undefined) useStudio.getState().upsertWorkflow(workflow);
     toast.success(`Created “${workflow.name}”`, { description: `${steps.length} nodes, switched off until you turn it on. Check each node’s settings first.` });
     onDone();
-    router.push(`/workflows/${workflow.id}`);
+    if (onCreate === undefined) router.push(`/workflows/${workflow.id}`);
+    else onCreate(workflow);
   };
 
   return (

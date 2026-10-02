@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { use, useState } from 'react';
+import { useState } from 'react';
 import { usePageTitle } from '@/hooks/use-page-title';
 import {
   ArrowLeft,
@@ -51,13 +51,18 @@ import { getConnector } from '@/lib/connectors';
 import { formatUsd } from '@/lib/format';
 import { canCancel, cancelRun } from '@/lib/run-launcher';
 import { useStudio } from '@/lib/store';
+import { useStudioLinks } from '@/lib/studio-links';
 import { cn } from '@/lib/utils';
 import type { Run, RunStatus } from '@/lib/workflow/schema';
 import { formatMs } from '@/lib/workflow/simulate';
 
-export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
-  const { id } = use(params);
+/**
+ * One run, in full: what it did, what it cost and why it ended the way it
+ * did. The studio's run page and the playground's are both this.
+ */
+export function RunDetail({ id }: { id: string }) {
   const router = useRouter();
+  const links = useStudioLinks();
   const now = useNow();
   const run = useStudio((state) => state.runs.find((candidate) => candidate.id === id));
   const workflow = useStudio((state) => (run === undefined ? undefined : state.workflows[run.workflowId]));
@@ -89,10 +94,10 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
       <FadeIn className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
         <div className="flex min-w-0 items-start gap-3">
           <Tooltip>
-            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" nativeButton={false} render={<Link href="/runs" />} aria-label="Back to all runs" className="mt-0.5" />}>
+            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" nativeButton={false} render={<Link href={links.runs} />} aria-label={links.playground ? 'Back to the playground' : 'Back to all runs'} className="mt-0.5" />}>
               <ArrowLeft />
             </TooltipTrigger>
-            <TooltipContent>All runs</TooltipContent>
+            <TooltipContent>{links.playground ? 'Back to the playground' : 'All runs'}</TooltipContent>
           </Tooltip>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -150,7 +155,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
             </Tooltip>
           )}
           {workflow !== undefined ? (
-            <Button variant="outline" nativeButton={false} render={<Link href={`/workflows/${workflow.id}`} />}>
+            <Button variant="outline" nativeButton={false} render={<Link href={links.workflow(workflow.id)} />}>
               <WorkflowIcon data-icon="inline-start" /> Open workflow
             </Button>
           ) : null}
@@ -180,7 +185,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
       </FadeIn>
 
       <FadeIn delay={0.04}>
-        <Outcome run={run} speed={speed} />
+        <Outcome run={run} speed={speed} settings={!links.playground} />
       </FadeIn>
 
       <Stagger className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -320,7 +325,7 @@ export default function RunDetailPage({ params }: PageProps<'/runs/[id]'>) {
         onDeleted={() => {
           setLeaving(true);
           toast.success(`Deleted run ${run.shortId}`);
-          router.push('/runs');
+          router.push(links.runs);
         }}
       />
     </div>
@@ -337,7 +342,7 @@ const OUTCOME_STYLE: Record<RunStatus, { box: string; icon: React.ReactNode; tit
 };
 
 /** The outcome in words: what the status means in general, and what happened in this run. */
-function Outcome({ run, speed }: { run: Run; speed: string }) {
+function Outcome({ run, speed, settings }: { run: Run; speed: string; settings: boolean }) {
   const style = OUTCOME_STYLE[run.status];
   const live = isLive(run.status);
   // A run on a machine is happening, not being played back.
@@ -359,11 +364,16 @@ function Outcome({ run, speed }: { run: Run; speed: string }) {
               <span className="text-xs">· on {run.machine?.host ?? 'your machine'}, at the speed the agents work</span>
             ) : (
               <span className="text-xs">
-                · played back at {speed} speed (
-                <Link href="/settings#appearance" className="underline underline-offset-2 hover:text-foreground">
-                  change
-                </Link>
-                )
+                · played back at {speed} speed
+                {settings ? (
+                  <>
+                    {' ('}
+                    <Link href="/settings#appearance" className="underline underline-offset-2 hover:text-foreground">
+                      change
+                    </Link>
+                    )
+                  </>
+                ) : null}
               </span>
             )}
           </div>
@@ -394,6 +404,7 @@ function Fact({ icon, label, help, value, hint, mono = false }: { icon: React.Re
 }
 
 function RunNotFound() {
+  const links = useStudioLinks();
   return (
     <div className="flex flex-1 p-4 md:p-6">
       <FadeIn className="flex flex-1">
@@ -408,12 +419,14 @@ function RunNotFound() {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent className="flex-row justify-center">
-            <Button nativeButton={false} render={<Link href="/runs" />}>
-              <ArrowLeft data-icon="inline-start" /> All runs
+            <Button nativeButton={false} render={<Link href={links.runs} />}>
+              <ArrowLeft data-icon="inline-start" /> {links.playground ? 'Back to the playground' : 'All runs'}
             </Button>
-            <Button variant="outline" nativeButton={false} render={<Link href="/dashboard" />}>
-              <LayoutDashboard data-icon="inline-start" /> Dashboard
-            </Button>
+            {links.playground ? null : (
+              <Button variant="outline" nativeButton={false} render={<Link href="/dashboard" />}>
+                <LayoutDashboard data-icon="inline-start" /> Dashboard
+              </Button>
+            )}
           </EmptyContent>
         </Empty>
       </FadeIn>

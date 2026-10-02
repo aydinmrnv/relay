@@ -14,6 +14,7 @@ import { RunTimeline } from '@/components/runs/run-timeline';
 import { LabeledProgressIndicator } from '@/components/watermelon/labeled-progress-indicator';
 import type { Run, Workflow } from '@/lib/workflow/schema';
 import { formatUsd } from '@/lib/format';
+import { useStudioLinks } from '@/lib/studio-links';
 
 interface Props {
   run: Run | null;
@@ -27,6 +28,7 @@ interface Props {
 
 /** The strip under the canvas: what the last test run did, live while it plays. */
 export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onClear }: Props) {
+  const links = useStudioLinks();
   const statuses = run === null ? [] : Object.values(run.nodeStatus);
   const settled = statuses.filter((status) => status !== 'pending' && status !== 'running').length;
   const progress = statuses.length === 0 ? 0 : Math.round((settled / statuses.length) * 100);
@@ -68,7 +70,7 @@ export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onC
                 <Button size="xs" variant="ghost" onClick={onClear} title="Remove the run colours from the canvas">
                   <Eraser data-icon="inline-start" /> Clear
                 </Button>
-                <Button size="xs" variant="outline" nativeButton={false} render={<Link href={`/runs/${run.id}`} />}>
+                <Button size="xs" variant="outline" nativeButton={false} render={<Link href={links.run(run.id)} />}>
                   Details
                 </Button>
               </>

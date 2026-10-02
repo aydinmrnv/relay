@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { launchRun } from '@/lib/run-launcher';
 import { useStudio } from '@/lib/store';
+import { useStudioLinks } from '@/lib/studio-links';
 import { validateWorkflow } from '@/lib/workflow/validate';
 
 interface Options {
@@ -20,6 +21,7 @@ interface Options {
  */
 export function useRunAgain() {
   const router = useRouter();
+  const links = useStudioLinks();
 
   return (workflowId: string, options: Options = {}) => {
     const workflow = useStudio.getState().workflows[workflowId];
@@ -32,7 +34,7 @@ export function useRunAgain() {
       const first = validation.issues.find((issue) => issue.level === 'error');
       toast.error(`${workflow.name} has ${validation.errors} ${validation.errors === 1 ? 'problem' : 'problems'} to fix first`, {
         description: first?.message,
-        action: { label: 'Open workflow', onClick: () => router.push(`/workflows/${workflow.id}`) },
+        action: { label: 'Open workflow', onClick: () => router.push(links.workflow(workflow.id)) },
       });
       return;
     }
@@ -44,12 +46,12 @@ export function useRunAgain() {
         if (announced) return;
         announced = true;
         if (options.navigate === true) {
-          router.push(`/runs/${live.id}`);
+          router.push(links.run(live.id));
           return;
         }
         toast.success('Test run started', {
           description: `${workflow.name} is playing in this browser. Nothing is called or billed.`,
-          action: { label: 'Watch', onClick: () => router.push(`/runs/${live.id}`) },
+          action: { label: 'Watch', onClick: () => router.push(links.run(live.id)) },
         });
       },
     }).catch((error: unknown) => {

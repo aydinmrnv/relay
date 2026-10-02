@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { GraphThumbnail } from '@/components/templates/graph-thumbnail';
-import { useAccount } from '@/lib/cloud/account';
+import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { useCombo } from '@/hooks/use-key-label';
 import { api, flushNow } from '@/lib/cloud/sync';
 import { withLocalSecrets, withoutSecrets } from '@/lib/cloud/secrets';
@@ -44,12 +44,18 @@ export function HistorySheet({ workflow, open, onOpenChange, onRestore }: { work
 
 function GuestHistory() {
   const pathname = usePathname();
+  // A deployment without sign-in has nothing to send anyone to.
+  const accounts = useCapabilities().enabled;
   return (
     <div className="flex flex-col gap-3 p-4 text-sm text-muted-foreground">
       <p>Version history is kept in your account, so a bad afternoon of edits is never more than a click from undone — on any device.</p>
-      <Button className="w-fit" nativeButton={false} render={<Link href={`/sign-up?next=${encodeURIComponent(pathname)}`} />}>
-        <UserPlus data-icon="inline-start" /> Create a free account
-      </Button>
+      {accounts ? (
+        <Button className="w-fit" nativeButton={false} render={<Link href={`/sign-up?next=${encodeURIComponent(pathname)}`} />}>
+          <UserPlus data-icon="inline-start" /> Create a free account
+        </Button>
+      ) : (
+        <p>Accounts are not switched on for this copy of the studio. Until they are, undo and redo cover the session you are in.</p>
+      )}
     </div>
   );
 }

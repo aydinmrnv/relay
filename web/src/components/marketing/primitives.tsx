@@ -40,17 +40,27 @@ const EASE = [0.22, 1, 0.36, 1] as const;
  * account, so someone signed out is sent to sign in — one form that also
  * makes a new account — and `into` then carries on to the page the link was
  * for. Only a development copy without accounts opens the studio directly.
+ *
+ * `playground` is the builder without an account, for a visitor who wants to
+ * see it before making one. Where a deployment has no sign-in at all it is
+ * the only way in, so every button leads there instead of to a sign-in page
+ * that can only say it is unavailable.
  */
 export function useStudioEntry() {
   const signedIn = useAccount((state) => state.status === 'signed-in');
-  const guests = useCapabilities().guests;
+  const { guests, enabled: accounts } = useCapabilities();
   const invite = !signedIn && !guests;
+  const closed = invite && !accounts;
   return {
     signedIn,
     invite,
-    href: invite ? '/sign-in' : '/dashboard',
+    href: closed ? '/play' : invite ? '/sign-in' : '/dashboard',
     label: signedIn ? 'Go to dashboard' : 'Try it free',
-    into: (path: string) => (invite ? signInThenTo(path) : path),
+    into: (path: string) => (closed ? '/play' : invite ? signInThenTo(path) : path),
+    // `null` where the main button already goes there, so no page shows two buttons to one place.
+    playground: invite && !closed ? '/play' : null,
+    /** The builder: the studio's for someone in it, the playground's for everyone else. */
+    builder: invite ? '/play' : '/workflows',
   };
 }
 
