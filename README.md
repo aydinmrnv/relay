@@ -192,6 +192,16 @@ Codex with your ChatGPT plan: through `relay connect`, the studio starts each
 CLI's own login on your computer and then asks that CLI whether it worked. The
 sign-in stays in that CLI's own files; Relay does not read or store it.
 
+Codex has a second way in: **Continue with ChatGPT**. OpenAI's Sign in with
+ChatGPT lets you authorize Relay itself to use your ChatGPT plan, so Codex needs
+no login of its own, and what Relay may spend is a limit you set for it under
+[Usage in ChatGPT's settings](https://chatgpt.com/settings/usage). Start it from
+the studio's Agent accounts card or with `relay chatgpt login`. This is the one
+credential Relay holds: an OAuth token in an owner-only file under `~/.relay`
+on your machine, handed to the Codex process that spends it and to nothing else.
+It never reaches the studio or `.relay/`. It is for Relay on your own computer;
+Relay Cloud machines keep using Codex's own sign-in.
+
 In GitHub Actions the export uses each vendor's supported way of carrying a
 personal plan into CI — `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and
 `CODEX_AUTH_JSON` holding `~/.codex/auth.json` — or API keys, if you prefer them.

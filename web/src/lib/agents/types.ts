@@ -3,7 +3,9 @@
  *
  * "Bring your own subscription": the studio never holds a model credential.
  * It asks each vendor's CLI whether it is signed in, and it can start that
- * CLI's own login flow. What comes back is the state below, and nothing more.
+ * CLI's own login flow — or, for Codex, Sign in with ChatGPT, which the Relay
+ * CLI on the person's machine runs and keeps. What comes back is the state
+ * below, and nothing more.
  */
 
 export type AgentId = 'claude' | 'codex';
@@ -26,6 +28,8 @@ export interface AgentAccount {
   plan: string | null;
   /** Account email when the CLI reports one. Shown to the user, never stored. */
   email: string | null;
+  /** `relay` when the sign-in is the Relay CLI's own (Sign in with ChatGPT) and not the vendor CLI's. */
+  source?: 'relay';
   installCommand: string;
   /** How the CLI is signed in from a terminal, for the copy button. */
   loginCommand: string;
@@ -37,7 +41,11 @@ export interface AgentsStatus {
   agents: Record<AgentId, AgentAccount>;
 }
 
-export type LoginMode = 'browser' | 'device' | 'console';
+/** `chatgpt` is Sign in with ChatGPT, run by the Relay CLI itself; the rest are the vendor CLI's own logins. */
+export type LoginMode = 'browser' | 'device' | 'console' | 'chatgpt';
+
+/** Where a person sees and limits what Relay spends of their ChatGPT plan. */
+export const CHATGPT_USAGE_URL = 'https://chatgpt.com/settings/usage';
 
 export type LoginStatus = 'pending' | 'succeeded' | 'failed' | 'cancelled';
 

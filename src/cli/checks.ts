@@ -1,7 +1,7 @@
 import { AGENT_REGISTRY, type HarnessRegistration } from '../agents/index.ts';
 import { configHarnessRegistrations } from '../agents/configHarness.ts';
 import { detectOsSandbox } from '../agents/sandbox.ts';
-import { describeCommand, probeAuth, type AuthState, type AuthSupport } from '../auth/delegated.ts';
+import { describeCommand, probeAuth, type AuthState, type AuthSupport, type OwnSignIn } from '../auth/delegated.ts';
 import { discoverRepository } from '../git/repository.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -195,7 +195,17 @@ export async function enforcementChecks(
  * failure onboarding exists to move forward to here.
  */
 export async function authCheck(label: string, support: AuthSupport, cwd: string): Promise<Check> {
+  const own = await support.own?.().catch(() => undefined);
+  if (own !== undefined) return ownSignInCheck(label, own);
   return authStateCheck(label, support, await probeAuth(support, { cwd }));
+}
+
+/**
+ * A sign-in Relay holds itself, reported in its own words: "run `codex login`"
+ * is the wrong advice for one that `relay chatgpt login` renews.
+ */
+export function ownSignInCheck(label: string, own: OwnSignIn): Check {
+  return { label, status: own.state === 'authenticated' ? 'ok' : 'fail', detail: own.detail, ...(own.hint === undefined ? {} : { hint: own.hint }) };
 }
 
 /** The reporting half of `authCheck`, kept pure so a flow can probe once and print twice. */

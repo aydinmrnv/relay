@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { CHATGPT_ENDPOINTS, CHATGPT_USAGE_URL } from '../auth/chatgpt.ts';
 import { runProcess, resolveExecutable } from '../process/runner.ts';
 import { parseJsonLine } from '../process/lines.ts';
 import { removeDirectory } from '../util/fs.ts';
@@ -31,6 +32,58 @@ export function codexSandboxMode(capability: AgentCapability): string {
   return capability === 'write' ? 'workspace-write' : 'read-only';
 }
 
+/**
+ * The variable a turn's ChatGPT plan token travels in. Codex reads it by name
+ * (`env_key` below); Relay sets it on that one child process and nowhere else.
+ */
+export const CODEX_PLAN_ENV = 'RELAY_CHATGPT_ACCESS_TOKEN';
+
+/**
+ * Points Codex at the Responses API with the token Sign in with ChatGPT issued
+ * to Relay, in place of whatever `codex login` left behind. This is OpenAI's
+ * documented provider configuration for an app spending a person's plan:
+ * plain HTTP streaming, and no Codex sign-in required.
+ */
+export function codexPlanArgs(baseUrl: string = CHATGPT_ENDPOINTS.resource): string[] {
+  const provider = 'model_providers.relay_chatgpt_plan';
+  return [
+    'model_provider="relay_chatgpt_plan"',
+    `${provider}.name="ChatGPT plan"`,
+    `${provider}.base_url=${JSON.stringify(baseUrl)}`,
+    `${provider}.env_key="${CODEX_PLAN_ENV}"`,
+    `${provider}.wire_api="responses"`,
+    `${provider}.requires_openai_auth=false`,
+    `${provider}.supports_websockets=false`,
+  ].flatMap((override) => ['-c', override]);
+}
+
+/** A plan token for one turn, and when it stops working. */
+export interface CodexPlanAccess {
+  accessToken: string;
+  expiresAt: number;
+}
+
+/**
+ * What a failed plan-funded turn should say beyond Codex's own words. Codex
+ * retries a 429 itself and then reports only the status, so the place to look
+ * — ChatGPT's usage settings, where the plan's limit and this app's both live
+ * — is added here. Codex's wording stays first: it is what `workflow/retry.ts`
+ * classifies.
+ */
+export function explainPlanFailure(failure: string, expiredDuringTurn: boolean): string {
+  if (/\b401\b/.test(failure)) {
+    // A token that ran out mid-turn is not a refusal. The next attempt starts
+    // with a fresh one and resumes the thread, so this must not read as auth.
+    return expiredDuringTurn
+      ? 'ChatGPT plan token expired during the turn; the next attempt uses a fresh one.'
+      : `${failure} — ChatGPT refused Relay's plan sign-in. Run \`relay chatgpt login\`, or check Relay under Login connections in ChatGPT's settings.`;
+  }
+  if (/\b429\b|usage limit/i.test(failure)) {
+    return `${failure} — this may be your ChatGPT plan's limit, or the one you set for Relay: ${CHATGPT_USAGE_URL}`;
+  }
+  return failure;
+}
+
 export interface CodexArgsOptions {
   capability: AgentCapability;
   /** Existing thread id to continue. */
@@ -40,6 +93,8 @@ export interface CodexArgsOptions {
   lastMessageFile?: string;
   /** Path to a JSON Schema file constraining the final message. */
   outputSchemaFile?: string;
+  /** Bill the turn to the ChatGPT plan Relay is signed in to. The token itself goes in the environment. */
+  chatgptPlan?: boolean;
   extraArgs?: readonly string[];
 }
 
@@ -87,6 +142,7 @@ export function buildCodexArgs(options: CodexArgsOptions): string[] {
   if (options.outputSchemaFile !== undefined) {
     args.push('--output-schema', options.outputSchemaFile);
   }
+  if (options.chatgptPlan === true) args.push(...codexPlanArgs());
   if (options.extraArgs !== undefined) args.push(...options.extraArgs);
 
   // `-` tells Codex to read the prompt from stdin, for both exec and resume.
@@ -236,6 +292,13 @@ export interface CodexHarnessOptions {
   defaultTimeoutMs?: number;
   defaultModel?: string;
   extraArgs?: readonly string[];
+  /**
+   * Asked before every turn for a plan token good for at least that long.
+   * Undefined — the option, or its answer — leaves Codex on its own sign-in.
+   * Throwing fails the turn: a plan sign-in that lapsed must not quietly
+   * become a different bill.
+   */
+  planAccess?: (minValidMs: number) => Promise<CodexPlanAccess | undefined>;
 }
 
 export class CodexHarness implements AgentHarness {
@@ -245,6 +308,7 @@ export class CodexHarness implements AgentHarness {
   private readonly defaultTimeoutMs: number;
   private readonly defaultModel: string | undefined;
   private readonly extraArgs: readonly string[];
+  private readonly planAccess: CodexHarnessOptions['planAccess'];
   private readonly active = new Map<string, AbortController>();
   private handleCounter = 0;
 
@@ -253,6 +317,7 @@ export class CodexHarness implements AgentHarness {
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30 * 60_000;
     this.defaultModel = options.defaultModel;
     this.extraArgs = options.extraArgs ?? [];
+    this.planAccess = options.planAccess;
   }
 
   async checkAvailability(): Promise<AvailabilityResult> {
@@ -312,15 +377,19 @@ export class CodexHarness implements AgentHarness {
       await writeFile(outputSchemaFile, JSON.stringify(options.outputSchema, null, 2), 'utf8');
     }
 
+    const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const model = options.model ?? this.defaultModel;
-    const args = buildCodexArgs({
-      capability: options.capability,
-      ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
-      ...(model === undefined ? {} : { model }),
-      lastMessageFile,
-      ...(outputSchemaFile === undefined ? {} : { outputSchemaFile }),
-      extraArgs: this.extraArgs,
-    });
+    const argsFor = (chatgptPlan: boolean): string[] =>
+      buildCodexArgs({
+        capability: options.capability,
+        ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
+        ...(model === undefined ? {} : { model }),
+        lastMessageFile,
+        ...(outputSchemaFile === undefined ? {} : { outputSchemaFile }),
+        ...(chatgptPlan ? { chatgptPlan } : {}),
+        extraArgs: this.extraArgs,
+      });
+    let args = argsFor(false);
 
     const events: AgentEvent[] = [];
     let sessionId = resumeSessionId;
@@ -345,17 +414,22 @@ export class CodexHarness implements AgentHarness {
     };
 
     const startedAt = Date.now();
+    let plan: CodexPlanAccess | undefined;
     try {
       let result;
       try {
+        // A token that outlasts the turn, where one can be had: there is no
+        // renewing it inside a process that has already started.
+        plan = await this.planAccess?.(timeoutMs + 60_000);
+        if (plan !== undefined) args = argsFor(true);
         result = await runProcess(this.binary, args, {
           cwd: options.cwd,
           stdin: options.prompt,
-          timeoutMs: options.timeoutMs ?? this.defaultTimeoutMs,
+          timeoutMs,
           signal: controller.signal,
           // A turn is the CLI and everything it started; see `killTree`.
           killTree: true,
-          env: { ...options.env, NO_COLOR: '1' },
+          env: { ...options.env, NO_COLOR: '1', ...(plan === undefined ? {} : { [CODEX_PLAN_ENV]: plan.accessToken }) },
           onStdoutLine: (line) => {
             const parsed = parseJsonLine(line);
             if (parsed === undefined) return;
@@ -366,9 +440,10 @@ export class CodexHarness implements AgentHarness {
           },
         });
       } catch (error) {
-        // A process that could not even start (missing binary, EACCES) fails
-        // the turn the way a crash does: a `failed` event and a resolved
-        // session. Nothing thrown here may cross the harness boundary.
+        // A process that could not even start (missing binary, EACCES, a plan
+        // sign-in that lapsed) fails the turn the way a crash does: a `failed`
+        // event and a resolved session. Nothing thrown here may cross the
+        // harness boundary.
         emit(makeEvent('failed', options.role, { error: error instanceof Error ? error.message : String(error) }));
         return {
           provider: this.name,
@@ -401,12 +476,15 @@ export class CodexHarness implements AgentHarness {
       const ok = result.ok && failure === undefined;
       if (!ok && failure === undefined) {
         failure = result.timedOut
-          ? `codex timed out after ${Math.round((options.timeoutMs ?? this.defaultTimeoutMs) / 1000)}s`
+          ? `codex timed out after ${Math.round(timeoutMs / 1000)}s`
           : result.aborted
             ? 'codex was cancelled'
             : result.signal !== null
               ? `codex was killed by ${result.signal}`
               : `codex exited with code ${result.exitCode}${result.stderr.trim() ? `: ${oneLine(result.stderr, 400)}` : ''}`;
+      }
+      if (!ok && plan !== undefined && failure !== undefined) {
+        failure = explainPlanFailure(failure, Date.now() >= plan.expiresAt);
       }
       // The contract promises a `failed` event for every failed turn, so one is
       // synthesized when the stream itself never said so — a kill, a silent

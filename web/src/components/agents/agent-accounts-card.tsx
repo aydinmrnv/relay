@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, ExternalLink, KeyRound, LogOut, RefreshCw, Smartphone, TerminalSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -18,16 +18,20 @@ import { useAgentsStore, type BridgeState } from '@/hooks/use-agent-accounts';
 import { useNow } from '@/hooks/use-now';
 import { timeAgo } from '@/lib/format';
 import { AGENT_MARKS } from '@/lib/agents/marks';
-import { ACCOUNT_META, AGENT_IDS, AGENT_META, type AccountId, type AgentAccount, type AgentId, type GithubAccount, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
+import { ACCOUNT_META, AGENT_IDS, AGENT_META, CHATGPT_USAGE_URL, type AccountId, type AgentAccount, type AgentId, type GithubAccount, type LoginMode, type LoginSessionView } from '@/lib/agents/types';
 import { useCompanion } from '@/lib/companion/client';
 import { machineStatusText } from '@/components/companion/machine-card';
 import { cloudStatusText } from '@/components/companion/cloud-card';
+
+/** Set once the person has been told, the first time, whose plan Codex now spends. */
+const PLAN_NOTICE_KEY = 'relay:chatgpt-plan-notice';
 
 /**
  * Sign-in state of the coding CLIs on the runner — the paired machine, or the
  * person's Relay Cloud machine — and buttons that start their own login flows
  * there. The studio never holds a credential: it asks, and it starts the
- * CLI's login.
+ * CLI's login — or, on a paired machine, Sign in with ChatGPT, which the Relay
+ * CLI there runs and keeps.
  */
 export function AgentAccountsCard() {
   const bridge = useAgentsStore((state) => state.bridge);
@@ -40,8 +44,13 @@ export function AgentAccountsCard() {
   const cloud = useCompanion((state) => state.target === 'cloud');
   const cloudStatus = useCompanion((state) => state.cloud);
   const withGithub = useCompanion((state) => (state.hello?.capabilities ?? []).includes('github'));
+  // Only a runner that says so: an older CLI has no such sign-in, and a cloud machine cannot finish one.
+  const withChatgpt = useCompanion((state) => state.target !== 'cloud' && (state.hello?.capabilities ?? []).includes('chatgpt'));
   const host = useCompanion((state) => (state.target === 'cloud' ? 'your cloud machine' : state.hello?.machine));
   const [signing, setSigning] = useState<{ agent: AccountId; mode: LoginMode } | null>(null);
+  // Stable, because the dialog's sign-in effect depends on it: a new function on
+  // every recheck of this card would cancel the sign-in in progress and start another.
+  const closeSignIn = useCallback(() => setSigning(null), []);
 
   return (
     <Card>
@@ -75,7 +84,7 @@ export function AgentAccountsCard() {
           </div>
         ) : null}
         {AGENT_IDS.map((id) => (
-          <AgentRow key={id} id={id} account={status?.agents[id] ?? null} bridge={bridge} cloud={cloud} onSignIn={(mode) => setSigning({ agent: id, mode })} />
+          <AgentRow key={id} id={id} account={status?.agents[id] ?? null} bridge={bridge} cloud={cloud} chatgpt={withChatgpt && id === 'codex'} onSignIn={(mode) => setSigning({ agent: id, mode })} />
         ))}
         {withGithub ? <GithubRow account={github} bridge={bridge} onSignIn={() => setSigning({ agent: 'github', mode: 'device' })} /> : null}
       </CardContent>
@@ -85,12 +94,12 @@ export function AgentAccountsCard() {
           Credentials for exported workflows <ArrowRight className="size-3" aria-hidden />
         </Link>
       </CardFooter>
-      <SignInDialog request={signing} onClose={() => setSigning(null)} />
+      <SignInDialog request={signing} onClose={closeSignIn} />
     </Card>
   );
 }
 
-function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; account: AgentAccount | null; bridge: BridgeState; cloud: boolean; onSignIn: (mode: LoginMode) => void }) {
+function AgentRow({ id, account, bridge, cloud, chatgpt, onSignIn }: { id: AgentId; account: AgentAccount | null; bridge: BridgeState; cloud: boolean; chatgpt: boolean; onSignIn: (mode: LoginMode) => void }) {
   const meta = AGENT_META[id];
   const logout = useAgentsStore((state) => state.logout);
   const [busy, setBusy] = useState(false);
@@ -100,13 +109,19 @@ function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; accou
   const canStart = bridge === 'available' && installed;
   // ChatGPT's browser sign-in returns to localhost on the machine running Codex,
   // which a cloud machine's browser-less owner cannot reach: there, the device code is the way.
-  const primary: LoginMode = cloud && id === 'codex' ? 'device' : 'browser';
-  const alternative =
+  // Where the runner can Sign in with ChatGPT itself, that comes first: it needs no Codex login at all.
+  const primary: LoginMode = chatgpt ? 'chatgpt' : cloud && id === 'codex' ? 'device' : 'browser';
+  const deviceCode = { mode: 'device' as const, icon: Smartphone, label: 'Sign in with a device code instead', hint: 'Shows a one-time code to type on OpenAI’s page. Handy when this browser is not where you are signed in.' };
+  const alternatives =
     id === 'codex'
       ? cloud
-        ? null
-        : { mode: 'device' as const, icon: Smartphone, label: 'Sign in with a device code instead', hint: 'Shows a one-time code to type on OpenAI’s page. Handy when this browser is not where you are signed in.' }
-      : { mode: 'console' as const, icon: KeyRound, label: 'Use an Anthropic Console API account instead', hint: 'Signs Claude Code in with a Console account. Usage is billed per token to it, not to a Claude plan.' };
+        ? []
+        : chatgpt
+          ? [{ mode: 'browser' as const, icon: TerminalSquare, label: 'Use the Codex CLI’s own login instead', hint: 'Runs codex login. Codex keeps that sign-in, and its usage is not counted against the limit you set for Relay in ChatGPT.' }, deviceCode]
+          : [deviceCode]
+      : [{ mode: 'console' as const, icon: KeyRound, label: 'Use an Anthropic Console API account instead', hint: 'Signs Claude Code in with a Console account. Usage is billed per token to it, not to a Claude plan.' }];
+  // Relay's own ChatGPT sign-in: the plan is in use, or was until the session ran out.
+  const viaRelay = account?.source === 'relay';
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
@@ -117,7 +132,7 @@ function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; accou
           {account?.version !== null && account?.version !== undefined ? <span className="font-mono text-[10px] text-muted-foreground">v{account.version}</span> : null}
           {signedIn ? (
             <Badge variant="outline" className="border-success/40 bg-success/10 text-[10px] text-success">
-              {account?.method === 'subscription' ? 'Subscription' : account?.method === 'api-key' ? 'API key' : 'Signed in'}
+              {viaRelay ? 'ChatGPT plan' : account?.method === 'subscription' ? 'Subscription' : account?.method === 'api-key' ? 'API key' : 'Signed in'}
               {account?.plan !== null && account?.plan !== undefined ? ` · ${account.plan}` : ''}
             </Badge>
           ) : bridge === 'unknown' ? (
@@ -135,12 +150,23 @@ function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; accou
           ) : null}
         </p>
         <p className="truncate text-xs text-muted-foreground">
-          {signedIn && account?.email !== null && account?.email !== undefined
+          {signedIn && viaRelay ? (
+            <>
+              {account?.email !== null && account?.email !== undefined ? `${account.email} · ` : ''}Using ChatGPT plan ·{' '}
+              <a href={CHATGPT_USAGE_URL} target="_blank" rel="noreferrer noopener" className="font-medium text-foreground underline-offset-4 hover:underline">
+                Manage usage
+              </a>
+            </>
+          ) : viaRelay ? (
+            'Your ChatGPT sign-in expired, so Codex turns fail. Continue with ChatGPT to renew it.'
+          ) : signedIn && account?.email !== null && account?.email !== undefined
             ? account.email
             : signedIn
               ? `Signed in through ${meta.vendor}.`
-              : installed || bridge !== 'available'
-                ? `Sign in with your ${meta.subscription} account.`
+              : chatgpt && installed
+                ? 'Use your ChatGPT Plus or Pro plan through Relay.'
+                : installed || bridge !== 'available'
+                  ? `Sign in with your ${meta.subscription} account.`
                 : `Install it first: ${meta.installCommand}`}
         </p>
       </div>
@@ -167,10 +193,10 @@ function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; accou
         ) : (
           <>
             <Button size="sm" disabled={!canStart} onClick={() => onSignIn(primary)}>
-              {id === 'claude' ? 'Sign in with Claude' : 'Sign in with ChatGPT'}
+              {id === 'claude' ? 'Sign in with Claude' : primary === 'chatgpt' ? 'Continue with ChatGPT' : 'Sign in with ChatGPT'}
             </Button>
-            {alternative === null ? null : (
-              <Tooltip>
+            {alternatives.map((alternative) => (
+              <Tooltip key={alternative.mode}>
                 <TooltipTrigger render={<Button size="icon-sm" variant="ghost" aria-label={alternative.label} disabled={!canStart} onClick={() => onSignIn(alternative.mode)} />}>
                   <alternative.icon />
                 </TooltipTrigger>
@@ -178,7 +204,7 @@ function AgentRow({ id, account, bridge, cloud, onSignIn }: { id: AgentId; accou
                   <span className="font-medium">{alternative.label}.</span> {alternative.hint}
                 </TooltipContent>
               </Tooltip>
-            )}
+            ))}
           </>
         )}
       </div>
@@ -259,6 +285,8 @@ function SignInFlow({ agent, mode, onClose }: { agent: AccountId; mode: LoginMod
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  // Shown in place of the toast the first time a ChatGPT plan comes into use here.
+  const [planNotice, setPlanNotice] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -275,7 +303,12 @@ function SignInFlow({ agent, mode, onClose }: { agent: AccountId; mode: LoginMod
         if (next.status === 'pending') timer = setTimeout(() => void tick(id), 1500);
         else if (next.status === 'succeeded') {
           await refresh();
-          toast.success(`${ACCOUNT_META[next.agent].name} is signed in.`);
+          if (!active) return;
+          if (next.mode === 'chatgpt' && window.localStorage.getItem(PLAN_NOTICE_KEY) === null) {
+            setPlanNotice(true);
+            return;
+          }
+          toast.success(next.mode === 'chatgpt' ? 'Codex is using your ChatGPT plan.' : `${ACCOUNT_META[next.agent].name} is signed in.`);
           onClose();
         } else if (next.status === 'failed') setError(next.error ?? 'Sign-in failed.');
       } catch (caught) {
@@ -311,7 +344,33 @@ function SignInFlow({ agent, mode, onClose }: { agent: AccountId; mode: LoginMod
   const close = () => onClose();
 
   const meta = ACCOUNT_META[agent];
-  const title = mode === 'console' ? `Sign in to ${meta.name} with an API account` : mode === 'device' ? `Sign in to ${meta.name} with a device code` : `Sign in to ${meta.name}`;
+  const title =
+    mode === 'chatgpt' ? 'Continue with ChatGPT' : mode === 'console' ? `Sign in to ${meta.name} with an API account` : mode === 'device' ? `Sign in to ${meta.name} with a device code` : `Sign in to ${meta.name}`;
+
+  if (planNotice) {
+    const dismiss = () => {
+      window.localStorage.setItem(PLAN_NOTICE_KEY, new Date().toISOString());
+      onClose();
+    };
+    return (
+      <Dialog open onOpenChange={(open) => (!open ? dismiss() : undefined)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>You’re using your ChatGPT plan</DialogTitle>
+            <DialogDescription>
+              Codex turns that Relay starts on your machine now use the usage included in your ChatGPT plan, and no longer need a Codex login. Claude Code is unaffected. You can review what Relay uses, and limit it, in ChatGPT’s settings.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="items-center justify-between sm:justify-between">
+            <a href={CHATGPT_USAGE_URL} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-xs font-medium underline-offset-4 hover:underline">
+              Manage usage <ExternalLink className="size-3" aria-hidden />
+            </a>
+            <Button onClick={dismiss}>Got it</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open onOpenChange={(open) => (!open ? close() : undefined)}>
@@ -319,9 +378,11 @@ function SignInFlow({ agent, mode, onClose }: { agent: AccountId; mode: LoginMod
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            {mode === 'console'
-              ? `The ${meta.name} CLI is running its Console login. Usage will be billed to that API account.`
-              : `The ${meta.name} CLI is running its own login. Finish it on ${meta.vendor}’s page; the credential lands in the CLI, not here.`}
+            {mode === 'chatgpt'
+              ? 'The Relay CLI on your machine is signing in with ChatGPT. Allow it on OpenAI’s page and Codex turns use your ChatGPT plan, within the limit you set for Relay there. The credential stays with the CLI on your machine, not here.'
+              : mode === 'console'
+                ? `The ${meta.name} CLI is running its Console login. Usage will be billed to that API account.`
+                : `The ${meta.name} CLI is running its own login. Finish it on ${meta.vendor}’s page; the credential lands in the CLI, not here.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -329,11 +390,20 @@ function SignInFlow({ agent, mode, onClose }: { agent: AccountId; mode: LoginMod
           <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
         ) : session === null ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Spinner /> Starting {meta.name}…
+            <Spinner /> {mode === 'chatgpt' ? 'Starting the sign-in on your machine…' : `Starting ${meta.name}…`}
           </div>
         ) : (
           <div className="grid gap-3">
-            {session.mode === 'device' ? (
+            {session.mode === 'chatgpt' ? (
+              <>
+                <Step n={1} text="Sign in on the OpenAI page that just opened on your machine, and allow Relay to use your ChatGPT plan." />
+                {session.url ? <OpenLink url={session.url} label="Open the sign-in page again" /> : <Waiting text="Waiting for the sign-in link…" />}
+                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Spinner /> Waiting for OpenAI to send you back…
+                </p>
+                <p className="text-[11px] text-muted-foreground">The link only works in a browser on the machine running relay connect.</p>
+              </>
+            ) : session.mode === 'device' ? (
               <>
                 <Step n={1} text={`Open ${meta.vendor}’s device page and sign in.`} />
                 {session.url ? <OpenLink url={session.url} /> : <Waiting text="Waiting for the CLI to print the page…" />}
@@ -390,7 +460,7 @@ function SignInFlow({ agent, mode, onClose }: { agent: AccountId; mode: LoginMod
 
         <DialogFooter className="items-center justify-between sm:justify-between">
           <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <TerminalSquare className="size-3" /> Prefer a terminal? <span className="font-mono">{meta.loginCommand}</span>
+            <TerminalSquare className="size-3" /> Prefer a terminal? <span className="font-mono">{mode === 'chatgpt' ? 'relay chatgpt login' : meta.loginCommand}</span>
           </span>
           <Button variant="outline" onClick={close}>
             {session?.status === 'pending' ? 'Cancel' : 'Close'}

@@ -45,6 +45,9 @@ const RETRYABLE_PATTERNS: RegExp[] = [
   /\b(?:connection (?:reset|refused|closed|error)|socket hang ?up|network error|fetch failed)\b/i,
   /\bstream (?:disconnected|error)\b/i,
   /\btemporar(?:y|ily) (?:unavailable|failed)\b/i,
+  // Relay's own wording (`explainPlanFailure`) for a plan token that ran out
+  // mid-turn: the retry starts with a fresh one and resumes the thread.
+  /\bChatGPT plan token expired\b/,
 ];
 
 /**

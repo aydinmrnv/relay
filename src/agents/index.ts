@@ -1,4 +1,5 @@
-import type { AuthSupport } from '../auth/delegated.ts';
+import { chatgptPlanAccess, chatgptStatus } from '../auth/chatgpt.ts';
+import type { AuthSupport, OwnSignIn } from '../auth/delegated.ts';
 import { ClaudeHarness, claudeSignedIn } from './claude.ts';
 import { CodexHarness } from './codex.ts';
 import type { AgentHarness } from './types.ts';
@@ -127,15 +128,29 @@ export const AGENT_REGISTRY: readonly HarnessRegistration[] = [
     auth: {
       status: { command: 'codex', args: ['login', 'status'] },
       login: { command: 'codex', args: ['login'] },
+      own: codexPlanSignIn,
+      ownLogin: 'relay chatgpt login',
     },
     enforcement: {
       readOnly: 'os-sandbox',
       detail: 'OS sandbox (codex --sandbox read-only)',
     },
     ownEnvironment: () => ['OPENAI_', 'CODEX_', 'AZURE_OPENAI_'],
-    create: (options) => new CodexHarness(options),
+    create: (options) => new CodexHarness({ ...options, planAccess: (minValidMs) => chatgptPlanAccess({ minValidMs }) }),
   },
 ];
+
+/**
+ * Sign in with ChatGPT, as the Codex row of `relay doctor` and `relay start`
+ * sees it. Signed in there, Codex needs no login of its own; lapsed, the turn
+ * would fail, and the fix is Relay's command rather than Codex's.
+ */
+async function codexPlanSignIn(): Promise<OwnSignIn | undefined> {
+  const { state, email } = await chatgptStatus();
+  if (state === 'active') return { state: 'authenticated', detail: `signed in with ChatGPT${email === null ? '' : ` (${email})`}` };
+  if (state === 'lapsed') return { state: 'unauthenticated', detail: 'ChatGPT plan sign-in expired', hint: 'Run `relay chatgpt login`.' };
+  return undefined;
+}
 
 export const AGENT_PROVIDERS: readonly string[] = AGENT_REGISTRY.map((entry) => entry.name);
 

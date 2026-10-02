@@ -46,7 +46,7 @@ export function Faq() {
     {
       id: 'keys',
       question: 'Do I need API keys?',
-      answer: `No. Claude Code signs in with your Claude plan and Codex with your ChatGPT plan; the studio can start each CLI’s own login and then asks it whether it worked. The studio never sees a token: the sign-ins live in the CLIs, on your computer${cloud ? ' or on your Relay Cloud machine' : ''}. In GitHub Actions the export uses the vendors’ supported methods, held as secrets in your repository: CLAUDE_CODE_OAUTH_TOKEN from claude setup-token, and CODEX_AUTH_JSON.`,
+      answer: `No. Claude Code signs in with your Claude plan and Codex with your ChatGPT plan; the studio can start each CLI’s own login and then asks it whether it worked. On your own computer Codex can also use Continue with ChatGPT, where you allow Relay to use your plan and set its limit in ChatGPT’s settings. The studio never sees a token: the sign-ins live in the CLIs, on your computer${cloud ? ' or on your Relay Cloud machine' : ''}. In GitHub Actions the export uses the vendors’ supported methods, held as secrets in your repository: CLAUDE_CODE_OAUTH_TOKEN from claude setup-token, and CODEX_AUTH_JSON.`,
     },
     {
       id: 'merge',

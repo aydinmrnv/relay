@@ -6,6 +6,7 @@ import {
   probeAuth,
   type AuthState,
   type AuthSupport,
+  type OwnSignIn,
 } from '../../auth/delegated.ts';
 import { harnessRegistration } from '../../agents/index.ts';
 import { discoverRepository, type RepositoryInfo } from '../../git/repository.ts';
@@ -21,7 +22,7 @@ import { LINEAR_KEY_VARIABLE } from '../../issues/linear.ts';
 import { describeReview } from '../../reviews/level.ts';
 import { RelayError } from '../../util/errors.ts';
 import { Prompter, isPromptCancelled, type Choice, type PromptSession } from '../../ui/prompt.ts';
-import { agentChecks, authStateCheck, seatedAgents, type AgentCheck, type Check } from '../checks.ts';
+import { agentChecks, authStateCheck, ownSignInCheck, seatedAgents, type AgentCheck, type Check } from '../checks.ts';
 import { checksToJson } from '../doctorJson.ts';
 import { EXIT } from '../exit.ts';
 import { emitJson } from '../json.ts';
@@ -75,6 +76,8 @@ export interface StartDeps {
   authState: (support: AuthSupport, cwd: string) => Promise<AuthState>;
   /** Hands the terminal to the vendor's own login command. */
   login: (support: AuthSupport, cwd: string) => Promise<boolean>;
+  /** The state of a sign-in Relay holds itself for this CLI, when it holds one. */
+  ownSignIn?: (support: AuthSupport) => Promise<OwnSignIn | undefined>;
   installed: (binary: string) => Promise<boolean>;
   providerCheck: (
     registration: IssueTrackerRegistration,
@@ -96,7 +99,8 @@ export interface StartDeps {
  * here that prompts for a secret, and nothing it learns is written to
  * `.relay/config.json`. Linear's key is the stated exception — it has no CLI
  * to delegate to — and even there this flow names the variable Relay reads
- * and prompts for nothing.
+ * and prompts for nothing. Sign in with ChatGPT, the one sign-in Relay holds
+ * itself, is its own command (`relay chatgpt login`); onboarding only says so.
  *
  * Each step is idempotent, so re-running is both the resume path and the repair
  * path when one dependency breaks later.
@@ -107,6 +111,7 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
     checkAgents: agentChecks,
     authState: (support, cwd) => probeAuth(support, { cwd }),
     login: (support, cwd) => delegateLogin(support, { cwd }),
+    ownSignIn: async (support) => support.own?.().catch(() => undefined),
     installed: async (binary) => (await resolveExecutable(binary)) !== null,
     providerCheck: async (registration, cwd) =>
       registration.create({ cwd, issues: (await loadConfig(cwd).catch(() => undefined))?.issues }).checkAvailability(),
@@ -272,6 +277,14 @@ async function ensureAgents(repo: RepositoryInfo, deps: StartDeps): Promise<Agen
 
     // Nobody is walked through a sign-in for a CLI no run here will call.
     if (state !== 'authenticated' && used) {
+      // A sign-in of Relay's own that ran out is not something the vendor's
+      // login renews: offering it would send the person round in a circle.
+      const own = await deps.ownSignIn?.(entry.auth);
+      if (own?.state === 'unauthenticated') {
+        hint(`${own.detail}.${own.hint === undefined ? '' : ` ${own.hint}`}`, '    ');
+        problems.push({ agent: entry.name, message: `${entry.label}: ${own.detail}.` });
+        continue;
+      }
       state = await offerLogin(entry.label, entry.auth, state, repo.root, deps);
     }
     if (state === 'unauthenticated') problems.push({ agent: entry.name, message: `${entry.label} is not signed in.` });
@@ -400,6 +413,9 @@ async function offerLogin(
     '    ',
   );
   hint(`Relay hands the terminal to ${label} and reads none of it — no token reaches Relay.`, '    ');
+  if (support.ownLogin !== undefined) {
+    hint(`Or skip this and run \`${support.ownLogin}\`: ${label} then uses your ChatGPT plan through Relay.`, '    ');
+  }
 
   // Defaults to yes only when we know sign-in is missing; an unknown state is
   // usually a CLI that simply cannot be asked, and re-launching it every run
@@ -836,7 +852,11 @@ async function reportReadiness(
       continue;
     }
     checks.push({ ...check, label: entry.label });
-    const auth = authStateCheck(`${entry.label} sign-in`, entry.auth, await deps.authState(entry.auth, repo.root));
+    const own = await deps.ownSignIn?.(entry.auth);
+    const auth =
+      own !== undefined
+        ? ownSignInCheck(`${entry.label} sign-in`, own)
+        : authStateCheck(`${entry.label} sign-in`, entry.auth, await deps.authState(entry.auth, repo.root));
     const used = seated === undefined || seated.has(entry.name);
     checks.push(
       auth.status === 'fail' && !used

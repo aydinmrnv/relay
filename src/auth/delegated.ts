@@ -2,7 +2,7 @@ import { runInteractive } from '../process/interactive.ts';
 import { resolveExecutable, runProcess } from '../process/runner.ts';
 
 /**
- * Delegated authentication: the only kind Relay has.
+ * Delegated authentication: how Relay treats every tool that can sign itself in.
  *
  * Relay holds no API keys for the tools it drives, reads none of their
  * credentials and never sees one of their tokens. Every such tool — the coding
@@ -13,6 +13,10 @@ import { resolveExecutable, runProcess } from '../process/runner.ts';
  * A tracker with no CLI to drive is the one exception, and it lives elsewhere:
  * `src/issues/linear.ts` reads `LINEAR_API_KEY`, because there is no login
  * command to hand a terminal to.
+ *
+ * The one sign-in that cannot be delegated lives next door, in `chatgpt.ts`,
+ * and reaches this module only as `own`: an answer about its state, never the
+ * credential behind it.
  */
 
 /**
@@ -25,6 +29,13 @@ export type AuthState = 'authenticated' | 'unauthenticated' | 'unknown';
 export interface AuthCommand {
   readonly command: string;
   readonly args: readonly string[];
+}
+
+/** The state of a sign-in Relay holds itself, as one row of a report. */
+export interface OwnSignIn {
+  state: 'authenticated' | 'unauthenticated';
+  detail: string;
+  hint?: string;
 }
 
 export interface AuthSupport {
@@ -40,6 +51,14 @@ export interface AuthSupport {
   };
   /** The vendor's interactive login. Spawned with the terminal, never read. */
   readonly login: AuthCommand;
+  /**
+   * A sign-in Relay holds for this vendor instead of the vendor's own (Sign in
+   * with ChatGPT). Asked first, and when it has an answer the CLI is not
+   * asked at all. Undefined means there is none, and the CLI's answer stands.
+   */
+  readonly own?: () => Promise<OwnSignIn | undefined>;
+  /** The command that starts that sign-in, for onboarding to mention beside the vendor's. */
+  readonly ownLogin?: string;
 }
 
 /** How a command is spelled when Relay tells the user to run it. */
@@ -55,6 +74,9 @@ export function describeCommand(command: AuthCommand): string {
  * output and exit 0 either way.
  */
 export async function probeAuth(support: AuthSupport, options: { cwd?: string } = {}): Promise<AuthState> {
+  const own = await support.own?.().catch(() => undefined);
+  if (own !== undefined) return own.state;
+
   const status = support.status;
   if (status === undefined) return 'unknown';
 

@@ -38,7 +38,7 @@ export function Features() {
     {
       icon: KeyRound,
       title: 'Bring your own subscription',
-      body: `Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. There are no API keys to paste. On your own computer and in CI no token ever reaches ${brand.name}${cloud ? `; a ${brand.name} Cloud machine holds the sign-ins you make on it, and nothing else does` : ''}.`,
+      body: `Claude Code signs in with your Claude plan and Codex with your ChatGPT plan. There are no API keys to paste, and every sign-in stays on the machine that runs your agents${cloud ? `: your own computer, or the ${brand.name} Cloud machine you made it on` : ''}.`,
       proof: 'claude auth login · codex login',
     },
     {

@@ -71,8 +71,10 @@ export function isLoopbackOrigin(origin: string): boolean {
  * GitHub repository it works on, and the companion checks it out (a cloud
  * runner, which has no repository of its own). `github`: the companion signs
  * in to GitHub itself, through `gh`'s device flow (a cloud runner again).
+ * `chatgpt`: Sign in with ChatGPT, which finishes on a loopback address and so
+ * only on the machine whose browser the person is using — never a cloud runner.
  */
-export type CompanionCapability = 'agents' | 'runs' | 'install' | 'repositories' | 'github';
+export type CompanionCapability = 'agents' | 'runs' | 'install' | 'repositories' | 'github' | 'chatgpt';
 
 export interface CompanionRepository {
   root: string;
@@ -146,6 +148,8 @@ export interface AgentAccount {
   plan: string | null;
   /** Account email when the CLI reports one. Shown to the user, never stored. */
   email: string | null;
+  /** `relay` when the sign-in is Relay's own (Sign in with ChatGPT) and not the CLI's. Absent for the CLI's. */
+  source?: 'relay';
   installCommand: string;
   loginCommand: string;
 }
@@ -156,7 +160,12 @@ export interface AgentsStatus {
   agents: Record<AgentId, AgentAccount>;
 }
 
-export type LoginMode = 'browser' | 'device' | 'console';
+/**
+ * `browser`, `device` and `console` are the vendor CLI's own logins. `chatgpt`
+ * is Sign in with ChatGPT, which the companion runs itself: Codex then spends
+ * the person's ChatGPT plan as Relay, within the limit they set for it.
+ */
+export type LoginMode = 'browser' | 'device' | 'console' | 'chatgpt';
 
 export type LoginStatus = 'pending' | 'succeeded' | 'failed' | 'cancelled';
 
