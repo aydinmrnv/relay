@@ -3,9 +3,10 @@ import type { AddressInfo } from 'node:net';
 
 import type { IssueProvider } from '../github/types.ts';
 import { errorMessage } from '../util/errors.ts';
-import { issueEvent, scheduleEvent, signatureValid, webhookEvent } from './events.ts';
+import { issueEvent, scheduleEvent, signatureValid } from './events.ts';
 import type { GraphOutcome } from './executor.ts';
 import { isTimeZone, nextCronTime, parseCron } from './schedule.ts';
+import { APP_WEBHOOK_TRIGGERS, matchDelivery } from './triggers.ts';
 import { triggerOf, type GraphNode, type WorkflowEvent, type WorkflowGraph } from './types.ts';
 
 /**
@@ -87,10 +88,11 @@ function isLoopbackHost(host: string): boolean {
   return host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host);
 }
 
-/** The path a workflow's webhook is delivered to: `/hooks/<path suffix>`. */
+/** The path a workflow's webhook is delivered to: `/hooks/<path suffix>`, or `/hooks/<app>` for an app's own trigger. */
 export function webhookPath(trigger: GraphNode): string {
   const suffix = String(trigger.config['path'] ?? '').trim().replace(/^\/+|\/+$/g, '');
-  return `/hooks/${suffix.length === 0 ? 'relay' : suffix.replace(/[^A-Za-z0-9._~-]+/g, '-')}`;
+  const fallback = trigger.type === 'http.trigger.webhook' ? 'relay' : (trigger.type.split('.')[0] ?? 'relay');
+  return `/hooks/${suffix.length === 0 ? fallback : suffix.replace(/[^A-Za-z0-9._~-]+/g, '-')}`;
 }
 
 export async function serveWorkflow(options: ServeWorkflowOptions): Promise<ServeWorkflowOutcome> {
@@ -127,16 +129,24 @@ export async function serveWorkflow(options: ServeWorkflowOptions): Promise<Serv
   const sources: Array<Promise<void>> = [];
   let server: Server | undefined;
 
-  switch (trigger.type) {
+  // An app's own trigger is its webhook, read by name: the same listener, a stricter reading.
+  const kind = APP_WEBHOOK_TRIGGERS.has(trigger.type) ? 'http.trigger.webhook' : trigger.type;
+  switch (kind) {
     case 'http.trigger.webhook': {
       const host = options.host ?? '127.0.0.1';
       const secret = options.env[WEBHOOK_SECRET_VARIABLE]?.trim() ?? '';
+      const fromApp = trigger.type !== 'http.trigger.webhook';
+      // An app reaches this through a tunnel or a public address, whatever it is bound to here, and it signs what it sends.
+      if (secret.length === 0 && fromApp) {
+        throw new Error(`${trigger.name} is delivered by the app, signed. Set ${WEBHOOK_SECRET_VARIABLE} to the secret you gave its webhook: an unsigned delivery could be anyone’s.`);
+      }
       if (secret.length === 0 && !isLoopbackHost(host)) {
         throw new Error(`Listening on ${host} lets anyone who can reach it start a run. Set ${WEBHOOK_SECRET_VARIABLE} so deliveries have to be signed, or listen on 127.0.0.1.`);
       }
       const path = webhookPath(trigger);
+      const memory = new Map<string, string>();
       server = createServer((request, response) => {
-        void handleWebhook(request, response, { path, secret, offer, log, now, linear: (options.env['LINEAR_API_KEY'] ?? '').trim().length > 0 });
+        void handleWebhook(request, response, { trigger, path, secret, offer, log, now, memory, linear: (options.env['LINEAR_API_KEY'] ?? '').trim().length > 0 });
       });
       await new Promise<void>((resolve, reject) => {
         server!.once('error', reject);
@@ -273,6 +283,9 @@ export async function serveWorkflow(options: ServeWorkflowOptions): Promise<Serv
 /* ------------------------------------------------------------------ */
 
 interface WebhookContext {
+  trigger: GraphNode;
+  /** What the server remembers between deliveries, for a trigger that asks about the one before. */
+  memory: Map<string, string>;
   path: string;
   secret: string;
   offer: (event: WorkflowEvent) => 'queued' | 'duplicate' | 'full' | 'closed';
@@ -320,11 +333,14 @@ async function handleWebhook(request: IncomingMessage, response: ServerResponse,
     } catch {
       return answer(response, 400, { error: 'The body is not JSON.' });
     }
-    const header = (name: string): string | null => {
-      const value = request.headers[name];
-      return typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, 200) : null;
-    };
-    const event = webhookEvent(body, { now: context.now(), deliveryId: header('x-relay-delivery') ?? header('x-github-delivery') ?? header('linear-delivery'), linear: context.linear });
+    // Read as the trigger the workflow names. An app sends every kind of event to one URL; most are not this one.
+    const read = matchDelivery(context.trigger, body, { headers: request.headers, now: context.now(), linear: context.linear, memory: context.memory });
+    if (!read.match) {
+      context.log({ type: 'ignored', reason: read.why });
+      // A 200, so the app does not send it again: it arrived, and it is not what starts this workflow.
+      return answer(response, 200, { accepted: false, reason: read.why });
+    }
+    const event = read.event;
     switch (context.offer(event)) {
       case 'queued':
         return answer(response, 202, { accepted: true, id: event.id });

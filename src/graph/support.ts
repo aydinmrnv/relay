@@ -107,12 +107,34 @@ const ACTIONS: Readonly<Record<string, NodeSupport>> = {
   'linear.action.create-issue': real(LINEAR_NOTE, LINEAR),
 };
 
+const WEBHOOK_SECRET = 'RELAY_WEBHOOK_SECRET';
+const APP_HOOK = 'on a machine of yours that the app can reach, and takes only deliveries signed with the secret you gave the app.';
+const GITHUB_HOOK = `\`relay workflow serve\` reads GitHub’s own webhook ${APP_HOOK}`;
+const LINEAR_HOOK = `\`relay workflow serve\` reads Linear’s own webhook ${APP_HOOK}`;
+const SENTRY_HOOK = `\`relay workflow serve\` reads Sentry’s own webhook ${APP_HOOK}`;
+
 const TRIGGERS: Readonly<Record<string, NodeSupport>> = {
   'logic.trigger.manual': real('Started by a person: `relay workflow run`, or Run on your computer in the studio.'),
   'http.trigger.webhook': real('`relay workflow serve` listens for it. Signed deliveries are checked against RELAY_WEBHOOK_SECRET when it is set.', 'RELAY_WEBHOOK_SECRET'),
   'schedule.trigger.cron': real('`relay workflow serve` keeps the clock, in the time zone given.'),
   'schedule.trigger.interval': real('`relay workflow serve` keeps the clock.'),
   'github-issues.trigger.issue-labelled': real('`relay workflow serve` watches for the label with `gh`; the exported Action fires on the event itself.'),
+
+  'github-issues.trigger.issue-opened': real(GITHUB_HOOK, WEBHOOK_SECRET),
+  'github-issues.trigger.issue-assigned': real(GITHUB_HOOK, WEBHOOK_SECRET),
+  'github-issues.trigger.issue-comment': real(GITHUB_HOOK, WEBHOOK_SECRET),
+  'github-actions.trigger.workflow-failed': real(`${GITHUB_HOOK} The failing run’s id is handed to the agents, who read its log with \`gh\`.`, WEBHOOK_SECRET),
+  'codeql.trigger.alert-created': real(GITHUB_HOOK, WEBHOOK_SECRET),
+  'dependabot.trigger.alert-created': real(GITHUB_HOOK, WEBHOOK_SECRET),
+
+  'linear.trigger.issue-assigned': real(LINEAR_HOOK, WEBHOOK_SECRET),
+  'linear.trigger.issue-created': real(LINEAR_HOOK, WEBHOOK_SECRET),
+  'linear.trigger.issue-labelled': real(LINEAR_HOOK, WEBHOOK_SECRET),
+  'linear.trigger.issue-state-changed': real(LINEAR_HOOK, WEBHOOK_SECRET),
+
+  'sentry.trigger.issue-created': real(`${SENTRY_HOOK} A threshold such as “more than five users” belongs in a Sentry alert rule, whose deliveries start this too.`, WEBHOOK_SECRET),
+  'sentry.trigger.issue-regressed': real(SENTRY_HOOK, WEBHOOK_SECRET),
+  'sentry.trigger.issue-assigned': real(SENTRY_HOOK, WEBHOOK_SECRET),
 };
 
 /** What an app's own events need before they can start a workflow by themselves. */

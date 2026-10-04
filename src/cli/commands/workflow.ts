@@ -347,8 +347,9 @@ export function checkWorkflow(graph: WorkflowGraph, file: string, env: Readonly<
     };
   });
   const trigger = triggerOf(graph);
-  // The webhook's secret and the bridge are optional; every other variable a step names is how the step works at all.
-  const optional = new Set([WEBHOOK_SECRET_VARIABLE, BRIDGE_VARIABLE]);
+  // The bridge is optional, and so is the secret of a plain Incoming webhook on this machine. An app's own webhook is
+  // signed, so there the secret is how the trigger works at all, like every other variable a step names.
+  const optional = new Set(trigger.type === 'http.trigger.webhook' ? [WEBHOOK_SECRET_VARIABLE, BRIDGE_VARIABLE] : [BRIDGE_VARIABLE]);
   const missing = [...new Set(nodes.flatMap((node) => node.needs.filter((need) => !need.set && !optional.has(need.variable)).map((need) => need.variable)))];
   const bridge = (env[BRIDGE_VARIABLE] ?? '').trim().length > 0;
   return {
@@ -385,7 +386,7 @@ export async function workflowCheckCommand(workflowRef: string | undefined, opti
     out(`  ${node.real ? success(glyphs(theme()).ok) : isTrigger ? dim(glyphs(theme()).bullet) : warning('!')} ${node.name}${aside}`);
     hint(node.note, '    ');
     for (const need of node.needs) {
-      if (need.variable === WEBHOOK_SECRET_VARIABLE && !need.set) hint(`${need.variable} is not set: deliveries are unsigned, so it listens on this machine only.`, '    ');
+      if (need.variable === WEBHOOK_SECRET_VARIABLE && !need.set && node.nodeType === 'http.trigger.webhook') hint(`${need.variable} is not set: deliveries are unsigned, so it listens on this machine only.`, '    ');
       else if (need.variable === BRIDGE_VARIABLE && !need.set) hint(`${need.variable} is not set, so this step is skipped.`, '    ');
       else out(`    ${need.set ? dim(`${need.variable} is set`) : failure(`${need.variable} is not set`)}`);
     }

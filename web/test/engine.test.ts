@@ -47,9 +47,24 @@ function template(id: string): Workflow {
 
 test('each template says how it starts, and which of its steps a real run does not perform itself', () => {
   const starts = Object.fromEntries(TEMPLATES.map((meta) => [meta.id, readiness(template(meta.id)).unattended]));
-  assert.equal(starts['label-run'], true);
-  assert.equal(starts['dependency-upgrades'], true, 'a schedule is kept by relay workflow serve');
-  assert.equal(starts['ticket-to-pr'], false, 'nothing listens for Linear yet');
+  assert.deepEqual(
+    starts,
+    {
+      'ticket-to-pr': true,
+      'label-run': true,
+      'ci-fix': true,
+      'sentry-fix': true,
+      'support-fix': false,
+      'slack-to-pr': false,
+      'backlog-triage': true,
+      'code-scanning-fix': true,
+      'dependency-upgrades': true,
+      'flag-cleanup': false,
+    },
+    'what relay workflow serve can keep: a schedule, a label, and the webhooks GitHub, Linear and Sentry sign. Zendesk, Slack and LaunchDarkly are not read yet',
+  );
+  assert.match(readiness(template('ticket-to-pr')).detail, /point Linear’s webhook at it/);
+  assert.match(readiness(template('support-fix')).detail, /Nothing listens for Zendesk events yet/);
   // Linear ticket to pull request: every step is performed, by Linear's API and a Slack webhook.
   assert.deepEqual(realRunGaps(template('ticket-to-pr')), []);
   for (const meta of TEMPLATES) for (const gap of realRunGaps(template(meta.id))) assert.equal(gap.bridge, true, `${meta.id}: ${gap.name} can at least be handed to a bridge`);

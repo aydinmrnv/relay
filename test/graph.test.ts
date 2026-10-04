@@ -671,10 +671,10 @@ describe('the table of what is real', () => {
     assert.deepEqual(nodeSupport('slack.action.post-message').needs, ['SLACK_WEBHOOK_URL']);
     assert.deepEqual([nodeSupport('slack.action.send-dm').real, nodeSupport('slack.action.send-dm').bridge], [false, true]);
     assert.deepEqual([nodeSupport('logic.action.transform').real, nodeSupport('logic.action.transform').bridge, testRunsOnly('logic.action.transform')], [false, false, true]);
-    assert.deepEqual([testRunsOnly('zendesk.action.internal-note'), testRunsOnly('sentry.trigger.issue-created'), testRunsOnly('slack.action.post-message')], [false, false, false]);
+    assert.deepEqual([testRunsOnly('zendesk.action.internal-note'), testRunsOnly('zendesk.trigger.ticket-tagged'), testRunsOnly('slack.action.post-message')], [false, false, false]);
     assert.match(nodeSupport('zendesk.action.internal-note').note, /no connection to zendesk yet/);
-    assert.equal(nodeSupport('sentry.trigger.issue-created').real, false);
-    assert.match(nodeSupport('sentry.trigger.issue-created').note, /Incoming webhook/);
+    assert.equal(nodeSupport('zendesk.trigger.ticket-tagged').real, false);
+    assert.match(nodeSupport('zendesk.trigger.ticket-tagged').note, /Incoming webhook/);
     assert.equal(nodeSupport('http.trigger.webhook').real, true);
   });
 });

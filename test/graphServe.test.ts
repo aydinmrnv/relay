@@ -374,7 +374,7 @@ describe('relay workflow serve', () => {
 
   it('refuses a trigger nothing listens for, a cron it cannot read, and a workflow that starts by hand', async () => {
     const base = { env: {}, signal: new AbortController().signal, runSignal: new AbortController().signal, log: () => undefined, run: async (): Promise<GraphOutcome> => assert.fail('nothing runs') };
-    await assert.rejects(serveWorkflow({ ...base, graph: workflow('sentry.trigger.issue-created') }), /Nothing listens for .* yet/);
+    await assert.rejects(serveWorkflow({ ...base, graph: workflow('zendesk.trigger.ticket-tagged') }), /Nothing listens for .* yet/);
     await assert.rejects(serveWorkflow({ ...base, graph: workflow('schedule.trigger.cron', {}, { cron: 'every day' }) }), /five fields/);
     await assert.rejects(serveWorkflow({ ...base, graph: workflow('logic.trigger.manual') }), /starts by hand/);
   });
@@ -420,7 +420,8 @@ describe('the relay workflow commands', () => {
     assert.equal(check.unwired, 1);
     assert.deepEqual(check.missing, ['SLACK_WEBHOOK_URL'], 'the webhook secret is optional on this machine');
     assert.deepEqual(checkWorkflow(graph, 'x', { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/x' }).missing, []);
-    assert.equal(checkWorkflow(workflow('linear.trigger.issue-assigned'), 'x', {}).startsByItself, false);
+    assert.equal(checkWorkflow(workflow('zendesk.trigger.ticket-tagged'), 'x', {}).startsByItself, false);
+    assert.equal(checkWorkflow(workflow('linear.trigger.issue-assigned'), 'x', {}).startsByItself, true);
 
     await install(graph);
     const printed = await capture(() => workflowCheckCommand(undefined, { json: true }));

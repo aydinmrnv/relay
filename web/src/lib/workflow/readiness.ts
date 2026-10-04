@@ -75,11 +75,19 @@ export function readiness(workflow: Workflow): Readiness {
     return { unattended: false, headline: 'Started by hand', detail: 'Run it on your computer with an issue or a description: the guardrails, the pipeline and the steps after it all run for real.' };
   }
   if (GITHUB_NATIVE.has(trigger.connectorId)) {
-    const served = nodeSupport(trigger.id).real ? ' On a machine of your own, relay workflow serve watches for the label and runs every step.' : '';
+    const served = trigger.id === 'github-issues.trigger.issue-labelled' ? ' On a machine of your own, relay workflow serve watches for the label and runs every step.' : nodeSupport(trigger.id).real ? ' On a machine of your own, relay workflow serve takes GitHub’s webhook and runs every step.' : '';
     return { unattended: true, headline: 'Runs unattended today', detail: `Export it: the GitHub Action starts on the issue event, behind the same guardrails.${served}` };
   }
   if (nodeSupport(trigger.id).real) {
-    return { unattended: true, headline: 'Runs unattended today', detail: `Export it and run relay workflow serve on a machine of your own: it keeps this trigger (${trigger.name.toLowerCase()}) and runs every step each time it fires.` };
+    // A webhook or a clock is kept on any machine. An app's own events have to reach it, signed.
+    const fromApp = trigger.connectorId !== 'http' && trigger.connectorId !== 'schedule';
+    return {
+      unattended: true,
+      headline: 'Runs unattended today',
+      detail: fromApp
+        ? `Export it, run relay workflow serve on a machine ${trigger.connector.name} can reach, and point ${trigger.connector.name}’s webhook at it. It takes the signed deliveries, and runs every step each time this happens.`
+        : `Export it and run relay workflow serve on a machine of your own: it keeps this trigger (${trigger.name.toLowerCase()}) and runs every step each time it fires.`,
+    };
   }
   return {
     unattended: false,
