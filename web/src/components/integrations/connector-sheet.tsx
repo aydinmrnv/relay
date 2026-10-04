@@ -15,7 +15,7 @@ import { useBrand } from '@/hooks/use-brand';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { useNow } from '@/hooks/use-now';
 import { useStudio, useWorkflows } from '@/lib/store';
-import { appsInUse, connectionState, nothingToConnect, STATE_LABEL, uncoveredNodes, type AppUsage } from '@/lib/connectors/connection-state';
+import { appsInUse, connectionState, nothingToConnect, STATE_LABEL, uncoveredNodes, type AppUsage, runnerSupport } from '@/lib/connectors/connection-state';
 import { credentialSpec } from '@/lib/connectors/credentials';
 import { CATEGORY_LABELS, nodeTypeId, type ActionSpec, type Connector, type FieldSpec, type PortSpec, type TriggerSpec } from '@/lib/connectors';
 import { workflowFromTrigger } from '@/lib/workflow/templates';
@@ -36,6 +36,9 @@ interface Props {
 }
 
 /** Everything one app can do, explained, with a way to start building from any of its triggers. */
+/** The apps whose steps are GitHub's, done with `gh` rather than a key. */
+const GITHUB_FAMILY: ReadonlySet<string> = new Set(['github-issues', 'github', 'github-actions', 'codeql', 'dependabot']);
+
 export function ConnectorSheet({ connector, open, onOpenChange, onOpenApp }: Props) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -65,6 +68,7 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
   const builtIn = isBuiltIn(connector);
   const state = connectionState(connector, connection);
   const spec = credentialSpec(connector.id);
+  const runner = runnerSupport(connector);
   const mode = useConnectMode(connector.id);
   const templates = templatesUsing(connector.id);
   const how = authExplainer(connector, brand.name);
@@ -216,6 +220,31 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
                 <span>Connecting for real keeps it in your account, so it needs one. Free, and what you made in this browser comes with you.</span>
               </p>
             ) : null}
+          </section>
+        )}
+
+        {runner.performed === 0 ? null : (
+          <section className="rounded-lg border p-3.5">
+            <p className="text-sm font-medium">In a real run, on your runner</p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
+              A real run performs {runner.performed} of {connector.name}’s {runner.total} triggers and steps with what is on the machine it runs on, whatever is connected here.{' '}
+              {runner.needs.length === 0 ? (
+                'It uses the gh CLI signed in there.'
+              ) : (
+                <>
+                  It reads{' '}
+                  {runner.needs.map((name, index) => (
+                    <span key={name}>
+                      {index > 0 ? ', ' : ''}
+                      <code className="rounded bg-muted px-1 font-mono text-[12px] text-foreground">{name}</code>
+                    </span>
+                  ))}{' '}
+                  from that machine’s environment, or from a file given to relay connect or relay workflow as --env-file.
+                  {GITHUB_FAMILY.has(connector.id) ? ' Its steps use the gh CLI signed in there.' : ''}
+                </>
+              )}{' '}
+              Each node in the builder says which it is.
+            </p>
           </section>
         )}
 

@@ -15,12 +15,12 @@ export function HowItWorks() {
   const steps: Array<{ title: string; body: string; visual: ReactNode }> = [
     {
       title: 'Pick what starts a run',
-      body: 'A label on a GitHub issue starts a run by itself today. Linear, Sentry, schedules and the rest can be drawn and test-run now, and started by hand with a ticket.',
+      body: 'A label on a GitHub issue, a ticket assigned in Linear, a new error in Sentry, a schedule or a webhook: each starts a run by itself, on a machine of yours. The rest of the catalog can be drawn and test-run now, and started by hand.',
       visual: <TriggerVisual />,
     },
     {
       title: 'Put guardrails in front',
-      body: 'Set a budget, restrict who can start a run, and add approval where it matters. Failed checks stop the run.',
+      body: 'Set a budget, restrict who can start a run, and add approval where it matters: the run waits there until a person says yes. Failed checks stop the run.',
       visual: <GuardrailVisual />,
     },
     {
@@ -77,15 +77,15 @@ const SUCCESS_TEXT = 'text-[color-mix(in_oklch,var(--success)_80%,var(--foregrou
 const DESTRUCTIVE_TEXT = 'text-[color-mix(in_oklch,var(--destructive)_85%,var(--foreground))] dark:text-destructive';
 
 function TriggerVisual() {
-  // What starts a run with nobody pressing anything, and what does not yet: said on the picture, not in a footnote.
+  // What starts a run with nobody pressing anything: said on the picture, not in a footnote.
   const triggers = [
     { id: 'github', name: 'GitHub', event: 'Label added', detail: `${SAMPLE.label} on ${SAMPLE.issue}`, state: 'Runs unattended' },
-    { id: 'linear', name: 'Linear', event: 'Issue assigned', detail: '', state: 'Design and test now' },
-    { id: 'sentry', name: 'Sentry', event: 'New issue', detail: '', state: 'Design and test now' },
+    { id: 'linear', name: 'Linear', event: 'Issue assigned', detail: '', state: 'Runs unattended' },
+    { id: 'sentry', name: 'Sentry', event: 'New issue', detail: '', state: 'Runs unattended' },
   ];
   return (
     <Panel>
-      {triggers.map((trigger, index) => (
+      {triggers.map((trigger) => (
         <Row key={trigger.id}>
           <AppTile connector={trigger.id} size={14} />
           <div className="min-w-0 flex-1">
@@ -93,7 +93,7 @@ function TriggerVisual() {
             <p className="truncate text-sm font-medium">{trigger.event}</p>
           </div>
           {trigger.detail.length > 0 ? <span className="hidden truncate font-mono text-xs text-muted-foreground sm:block">{trigger.detail}</span> : null}
-          <span className={cn('shrink-0 text-xs', index === 0 ? cn('font-medium', SUCCESS_TEXT) : 'text-muted-foreground')}>{trigger.state}</span>
+          <span className={cn('shrink-0 text-xs font-medium', SUCCESS_TEXT)}>{trigger.state}</span>
         </Row>
       ))}
     </Panel>

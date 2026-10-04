@@ -26,7 +26,7 @@ export function Faq() {
       id: 'real',
       question: 'Are the runs in the studio real?',
       answer:
-        `Test runs are simulated so you can explore a workflow for free. For a real run you pick a runner: pair your own computer with relay connect${cloud ? ', or use Relay Cloud, where Relay makes and wakes a machine for you' : ''}. A workflow that starts from a GitHub issue label can also be exported, and then runs unattended on your repository’s own GitHub Actions minutes.`,
+        `Test runs are simulated so you can explore a workflow for free. For a real run you pick a runner: pair your own computer with relay connect${cloud ? ', or use Relay Cloud, where Relay makes and wakes a machine for you' : ''}. On your computer every step runs as drawn: the guardrails decide, an approval waits for you, the agents open the pull request and the message is posted. To run with nobody there, export the workflow and keep its trigger with relay workflow serve on a machine of yours, or let a label on a GitHub issue start it on your repository’s own GitHub Actions minutes.`,
     },
     ...(cloud
       ? [

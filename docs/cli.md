@@ -137,19 +137,25 @@ paired studio uses to
   authorization code goes to the CLI's stdin and is not kept. For Codex it can
   also run [Sign in with ChatGPT](#sign-in-with-chatgpt); the studio is shown a
   loopback link and whether it worked, and never the credential.
-- **run a workflow for real.** The studio sends the workflow compiled to a
-  `.relay/config.json`; the companion runs `relay run --json` on the issue or
-  description you gave it, with that config layered over the repository's own
-  (below), and streams the engine's [JSON lines](#machine-readable-output)
-  back verbatim. The canvas lights up from measured phases, costs and diffs,
-  and the studio can stop the run the way Ctrl-C would.
-- **install an export.** The three files Export produces are written into the
+- **run a workflow for real.** The studio sends the workflow, compiled: the
+  whole graph and the `.relay/config.json` it shapes. The companion runs
+  [`relay workflow run --json`](#workflows) on the issue or description you
+  gave it — every step, as drawn, with the pipeline's config layered over the
+  repository's own (below) — and streams the [JSON lines](#machine-readable-output)
+  back verbatim. The canvas lights up from what happened: a guardrail that
+  passed, an approval that is waiting (answered from the run panel), measured
+  phases, costs and diffs, a message that was posted. The studio can stop the
+  run the way Ctrl-C would. The app steps read their credentials from the
+  environment `relay connect` was started with, or from `--env-file`.
+- **install an export.** The files Export produces are written into the
   repository, and nothing else can be: `.relay/config.json`, merged into the
   existing one rather than replacing it, so the tracker, harnesses and test
   command `relay init` wrote survive, and only the sections an export produces
-  are taken from it; `.github/workflows/<name>.yml`; and `<product>-workflow.json`.
-  A workflow or graph file already there that an export did not write is left
-  as it is, and a path that goes through a symbolic link is refused.
+  are taken from it; `.relay/workflows/<name>.json`, only if this Relay's own
+  parser accepts it as a workflow it could run; `.github/workflows/<name>.yml`;
+  and `<product>-workflow.json`. A file already there that an export did not
+  write is left as it is, and a path that goes through a symbolic link is
+  refused.
 
 Started outside a repository it still serves sign-ins, and says that runs and
 installs need one.
@@ -502,6 +508,10 @@ README — not a defended one.
 | `relay stats` | what this repository's runs have cost, taken, and caught |
 | `relay recording [run]` | write a finished run to one file the studio can [play back](#recordings) |
 | `relay serve` | watch the tracker and start a run per labelled issue, inside a budget and an allowlist |
+| `relay workflow run [workflow] [issue]` | run a workflow from the studio as it was drawn: its guardrails, its logic, the pipeline and the steps after it ([details](#workflows)) |
+| `relay workflow serve [workflow]` | keep a workflow's own trigger: its webhook, its schedule, its label, or the events GitHub, Linear and Sentry send |
+| `relay workflow check [workflow]` | say what each step needs, and which steps Relay cannot perform yet |
+| `relay workflow approvals` / `approve <id>` / `reject <id>` | list what is waiting on a person, and answer it |
 | `relay resume <run>` | continue an interrupted or failed run |
 | `relay deliver [run]` | run a finished run's delivery again (`--to <policy>`) |
 | `relay stop [run]` | cancel a run at its next phase boundary |
@@ -1059,6 +1069,98 @@ what it printed: the label came off before the run, the issue nobody was
 allowed to trigger kept its label, the pull request is a draft, and `main` did
 not move.
 
+## Workflows
+
+`relay run` is the agent pipeline: one issue in, one reviewed change out. A
+**workflow** is everything the studio draws around it — what starts a run, the
+guardrails in front, the conditions, the approval, the messages afterwards.
+`relay workflow` runs that graph as it was drawn.
+
+```bash
+relay workflow check                             # what each step needs, and what Relay cannot perform
+relay workflow run ticket-to-pr 142              # the whole workflow, for issue 142
+relay workflow run ticket-to-pr --prompt "…"     # or for a description
+relay workflow run ticket-to-pr --prompt "…" --dry-run   # decide everything, start and send nothing
+relay workflow serve ticket-to-pr                # keep its trigger, and run it each time it fires
+```
+
+The workflow is a file: `.relay/workflows/<name>.json`, written by the studio's
+export (or installed by `relay connect`). It holds every node with its settings
+filled in and no secret in it, so it is committed and reviewed like the config
+beside it. Name it by its file name, or by nothing when the repository has one.
+
+It is the same walk the studio's test run plays, with the playing replaced by
+doing:
+
+| Step | What a real run does |
+|---|---|
+| Kill switch, allowlist | Decide whether an *event* may start a run. A person starting the workflow by hand passes them: they are at the controls. `.relay/STOP` stops every unattended start. |
+| Budget gate | The day's spend is summed from this machine's run records, with each run in flight holding its whole per-run cap, as in [`relay serve`](#unattended). The per-run cap stops the run at a phase boundary. |
+| Injection screen | [The engine's patterns](#untrusted-input), over the title and description the agents are about to read. |
+| Human approval | Waits for a person. `relay workflow approve <id>` or `reject <id>` in the repository, Approve and Reject in the studio's run panel, or a y/n in the terminal the workflow runs in. Nobody answering before the timeout takes the Rejected path. |
+| Condition, Filter | Evaluated against the event and the run. A Filter's expression reads fields with `==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `matches` and `in`, joined by `&&`, `\|\|` and `!`; a field with no value makes its comparison false. It is a small language, not JavaScript: there is nothing in it to call. |
+| AI step | One read-only turn of a coding CLI signed in on the machine: Claude Code for a Claude model, Codex for GPT. Relay calls no model API. The answer is `{{issue.triage}}` to the steps after it. |
+| Estimate cost | The median of what earlier finished runs in the repository cost. With none, there is no estimate, and a Filter that reads it is false. |
+| Wait, Wait for business hours | A real wait, in the process running the workflow. |
+| Agent pipeline, Deliver, Comment | `relay run`, as a child process, shaped by the workflow. Delivery stops at a pull request. |
+| Slack, Discord | Posted through a webhook: `SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`. A webhook posts to the channel it was made for, whatever the node's Channel field says. |
+| GitHub | `gh`, as whoever is signed in: comment, label, assign, close or open an issue; comment on, label or request review of the pull request the run opened. |
+| Linear | Its API, with `LINEAR_API_KEY`: comment, move to a state, attach the pull request, add a label, file an issue. |
+| HTTP request | Sent. Headers come from `HTTP_HEADERS` (a JSON object), never from the workflow file. |
+| Any other app's step | Relay has no connection to it. With `BRIDGE_WEBHOOK_URL` set, the step is posted there as JSON for an endpoint of yours to perform (n8n, a Zapier catch hook, a server); without it the step is skipped and reported as **not performed**. It is never reported as done. |
+| Transform | Not run: the payload passes through unchanged. |
+
+A step that needs a variable which is not set **fails**, by name, rather than
+being skipped quietly. A step that fails after the pull request is open does
+not hide the pull request: the run exits 1 and its summary still carries the
+link. A refusal at a guardrail is the guardrail working, and exits 0.
+
+The credentials are read from the environment, or from a file of `NAME=value`
+lines given as `--env-file` (to `relay workflow` and to `relay connect`). The
+ones that belong to the workflow's own steps — the chat webhooks, the bridge,
+the request headers, the webhook secret — are **not** passed on to the
+pipeline's run, whose environment reaches the agents and your test suite.
+
+### Keeping a trigger
+
+`relay workflow serve` is the always-on half, on a machine of your own. What it
+listens for is the workflow's trigger node:
+
+| Trigger | How it is kept |
+|---|---|
+| Incoming webhook | `POST http://127.0.0.1:4480/hooks/<path>` with a JSON body: `title`, `body`, `url`, `actor`, and `issue` (a number, a URL or a Linear key) when the agents should fetch the issue themselves. `--port` and `--host` move it. |
+| On a schedule, Every N minutes | A five-field cron expression in the trigger's time zone, or an interval. A workflow on a schedule has no ticket, so it usually files one first (see the dependency-upgrade template). |
+| GitHub: a label on an issue | Polled with `gh` every `--interval` seconds. The label comes off as the agents start, which is the acknowledgement. |
+| GitHub: issue opened, assigned or commented on; a workflow run failed; a code scanning or Dependabot alert | GitHub's own webhook, pointed at `/hooks/<app>` on this server. |
+| Linear: issue assigned, created, labelled or moved | Linear's own webhook. |
+| Sentry: issue created, regressed or assigned, and alert rules | Sentry's own webhook. |
+
+A run a trigger starts is **unattended**, and gets everything that word means
+[above](#unattended): capped at a draft pull request, trusted comments only,
+the injection screen, secret-named variables withheld from the agents. The
+workflow's own guardrails decide before that whether it starts at all, and a
+refusal is a line in the log, not a run.
+
+**Signatures.** Set `RELAY_WEBHOOK_SECRET` and every delivery must be signed
+with it: HMAC-SHA256 of the body as sent, in hex, in `X-Relay-Signature`
+(`sha256=<hex>`). GitHub's `X-Hub-Signature-256`, Linear's `Linear-Signature`
+and Sentry's `Sentry-Hook-Signature` are the same scheme and are read as they
+arrive, so the secret you give the app is this one. An app's own trigger will
+not start without the secret; a plain Incoming webhook may go unsigned only on
+`127.0.0.1`, and `--host` anything else without one is refused. A delivery
+that is not the trigger — the wrong event, another assignee — is answered 200
+and starts nothing, and the log says why. One sent twice starts one run.
+
+An app has to be able to reach the listener: run it on a server, or put a
+tunnel in front of it. The readings of GitHub's, Linear's and Sentry's
+deliveries follow the apps' documentation and fail closed — a shape that is
+not recognised starts nothing — but they have not been exercised against the
+live services, so try a trigger with `--dry-run` before trusting it with a
+budget.
+
+Ctrl-C stops taking events and lets the run in flight finish; a second one
+stops that run too. `--once` runs the first event and exits.
+
 ## The session
 
 Answering those questions is not the end of the work — the next task is. So on
@@ -1277,6 +1379,10 @@ jq` works while the run is still printing.
 | `relay stats --json` | what this repository's runs have cost, taken, and caught, including the [unattended audit trail](#unattended) |
 | `relay recording [run] --json` | where the recording was written, its size, and its receipts counted by verdict |
 | `relay serve --json` | one object per line as it decides — considered, skipped, claimed, finished — then a summary |
+| `relay workflow run --json` | one object per line: `workflow_started`, then `node_started`, `node_waiting` and `node_finished` for each step (`status`: `done`, `refused`, `failed`, `skipped`, or `unwired` for a step Relay could not perform), with the pipeline's own `relay run --json` lines passing through between its start and its finish, then `workflow_finished` |
+| `relay workflow serve --json` | `serve` lines as it listens, takes and ignores deliveries, around each run's own stream |
+| `relay workflow check --json` | every step: whether it is performed, the note that says how, and whether each variable it needs is set |
+| `relay workflow approvals --json`, `approve`, `reject` | the approvals waiting, and the one just answered |
 | `relay deliver [run] --json` | the run after delivery, ledger included |
 | `relay stop [run] --json` | what was signalled, and whether the process was still alive |
 
@@ -1840,6 +1946,8 @@ relay completion powershell >> $PROFILE
 | `RELAY_ASCII` | `1` for ASCII-only glyphs, frames and logo. Unset, empty, `0` or `false` leaves them on |
 | `NO_COLOR` | any value turns colour off |
 | `RELAY_NO_OS_SANDBOX` | `1` stops Relay wrapping Claude Code's read-only turns in the operating system's sandbox, for a machine where the wrapper breaks the CLI underneath. Those turns then rely on the tool deny list, and `relay doctor` reports it ([Safety](#safety), item 1) |
-| `LINEAR_API_KEY` | the personal API key Relay reads when an issue lives in [Linear](#linear) |
+| `LINEAR_API_KEY` | the personal API key Relay reads when an issue lives in [Linear](#linear), and acts with when a workflow has a Linear step |
+| `SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`, `HTTP_HEADERS`, `BRIDGE_WEBHOOK_URL` | what a [workflow](#workflows)'s own steps post with. Read by `relay workflow`, never passed to the agents |
+| `RELAY_WEBHOOK_SECRET` | the secret deliveries to `relay workflow serve` are signed with ([Keeping a trigger](#keeping-a-trigger)) |
 | `RELAY_STUDIO_URL`, `RELAY_COMPANION_PORT` | the studio `relay connect` pairs with and the port it listens on ([the studio companion](#the-studio-companion)) |
 | `RELAY_HUB_URL`, `RELAY_RUNNER_TOKEN`, `RELAY_RUNNER_MAX_RUNS` | for a machine run as a [cloud runner](#a-cloud-runner) |

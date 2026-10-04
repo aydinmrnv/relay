@@ -7,6 +7,32 @@ and Relay Cloud. Newest first.
 
 Launch readiness. Relay is in beta, and free while it is.
 
+### Workflows run as drawn
+
+- `relay workflow run` performs a workflow from the studio as it was drawn:
+  the guardrails, conditions and filters, an AI step, the agent pipeline,
+  delivery and the app steps after it. `--dry-run` decides everything and
+  starts and sends nothing.
+- `relay workflow serve` keeps a workflow's own trigger on a machine of yours:
+  an incoming webhook, a schedule, a label on a GitHub issue, and the webhooks
+  GitHub, Linear and Sentry send for their own events. Deliveries are signed,
+  and one sent twice starts one run.
+- Human approval is real. The run waits until a person answers, in the
+  studio's run panel or with `relay workflow approve`, and takes the Rejected
+  path on a no or on silence.
+- Steps in Slack, Discord, GitHub and Linear and HTTP requests are performed.
+  A step in an app Relay has no connection to is handed to a bridge URL of
+  yours, or reported as not performed. Nothing is reported as done that was
+  not.
+- *Run on your computer* runs the whole workflow, not the pipeline alone, and
+  the canvas shows what became of every node.
+- Export writes `.relay/workflows/<name>.json`, the workflow compiled for the
+  CLI, beside the config and the GitHub Actions workflow.
+- Every node says what a real run does with it. A Filter is evaluated in a
+  test run, by the evaluator a real run uses.
+- The workflow's own credentials are read from the environment or `--env-file`
+  and are never passed on to the agents.
+
 ### The studio
 
 - The command palette (⌘K) no longer crashes the page.
