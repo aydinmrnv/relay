@@ -28,7 +28,8 @@ import type { Term } from '@/lib/glossary';
 import type { ValidationIssue } from '@/lib/workflow/validate';
 import type { Run, Workflow } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
-import { isSimulatedOnly } from '@/lib/workflow/readiness';
+import { RichText } from '@/components/app/rich-text';
+import { nodeSupport } from '@/lib/workflow/readiness';
 import { PORT_LEGEND, PORT_STYLE } from './ports';
 import type { CanvasNode } from './types';
 import { ForecastSummary } from './forecast-dialog';
@@ -300,11 +301,7 @@ function NodePanel({ node, issues, run, onChange, onDelete, onDuplicate }: Props
             {term === undefined ? null : <HelpTip term={term} detailed />}
           </p>
           <p className="mt-1 text-xs leading-snug text-muted-foreground">{def.description}</p>
-          {isSimulatedOnly(def.id) ? (
-            <p className="mt-2 rounded-md border border-dashed px-2 py-1.5 text-[11px] leading-snug text-muted-foreground">
-              <span className="font-medium text-foreground">Test runs only.</span> This step is played when you test the workflow. A real run and the exported workflow do not perform it yet; Export says so in its warnings.
-            </p>
-          ) : null}
+          <RealRunNote typeId={def.id} />
         </div>
       </div>
 
@@ -675,5 +672,36 @@ function TemplateField({ id, label, help, field, value, onChange }: { id: string
       />
       {help}
     </div>
+  );
+}
+
+/**
+ * What a real run does with this step, from the table the engine itself reads:
+ * that it performs it and how, that it hands it to your bridge, or that
+ * nothing performs it yet. Never left unsaid, so the canvas cannot read as
+ * more finished than it is.
+ */
+function RealRunNote({ typeId }: { typeId: string }) {
+  const support = nodeSupport(typeId);
+  const trigger = typeId.split('.')[1] === 'trigger';
+  const lead = support.real ? (trigger ? 'Starts runs for real.' : 'Runs for real.') : trigger ? 'Not listened for yet.' : support.bridge ? 'Through your bridge.' : 'Test runs only.';
+  const needs = support.real ? support.needs : [];
+  return (
+    <p className={cn('mt-2 rounded-md border px-2 py-1.5 text-[11px] leading-snug text-muted-foreground', support.real ? '' : 'border-dashed')}>
+      <span className="font-medium text-foreground">{lead}</span> <RichText text={support.note} />
+      {needs.length > 0 ? (
+        <>
+          {' '}
+          Reads{' '}
+          {needs.map((name, index) => (
+            <span key={name}>
+              {index > 0 ? ', ' : ''}
+              <code className="rounded bg-muted px-1 font-mono text-[10px] text-foreground">{name}</code>
+            </span>
+          ))}{' '}
+          from the environment the runner was started with.
+        </>
+      ) : null}
+    </p>
   );
 }

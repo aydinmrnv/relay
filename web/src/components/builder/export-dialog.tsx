@@ -71,7 +71,11 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
   const install = async () => {
     setInstalling(true);
     try {
-      const files = compiled.files.filter((file) => file.path !== 'SETUP.md').map((file) => ({ path: file.path, content: file.content }));
+      // An older relay connect refuses a path it does not know, and with it the whole install: it is sent the files it knows.
+      const takesWorkflows = (machine?.capabilities ?? []).includes('workflow');
+      const files = compiled.files
+        .filter((file) => file.path !== 'SETUP.md' && (takesWorkflows || !file.path.startsWith('.relay/workflows/')))
+        .map((file) => ({ path: file.path, content: file.content }));
       const result = await companionFetch<InstallResponse>('/v1/install', { method: 'POST', body: { files } });
       markExported(workflow.id);
       const changed = result.files.filter((file) => file.status !== 'unchanged');
@@ -103,7 +107,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
             <HelpTip term="export" detailed />
           </DialogTitle>
           <DialogDescription>
-            The files a repository needs to run this workflow on its own GitHub Actions minutes, with your own Claude and ChatGPT subscriptions. Nothing is hosted or billed by {brand.name}.
+            The files a repository needs to run this workflow: as drawn with the relay CLI on a machine of yours, and on its own GitHub Actions minutes. Your own Claude and ChatGPT subscriptions; nothing is hosted or billed by {brand.name}.
           </DialogDescription>
         </DialogHeader>
 

@@ -107,7 +107,7 @@ export type GraphRecord =
       nodes: Array<{ id: string; nodeType: string; name: string; real: boolean }>;
     }
   | { type: 'node_started'; at: string; node: string; nodeType: string; name: string }
-  | { type: 'node_waiting'; at: string; node: string; message: string; detail: string | null }
+  | { type: 'node_waiting'; at: string; node: string; message: string; detail: string | null; /** The approval being waited on, when that is what the wait is: what `relay workflow approve` and the studio answer. */ approval?: string }
   | {
       type: 'node_finished';
       at: string;

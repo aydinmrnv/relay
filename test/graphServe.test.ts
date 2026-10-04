@@ -15,6 +15,7 @@ import { executeGraph, type GraphOutcome } from '../src/graph/executor.ts';
 import { serveWorkflow, type ServeLog } from '../src/graph/serve.ts';
 import { parseGraph, type GraphRecord, type WorkflowEvent, type WorkflowGraph } from '../src/graph/types.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
+import { createRouter } from '../src/studio/router.ts';
 import { parseStartRequest, StudioRuns, type RelayLauncher } from '../src/studio/runs.ts';
 import { createTempRepo, FakeIssueProvider, type TempRepo } from './helpers/tempRepo.ts';
 
@@ -448,6 +449,39 @@ describe('the relay workflow commands', () => {
 
     await assert.rejects(workflowRunCommand('ticket-to-pr', undefined, { json: true }), /Say what the workflow should work on/);
     await assert.rejects(workflowRunCommand('ticket-to-pr', '142', { prompt: 'x', json: true }), /one of the three/);
+  });
+
+  it('lets a paired studio see what is waiting and answer it, through the companion', async () => {
+    const events: string[] = [];
+    const companion = { owner: null, name: null, root: repo.root, defaultBranch: 'main' };
+    const router = createRouter({ version: 'test', repository: companion, runs: new StudioRuns(repo.root, launcher), log: (event) => events.push(`${event.kind}: ${event.message}`) });
+    assert.ok(router.capabilities.includes('workflow'));
+    const call = async (method: string, url: string, body?: unknown): Promise<{ status: number; body: unknown }> => {
+      try {
+        const result = await router.handle({ method, url, json: async () => body });
+        return result.kind === 'json' ? { status: result.status, body: result.body } : { status: 200, body: null };
+      } catch (error) {
+        return { status: (error as { status?: number }).status ?? 500, body: (error as Error).message };
+      }
+    };
+
+    const open = await createApproval(repo.root, { workflow: 'W', node: 'gate', subject: 'Fix \u001b[31mit', via: 'dashboard', approvers: ['lead'], expiresAt: new Date(Date.now() + 60_000) });
+    const listed = (await call('GET', '/v1/approvals')).body as { approvals: Array<{ id: string }> };
+    assert.deepEqual(listed.approvals.map((record) => record.id), [open.id]);
+
+    assert.equal((await call('POST', `/v1/approvals/${open.id}`, {})).status, 400);
+    const stranger = await call('POST', `/v1/approvals/${open.id}`, { approved: true, as: 'intern' });
+    assert.deepEqual([stranger.status, /intern is not on the list/.test(String(stranger.body))], [403, true]);
+    assert.equal((await call('POST', `/v1/approvals/${open.id}`, { approved: true, as: 'lead' })).status, 200);
+    assert.equal((await call('POST', `/v1/approvals/${open.id}`, { approved: false, as: 'lead' })).status, 409, 'answered once');
+    assert.equal((await call('POST', '/v1/approvals/ap-zzzzzzzz', { approved: true })).status, 404);
+    assert.deepEqual(((await call('GET', '/v1/approvals')).body as { approvals: unknown[] }).approvals, []);
+    assert.equal((await listApprovals(repo.root))[0]?.decidedBy, 'lead');
+    assert.deepEqual(events, ['approval: Approved from the studio as lead: Fix [31mit.'], 'what a studio sent is cleaned before it reaches the terminal');
+
+    // A runner that cannot perform workflows has no such routes.
+    const older = createRouter({ version: 'test', repository: companion, runs: null, capabilities: ['agents', 'runs'] });
+    await assert.rejects(older.handle({ method: 'GET', url: '/v1/approvals', json: async () => undefined }), (error: unknown) => (error as { status?: number }).status === 404);
   });
 
   it('lists what is waiting for approval, and answers it', async () => {

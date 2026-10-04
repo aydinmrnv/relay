@@ -256,7 +256,17 @@ export class MachineRunFold {
     const nodeId = String(data['node'] ?? '');
     if (!this.names.has(nodeId)) return [];
     this.setNode(nodeId, 'waiting');
-    return [this.emit({ at, nodeId, kind: 'message', status: 'waiting', message: String(data['message'] ?? 'Waiting.'), ...(typeof data['detail'] === 'string' ? { detail: data['detail'] } : {}) })];
+    return [
+      this.emit({
+        at,
+        nodeId,
+        kind: 'message',
+        status: 'waiting',
+        message: String(data['message'] ?? 'Waiting.'),
+        ...(typeof data['detail'] === 'string' ? { detail: data['detail'] } : {}),
+        ...(typeof data['approval'] === 'string' ? { approvalId: data['approval'] } : {}),
+      }),
+    ];
   }
 
   private nodeFinished(at: string, data: Record<string, unknown>): RunEvent[] {

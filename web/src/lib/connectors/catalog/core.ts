@@ -85,7 +85,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'estimate',
         name: 'Estimate cost',
-        description: 'Prices the run before any agent turn. In a test run the price is drawn from a typical range.',
+        description: 'Prices the run before any agent turn: from what earlier runs in the repository cost. A test run draws the price from a typical range.',
         inputs: PORTS.issueIn,
         outputs: PORTS.issueOut,
         fields: [],
@@ -164,19 +164,22 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'approval',
         name: 'Human approval',
-        description: 'Holds the run for a person’s yes or no. In a test run the answer is played; nothing waits for a real one yet.',
+        description: 'Holds the run for a person’s yes or no. A real run waits for it: answered here, or with relay workflow approve. A test run plays the answer.',
         inputs: PORTS.anyIn,
         outputs: [
           { id: 'approved', label: 'Approved', type: 'any' },
           { id: 'rejected', label: 'Rejected', type: 'event' },
         ],
         fields: [
-          FIELDS.select('via', 'Ask via', [
-            { value: 'dashboard', label: 'Dashboard' },
-            { value: 'issue', label: 'Comment on the issue' },
-            { value: 'chat', label: 'Chat message with buttons' },
-          ]),
-          { key: 'approvers', label: 'Who may approve', type: 'textarea', placeholder: 'logins, one per line' },
+          {
+            ...FIELDS.select('via', 'Ask via', [
+              { value: 'dashboard', label: 'Dashboard' },
+              { value: 'issue', label: 'Comment on the issue' },
+              { value: 'chat', label: 'Chat message with buttons' },
+            ]),
+            help: 'Whichever is chosen, a real run is answered in the studio’s run panel or with relay workflow approve today. Asking in the issue or in chat is not built yet.',
+          },
+          { key: 'approvers', label: 'Who may approve', type: 'textarea', placeholder: 'logins, one per line', help: 'Empty means anyone who can reach the runner. A name is what the person answering says it is: the runner cannot check it.' },
           FIELDS.number('timeoutHours', 'Give up after (hours)', 24, 1, 168, 1),
         ],
       },
@@ -251,7 +254,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'cron',
         name: 'On a schedule',
-        description: 'Cron expression, evaluated in the workspace time zone.',
+        description: 'A cron expression, in the time zone below. relay workflow serve keeps the clock on a machine of yours.',
         fields: [FIELDS.text('cron', 'Cron', '0 9 * * 1-5', true), FIELDS.text('timezone', 'Time zone', 'UTC')],
         sample: { firedAt: '2026-09-23T09:00:00Z' },
       },
@@ -295,8 +298,11 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'webhook',
         name: 'Incoming webhook',
-        description: 'Start from any tool that can send a webhook. A test run plays a sample body; no URL is listening yet.',
-        fields: [{ key: 'secret', label: 'Signing secret', type: 'secret', placeholder: 'optional' }, FIELDS.text('path', 'Path suffix', 'ticket-in')],
+        description: 'Start from any tool that can send a webhook. relay workflow serve listens for it on a machine of yours; a test run plays a sample body.',
+        fields: [
+          { key: 'secret', label: 'Signing secret', type: 'secret', placeholder: 'optional', help: 'Never exported. Set it as RELAY_WEBHOOK_SECRET where relay workflow serve runs: deliveries must then be signed with it (HMAC-SHA256 of the body, in X-Relay-Signature).' },
+          { ...FIELDS.text('path', 'Path suffix', 'ticket-in'), help: 'The webhook is delivered to /hooks/<this>.' },
+        ],
         sample: { method: 'POST', body: { title: 'Anything you send' } },
       },
     ],
@@ -376,15 +382,20 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'filter',
         name: 'Filter',
-        description: 'Continue only when the expression is true. In a test run it always passes: the expression is not evaluated yet.',
+        description: 'Continue only when the expression is true. A false one stops this path, in a test run and a real one alike.',
         inputs: PORTS.anyIn,
         outputs: PORTS.eventOut,
-        fields: [FIELDS.text('expression', 'Expression', 'issue.estimate <= 3', true)],
+        fields: [
+          {
+            ...FIELDS.text('expression', 'Expression', 'issue.estimate <= 3', true),
+            help: 'Fields of the ticket and the run, compared with ==, !=, <, <=, >, >=, contains, matches or in, and combined with &&, || and !. For example: issue.labels contains "bug" && issue.estimate <= 3. A field with no value makes its comparison false.',
+          },
+        ],
       },
       {
         id: 'transform',
         name: 'Transform',
-        description: 'Reshape the payload with a small JavaScript function. In a test run the payload passes through unchanged.',
+        description: 'Reshape the payload with a small JavaScript function. Not run yet: the payload passes through unchanged, in a test run and a real one.',
         inputs: PORTS.anyIn,
         outputs: PORTS.eventOut,
         fields: [{ key: 'code', label: 'Function body', type: 'textarea', default: 'return { ...input, title: input.title.trim() };' }],
@@ -392,18 +403,24 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'ai-step',
         name: 'AI step',
-        description: 'One model turn with a prompt: triage, summarise, classify, draft.',
+        description: 'One model turn with a prompt: triage, summarise, classify, draft. A real run asks a coding CLI signed in on the runner, read-only.',
         inputs: PORTS.anyIn,
         outputs: PORTS.eventOut,
         fields: [
-          FIELDS.select('model', 'Model', [
-            { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-            { value: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
-            { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-            { value: 'gpt-5', label: 'GPT-5' },
-            { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-          ]),
-          FIELDS.template('prompt', 'Prompt', 'Classify this ticket as bug, feature or chore and estimate size (S/M/L):\n\n{{issue.title}}\n{{issue.body}}'),
+          {
+            ...FIELDS.select('model', 'Model', [
+              { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+              { value: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
+              { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+              { value: 'gpt-5', label: 'GPT-5' },
+              { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+            ]),
+            help: 'Relay calls no model API. In a real run this chooses the CLI: Claude Code for a Claude model, Codex for GPT, the planner’s for anything else. The model is that CLI’s own default.',
+          },
+          {
+            ...FIELDS.template('prompt', 'Prompt', 'Classify this ticket as bug, feature or chore and estimate size (S/M/L):\n\n{{issue.title}}\n{{issue.body}}'),
+            help: 'The answer is kept as {{issue.triage}} for a Condition after it. Ask for one of a few words (“Answer fixable or needs-a-person”) and it is the first of them the reply says.',
+          },
         ],
       },
       {

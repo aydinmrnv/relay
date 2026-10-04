@@ -357,7 +357,8 @@ export function checkWorkflow(graph: WorkflowGraph, file: string, env: Readonly<
     startsByItself: nodeSupport(trigger.type).real && trigger.type !== 'logic.trigger.manual',
     nodes,
     // A step for an app Relay has no connection to is performed when there is a bridge to hand it to.
-    unwired: nodes.filter((node) => !node.real && !(node.bridge && bridge)).length,
+    // The trigger is not a step: a workflow whose trigger nothing listens for is still started by hand.
+    unwired: nodes.filter((node) => node.id !== trigger.id && !node.real && !(node.bridge && bridge)).length,
     missing,
   };
 }
@@ -378,7 +379,10 @@ export async function workflowCheckCommand(workflowRef: string | undefined, opti
   out();
   for (const node of check.nodes) {
     const bridged = !node.real && node.bridge && node.needs.every((need) => need.set);
-    out(`  ${node.real ? success(glyphs(theme()).ok) : warning('!')} ${node.name}${node.real ? '' : warning(bridged ? '  handed to your bridge' : '  not performed')}`);
+    // The trigger is not a step to perform: what matters is whether anything listens for it.
+    const isTrigger = node.id === triggerOf(graph).id;
+    const aside = node.real ? '' : isTrigger ? dim('  started by hand') : warning(bridged ? '  handed to your bridge' : '  not performed');
+    out(`  ${node.real ? success(glyphs(theme()).ok) : isTrigger ? dim(glyphs(theme()).bullet) : warning('!')} ${node.name}${aside}`);
     hint(node.note, '    ');
     for (const need of node.needs) {
       if (need.variable === WEBHOOK_SECRET_VARIABLE && !need.set) hint(`${need.variable} is not set: deliveries are unsigned, so it listens on this machine only.`, '    ');
@@ -390,7 +394,7 @@ export async function workflowCheckCommand(workflowRef: string | undefined, opti
   const trigger = triggerOf(graph);
   rows([
     { label: 'Starts', value: check.startsByItself ? `by itself, under \`relay workflow serve\` (${trigger.name})` : trigger.type === 'logic.trigger.manual' ? 'by hand: `relay workflow run`' : 'by hand: nothing listens for its trigger yet' },
-    { label: 'Performed', value: `${check.nodes.length - check.unwired} of ${pluralize(check.nodes.length, 'step')}` },
+    { label: 'Performed', value: `${check.nodes.length - 1 - check.unwired} of ${pluralize(check.nodes.length - 1, 'step')}` },
     check.missing.length > 0 && { label: 'Missing', value: check.missing.join(', ') },
   ]);
   if (check.unwired > 0) hint('A step Relay cannot perform is skipped in a real run, and the run says so. Nothing is pretended.');

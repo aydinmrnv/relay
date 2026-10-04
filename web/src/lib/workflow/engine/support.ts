@@ -76,7 +76,7 @@ const ACTIONS: Readonly<Record<string, NodeSupport>> = {
   'logic.action.filter': real('The expression is evaluated; a false or unreadable one stops that path.'),
   'logic.action.merge-paths': real('Waits for every path that is still coming.'),
   'logic.action.note': real('A note. Nothing to run.'),
-  'logic.action.ai-step': real('One read-only turn of a coding CLI signed in on the runner. Relay calls no model API of its own, so the Model field is not what answers.'),
+  'logic.action.ai-step': real('One read-only turn of a coding CLI signed in on the runner: Claude Code for a Claude model, Codex for GPT. Relay calls no model API of its own.'),
   'logic.action.transform': unwired('Running JavaScript from a canvas needs a sandbox Relay does not have yet. The payload passes through unchanged.'),
 
   'slack.action.post-message': real(SLACK_NOTE, SLACK),
@@ -103,6 +103,7 @@ const ACTIONS: Readonly<Record<string, NodeSupport>> = {
   'linear.action.comment': real(LINEAR_NOTE, LINEAR),
   'linear.action.update-state': real(LINEAR_NOTE, LINEAR),
   'linear.action.attach-pr': real(LINEAR_NOTE, LINEAR),
+  'linear.action.add-label': real(`${LINEAR_NOTE} The label has to exist already.`, LINEAR),
   'linear.action.create-issue': real(LINEAR_NOTE, LINEAR),
 };
 

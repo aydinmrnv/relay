@@ -76,6 +76,8 @@ export interface RunEvent {
   phase?: string;
   durationMs?: number;
   costUsd?: number;
+  /** For a real run waiting on a person: the approval to answer, on the runner it is waiting on. */
+  approvalId?: string;
 }
 
 export interface RunPhase {

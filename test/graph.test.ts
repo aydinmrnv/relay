@@ -614,6 +614,23 @@ describe('the steps after the pipeline', () => {
     assert.equal(messageOf(made, move), 'Moved ENG-142 to In Review.');
   });
 
+  it('labels a Linear ticket with a label that exists, and will not invent one', async () => {
+    const trigger = node('logic.trigger.manual');
+    const label = node('linear.action.add-label', { label: 'agent-ready' });
+    const event = manualEvent({ kind: 'issue', ref: 'ENG-7' }, NOW);
+    const made = world({
+      linear: (query) => (query.startsWith('query Issue') ? { issue: { id: 'uuid-7' } } : query.startsWith('query Label') ? { issueLabels: { nodes: [{ id: 'l1', name: 'Agent-ready' }] } } : { issueAddLabel: { success: true } }),
+    });
+    await executeGraph(graph([trigger, label], [[trigger, label]]), event, made.effects);
+    assert.equal(messageOf(made, label), 'Labelled ENG-7 Agent-ready.');
+    assert.deepEqual(made.linear.at(-1)?.variables, { id: 'uuid-7', labelId: 'l1' });
+
+    const missing = world({ linear: (query) => (query.startsWith('query Issue') ? { issue: { id: 'uuid-7' } } : { issueLabels: { nodes: [] } }) });
+    await executeGraph(graph([trigger, label], [[trigger, label]]), event, missing.effects);
+    assert.equal(statusOf(missing, label), 'failed');
+    assert.match(messageOf(missing, label), /has no label called “agent-ready”/);
+  });
+
   it('says which states exist when a Linear state is misspelt, and that a ticket is not Linear’s', async () => {
     const trigger = node('logic.trigger.manual');
     const move = node('linear.action.update-state', { state: 'Reviewing' });

@@ -149,7 +149,7 @@ export function createEffects(options: EffectsOptions): GraphEffects {
     async approval(ask, announce): Promise<ApprovalAnswer> {
       const record = await createApproval(repoRoot, { workflow: ask.workflow, node: ask.node, subject: ask.subject, via: ask.via, approvers: ask.approvers, expiresAt: ask.expiresAt }, now());
       const who = ask.approvers.length === 0 ? '' : ` It may be answered by ${ask.approvers.join(', ')}.`;
-      announce(`Approve with \`relay workflow approve ${record.id}\`, or reject with \`relay workflow reject ${record.id}\`, in this repository.${who} It gives up at ${record.expiresAt}.`);
+      announce(`Approve with \`relay workflow approve ${record.id}\`, or reject with \`relay workflow reject ${record.id}\`, in this repository.${who} It gives up at ${record.expiresAt}.`, record.id);
 
       // Whichever answers first: the file, written from anywhere, or the terminal this runs in.
       const asking = new AbortController();

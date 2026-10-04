@@ -18,6 +18,8 @@ import { useStudio } from '@/lib/store';
 import { machineRunNodes } from '@/lib/companion/machine-run';
 import { repositoryLabel, type RunTask } from '@/lib/companion/types';
 import { compiledConfig } from '@/lib/run-launcher';
+import { getNodeType } from '@/lib/connectors';
+import { nodeSupport, realRunGaps } from '@/lib/workflow/readiness';
 import type { Workflow } from '@/lib/workflow/schema';
 import { isRepository } from '@/lib/workflow/schema';
 
@@ -60,6 +62,15 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
   const [repository, setRepository] = useState(() => (workflow.repository !== undefined && workflow.repository !== '' ? workflow.repository : defaultRepository));
   const [waking, setWaking] = useState(false);
 
+  // Whether this runner walks the whole graph, or runs the pipeline alone (a Relay Cloud machine, an older CLI).
+  const whole = useCompanion((state) => state.target !== 'cloud' && (state.hello?.capabilities ?? []).includes('workflow'));
+  const gaps = useMemo(() => realRunGaps(workflow), [workflow]);
+  // What the steps a real run performs read from the runner's environment. The trigger's own secret is not this run's: a person started it.
+  const needs = useMemo(
+    () => [...new Set(workflow.nodes.filter((node) => getNodeType(node.data.typeId)?.kind === 'action').flatMap((node) => (nodeSupport(node.data.typeId).real ? nodeSupport(node.data.typeId).needs : [])))],
+    [workflow],
+  );
+
   const host = cloudMode ? 'Relay Cloud' : (hello?.machine ?? 'your computer');
   const repo = cloudMode ? (isRepository(repository) ? repository.trim() : null) : repositoryLabel(hello?.repository);
   const nodes = machineRunNodes(workflow);
@@ -81,7 +92,9 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
   const mismatch = !cloudMode && workflow.repository !== undefined && workflow.repository !== '' && repo !== null && workflow.repository !== repo;
 
   const task: RunTask | null = kind === 'issue' ? (ref.trim().length > 0 ? { kind: 'issue', ref: ref.trim() } : null) : text.trim().length > 0 ? { kind: 'prompt', text: text.trim() } : null;
-  const blocked = cloudMode ? nodes.pipeline === undefined || config === null || repo === null || !cloudReady : nodes.pipeline === undefined || hello?.repository === null || hello?.repository === undefined || config === null;
+  // A runner that performs the whole workflow has something to do even with no pipeline in it: price a ticket, label it, post about it.
+  const nothingToRun = nodes.pipeline === undefined && !whole;
+  const blocked = cloudMode ? nothingToRun || config === null || repo === null || !cloudReady : nothingToRun || hello?.repository === null || hello?.repository === undefined || config === null;
 
   return (
     <form
@@ -100,7 +113,9 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
           {cloudMode ? (
             <>The agent pipeline runs for real on your own cloud machine, in {repo === null ? 'the repository you name below' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.</>
           ) : (
-            <>The agent pipeline runs for real in {repo === null ? 'the repository relay connect was started in' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.</>
+            <>
+              {whole ? 'The whole workflow runs for real' : 'The agent pipeline runs for real'} in {repo === null ? 'the repository relay connect was started in' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.
+            </>
           )}
         </DialogDescription>
       </DialogHeader>
@@ -162,7 +177,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
         </Notice>
       ) : null}
 
-      {nodes.pipeline === undefined ? (
+      {nothingToRun ? (
         <Notice tone="error">This workflow has no Agent pipeline node, so there is nothing to run. Add one from the palette.</Notice>
       ) : !cloudMode && (hello?.repository === null || hello?.repository === undefined) ? (
         <Notice tone="error">
@@ -221,10 +236,35 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
               ? 'No per-run cap: set “Stop this run above” on the pipeline node, or “Stop a run above” on a Budget gate, to have the run stop itself.'
               : `Stops itself once it has cost more than $${cap.toFixed(2)}: the lower of the pipeline node’s limit and the Budget gate’s.`}
           </li>
-          <li>
-            The allowlist and the daily budget decide whether an event may start a run, so a person pressing this passes over them. The app steps before and after the pipeline are not performed by this run; they are in test runs
-            and in the exported workflow.
-          </li>
+          {whole ? (
+            <>
+              <li>Every step is performed, in the order the canvas draws: the conditions are evaluated, an approval waits for an answer here or in the terminal, and the steps after the pipeline post where they say.</li>
+              <li>The kill switch and the allowlist decide whether an event may start a run, so a person pressing this passes them. The per-run cap still stops the run.</li>
+              {needs.length > 0 ? (
+                <li>
+                  The app steps read their credentials from the environment relay connect was started with:{' '}
+                  {needs.map((name, index) => (
+                    <span key={name}>
+                      {index > 0 ? ', ' : ''}
+                      <code className="rounded bg-muted px-1 font-mono text-[11px]">{name}</code>
+                    </span>
+                  ))}
+                  . A step whose variable is missing fails, and says which. Pass a file of them with relay connect --env-file.
+                </li>
+              ) : null}
+              {gaps.length > 0 ? (
+                <li>
+                  {gaps.length === 1 ? 'One step is' : `${gaps.length} steps are`} for an app Relay has no connection to ({gaps.map((gap) => gap.name).join(', ')}): {gaps.length === 1 ? 'it is' : 'they are'} handed to your bridge when BRIDGE_WEBHOOK_URL is set, and skipped,
+                  said, when it is not.
+                </li>
+              ) : null}
+            </>
+          ) : (
+            <li>
+              The allowlist and the daily budget decide whether an event may start a run, so a person pressing this passes over them. {cloudMode ? 'A Relay Cloud machine' : 'This relay connect'} runs the pipeline and its delivery; the steps before
+              and after it are not performed by this run. {cloudMode ? '' : 'Update the CLI to run the whole workflow.'}
+            </li>
+          )}
           {cloudMode ? null : <li>The first run after relay connect starts is confirmed in its terminal: it asks there, and waits two minutes for a y.</li>}
         </ul>
       </div>

@@ -90,8 +90,8 @@ export interface GraphEffects {
   estimate(): Promise<{ medianUsd: number; worstUsd: number; samples: number } | null>;
   /** The first of these teams the login belongs to, or null. */
   teamOf(login: string, teams: readonly string[]): Promise<string | null>;
-  /** Asks a person, and waits for the answer or the deadline. `announce` is told how to answer, once that is known. */
-  approval(ask: ApprovalAsk, announce: (how: string) => void): Promise<ApprovalAnswer>;
+  /** Asks a person, and waits for the answer or the deadline. `announce` is told how to answer, and the request's id, once they are known. */
+  approval(ask: ApprovalAsk, announce: (how: string, id?: string) => void): Promise<ApprovalAnswer>;
 
   /** Runs the agent pipeline, and its delivery, to the end. */
   runPipeline(input: { node: GraphNode; task: GraphTask; event: WorkflowEvent; onLine: (line: Record<string, unknown>) => void }): Promise<PipelineResult>;
@@ -317,7 +317,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
       if (!event.attended && !graph.enabled) {
         return { status: 'refused', message: 'Refused: this workflow is paused, so nothing starts it by itself.', detail: 'Switch it to Active in the studio and export it again, or start it by hand.', next: [] };
       }
-      return { status: 'done', message: `${event.attended ? 'Started by hand' : node.name}: ${title}`, detail: clip(JSON.stringify(event.payload, null, 2), 4000), next: 'all' };
+      return { status: 'done', message: `${event.attended ? 'Started by hand' : 'Received'}: ${title}`, detail: clip(JSON.stringify(event.payload, null, 2), 4000), next: 'all' };
     }
 
     const support = nodeSupport(node.type);
@@ -513,7 +513,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
       approvers: lines(node.config['approvers']),
       expiresAt: new Date(effects.now().getTime() + hours * 3_600_000),
     };
-    const answer = await effects.approval(ask, (how) => effects.emit({ type: 'node_waiting', at: at(), node: node.id, message: `Waiting for approval: ${title}`, detail: how }));
+    const answer = await effects.approval(ask, (how, id) => effects.emit({ type: 'node_waiting', at: at(), node: node.id, message: `Waiting for approval: ${title}`, detail: how, ...(id === undefined ? {} : { approval: id }) }));
     const who = answer.by === null ? 'a person' : answer.by;
     if (answer.reason === 'timeout') {
       const waited = hours >= 1 ? `${hours} hour${hours === 1 ? '' : 's'}` : `${Math.round(hours * 60)} minutes`;
@@ -626,7 +626,14 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
   async function aiStep(node: GraphNode): Promise<NodeResult> {
     const prompt = rendered(node, 'prompt');
     if (prompt.trim().length === 0) return { status: 'failed', message: 'The AI step has no prompt.', next: [] };
-    if (dry) return { status: 'done', message: 'Dry run: would ask a model. No answer, so what reads it sees no value.', detail: prompt, next: 'all' };
+    if (dry) {
+      // Nothing is asked, so the walk takes the first answer the prompt offers: the path the workflow was drawn for.
+      const assumed = answerOptions(prompt)?.[0];
+      if (assumed === undefined) return { status: 'done', message: 'Dry run: would ask a model. No answer, so what reads it sees no value.', detail: prompt, next: 'all' };
+      issue['triage'] = assumed;
+      context['ai'] = { answer: assumed, text: assumed };
+      return { status: 'done', message: `Dry run: would ask a model. Taken as “${assumed}”, the first answer the prompt offers.`, detail: prompt, next: 'all' };
+    }
     const model = text(node, 'model').toLowerCase();
     const vendor = model.startsWith('claude') ? 'claude' : model.startsWith('gpt') || model.includes('codex') ? 'codex' : null;
     const answer = await effects.aiStep({ prompt, vendor, event });
@@ -828,7 +835,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     }
 
     if (key === undefined) return { status: 'failed', message: 'The event is not about a Linear issue (a key like ENG-142), so there is nothing to act on.', next: [] };
-    if (dry) return { status: 'done', message: `Dry run: would ${action === 'comment' ? 'comment on' : action === 'attach-pr' ? 'attach the pull request to' : 'move'} ${key}.`, next: 'all' };
+    if (dry) return { status: 'done', message: `Dry run: would ${action === 'comment' ? 'comment on' : action === 'attach-pr' ? 'attach the pull request to' : action === 'add-label' ? 'label' : 'move'} ${key}.`, next: 'all' };
 
     const found = await effects.linear<{ issue: { id: string; team?: { states?: { nodes?: Array<{ id: string; name: string }> } } } | null }>(
       'query Issue($id: String!) { issue(id: $id) { id team { states { nodes { id name } } } } }',
@@ -851,6 +858,15 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
         if (target === undefined) return { status: 'failed', message: `${key}'s team has no state called “${wanted}”.`, detail: `It has: ${states.map((candidate) => candidate.name).join(', ') || 'none this key can see'}.`, next: [] };
         const moved = await effects.linear<{ issueUpdate: { success: boolean } }>('mutation Move($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }', { id: found.issue.id, stateId: target.id });
         return moved.issueUpdate?.success === true ? { status: 'done', message: `Moved ${key} to ${target.name}.`, next: 'all' } : { status: 'failed', message: `Linear refused to move ${key}.`, next: [] };
+      }
+      case 'add-label': {
+        const wanted = text(node, 'label').trim();
+        if (wanted.length === 0) return { status: 'failed', message: 'The Add label step names no label.', next: [] };
+        const labels = await effects.linear<{ issueLabels: { nodes: Array<{ id: string; name: string }> } }>('query Label($name: String!) { issueLabels(filter: { name: { eqIgnoreCase: $name } }) { nodes { id name } } }', { name: wanted });
+        const label = labels.issueLabels?.nodes?.[0];
+        if (label === undefined) return { status: 'failed', message: `Linear has no label called “${wanted}”. Make it there first: a step does not invent labels.`, next: [] };
+        const added = await effects.linear<{ issueAddLabel: { success: boolean } }>('mutation Label($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }', { id: found.issue.id, labelId: label.id });
+        return added.issueAddLabel?.success === true ? { status: 'done', message: `Labelled ${key} ${label.name}.`, next: 'all' } : { status: 'failed', message: `Linear refused the label on ${key}.`, next: [] };
       }
       case 'attach-pr': {
         const pr = String(run['prUrl'] ?? '');
