@@ -493,7 +493,8 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
     const prUrl = `https://github.com/${repository}/pull/${number}`;
     run.prUrl = prUrl;
     (context.run as Record<string, unknown>).prUrl = prUrl;
-    const title = renderTemplate(String(config['prTitle'] ?? '{{issue.title}}'), context);
+    // A payload with no title leaves only the template's punctuation: say what it is instead of printing ": :".
+    const title = renderTemplate(String(config['prTitle'] ?? '{{issue.title}}'), context).replace(/^[\s:·–—-]+|[\s:·–—-]+$/g, '') || 'Untitled change';
     steps.push(`Opened ${config['draft'] === false ? 'PR' : 'draft PR'} #${number}`);
     tick(4000);
     emit({ nodeId, kind: 'artifact', message: `Pull request #${number}: ${title}`, detail: renderTemplate(String(config['prBody'] ?? ''), context) });
@@ -624,12 +625,14 @@ function phaseDetail(phase: string, agent: string | undefined, rng: () => number
 }
 
 function samplePlan(title: string): string {
-  return `# Plan: ${title}\n\n1. Reproduce with a failing test.\n2. Isolate the timing dependency behind an injected clock.\n3. Make the retry schedule deterministic in tests.\n4. Run the suite twice to confirm stability.\n\nRisks: the clock seam touches two call sites; both are covered by existing tests.`;
+  // The same four steps whatever the ticket, and said to be a sample: no agent read any code in a test run.
+  return `# Plan: ${title}\n\n1. Reproduce it with a failing test.\n2. Make the smallest change that turns the test green.\n3. Cover the case the ticket describes, and the one next to it.\n4. Run the whole suite.\n\nA sample: in a test run no agent has read your code. A real run’s plan names the files it will touch and what could go wrong.`;
 }
 
 function summarize(run: Run, context: Record<string, unknown>): string {
   const issue = context.issue as Record<string, unknown>;
-  const parts = [`${run.workflowName} · ${String(issue['id'] ?? '')} ${String(issue['title'] ?? '')}`.trim()];
+  const subject = [issue['id'], issue['title']].map((part) => String(part ?? '').trim()).filter((part) => part.length > 0).join(' ');
+  const parts = [subject.length === 0 ? run.workflowName : `${run.workflowName} · ${subject}`];
   if (run.phases.length > 0) parts.push(`${run.phases.length} phases in ${formatMs(run.phases.reduce((sum, phase) => sum + phase.ms, 0))}`);
   if (run.diff !== undefined) parts.push(`+${run.diff.additions} −${run.diff.deletions} across ${run.diff.files} files`);
   if (run.tests !== undefined) parts.push(`tests ${run.tests.passed ? 'passed' : 'failed'}`);

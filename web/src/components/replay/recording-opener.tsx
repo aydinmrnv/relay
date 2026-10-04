@@ -10,6 +10,7 @@ import { formatUsd } from '@/lib/format';
 import { LIMITS, parseRecordingText } from '@/lib/replay/parse';
 import type { BuiltinRecording, Recording } from '@/lib/replay/types';
 import { cn } from '@/lib/utils';
+import { RichText } from '@/components/app/rich-text';
 import { ReplayView } from './replay-view';
 
 const OUTCOME: Record<BuiltinRecording['outcome'], { label: string; tone: string }> = {
@@ -147,7 +148,7 @@ export function RecordingOpener() {
           />
           {error === null ? null : (
             <p role="alert" className="max-w-md text-sm text-destructive">
-              {error}
+              <RichText text={error} inline />
             </p>
           )}
         </div>

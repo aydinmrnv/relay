@@ -6,7 +6,9 @@ import { Fragment } from 'react';
  * glossary stays plain strings, so it can be read without React; this is the
  * one place those strings become elements.
  */
-export function RichText({ text, className }: { text: string; className?: string }) {
+export function RichText({ text, className, inline: inSentence = false }: { text: string; className?: string; inline?: boolean }) {
+  // Inside a sentence there are no paragraphs to make: a <p> inside a <p> is not HTML.
+  if (inSentence) return <span className={className}>{inline(text)}</span>;
   const paragraphs = text.split(/\n\s*\n/);
   return (
     <>

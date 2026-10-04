@@ -34,7 +34,9 @@ export function HistorySheet({ workflow, open, onOpenChange, onRestore }: { work
           <SheetTitle className="flex items-center gap-2">
             <History className="size-4 text-muted-foreground" /> Version history
           </SheetTitle>
-          <SheetDescription>Saved automatically before each editing session, and whenever you save one by hand. Restore any of them; {combo('mod', 'Z')} undoes a restore.</SheetDescription>
+          <SheetDescription>
+            {signedIn ? <>Saved automatically before each editing session, and whenever you save one by hand. Restore any of them; {combo('mod', 'Z')} undoes a restore.</> : 'Every earlier state of this workflow, to go back to.'}
+          </SheetDescription>
         </SheetHeader>
         {signedIn ? <Versions workflow={workflow} open={open} onRestore={onRestore} /> : <GuestHistory />}
       </SheetContent>

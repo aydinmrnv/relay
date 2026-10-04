@@ -786,8 +786,9 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
                       {cloudTarget ? <Cloud /> : <Laptop />} {cloudTarget ? 'Run in Relay Cloud…' : canRunOnMachine ? `Run on ${machineHost ?? 'your computer'}…` : 'Run on your computer…'}
                     </DropdownMenuItem>
                     {canRunOnMachine ? null : (
+                      // Pairing a computer is the studio's, behind an account; the playground says so before the click, not after it.
                       <DropdownMenuItem render={<Link href="/connect" />}>
-                        <Plug /> Connect your computer
+                        <Plug /> {playground ? 'Connect your computer (free account)' : 'Connect your computer'}
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuGroup>

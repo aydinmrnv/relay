@@ -687,8 +687,8 @@ function RealRunNote({ typeId }: { typeId: string }) {
   const lead = support.real ? (trigger ? 'Starts runs for real.' : 'Runs for real.') : trigger ? 'Not listened for yet.' : support.bridge ? 'Through your bridge.' : 'Test runs only.';
   const needs = support.real ? support.needs : [];
   return (
-    <p className={cn('mt-2 rounded-md border px-2 py-1.5 text-[11px] leading-snug text-muted-foreground', support.real ? '' : 'border-dashed')}>
-      <span className="font-medium text-foreground">{lead}</span> <RichText text={support.note} />
+    <div className={cn('mt-2 rounded-md border px-2 py-1.5 text-[11px] leading-snug text-muted-foreground', support.real ? '' : 'border-dashed')}>
+      <span className="font-medium text-foreground">{lead}</span> <RichText text={support.note} inline />
       {needs.length > 0 ? (
         <>
           {' '}
@@ -702,6 +702,6 @@ function RealRunNote({ typeId }: { typeId: string }) {
           from the environment the runner was started with.
         </>
       ) : null}
-    </p>
+    </div>
   );
 }

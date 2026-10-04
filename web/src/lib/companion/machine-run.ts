@@ -510,9 +510,13 @@ function stepLabel(step: string | undefined): string {
 }
 
 function summarize(run: Run, error: string | null): string {
-  const parts = [`${run.workflowName} · ${String(run.trigger.payload['title'] ?? '')}`.trim()];
+  const title = String(run.trigger.payload['title'] ?? '').trim();
+  // A recording is named after its ticket, so the two would be the same words twice.
+  const parts = [title.length === 0 || title === run.workflowName ? run.workflowName : `${run.workflowName} · ${title}`];
   if (run.machine !== undefined) parts.push(`on ${run.machine.host}`);
-  if (run.phases.length > 0) parts.push(`${run.phases.length} phases in ${formatMs(run.phases.reduce((sum, phase) => sum + phase.ms, 0))}`);
+  // A phase a run went back to (a second review round) is one phase visited twice, which is how the list below counts it.
+  const distinct = new Set(run.phases.map((phase) => phase.phase)).size;
+  if (distinct > 0) parts.push(`${distinct} ${distinct === 1 ? 'phase' : 'phases'} in ${formatMs(run.phases.reduce((sum, phase) => sum + phase.ms, 0))}`);
   if (run.diff !== undefined) parts.push(`+${run.diff.additions} −${run.diff.deletions} across ${run.diff.files} files`);
   if (run.tests !== undefined) parts.push(`tests ${run.tests.passed ? 'passed' : 'failed'}`);
   if (run.costUsd > 0) parts.push(usd(run.costUsd));

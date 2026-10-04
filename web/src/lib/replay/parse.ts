@@ -38,7 +38,7 @@ export function parseRecordingText(text: string): ParseResult {
 export function parseRecording(value: unknown): ParseResult {
   if (!isRecord(value)) return { ok: false, error: 'That file is not a recording.' };
   if (value['bundle'] !== 1) {
-    return { ok: false, error: typeof value['bundle'] === 'number' ? `This recording is version ${value['bundle']}, which this studio does not read yet.` : 'That file is not a recording: it has no `bundle` version.' };
+    return { ok: false, error: typeof value['bundle'] === 'number' ? `This recording is version ${value['bundle']}, which this studio does not read yet.` : 'That file is not a recording: nothing in it says which version of a recording it is.' };
   }
   const stream = list(value['stream'], LIMITS.lines).map(line).filter((entry): entry is RecordingLine => entry !== null);
   if (stream.length === 0) return { ok: false, error: 'This recording has no run in it: its stream is empty.' };

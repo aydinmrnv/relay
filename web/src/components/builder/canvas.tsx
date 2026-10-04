@@ -25,7 +25,9 @@ import { DRAG_MIME } from './palette';
 import type { CanvasEdge, CanvasNode } from './types';
 
 /** The smallest a fit may make the graph: below this a node's text cannot be read, so the rest is reached by panning. */
-const FIT_MIN_ZOOM = 0.6;
+const FIT_MIN_ZOOM = 0.7;
+/** Room left round a fitted graph, as a share of the canvas. Small: every point of it is taken from the size of the nodes. */
+const FIT_PADDING = 0.06;
 
 const NODE_TYPES = { wf: WorkflowNode };
 const EDGE_TYPES = { wf: WorkflowEdge };
@@ -71,12 +73,23 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
       const wide = (element.clientWidth - pad * 2) / Math.max(1, bounds.width);
       const tall = (element.clientHeight - pad * 2) / Math.max(1, bounds.height);
       if (Math.min(wide, tall) >= FIT_MIN_ZOOM) {
-        void fitView({ padding: 0.14, maxZoom: 1, minZoom: FIT_MIN_ZOOM, duration });
+        void fitView({ padding: FIT_PADDING, maxZoom: 1, minZoom: FIT_MIN_ZOOM, duration });
         return;
       }
       const zoom = FIT_MIN_ZOOM;
-      const x = wide >= zoom ? (element.clientWidth - bounds.width * zoom) / 2 - bounds.x * zoom : pad - bounds.x * zoom;
-      const y = tall >= zoom ? (element.clientHeight - bounds.height * zoom) / 2 - bounds.y * zoom : pad + 40 - bounds.y * zoom;
+      let x = wide >= zoom ? (element.clientWidth - bounds.width * zoom) / 2 - bounds.x * zoom : pad - bounds.x * zoom;
+      let y = tall >= zoom ? (element.clientHeight - bounds.height * zoom) / 2 - bounds.y * zoom : pad + 40 - bounds.y * zoom;
+      // The node whose panel just opened must not be the part that is off screen.
+      const selected = all.find((node) => node.selected === true);
+      if (selected !== undefined) {
+        const box = getNodesBounds([selected]);
+        const right = (box.x + box.width) * zoom + x;
+        const bottom = (box.y + box.height) * zoom + y;
+        if (right > element.clientWidth - pad) x -= right - (element.clientWidth - pad);
+        else if (box.x * zoom + x < pad) x += pad - (box.x * zoom + x);
+        if (bottom > element.clientHeight - pad) y -= bottom - (element.clientHeight - pad);
+        else if (box.y * zoom + y < pad + 40) y += pad + 40 - (box.y * zoom + y);
+      }
       void setViewport({ x, y, zoom }, { duration });
     },
     [fitView, getNodes, getNodesBounds, setViewport],
@@ -86,14 +99,18 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
     const element = wrapper.current;
     if (element === null) return;
     let width = element.clientWidth;
+    let height = element.clientHeight;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    setRoomy(width >= 760);
+    // The overview map needs a canvas big enough to spare its corner: narrow, or short under an open run panel, it covers nodes.
+    setRoomy(width >= 760 && height >= 440);
     const observer = new ResizeObserver(() => {
       const next = element.clientWidth;
-      setRoomy(next >= 760);
-      // A panel, not the pixel or two of a scrollbar appearing.
-      if (Math.abs(next - width) < 80) return;
+      const tall = element.clientHeight;
+      setRoomy(next >= 760 && tall >= 440);
+      // A panel, not the pixel or two of a scrollbar appearing. The run panel opens from below, so height counts too.
+      if (Math.abs(next - width) < 80 && Math.abs(tall - height) < 80) return;
       width = next;
+      height = tall;
       if (timer !== null) clearTimeout(timer);
       timer = setTimeout(() => fit(250), 120);
     });
@@ -177,7 +194,7 @@ export function Canvas({ nodes, edges, onNodesChange, onEdgesChange, onConnect, 
         multiSelectionKeyCode={['Meta', 'Shift']}
         deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
         fitView
-        fitViewOptions={{ padding: 0.14, maxZoom: 1, minZoom: FIT_MIN_ZOOM }}
+        fitViewOptions={{ padding: FIT_PADDING, maxZoom: 1, minZoom: FIT_MIN_ZOOM }}
         // After the first fit, which centres: a graph that cannot fit starts at its trigger instead.
         onInit={() => setTimeout(() => fit(), 0)}
         minZoom={0.35}

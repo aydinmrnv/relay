@@ -18,7 +18,10 @@ function WorkflowEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePositi
   const [hover, setHover] = useState(false);
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const state = data?.state;
-  const branch = data?.branch;
+  // An edge between neighbouring nodes is shorter than the label: it slid under the next node and read "Within budg".
+  // The output's name is printed inside the node beside its handle, so nothing is lost by leaving it off there.
+  const cramped = Math.hypot(targetX - sourceX, targetY - sourceY) < 120;
+  const branch = cramped ? undefined : data?.branch;
 
   return (
     <>
