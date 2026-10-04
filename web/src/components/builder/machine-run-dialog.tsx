@@ -114,7 +114,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
             <>The agent pipeline runs for real on your own cloud machine, in {repo === null ? 'the repository you name below' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.</>
           ) : (
             <>
-              {whole ? 'The whole workflow runs for real' : 'The agent pipeline runs for real'} in {repo === null ? 'the repository relay connect was started in' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.
+              {whole ? 'The whole workflow runs for real' : 'The agent pipeline runs for real'} in {repo === null ? 'the repository relay connect was started in' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. {nodes.pipeline === undefined ? 'What its steps do is real: a message is posted, a ticket is moved.' : 'It spends your plans’ usage — a test run is the free way to check the graph.'}
             </>
           )}
         </DialogDescription>
@@ -189,7 +189,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
           This workflow is attached to <span className="font-mono">{workflow.repository}</span>, but relay connect is running in <span className="font-mono">{repo}</span>. The run happens in {repo}.
         </Notice>
       ) : null}
-      {signedOut.length > 0 ? (
+      {signedOut.length > 0 && nodes.pipeline !== undefined ? (
         <Notice tone="warn">
           {signedOut.map((id) => AGENT_NAMES[id] ?? id).join(' and ')} {signedOut.length === 1 ? 'is' : 'are'} not signed in on {host}, so the run would stop at its first turn.{' '}
           <Link href="/settings#agents" className="underline underline-offset-2">
@@ -218,7 +218,10 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
       <div className="grid gap-1.5 rounded-lg border bg-muted/30 p-3 text-xs">
         <p className="font-medium text-foreground">What will happen</p>
         <ul className="grid gap-1 text-muted-foreground">
-          <li>
+          {nodes.pipeline === undefined ? (
+            <li>This workflow has no agent pipeline, so no agent runs, nothing is spent and no code is touched: its steps are performed in order, and that is all.</li>
+          ) : null}
+          <li className={nodes.pipeline === undefined ? 'hidden' : undefined}>
             {fast ? (
               <>Fast run: {AGENT_NAMES[roles['implementer'] ?? ''] ?? roles['implementer']} plans and implements, unreviewed.</>
             ) : (
@@ -228,10 +231,10 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
               </>
             )}
           </li>
-          <li>
+          <li className={nodes.pipeline === undefined ? 'hidden' : undefined}>
             Delivery: {deliver === 'none' ? 'nothing is committed' : deliver === 'branch' ? 'committed to a run branch, published nowhere' : deliver === 'push' ? 'committed and pushed' : 'committed, pushed and opened as a pull request'}. A run started here never merges — that is yours to do.
           </li>
-          <li>
+          <li className={nodes.pipeline === undefined ? 'hidden' : undefined}>
             {cap === null
               ? 'No per-run cap: set “Stop this run above” on the pipeline node, or “Stop a run above” on a Budget gate, to have the run stop itself.'
               : `Stops itself once it has cost more than $${cap.toFixed(2)}: the lower of the pipeline node’s limit and the Budget gate’s.`}
