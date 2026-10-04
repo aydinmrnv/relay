@@ -83,7 +83,7 @@ function PlaygroundHeader() {
         <span className="hidden sm:inline">{brand.name}</span>
       </Link>
       <Badge variant="secondary">Playground</Badge>
-      <p className="hidden min-w-0 truncate text-xs text-muted-foreground lg:block">No account needed. Your work stays in this browser, and test runs are simulated: nothing is called or billed.</p>
+      <p className="hidden min-w-0 truncate text-xs text-muted-foreground lg:block">No account needed. Your work stays in this browser, and test runs are simulated: nothing is called or billed. Export it, and the relay CLI runs the same workflow for real.</p>
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {/* Test runs here are simulated; this is where to see what a real one did. */}
         <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/r" />} className="hidden md:inline-flex">
