@@ -340,7 +340,11 @@ export function draftReasons(state: RunState): string[] {
   const reasons: string[] = [];
 
   if (state.trigger !== undefined) {
-    reasons.push(`this run started from the ${state.trigger.label} label, so no person has seen it yet`);
+    reasons.push(
+      state.trigger.source === 'workflow'
+        ? `this run was started by ${state.trigger.label}, so no person has seen it yet`
+        : `this run started from the ${state.trigger.label} label, so no person has seen it yet`,
+    );
   }
 
   if (state.tests?.discovered === true && !state.tests.passed) {

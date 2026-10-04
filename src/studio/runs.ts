@@ -137,7 +137,7 @@ let exitHooked = false;
  * group (it is spawned detached), so on POSIX the signal goes to the group;
  * Windows has no groups, and `taskkill /T` walks the tree instead.
  */
-function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid;
   if (pid === undefined) return;
   try {
@@ -153,7 +153,7 @@ function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
-function watchChild(child: ChildProcess): void {
+export function watchChild(child: ChildProcess): void {
   liveChildren.add(child);
   const forget = (): void => {
     liveChildren.delete(child);

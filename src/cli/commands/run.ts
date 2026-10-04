@@ -58,6 +58,8 @@ import { createTracking } from '../../tracking/index.ts';
 import { killProcessTrees } from '../../process/runner.ts';
 import { runQueue } from '../../workflow/queue.ts';
 import { waitForAdmission } from '../../workflow/admission.ts';
+import { applyUnattendedPolicy } from '../../unattended/policy.ts';
+import { adoptedRunTrigger } from '../../unattended/trigger.ts';
 import { pruneArtifacts } from '../../storage/retention.ts';
 import {
   changeCount,
@@ -439,7 +441,10 @@ export async function runCommand(issueRefs: string | string[] | undefined, optio
     }
   }
 
-  const config = applyOverrides(cli.config, options);
+  // A workflow's own trigger started this run (`relay workflow serve`): nobody
+  // is here, so it runs under the same ceiling as anything `relay serve` starts.
+  const trigger = adoptedRunTrigger();
+  const config = trigger === undefined ? applyOverrides(cli.config, options) : applyUnattendedPolicy(applyOverrides(cli.config, options));
 
   // What this run will do and what runs of its shape have cost here before —
   // said before the first agent turn, which is the only time it is useful.
@@ -471,6 +476,7 @@ export async function runCommand(issueRefs: string | string[] | undefined, optio
         defaultBranch: cli.repo.defaultBranch,
       },
       config,
+      ...(trigger === undefined ? {} : { trigger }),
       now,
     });
   });
