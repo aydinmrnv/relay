@@ -25,9 +25,14 @@ import { DRAG_MIME } from './palette';
 import type { CanvasEdge, CanvasNode } from './types';
 
 /** The smallest a fit may make the graph: below this a node's text cannot be read, so the rest is reached by panning. */
-const FIT_MIN_ZOOM = 0.7;
-/** Room left round a fitted graph, as a share of the canvas. Small: every point of it is taken from the size of the nodes. */
-const FIT_PADDING = 0.06;
+const FIT_MIN_ZOOM = 0.62;
+/**
+ * Room left round a fitted graph, as a share of the canvas. Small: every point
+ * of it is taken from the size of the nodes, and a five-column workflow on a
+ * laptop only just fits whole as it is. Seeing the whole flow at once is worth
+ * more than a margin.
+ */
+const FIT_PADDING = 0.04;
 
 const NODE_TYPES = { wf: WorkflowNode };
 const EDGE_TYPES = { wf: WorkflowEdge };

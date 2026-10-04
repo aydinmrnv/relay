@@ -148,6 +148,8 @@ the studio uses.
 - **Your subscriptions, your runners.** No API keys to paste. Agents run on your
   computer or your own Actions minutes, where Relay never sees your code.
 
+![A Linear step selected in the builder: “Runs for real. Done through Linear’s API with a personal API key. Reads LINEAR_API_KEY from the environment the runner was started with.”](docs/images/real-step.png)
+
 | Describe it | Spend forecast |
 |---|---|
 | ![A sentence becoming a Sentry-to-pull-request workflow as it is typed](docs/images/describe.png) | ![The spend forecast: typical and 90th-percentile cost per run, a monthly projection and where the money goes](docs/images/forecast.png) |
