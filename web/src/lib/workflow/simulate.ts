@@ -12,6 +12,7 @@
 import { getNodeType, type NodeTypeDef } from '../connectors';
 import type { Brand } from '../brand';
 import type { NodeRunStatus, Run, RunEvent, RunPhase, RunStatus, Workflow, WorkflowEdge, WorkflowNode } from './schema';
+import { evaluateCondition, evaluateFilter } from './engine/expression';
 import { INJECTION_RULES, screenText } from './injection';
 import { renderTemplate } from './template';
 
@@ -319,13 +320,18 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
         const left = renderTemplate(String(config['left'] ?? ''), context);
         const right = String(config['right'] ?? '');
         const op = String(config['op'] ?? 'contains');
-        const outcome = evaluate(left, op, right);
+        const outcome = evaluateCondition(left, op, right);
         tick(50);
         return { status: 'done', message: left.trim().length === 0 ? `${String(config['left'] ?? 'The field')} has no value in this run, so the condition is false.` : `"${left}" ${op} "${right}" → ${outcome}`, nextHandles: [outcome ? 'true' : 'false'] };
       }
-      case 'logic.action.filter':
+      case 'logic.action.filter': {
+        // Evaluated, with the evaluator a real run uses: a test run never takes a path a real one would not.
+        const expression = String(config['expression'] ?? '');
+        const outcome = evaluateFilter(expression, context);
         tick(50);
-        return { status: 'done', message: `Passed: ${String(config['expression'] ?? 'true')}`, nextHandles: 'all' };
+        if (!outcome.ok) return { status: 'failed', message: `The expression “${expression}” cannot be read: ${outcome.error}.`, nextHandles: [] };
+        return outcome.value ? { status: 'done', message: `Passed: ${expression.trim() || 'no expression'}`, nextHandles: 'all' } : { status: 'done', message: `Did not pass: ${expression}. This path stops here.`, nextHandles: [] };
+      }
       case 'logic.action.transform':
         tick(80);
         return { status: 'done', message: 'Payload transformed.', nextHandles: 'all' };
@@ -589,33 +595,6 @@ function defaults(def: NodeTypeDef): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const field of def.fields) if (field.default !== undefined) out[field.key] = field.default;
   return out;
-}
-
-function evaluate(left: string, op: string, right: string): boolean {
-  // A field with no value satisfies nothing: `Number('')` is 0, which would make "under 3" true of every ticket.
-  if (left.trim().length === 0) return op === 'not-equals' && right.trim().length > 0;
-  const l = left.toLowerCase();
-  const r = right.toLowerCase();
-  switch (op) {
-    case 'contains':
-      return l.includes(r);
-    case 'equals':
-      return l === r;
-    case 'not-equals':
-      return l !== r;
-    case 'gt':
-      return Number(left) > Number(right);
-    case 'lt':
-      return Number(left) < Number(right);
-    case 'matches':
-      try {
-        return new RegExp(right, 'i').test(left);
-      } catch {
-        return false;
-      }
-    default:
-      return false;
-  }
 }
 
 function phaseDetail(phase: string, agent: string | undefined, rng: () => number): string {

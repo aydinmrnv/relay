@@ -7,7 +7,7 @@ import { createEffects } from '../../graph/effects.ts';
 import { issueEvent, manualEvent, webhookEvent } from '../../graph/events.ts';
 import { executeGraph, type GraphEffects, type GraphOutcome } from '../../graph/executor.ts';
 import { DEFAULT_WEBHOOK_PORT, serveWorkflow, WEBHOOK_SECRET_VARIABLE, type ServeLog } from '../../graph/serve.ts';
-import { nodeSupport } from '../../graph/support.ts';
+import { BRIDGE_VARIABLE, nodeSupport } from '../../graph/support.ts';
 import { parseGraph, triggerOf, type GraphRecord, type WorkflowEvent, type WorkflowGraph } from '../../graph/types.ts';
 import { relayDir } from '../../storage/config.ts';
 import { Prompter } from '../../ui/prompt.ts';
@@ -328,7 +328,7 @@ export interface WorkflowCheckJson {
   workflow: { id: string; name: string; file: string; enabled: boolean };
   /** Whether an event can start it with nobody pressing anything, under `relay workflow serve`. */
   startsByItself: boolean;
-  nodes: Array<{ id: string; nodeType: string; name: string; real: boolean; note: string; needs: Array<{ variable: string; set: boolean }> }>;
+  nodes: Array<{ id: string; nodeType: string; name: string; real: boolean; bridge: boolean; note: string; needs: Array<{ variable: string; set: boolean }> }>;
   unwired: number;
   missing: string[];
 }
@@ -341,19 +341,23 @@ export function checkWorkflow(graph: WorkflowGraph, file: string, env: Readonly<
       nodeType: node.type,
       name: node.name,
       real: support.real,
+      bridge: support.bridge,
       note: support.note,
       needs: support.needs.map((variable) => ({ variable, set: (env[variable] ?? '').trim().length > 0 })),
     };
   });
   const trigger = triggerOf(graph);
-  // The webhook's secret is optional on this machine; every other variable a step names is how the step works at all.
-  const missing = [...new Set(nodes.flatMap((node) => node.needs.filter((need) => !need.set && need.variable !== WEBHOOK_SECRET_VARIABLE).map((need) => need.variable)))];
+  // The webhook's secret and the bridge are optional; every other variable a step names is how the step works at all.
+  const optional = new Set([WEBHOOK_SECRET_VARIABLE, BRIDGE_VARIABLE]);
+  const missing = [...new Set(nodes.flatMap((node) => node.needs.filter((need) => !need.set && !optional.has(need.variable)).map((need) => need.variable)))];
+  const bridge = (env[BRIDGE_VARIABLE] ?? '').trim().length > 0;
   return {
     type: 'workflow_check',
     workflow: { id: graph.id, name: graph.name, file, enabled: graph.enabled },
     startsByItself: nodeSupport(trigger.type).real && trigger.type !== 'logic.trigger.manual',
     nodes,
-    unwired: nodes.filter((node) => !node.real).length,
+    // A step for an app Relay has no connection to is performed when there is a bridge to hand it to.
+    unwired: nodes.filter((node) => !node.real && !(node.bridge && bridge)).length,
     missing,
   };
 }
@@ -373,10 +377,12 @@ export async function workflowCheckCommand(workflowRef: string | undefined, opti
   out(dim(`  ${check.workflow.file}${graph.enabled ? '' : '  ·  paused: nothing starts it by itself'}`));
   out();
   for (const node of check.nodes) {
-    out(`  ${node.real ? success(glyphs(theme()).ok) : warning('!')} ${node.name}${node.real ? '' : warning('  not performed')}`);
+    const bridged = !node.real && node.bridge && node.needs.every((need) => need.set);
+    out(`  ${node.real ? success(glyphs(theme()).ok) : warning('!')} ${node.name}${node.real ? '' : warning(bridged ? '  handed to your bridge' : '  not performed')}`);
     hint(node.note, '    ');
     for (const need of node.needs) {
       if (need.variable === WEBHOOK_SECRET_VARIABLE && !need.set) hint(`${need.variable} is not set: deliveries are unsigned, so it listens on this machine only.`, '    ');
+      else if (need.variable === BRIDGE_VARIABLE && !need.set) hint(`${need.variable} is not set, so this step is skipped.`, '    ');
       else out(`    ${need.set ? dim(`${need.variable} is set`) : failure(`${need.variable} is not set`)}`);
     }
   }

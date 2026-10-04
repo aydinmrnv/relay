@@ -142,7 +142,7 @@ export function createRouter(options: RouterOptions): Router {
   const logout = options.logout ?? liveLogout;
   const install = options.installFiles ?? liveInstallFiles;
   const startedAt = new Date().toISOString();
-  const capabilities: CompanionCapability[] = options.capabilities ?? (options.runs === null ? ['agents', 'chatgpt'] : ['agents', 'runs', 'install', 'chatgpt']);
+  const capabilities: CompanionCapability[] = options.capabilities ?? (options.runs === null ? ['agents', 'chatgpt'] : ['agents', 'runs', 'install', 'chatgpt', 'workflow']);
   const repositoryPerRun = capabilities.includes('repositories');
 
   function hello(authorized: boolean): HelloResponse {

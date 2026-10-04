@@ -250,6 +250,16 @@ interface PipelineChildInput {
   onLine: (line: Record<string, unknown>) => void;
 }
 
+/**
+ * The variables only a workflow's own steps read: the chat webhooks, the
+ * bridge, the webhook's signing secret, the headers of an HTTP request. Never
+ * passed on to the pipeline's run. (`LINEAR_API_KEY` is not here: the engine
+ * itself reads Linear issues with it.)
+ */
+export function isWorkflowCredential(name: string): boolean {
+  return ['SLACK_WEBHOOK_URL', 'DISCORD_WEBHOOK_URL', 'BRIDGE_WEBHOOK_URL', 'RELAY_WEBHOOK_SECRET'].includes(name) || /^HTTP_HEADERS(_\d+)?$/.test(name);
+}
+
 /** How long a run is given to cancel cleanly before its process group is ended. */
 const CANCEL_GRACE_MS = 10_000;
 
@@ -272,6 +282,9 @@ export async function runPipelineChild(input: PipelineChildInput): Promise<Pipel
   await writeFile(overlayPath, JSON.stringify(pipelineOverlay(graph, event), null, 2), { mode: 0o600 });
 
   const childEnv: NodeJS.ProcessEnv = { ...input.env, [CONFIG_OVERLAY_VARIABLE]: overlayPath, NO_COLOR: '1', FORCE_COLOR: '0' };
+  // The workflow's own credentials stop here. They are for its steps, and the
+  // run this starts hands its environment on to agents and a test suite.
+  for (const name of Object.keys(childEnv)) if (isWorkflowCredential(name)) delete childEnv[name];
   if (event.attended) delete childEnv[RUN_TRIGGER_VARIABLE];
   else childEnv[RUN_TRIGGER_VARIABLE] = JSON.stringify({ label: triggerLabel(event, graph), actor: event.actor, at: event.at });
 

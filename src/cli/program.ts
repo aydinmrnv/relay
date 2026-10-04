@@ -237,6 +237,7 @@ export function buildProgram(version: string): Command {
     .option('--open', 'open the pairing page even when not at a terminal')
     .option('--no-open', 'never open a browser; print the pairing link instead')
     .option('--new-token', 'replace this machine\'s secret; every start already has a pairing token of its own')
+    .option('--env-file <path>', 'read the credentials a workflow\'s app steps need (SLACK_WEBHOOK_URL, …) from a file of NAME=value lines')
     .option('--hub <url>', 'run as a Relay Cloud runner: dial out to this hub instead of listening (or RELAY_HUB_URL)')
     .option('--token-from <source>', 'with --hub, where the runner token is: env (RELAY_RUNNER_TOKEN), stdin, file:<path>, or azure')
     .option('--json', `${JSON_FLAG} — one object per line: listening, then each event`)

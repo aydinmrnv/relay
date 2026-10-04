@@ -1,25 +1,9 @@
 /**
- * `{{a.b.c}}` substitution. Arrays join with ", ", objects become JSON, and an
- * unknown path renders as an empty string rather than leaking the braces.
+ * `{{a.b.c}}` substitution, and the path lookup under it. The engine fills a
+ * real run's messages with the same two functions (`./engine/expression`), so
+ * a message reads the same in a test run and a real one.
  */
-export function renderTemplate(template: string, context: Record<string, unknown>): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_.\-]+)\s*\}\}/g, (_match, path: string) => {
-    const value = lookup(context, path);
-    if (value === undefined || value === null) return '';
-    if (Array.isArray(value)) return value.map(String).join(', ');
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
-  });
-}
-
-export function lookup(context: Record<string, unknown>, path: string): unknown {
-  let current: unknown = context;
-  for (const segment of path.split('.')) {
-    if (current === null || typeof current !== 'object') return undefined;
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
-}
+export { lookup, renderTemplate } from './engine/expression';
 
 /** The variables the inspector offers, grouped by where they come from. */
 export const VARIABLE_HINTS: Array<{ group: string; variables: Array<{ path: string; description: string }> }> = [

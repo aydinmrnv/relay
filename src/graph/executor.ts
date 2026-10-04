@@ -4,7 +4,7 @@ import { clip, oneLine } from '../util/text.ts';
 import { formatCost } from '../workflow/usage.ts';
 import { evaluateCondition, evaluateFilter, renderTemplate } from './expression.ts';
 import { nextWindowOpening } from './schedule.ts';
-import { nodeSupport } from './support.ts';
+import { BRIDGE_VARIABLE, nodeSupport } from './support.ts';
 import { triggerOf, type GraphNode, type GraphNodeStatus, type GraphRecord, type GraphRunStatus, type GraphTask, type WorkflowEvent, type WorkflowGraph } from './types.ts';
 
 /**
@@ -321,7 +321,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     }
 
     const support = nodeSupport(node.type);
-    if (!support.real) return { status: 'unwired', message: `Not performed: ${support.note}`, next: 'all' };
+    if (!support.real) return support.bridge ? bridge(node) : { status: 'unwired', message: `Not performed: ${support.note}`, next: 'all' };
 
     switch (node.type) {
       case 'gates.action.kill-switch':
@@ -692,6 +692,27 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     const response = await effects.fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body(message)), signal: AbortSignal.any([effects.signal, AbortSignal.timeout(20_000)]) });
     if (!response.ok) return { status: 'failed', message: `${app} answered HTTP ${response.status}.`, detail: clip(await response.text().catch(() => ''), 500), next: [] };
     return { status: 'done', message: `Posted to ${app}.`, detail: message, next: 'all' };
+  }
+
+  /**
+   * An app step Relay has no connection for, handed to the person's own
+   * endpoint: what the node was set to do, with its variables filled in, and
+   * the run it belongs to. The same request the exported Action sends, so one
+   * bridge serves both. With no bridge the step did not happen, and says so.
+   */
+  async function bridge(node: GraphNode): Promise<NodeResult> {
+    const [connector = '', , action = ''] = node.type.split('.');
+    const url = effects.env[BRIDGE_VARIABLE]?.trim() ?? '';
+    if (url.length === 0) return { status: 'unwired', message: `Not performed: Relay has no connection to ${connector} yet, and ${BRIDGE_VARIABLE} is not set.`, next: 'all' };
+    if (!/^https?:\/\//i.test(url)) return { status: 'failed', message: `${BRIDGE_VARIABLE} is not an http(s) URL.`, next: [] };
+    const config: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node.config)) config[key] = typeof value === 'string' ? renderTemplate(value, context) : value;
+    const message = ['text', 'body', 'message', 'title'].map((key) => config[key]).find((value): value is string => typeof value === 'string' && value.trim().length > 0) ?? '';
+    if (dry) return { status: 'done', message: `Dry run: would hand ${connector}.${action} to your bridge.`, ...(message.length === 0 ? {} : { detail: message }), next: 'all' };
+    const body = { run: run['id'], prUrl: run['prUrl'], status: run['status'], message, action: { connector, action, config }, issue, workflow: graph.name, repository: graph.repository };
+    const response = await effects.fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.any([effects.signal, AbortSignal.timeout(30_000)]) });
+    const said = `Handed ${connector}.${action} to your bridge → ${response.status}`;
+    return response.ok ? { status: 'done', message: said, ...(message.length === 0 ? {} : { detail: message }), next: 'all' } : { status: 'failed', message: said, next: [] };
   }
 
   /** The GitHub issue the event is about: its number, or a reference `gh` accepts. */

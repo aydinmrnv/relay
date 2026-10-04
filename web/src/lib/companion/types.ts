@@ -11,8 +11,10 @@ export const DEFAULT_COMPANION_PORT = 4477;
  * it out (a Relay Cloud machine). `github`: the runner signs in to GitHub
  * itself (a Relay Cloud machine again). `chatgpt`: the runner can Sign in with
  * ChatGPT itself, which only a `relay connect` on the person's own machine can.
+ * `workflow`: the runner performs a whole workflow, not the pipeline alone — a
+ * run may carry its compiled graph, and an install its `.relay/workflows/` file.
  */
-export type CompanionCapability = 'agents' | 'runs' | 'install' | 'repositories' | 'github' | 'chatgpt';
+export type CompanionCapability = 'agents' | 'runs' | 'install' | 'repositories' | 'github' | 'chatgpt' | 'workflow';
 
 /** A Relay Cloud machine, as the hub describes it. Mirrors `CloudRunnerStatus` in the engine. */
 export type CloudRunnerState = 'none' | 'queued' | 'creating' | 'starting' | 'ready' | 'stopping' | 'asleep' | 'failed' | 'deleting' | 'offline';

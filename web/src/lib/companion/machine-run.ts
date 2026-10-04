@@ -6,11 +6,12 @@
  * panel and the Runs pages show a real run exactly the way they show a
  * simulated one — except that every number here was measured.
  *
- * What runs on the machine is the pipeline and its delivery, with this
- * workflow's settings. The trigger is the person who pressed the button, and
- * the guardrails in front of the pipeline exist to decide whether an *event*
- * may start a run, so they have nothing to decide here; the actions after it
- * run in the exported workflow. Those nodes are marked skipped, and the run
+ * Two kinds of run arrive here. A runner that can perform a whole workflow
+ * (`relay workflow run`) says what became of every node — `node_started`,
+ * `node_finished` — around the pipeline's own lines, and the canvas shows each
+ * as it happened: a guardrail that passed, a Slack message that was posted, a
+ * step Relay had no way to perform. A runner that cannot runs the pipeline and
+ * its delivery alone; there the other nodes are marked skipped, and the run
  * says why once rather than pretending to have run them.
  */
 import { getNodeType } from '../connectors';
@@ -64,6 +65,8 @@ export function taskLabel(task: RunTask): string {
 }
 
 export interface MachineRunStart {
+  /** `workflow`: the runner walks the whole graph, so every node is waiting its turn, not skipped. */
+  scope?: 'workflow';
   id: string;
   companionRunId: string;
   host: string;
@@ -77,7 +80,8 @@ export interface MachineRunStart {
 export function createMachineRun(workflow: Workflow, start: MachineRunStart): Run {
   const nodes = machineRunNodes(workflow);
   const triggerDef = nodes.trigger === undefined ? undefined : getNodeType(workflow.nodes.find((node) => node.id === nodes.trigger)!.data.typeId);
-  const tracked = new Set([nodes.trigger, nodes.pipeline, nodes.delivery, nodes.comment].filter((id): id is string => id !== undefined));
+  const whole = start.scope === 'workflow';
+  const tracked = new Set(whole ? workflow.nodes.map((node) => node.id) : [nodes.trigger, nodes.pipeline, nodes.delivery, nodes.comment].filter((id): id is string => id !== undefined));
   const nodeStatus: Record<string, NodeRunStatus> = {};
   for (const node of workflow.nodes) nodeStatus[node.id] = node.id === nodes.trigger ? 'done' : tracked.has(node.id) ? 'pending' : 'skipped';
 
@@ -116,7 +120,7 @@ export function createMachineRun(workflow: Workflow, start: MachineRunStart): Ru
     phases: [],
     costUsd: 0,
     source: 'machine',
-    machine: { host: start.host, ...(start.runner === undefined ? {} : { runner: start.runner }), repository: start.repository, companionRunId: start.companionRunId, runId: null, task: start.task },
+    machine: { host: start.host, ...(start.runner === undefined ? {} : { runner: start.runner }), repository: start.repository, companionRunId: start.companionRunId, runId: null, task: start.task, ...(whole ? { scope: 'workflow' as const } : {}) },
   };
 }
 
@@ -153,6 +157,11 @@ export class MachineRunFold {
   private done = false;
   /** Where the pipeline's last event sits once delivery has begun, so late pipeline facts land inside its group. */
   private pipelineEnd: number | null = null;
+  /** Set once the stream says it is a whole workflow: the node records, not the pipeline's lines, say what became of each node. */
+  private whole = false;
+  /** How the workflow itself said it ended, when it did. */
+  private outcome: { status: RunStatus; summary: string; costUsd: number | null } | null = null;
+  private readonly names: Map<string, string>;
 
   /** The time of "now", for the two places a record carries none of its own. A recording being played back passes the run's own clock. */
   private readonly now: () => string;
@@ -161,6 +170,7 @@ export class MachineRunFold {
     this.run = run;
     this.now = now;
     this.nodes = machineRunNodes(workflow);
+    this.names = new Map(workflow.nodes.map((node) => [node.id, node.data.typeId]));
     const pipeline = workflow.nodes.find((node) => node.id === this.nodes.pipeline);
     this.fast = pipeline?.data.typeId === 'pipeline.action.fast';
   }
@@ -175,6 +185,17 @@ export class MachineRunFold {
     const data = record.data;
     const at = typeof data['at'] === 'string' && !Number.isNaN(Date.parse(data['at'])) ? data['at'] : this.now();
     switch (data['type']) {
+      case 'workflow_started':
+        this.whole = true;
+        return [];
+      case 'node_started':
+        return this.nodeStarted(at, data);
+      case 'node_waiting':
+        return this.nodeWaiting(at, data);
+      case 'node_finished':
+        return this.nodeFinished(at, data);
+      case 'workflow_finished':
+        return this.workflowFinished(data);
       case 'run_started':
         return this.started(at, data);
       case 'phase_started':
@@ -215,6 +236,67 @@ export class MachineRunFold {
   private setNode(nodeId: string | undefined, status: NodeRunStatus): void {
     if (nodeId !== undefined) this.run.nodeStatus[nodeId] = status;
   }
+
+  /* ------------------------- a whole workflow ------------------------- */
+
+  /** The nodes the pipeline's own lines already describe: its start, its delivery, its comment. */
+  private engineOwned(nodeId: string): boolean {
+    return nodeId === this.nodes.pipeline || nodeId === this.nodes.delivery || nodeId === this.nodes.comment;
+  }
+
+  private nodeStarted(at: string, data: Record<string, unknown>): RunEvent[] {
+    const nodeId = String(data['node'] ?? '');
+    // The trigger was shown when the button was pressed, and the pipeline announces itself.
+    if (!this.names.has(nodeId) || nodeId === this.nodes.trigger || this.engineOwned(nodeId)) return [];
+    this.setNode(nodeId, 'running');
+    return [this.emit({ at, nodeId, kind: 'node-started', status: 'running', message: String(data['name'] ?? '') })];
+  }
+
+  private nodeWaiting(at: string, data: Record<string, unknown>): RunEvent[] {
+    const nodeId = String(data['node'] ?? '');
+    if (!this.names.has(nodeId)) return [];
+    this.setNode(nodeId, 'waiting');
+    return [this.emit({ at, nodeId, kind: 'message', status: 'waiting', message: String(data['message'] ?? 'Waiting.'), ...(typeof data['detail'] === 'string' ? { detail: data['detail'] } : {}) })];
+  }
+
+  private nodeFinished(at: string, data: Record<string, unknown>): RunEvent[] {
+    const nodeId = String(data['node'] ?? '');
+    if (!this.names.has(nodeId)) return [];
+    const said = String(data['status'] ?? 'done');
+    // A step Relay had no way to perform did not happen. It is shown as skipped, with the reason, never as done.
+    const status: NodeRunStatus = said === 'unwired' ? 'skipped' : said === 'refused' || said === 'failed' || said === 'skipped' ? said : 'done';
+    const current = this.run.nodeStatus[nodeId];
+    if (nodeId === this.nodes.trigger && status === 'done') return [];
+    // The pipeline's own lines have usually said this already, in more detail. Only a different ending is news.
+    if (this.engineOwned(nodeId) && (current === status || (current === 'done' && status === 'done'))) return [];
+    this.setNode(nodeId, status);
+    const cost = typeof data['costUsd'] === 'number' ? data['costUsd'] : undefined;
+    const ms = Number(data['durationMs'] ?? 0);
+    return [
+      this.emit({
+        at,
+        nodeId,
+        kind: 'node-finished',
+        status,
+        message: String(data['message'] ?? ''),
+        ...(typeof data['detail'] === 'string' && data['detail'].length > 0 ? { detail: data['detail'] } : {}),
+        ...(Number.isFinite(ms) && ms > 0 ? { durationMs: Math.round(ms) } : {}),
+        ...(cost === undefined ? {} : { costUsd: round(cost) }),
+      }),
+    ];
+  }
+
+  private workflowFinished(data: Record<string, unknown>): RunEvent[] {
+    const said = String(data['status'] ?? 'failed');
+    const status: RunStatus = said === 'succeeded' || said === 'refused' || said === 'cancelled' ? said : 'failed';
+    this.outcome = { status, summary: String(data['summary'] ?? ''), costUsd: typeof data['costUsd'] === 'number' ? data['costUsd'] : null };
+    // The whole run's cost: the pipeline's, and any step of the workflow's own that asked a model.
+    if (this.outcome.costUsd !== null) this.run.costUsd = round(this.outcome.costUsd);
+    if (typeof data['pullRequest'] === 'string' && data['pullRequest'].length > 0 && this.run.prUrl === undefined) this.run.prUrl = data['pullRequest'];
+    return [];
+  }
+
+  /* ---------------------------- the pipeline ---------------------------- */
 
   private started(at: string, data: Record<string, unknown>): RunEvent[] {
     const runId = typeof data['runId'] === 'string' ? data['runId'] : null;
@@ -334,6 +416,18 @@ export class MachineRunFold {
     this.done = true;
     const at = this.now();
     const events: RunEvent[] = [];
+
+    // A whole workflow says how it ended itself: a refusal at a guardrail is
+    // not a failure, and a run that never reached the pipeline did not crash.
+    if (this.whole && this.outcome !== null) {
+      if (this.run.machine !== undefined && !this.summarized) this.run.machine.exitCode = code;
+      for (const [nodeId, value] of Object.entries(this.run.nodeStatus)) if (value === 'pending' || value === 'running' || value === 'waiting') this.run.nodeStatus[nodeId] = 'skipped';
+      this.run.status = this.outcome.status;
+      this.run.finishedAt = at;
+      this.run.summary = this.outcome.summary.length > 0 ? this.outcome.summary : summarize(this.run, error);
+      events.push(this.emit({ at, nodeId: null, kind: 'run-finished', message: `Run ${this.outcome.status}.`, detail: this.run.summary }));
+      return events;
+    }
     const status: RunStatus = this.summarized ? statusFor(this.run.machine?.exitCode ?? code ?? EXIT.error) : code === EXIT.cancelled || code === null ? (error === null ? 'cancelled' : 'failed') : 'failed';
 
     if (!this.summarized) {

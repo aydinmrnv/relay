@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import { answerOptions, executeGraph, pickAnswer, redactUrl, type ApprovalAnswer, type GraphEffects, type PipelineResult } from '../src/graph/executor.ts';
 import { manualEvent, webhookEvent } from '../src/graph/events.ts';
-import { nodeSupport, REAL_NODE_TYPES } from '../src/graph/support.ts';
+import { nodeSupport, REAL_NODE_TYPES, testRunsOnly } from '../src/graph/support.ts';
 import { parseGraph, type GraphNode, type GraphRecord, type WorkflowEvent, type WorkflowGraph } from '../src/graph/types.ts';
 
 /**
@@ -197,6 +198,25 @@ describe('a workflow run as it was drawn', () => {
     assert.equal(statusOf(made, slack), 'done', 'the step after it still runs');
     assert.deepEqual(outcome.unwired, ['Zendesk · Internal note']);
     assert.equal(outcome.status, 'succeeded');
+  });
+
+  it('hands a step for an app it has no connection to over to the person’s bridge, when there is one', async () => {
+    const trigger = node('logic.trigger.manual');
+    const pipeline = node('pipeline.action.run');
+    const zendesk = node('zendesk.action.internal-note', { body: 'Fix in review: {{run.prUrl}}', ticket: 991 }, ['out'], 'Zendesk · Internal note');
+    const made = world({ env: { BRIDGE_WEBHOOK_URL: 'https://bridge.acme.dev/relay' } });
+    const outcome = await executeGraph(graph([trigger, pipeline, zendesk], [[trigger, pipeline], [pipeline, zendesk]]), byHand(), made.effects);
+    assert.equal(statusOf(made, zendesk), 'done');
+    assert.equal(messageOf(made, zendesk), 'Handed zendesk.internal-note to your bridge → 200');
+    assert.deepEqual(outcome.unwired, []);
+    const sent = JSON.parse(made.requests[0]!.body) as { prUrl: string; message: string; action: unknown; repository: string };
+    assert.equal(made.requests[0]!.url, 'https://bridge.acme.dev/relay');
+    assert.deepEqual(sent.action, { connector: 'zendesk', action: 'internal-note', config: { body: 'Fix in review: https://github.com/acme/api/pull/143', ticket: 991 } });
+    assert.deepEqual([sent.prUrl, sent.message, sent.repository], ['https://github.com/acme/api/pull/143', 'Fix in review: https://github.com/acme/api/pull/143', 'acme/api']);
+
+    const refused = world({ env: { BRIDGE_WEBHOOK_URL: 'https://bridge.acme.dev/relay' }, respond: () => ({ status: 502 }) });
+    await executeGraph(graph([trigger, zendesk], [[trigger, zendesk]]), byHand(), refused.effects);
+    assert.equal(statusOf(refused, zendesk), 'failed', 'a bridge that refuses is a step that failed, not one that was skipped');
   });
 
   it('fails a chat step that has nowhere to post, by name, and keeps the pull request', async () => {
@@ -610,6 +630,15 @@ describe('the steps after the pipeline', () => {
 });
 
 describe('the table of what is real', () => {
+  it('is the same file in the studio, and so is the evaluator', async () => {
+    // The studio cannot import the CLI, so it holds copies (`npm run sync:studio`). A copy that drifted would
+    // have the canvas call a step real that this engine skips, or a test run take a branch a real run does not.
+    for (const name of ['expression.ts', 'support.ts']) {
+      const [ours, theirs] = await Promise.all([readFile(new URL(`../src/graph/${name}`, import.meta.url), 'utf8'), readFile(new URL(`../web/src/lib/workflow/engine/${name}`, import.meta.url), 'utf8')]);
+      assert.equal(theirs, ours, `web/src/lib/workflow/engine/${name} has drifted from src/graph/${name}: run \`npm run sync:studio\``);
+    }
+  });
+
   it('has a handler for every node it calls real', async () => {
     for (const type of REAL_NODE_TYPES.filter((entry) => entry.split('.')[1] === 'action')) {
       const trigger = node('logic.trigger.manual');
@@ -623,8 +652,9 @@ describe('the table of what is real', () => {
 
   it('names what each step needs, and why an unwired one is', () => {
     assert.deepEqual(nodeSupport('slack.action.post-message').needs, ['SLACK_WEBHOOK_URL']);
-    assert.equal(nodeSupport('slack.action.send-dm').real, false);
-    assert.equal(nodeSupport('logic.action.transform').real, false);
+    assert.deepEqual([nodeSupport('slack.action.send-dm').real, nodeSupport('slack.action.send-dm').bridge], [false, true]);
+    assert.deepEqual([nodeSupport('logic.action.transform').real, nodeSupport('logic.action.transform').bridge, testRunsOnly('logic.action.transform')], [false, false, true]);
+    assert.deepEqual([testRunsOnly('zendesk.action.internal-note'), testRunsOnly('sentry.trigger.issue-created'), testRunsOnly('slack.action.post-message')], [false, false, false]);
     assert.match(nodeSupport('zendesk.action.internal-note').note, /no connection to zendesk yet/);
     assert.equal(nodeSupport('sentry.trigger.issue-created').real, false);
     assert.match(nodeSupport('sentry.trigger.issue-created').note, /Incoming webhook/);

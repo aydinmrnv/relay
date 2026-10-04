@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { createLineSplitter, parseJsonLine } from '../process/lines.ts';
 import { CONFIG_OVERLAY_VARIABLE, DEFAULT_CONFIG, mergeConfig } from '../storage/config.ts';
 import { errorMessage } from '../util/errors.ts';
+import { parseGraph } from '../graph/types.ts';
 import { studioRunOverlay } from './overlay.ts';
 import type { CompanionRunView, RunStage, RunStreamRecord, RunTask, StartRunRequest } from './protocol.ts';
 
@@ -184,6 +185,15 @@ export function parseStartRequest(body: unknown, options: { repositoryPerRun?: b
   const config = raw['config'];
   if (config === null || typeof config !== 'object' || Array.isArray(config)) throw new TaskError('The request carries no compiled config.');
   const parsed: StartRunRequest = { workflow: { id: workflow['id'], name: workflow['name'] }, config: config as Record<string, unknown>, task: parseTask(raw['task']) };
+  if (raw['graph'] !== undefined && raw['graph'] !== null) {
+    // Read strictly, here, so a workflow this Relay cannot run is refused before anything is spawned.
+    try {
+      // One config, not two: the pipeline is shaped by the same compiled config a pipeline-only run would get.
+      parsed.graph = { ...parseGraph(raw['graph']), config: parsed.config };
+    } catch (error) {
+      throw new TaskError(`The workflow sent with this run cannot be run here: ${errorMessage(error)}`);
+    }
+  }
   const repository = typeof raw['repository'] === 'string' ? raw['repository'].trim() : '';
   if (options.repositoryPerRun === true) {
     if (repository.length === 0) throw new TaskError('Say which GitHub repository to run in, as owner/name.');
@@ -218,6 +228,12 @@ export function parseTask(value: unknown): RunTask {
 export function runArguments(task: RunTask): string[] {
   const base = ['run', '--json', '--no-offer-merge'];
   return task.kind === 'issue' ? [...base, '--', task.ref] : [...base, `--prompt=${task.text}`];
+}
+
+/** The argv for a run that carries its whole workflow: `relay workflow run`, on the file the graph was written to. */
+export function workflowRunArguments(task: RunTask, graphPath: string): string[] {
+  const base = ['workflow', 'run', '--json'];
+  return task.kind === 'issue' ? [...base, '--', graphPath, task.ref] : [...base, `--prompt=${task.text}`, '--', graphPath];
 }
 
 export class StudioRuns {
@@ -330,7 +346,16 @@ export class StudioRuns {
     const overlayPath = join(overlayDir, 'config.json');
     await writeFile(overlayPath, JSON.stringify(run.overlay, null, 2), { mode: 0o600 });
 
-    const child = spawn(this.launcher.command, [...this.launcher.args, ...runArguments(run.request.task)], {
+    // A run that carries its workflow is the whole graph, walked by `relay
+    // workflow run`, which starts the pipeline itself with the same overlay.
+    let args = runArguments(run.request.task);
+    if (run.request.graph !== undefined) {
+      const graphPath = join(overlayDir, 'workflow.json');
+      await writeFile(graphPath, JSON.stringify(run.request.graph), { mode: 0o600 });
+      args = workflowRunArguments(run.request.task, graphPath);
+    }
+
+    const child = spawn(this.launcher.command, [...this.launcher.args, ...args], {
       cwd: root,
       env: { ...process.env, [CONFIG_OVERLAY_VARIABLE]: overlayPath, NO_COLOR: '1', FORCE_COLOR: '0' },
       // A pipe on stdin, never the companion's terminal: nothing in the run

@@ -125,6 +125,8 @@ export interface MachineRunInfo {
   runId: string | null;
   task: { kind: 'issue'; ref: string } | { kind: 'prompt'; text: string };
   exitCode?: number | null;
+  /** `workflow`: the runner walked the whole graph. Absent: the pipeline and its delivery alone, as every run was before runners could. */
+  scope?: 'workflow';
 }
 
 /* ------------------------------------------------------------------ */

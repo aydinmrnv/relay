@@ -9,13 +9,13 @@ import { exitJsonMode } from '../src/cli/json.ts';
 import { restoreHumanOutput, setTheme } from '../src/cli/output.ts';
 import { checkWorkflow, loadWorkflow, resolveWorkflowFile, workflowApprovalsCommand, workflowCheckCommand, workflowDecideCommand, workflowRunCommand } from '../src/cli/commands/workflow.ts';
 import { createApproval, listApprovals } from '../src/graph/approvals.ts';
-import { createEffects, pipelineOverlay } from '../src/graph/effects.ts';
+import { createEffects, isWorkflowCredential, pipelineOverlay } from '../src/graph/effects.ts';
 import { manualEvent, signBody, webhookEvent } from '../src/graph/events.ts';
 import { executeGraph, type GraphOutcome } from '../src/graph/executor.ts';
 import { serveWorkflow, type ServeLog } from '../src/graph/serve.ts';
 import { parseGraph, type GraphRecord, type WorkflowEvent, type WorkflowGraph } from '../src/graph/types.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
-import type { RelayLauncher } from '../src/studio/runs.ts';
+import { parseStartRequest, StudioRuns, type RelayLauncher } from '../src/studio/runs.ts';
 import { createTempRepo, FakeIssueProvider, type TempRepo } from './helpers/tempRepo.ts';
 
 /**
@@ -222,6 +222,43 @@ describe('a workflow, with the real effects', () => {
     assert.equal(gate?.type === 'node_finished' ? gate.message : '', 'Approved by maintainer.');
     const told = records.find((record) => record.type === 'node_waiting');
     assert.match(told?.type === 'node_waiting' ? (told.detail ?? '') : '', new RegExp(`relay workflow approve ${waiting[0]!.id}`));
+  });
+
+  it('keeps the workflow’s own credentials from the run it starts', async () => {
+    await runReal(workflow('logic.trigger.manual'), manualEvent({ kind: 'issue', ref: '142' }, new Date()), { SLACK_WEBHOOK_URL: `${chatUrl}/hook`, HTTP_HEADERS_2: '{"authorization":"x"}' });
+    assert.equal((await seen()).slack, null, 'agents and a test suite inherit that run’s environment');
+    assert.deepEqual(['SLACK_WEBHOOK_URL', 'DISCORD_WEBHOOK_URL', 'BRIDGE_WEBHOOK_URL', 'RELAY_WEBHOOK_SECRET', 'HTTP_HEADERS', 'HTTP_HEADERS_3'].map(isWorkflowCredential), [true, true, true, true, true, true]);
+    assert.deepEqual(['LINEAR_API_KEY', 'PATH', 'HTTP_HEADERS_X', 'GH_TOKEN'].map(isWorkflowCredential), [false, false, false, false]);
+  });
+
+  it('runs the whole workflow when the studio sends one with a run, and the pipeline alone when it does not', async () => {
+    // The companion's child is `relay workflow run` here; a script answers for it and says what it was given.
+    const script = join(repo.root, '..', 'fake-relay.mjs');
+    await writeFile(script, `
+      import { readFileSync, writeFileSync } from 'node:fs';
+      const argv = process.argv.slice(2);
+      const file = argv.find((arg) => arg.endsWith('workflow.json'));
+      writeFileSync(process.env.FAKE_RUN_SEEN, JSON.stringify({ argv: argv.map((arg) => (arg === file ? '<graph>' : arg)), graph: file === undefined ? null : JSON.parse(readFileSync(file, 'utf8')) }));
+      process.stdout.write(JSON.stringify({ schema: 1, command: 'workflow', type: 'workflow_finished', status: 'succeeded', exitCode: 0 }) + '\\n');
+    `);
+    const runs = new StudioRuns(repo.root, { command: process.execPath, args: [script] });
+    const config = { version: 1, agents: { planner: 'claude', planReviewer: 'codex', implementer: 'codex', codeReviewer: 'claude' }, workflow: { deliver: 'pr', maxCostUsd: 3 } };
+    const finished = (id: string): Promise<void> => new Promise((resolve) => runs.subscribe(id, (record) => record.type === 'exit' && resolve()));
+
+    const whole = parseStartRequest({ workflow: { id: 'w', name: 'W' }, config, task: { kind: 'issue', ref: '142' }, graph: { ...workflow('logic.trigger.manual'), config: { version: 1, workflow: { deliver: 'merge' } } } });
+    await finished((await runs.start(whole)).id);
+    const first = JSON.parse(await readFile(seenPath, 'utf8')) as { argv: string[]; graph: { name: string; config: unknown } };
+    assert.deepEqual(first.argv, ['workflow', 'run', '--json', '--', '<graph>', '142']);
+    assert.deepEqual(first.graph.config, config, 'the run is shaped by the one compiled config, not a second copy inside the graph');
+
+    const described = parseStartRequest({ workflow: { id: 'w', name: 'W' }, config, task: { kind: 'prompt', text: '--deliver=merge' }, graph: workflow('logic.trigger.manual') });
+    await finished((await runs.start(described)).id);
+    assert.deepEqual((JSON.parse(await readFile(seenPath, 'utf8')) as { argv: string[] }).argv, ['workflow', 'run', '--json', '--prompt=--deliver=merge', '--', '<graph>'], 'a description can never become a flag');
+
+    await finished((await runs.start(parseStartRequest({ workflow: { id: 'w', name: 'W' }, config, task: { kind: 'issue', ref: '142' } }))).id);
+    assert.deepEqual((JSON.parse(await readFile(seenPath, 'utf8')) as { argv: string[] }).argv, ['run', '--json', '--no-offer-merge', '--', '142']);
+
+    assert.throws(() => parseStartRequest({ workflow: { id: 'w', name: 'W' }, config, task: { kind: 'issue', ref: '142' }, graph: { version: 9 } }), /cannot be run here: This workflow file is version 9/);
   });
 
   it('gives the unattended overlay only what an unattended run reads', () => {
