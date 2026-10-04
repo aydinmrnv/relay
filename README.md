@@ -219,6 +219,35 @@ relay workflow serve ticket-to-pr     # an incoming webhook, a schedule, a label
 relay workflow approve ap-7kq2m9xt    # the yes a Human approval step is waiting for
 ```
 
+This is that command with a small workflow in it — a webhook, an allowlist, a
+filter, an approval and an HTTP step — taking one delivery that was not
+signed, one that was, and a yes from another terminal:
+
+```
+$ RELAY_WEBHOOK_SECRET=… relay workflow serve demo --port 4598
+
+Workflow, unattended
+  Trigger    Incoming webhook
+  Listening  POST http://127.0.0.1:4598/hooks/demo (signed with RELAY_WEBHOOK_SECRET)
+  Delivery   capped at a draft pull request: nothing merges without a person
+
+2026-10-04T19:47:04.662Z ignored a delivery whose signature did not match
+2026-10-04T19:47:04.675Z event webhook-d201d9ac1fa66ad6: Export crashes on the second click
+
+Demo: approve, then tell the channel
+  Started by a webhook, from @ada: Export crashes on the second click
+
+  ✓ Incoming webhook  Received: Export crashes on the second click
+  ✓ Author allowlist  @ada is allowed.
+  ✓ Only bugs  Passed: issue.labels contains "bug"
+  … Waiting for approval: Export crashes on the second click
+    Approve with `relay workflow approve ap-cuf6799d`, or reject with `relay workflow reject ap-cuf6799d`, in this repository.
+  ✓ Human approval  Approved by ada.  3.0s
+  ✓ Tell the channel  POST http://127.0.0.1:4599/told → 200
+
+✓ Finished: Demo: approve, then tell the channel · Export crashes on the second click
+```
+
 A run a trigger starts is unattended, with everything that means below: it
 stops at a draft pull request, reads only trusted comments, and its agents
 never see a secret-named variable. Deliveries are signed (HMAC-SHA256, the
