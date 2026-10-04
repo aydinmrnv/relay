@@ -2,7 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import type { Issue } from '../github/types.ts';
 import { oneLine } from '../util/text.ts';
-import type { GraphTask, WorkflowEvent } from './types.ts';
+import { isIssueReference, type GraphTask, type WorkflowEvent } from './types.ts';
 
 /**
  * What starts a workflow, turned into the one shape the walk reads.
@@ -87,10 +87,26 @@ export function scheduleEvent(now: Date, prompt: string): WorkflowEvent {
 
 export interface WebhookOptions {
   now: Date;
-  /** A header the sender used to name this delivery, when there was one. */
-  deliveryId?: string | null;
   /** Whether a Linear key is set, so a Linear ticket can be fetched as an issue rather than retyped as a description. */
   linear?: boolean;
+  /**
+   * Whether anything stands behind what the body says about who sent it: a
+   * signature made with the workflow's secret, or the operator's own hand on
+   * `--event`. An unsigned delivery names nobody, whatever it claims — any
+   * process on the machine can post one.
+   */
+  vouched?: boolean;
+}
+
+/** The id of a delivery: what it said, hashed. Not a header, which the signature does not cover and a replay could change. */
+export function deliveryIdOf(body: unknown): string {
+  return `delivery-${createHash('sha256').update(JSON.stringify(body ?? null)).digest('hex').slice(0, 16)}`;
+}
+
+/** A GitHub issue's own address, or nothing: the only `html_url` an event is taken at its word for. */
+export function githubIssueUrl(value: unknown): string {
+  const url = text(value);
+  return /^https:\/\/github\.com\//.test(url) && isIssueReference(url) ? url : '';
 }
 
 /**
@@ -111,9 +127,9 @@ export function webhookEvent(body: unknown, options: WebhookOptions): WorkflowEv
   const github = raw['issue'];
   const linear = raw['data'];
   if (isRecord(github) && (typeof github['number'] === 'number' || typeof github['html_url'] === 'string')) {
-    // GitHub's `issues` and `issue_comment` events.
-    const url = text(github['html_url']);
-    const number = typeof github['number'] === 'number' ? github['number'] : null;
+    // GitHub's `issues` and `issue_comment` events. The address is the task the agents are given, so it has to be one.
+    const url = githubIssueUrl(github['html_url']);
+    const number = typeof github['number'] === 'number' && Number.isSafeInteger(github['number']) && github['number'] > 0 ? github['number'] : null;
     Object.assign(payload, {
       id: number === null ? url : `#${number}`,
       key: number === null ? url : `#${number}`,
@@ -127,7 +143,7 @@ export function webhookEvent(body: unknown, options: WebhookOptions): WorkflowEv
     actor = who(raw['sender']) ?? actor;
     const ref = url.length > 0 ? url : number === null ? '' : String(number);
     if (ref.length > 0) task = { kind: 'issue', ref };
-  } else if (isRecord(linear) && typeof linear['identifier'] === 'string' && /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(linear['identifier'])) {
+  } else if (isRecord(linear) && typeof linear['identifier'] === 'string' && /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(linear['identifier']) && isIssueReference(linear['identifier'])) {
     // Linear's issue events.
     const identifier = linear['identifier'];
     Object.assign(payload, {
@@ -143,8 +159,8 @@ export function webhookEvent(body: unknown, options: WebhookOptions): WorkflowEv
   } else {
     const named = raw['issue'];
     const ref = typeof named === 'number' ? String(named) : typeof named === 'string' ? named.trim() : '';
-    // Held to what an issue reference looks like: it becomes an argument to `relay run`.
-    if (ref.length > 0 && ref.length <= 300 && /^[A-Za-z0-9][A-Za-z0-9._~:/?#=&%+@-]*$/.test(ref)) {
+    // Held to what a tracker's reference looks like. It becomes the argument of `relay run`, which reads anything else as a file.
+    if (ref.length <= 300 && isIssueReference(ref)) {
       task = { kind: 'issue', ref };
       if (payload['id'] === undefined) payload['id'] = /^\d+$/.test(ref) ? `#${ref}` : ref;
       if (/^\d+$/.test(ref) && payload['number'] === undefined) payload['number'] = Number(ref);
@@ -156,9 +172,7 @@ export function webhookEvent(body: unknown, options: WebhookOptions): WorkflowEv
   }
 
   if (payload['key'] === undefined && payload['id'] !== undefined) payload['key'] = payload['id'];
-  const serialized = JSON.stringify(body ?? null);
-  const id = options.deliveryId?.trim() || `webhook-${createHash('sha256').update(serialized).digest('hex').slice(0, 16)}`;
-  return { id, source: 'webhook', attended: false, actor, payload, task, at: options.now.toISOString() };
+  return { id: deliveryIdOf(body), source: 'webhook', attended: false, actor: options.vouched === false ? null : actor, payload, task, at: options.now.toISOString() };
 }
 
 /** The headers a signature may arrive in. Each carries an HMAC-SHA256 of the raw body, in hex, with or without a `sha256=` prefix. */

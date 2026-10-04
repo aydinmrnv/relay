@@ -31,7 +31,22 @@ Launch readiness. Relay is in beta, and free while it is.
 - Every node says what a real run does with it. A Filter is evaluated in a
   test run, by the evaluator a real run uses.
 - The workflow's own credentials are read from the environment or `--env-file`
-  and are never passed on to the agents.
+  and are never passed on to the agents, the AI step's included.
+- An event is a stranger's words. It can name an issue in a tracker and never
+  a file; what it says is escaped before it lands in a Slack message, a JSON
+  body or a URL; and it cannot set what the run works out for itself, such as
+  an estimate.
+- An event may start the agents only when the workflow has a Budget gate with
+  a per-run cost and a daily budget. `.relay/STOP` stops every workflow's
+  unattended starts, and `relay workflow serve` reads the workflow file again
+  for each event, so pausing it needs no restart.
+- With no secret set, an incoming webhook is taken only from a script on the
+  same machine, never from a web page, and nobody's word is taken for who
+  sent it.
+- A step that two paths lead to runs when either arrives, and a Merge paths
+  after it waits for the one still coming.
+- Answering an approval from the studio needs the same yes at `relay connect`'s
+  terminal that starting a run does.
 
 ### The studio
 

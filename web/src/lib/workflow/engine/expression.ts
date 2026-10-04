@@ -21,16 +21,53 @@ export function lookup(context: Record<string, unknown>, path: string): unknown 
 /**
  * `{{a.b.c}}` substitution. Arrays join with ", ", objects become JSON, and an
  * unknown path renders as an empty string rather than leaking the braces.
+ *
+ * `encode` is for where the text is going. What fills a variable is often
+ * somebody else's words — a ticket's title, a webhook's body — and the place
+ * it lands has a syntax: a quote ends a JSON string, a `<` starts a Slack
+ * mention, a `/` is a path. The template is the author's and is left alone;
+ * each value that is filled in is passed through `encode` first.
  */
-export function renderTemplate(template: string, context: Record<string, unknown>): string {
+export function renderTemplate(template: string, context: Record<string, unknown>, encode?: (value: string) => string): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_.\-]+)\s*\}\}/g, (_match, path: string) => {
     const value = lookup(context, path);
     if (value === undefined || value === null) return '';
-    if (Array.isArray(value)) return value.map(String).join(', ');
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
+    const text = Array.isArray(value) ? value.map(String).join(', ') : typeof value === 'object' ? JSON.stringify(value) : String(value);
+    return encode === undefined ? text : encode(text);
   });
 }
+
+/**
+ * A template that is a JSON document: `{"title": "{{issue.title}}", "n": {{issue.number}}}`.
+ *
+ * A value that lands inside a string is escaped as a string's contents, so a
+ * title with a quote in it stays a title and cannot close the string and add
+ * a field of its own. A value that stands by itself is written as JSON: a
+ * number as a number, text in quotes, nothing as `null`.
+ */
+export function renderJsonTemplate(template: string, context: Record<string, unknown>): string {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_.\-]+)\s*\}\}/g, (_match, path: string, offset: number) => {
+    const value = lookup(context, path);
+    let inString = false;
+    for (let at = 0; at < offset; at += 1) {
+      const char = template[at];
+      if (char === '\\' && inString) at += 1;
+      else if (char === '"') inString = !inString;
+    }
+    if (!inString) return JSON.stringify(value ?? null);
+    if (value === undefined || value === null) return '';
+    const text = Array.isArray(value) ? value.map(String).join(', ') : typeof value === 'object' ? JSON.stringify(value) : String(value);
+    return JSON.stringify(text).slice(1, -1);
+  });
+}
+
+/** Whether a body's template is a JSON document, going by how it opens. */
+export function isJsonTemplate(template: string): boolean {
+  return /^\s*[{[]/.test(template);
+}
+
+/** How much of a field a pattern is run over. The pattern is the author's; the text is whoever wrote the ticket's. */
+const MATCH_LIMIT = 10_000;
 
 /** The operators a Condition node offers. */
 export type ConditionOp = 'contains' | 'equals' | 'not-equals' | 'gt' | 'lt' | 'matches';
@@ -54,7 +91,7 @@ export function evaluateCondition(left: string, op: string, right: string): bool
       return Number(left) < Number(right);
     case 'matches':
       try {
-        return new RegExp(right, 'i').test(left);
+        return new RegExp(right, 'i').test(left.slice(0, MATCH_LIMIT));
       } catch {
         return false;
       }
@@ -190,7 +227,7 @@ function compare(op: string, left: unknown, right: unknown): boolean {
     case 'matches': {
       if (left === null || left === undefined) return false;
       const text = Array.isArray(left) ? left.map(String).join(', ') : String(left);
-      return new RegExp(String(right ?? ''), 'i').test(text);
+      return new RegExp(String(right ?? ''), 'i').test(text.slice(0, MATCH_LIMIT));
     }
     default: {
       // An ordering needs two numbers. Anything else is not "less than" anything.

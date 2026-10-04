@@ -66,7 +66,7 @@ export interface RouterOptions {
 export interface AuthorizeRequest {
   /** The page that asked, as the transport saw it, or null when it was not a browser. */
   origin: string | null;
-  action: 'run' | 'install';
+  action: 'run' | 'install' | 'approve';
   /** One line saying what would happen, safe to print on a terminal. */
   summary: string;
 }
@@ -238,7 +238,7 @@ export function createRouter(options: RouterOptions): Router {
         const runs = requireRuns();
         let started: CompanionRunView;
         try {
-          const parsed = parseStartRequest(await request.json(), { repositoryPerRun });
+          const parsed = parseStartRequest(await request.json(), { repositoryPerRun, workflow: capabilities.includes('workflow') });
           await options.authorize?.({ origin: request.origin ?? null, action: 'run', summary: describeRequest(parsed.workflow.name, parsed.task, parsed.repository ?? repositoryName(options.repository)) });
           started = await runs.start(parsed);
         } catch (error) {
@@ -285,6 +285,9 @@ export function createRouter(options: RouterOptions): Router {
         const body = objectBody(await request.json());
         if (typeof body['approved'] !== 'boolean') throw new RouteError(400, 'Say whether it is approved: {"approved": true} or {"approved": false}.');
         const as = typeof body['as'] === 'string' ? printable(body['as'], 80) : '';
+        // An approval releases a run that was held for a person. The pairing token is not that person:
+        // the studio answering has to be one somebody at this terminal has already said yes to.
+        await options.authorize?.({ origin: request.origin ?? null, action: 'approve', summary: `${body['approved'] ? 'approve' : 'reject'} ${printable(a ?? '', 40)}` });
         try {
           const record = await decideApproval(options.repository.root, a ?? '', { approved: body['approved'], by: as.length > 0 ? as : 'the studio' });
           log({ kind: 'approval', message: `${record.status === 'approved' ? 'Approved' : 'Rejected'} from the studio${as.length > 0 ? ` as ${as}` : ''}: ${printable(record.subject, 80)}.` });

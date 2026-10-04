@@ -25,7 +25,7 @@ import { createInterface } from 'node:readline';
 export interface ConfirmRequest {
   /** The studio's origin, or null for a caller that is not a browser. */
   origin: string | null;
-  action: 'run' | 'install';
+  action: 'run' | 'install' | 'approve';
   /** What is being asked for, already stripped of anything a terminal would act on. */
   summary: string;
 }
@@ -80,7 +80,7 @@ export function terminalConfirm(io: TerminalIo = { input: process.stdin, output:
   const ask = (request: ConfirmRequest): Promise<ConfirmAnswer> =>
     new Promise((resolve) => {
       const who = request.origin === null ? 'A program on this machine' : `The studio at ${printable(request.origin)}`;
-      const what = request.action === 'run' ? 'start a run here' : 'write these files into this repository';
+      const what = request.action === 'run' ? 'start a run here' : request.action === 'approve' ? 'answer an approval a run here is waiting on' : 'write these files into this repository';
       // Only an answer to this question counts. `relay connect` reads nothing
       // from its terminal the rest of the time, so whatever was typed there
       // earlier — an Enter, a stray `y` — is still waiting to be read, and

@@ -39,7 +39,10 @@ describe('GitHub’s webhook', () => {
     const node = trigger('github-issues.trigger.issue-assigned', { assignee: '@relay-bot' });
     const body = { action: 'assigned', assignee: { login: 'Relay-Bot' }, issue, sender: { login: 'maintainer' } };
     const event = matched(read(node, body, gh('issues')));
-    assert.deepEqual([event.id, event.source, event.attended, event.actor], ['d-1', 'webhook', false, 'maintainer']);
+    assert.deepEqual([event.source, event.attended, event.actor], ['webhook', false, 'maintainer']);
+    // Named after what it said, not after a header: the signature covers the body, and a replay could change the header.
+    assert.match(event.id, /^delivery-[0-9a-f]{16}$/);
+    assert.equal(matched(read(node, body, gh('issues', 'd-2'))).id, event.id);
     assert.deepEqual(event.task, { kind: 'issue', ref: 'https://github.com/acme/api/issues/7' });
     assert.deepEqual([event.payload['key'], event.payload['title'], event.payload['assignee'], event.payload['labels']], ['#7', 'Export crashes', 'Relay-Bot', ['bug']]);
 
@@ -47,6 +50,20 @@ describe('GitHub’s webhook', () => {
     assert.match(why(read(node, { ...body, action: 'labeled' }, gh('issues'))), /not an issue being assigned/);
     assert.match(why(read(node, { zen: 'Keep it logically awesome.' }, gh('ping'))), /ping/);
     assert.match(why(read(node, 'text', gh('issues'))), /not a JSON object/);
+  });
+
+  it('takes the issue’s address only when it is one, and says why it ignored a delivery in words a terminal can print', () => {
+    const node = trigger('github-issues.trigger.issue-opened');
+    const elsewhere = matched(read(node, { action: 'opened', issue: { ...issue, html_url: '/etc/passwd' }, sender: { login: 'reporter' } }, gh('issues')));
+    assert.deepEqual(elsewhere.task, { kind: 'issue', ref: '7' }, 'the number is still the issue');
+    assert.equal(elsewhere.payload['url'], '');
+    const nowhere = matched(read(node, { action: 'opened', issue: { title: 'x', html_url: 'https://github.com/acme/api/../../x' }, sender: { login: 'reporter' } }, gh('issues')));
+    assert.equal(nowhere.task, null);
+
+    const said = why(read(node, { action: '\u001b[2Jdeleted\u0007' }, gh('issues')));
+    // eslint-disable-next-line no-control-regex
+    assert.doesNotMatch(said, /[\u0000-\u001f]/);
+    assert.match(said, /deleted/);
   });
 
   it('starts on a new issue, with the label if one is asked for, and on a comment that mentions it', () => {
@@ -99,19 +116,25 @@ describe('GitHub’s webhook', () => {
 });
 
 describe('Linear’s webhook', () => {
-  const data = { id: 'uuid', identifier: 'ENG-142', title: 'Fix the flaky timeout', description: 'It fails on CI.', team: { key: 'ENG' }, assignee: { id: 'u1', name: 'Relay Bot', email: 'relay-bot@acme.dev' }, labels: [{ name: 'Bug' }], state: { name: 'Todo' }, priorityLabel: 'High' };
-  const body = (action: string, updatedFrom: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => ({ type: 'Issue', action, data: { ...data, ...extra }, updatedFrom, url: 'https://linear.app/acme/issue/ENG-142', actor: { name: 'Ada' } });
+  const data = { id: 'uuid', identifier: 'ENG-142', title: 'Fix the flaky timeout', description: 'It fails on CI.', team: { key: 'ENG' }, assigneeId: 'u1', assignee: { id: 'u1', name: 'Relay Bot', email: 'relay-bot@acme.dev' }, labelIds: ['l-bug'], labels: [{ id: 'l-bug', name: 'Bug' }], state: { name: 'Todo' }, priorityLabel: 'High' };
+  const body = (action: string, updatedFrom: Record<string, unknown> = {}, extra: Record<string, unknown> = {}, actor: Record<string, unknown> = { name: 'Ada' }) => ({ type: 'Issue', action, data: { ...data, ...extra }, updatedFrom, url: 'https://linear.app/acme/issue/ENG-142', actor });
   const headers = { 'linear-delivery': 'lin-1' };
 
   it('starts when an issue is assigned to the bot, by name or by address', () => {
     const node = trigger('linear.trigger.issue-assigned', { assignee: '@relay-bot', team: 'eng' });
     const event = matched(read(node, body('update', { assigneeId: null }), headers));
-    assert.deepEqual([event.id, event.actor, event.payload['key'], event.payload['assignee'], event.payload['url']], ['lin-1', 'Ada', 'ENG-142', 'Relay Bot', 'https://linear.app/acme/issue/ENG-142']);
+    assert.deepEqual([event.actor, event.payload['key'], event.payload['assignee'], event.payload['url']], ['Ada', 'ENG-142', 'Relay Bot', 'https://linear.app/acme/issue/ENG-142']);
+    assert.match(event.id, /^delivery-[0-9a-f]{16}$/);
     assert.deepEqual(event.task, { kind: 'prompt', text: 'ENG-142: Fix the flaky timeout\n\nIt fails on CI.' });
     assert.deepEqual(matched(read(node, body('update', { assigneeId: null }), headers, { linear: true })).task, { kind: 'issue', ref: 'ENG-142' }, 'with a key, the engine fetches the ticket itself');
     assert.equal(read(trigger('linear.trigger.issue-assigned', { assignee: 'Relay Bot' }), body('create'), headers).match, true, 'created already assigned');
 
     assert.match(why(read(node, body('update', { title: 'old' }), headers)), /without a new assignee/);
+    // Taking somebody off an issue changes its assignee as well, to nobody. That is not an assignment, with a name asked for or without.
+    const anyone = trigger('linear.trigger.issue-assigned');
+    assert.equal(read(anyone, body('update', { assigneeId: null }), headers).match, true);
+    assert.match(why(read(anyone, body('update', { assigneeId: 'u1' }, { assignee: null, assigneeId: null }), headers)), /without a new assignee/);
+    assert.match(why(read(anyone, body('create', {}, { assignee: undefined, assigneeId: undefined }), headers)), /without a new assignee/);
     assert.match(why(read(node, body('update', { assigneeId: 'x' }, { assignee: { name: 'Grace' } }), headers)), /assigned to Grace, not relay-bot/);
     assert.match(why(read(node, body('update', { assigneeId: null }, { team: { key: 'OPS' } }), headers)), /in team OPS, not eng/);
     assert.match(why(read(node, { type: 'Comment', action: 'create', data: {} }, headers)), /a Linear Comment, not an issue/);
@@ -123,12 +146,32 @@ describe('Linear’s webhook', () => {
 
     const labelled = trigger('linear.trigger.issue-labelled', { label: 'bug' });
     assert.equal(read(labelled, body('update', { labelIds: [] }), headers).match, true);
+    assert.equal(read(labelled, body('create'), headers).match, true, 'created with the label already on it');
     assert.match(why(read(labelled, body('update', { labelIds: [] }, { labels: [] }), headers)), /without the label bug/);
     assert.match(why(read(labelled, body('update', { title: 'x' }), headers)), /without its labels changing/);
+    // Another label was added, or one was taken off, and this one was there all along.
+    assert.match(why(read(labelled, body('update', { labelIds: ['l-bug'] }, { labelIds: ['l-bug', 'l-ui'], labels: [{ id: 'l-bug', name: 'Bug' }, { id: 'l-ui', name: 'UI' }] }), headers)), /already had the label bug/);
+    assert.match(why(read(labelled, body('update', { labelIds: ['l-bug', 'l-ui'] }), headers)), /already had the label bug/);
+    // A delivery that does not say which labels it had is not read as "none".
+    assert.match(why(read(labelled, body('update', { labelIds: 'changed' }), headers)), /does not say which labels it had/);
+    assert.match(why(read(labelled, body('update', { labelIds: [] }, { labels: [{ name: 'Bug' }] }), headers)), /does not say which labels it had/);
 
     const moved = trigger('linear.trigger.issue-state-changed', { state: 'Ready for agent' });
     assert.equal(read(moved, body('update', { stateId: 's0' }, { state: { name: 'ready for agent' } }), headers).match, true);
     assert.match(why(read(moved, body('update', { stateId: 's0' }), headers)), /moved to Todo, not Ready for agent/);
+  });
+
+  it('names who did it by their address, which they cannot retype, when Linear sends one', () => {
+    const node = trigger('linear.trigger.issue-created');
+    assert.equal(matched(read(node, body('create', {}, {}, { name: 'repo-owner', email: 'mallory@acme.dev' }), headers)).actor, 'mallory@acme.dev');
+    assert.equal(matched(read(node, body('create', {}, {}, { name: 'Ada' }), headers)).actor, 'Ada');
+    assert.equal(matched(read(node, body('create', {}, {}, {}), headers)).actor, null);
+  });
+
+  it('will not take a ticket key that is not one as the issue to fetch', () => {
+    const node = trigger('linear.trigger.issue-created');
+    assert.match(why(read(node, body('create', {}, { identifier: '../../etc/passwd' }), headers, { linear: true })), /no identifier/);
+    assert.match(why(read(node, body('create', {}, { identifier: 'AAAAAAAAAAAAAAAAAAAA-1' }), headers, { linear: true })), /no identifier/);
   });
 });
 
@@ -145,6 +188,8 @@ describe('Sentry’s webhook', () => {
 
     assert.match(why(read(node, { action: 'created', data: { issue: { ...issue, userCount: 1 } } }, headers('issue'))), /affecting 1 user, fewer than 5/);
     assert.match(why(read(node, { action: 'created', data: { issue: { ...issue, project: { slug: 'api' } } } }, headers('issue'))), /in api, not web/);
+    // A delivery that names no project is not in the one that was asked for.
+    assert.match(why(read(node, { action: 'created', data: { issue: { ...issue, project: undefined } } }, headers('issue'))), /names no project, where web is wanted/);
     assert.match(why(read(node, { action: 'resolved', data: { issue } }, headers('issue'))), /not a new one/);
     // An alert rule's delivery has already done the counting, in Sentry.
     assert.equal(read(node, { action: 'triggered', data: { event: { title: issue.title, web_url: issue.web_url, issue_id: '2417', project: 'web' } } }, headers('event_alert')).match, true);
@@ -155,6 +200,10 @@ describe('Sentry’s webhook', () => {
     const regressed = trigger('sentry.trigger.issue-regressed', {});
     assert.equal(read(regressed, { action: 'unresolved', data: { issue: { ...issue, substatus: 'regressed' } } }, headers('issue')).match, true);
     assert.match(why(read(regressed, { action: 'created', data: { issue } }, headers('issue'))), /not one coming back/);
+    // A person reopening it is `unresolved` too; an issue that regressed last week still says so when it is assigned.
+    assert.match(why(read(regressed, { action: 'unresolved', data: { issue: { ...issue, substatus: 'ongoing' } } }, headers('issue'))), /not one coming back/);
+    assert.match(why(read(regressed, { action: 'unresolved', data: { issue } }, headers('issue'))), /not one coming back/);
+    assert.match(why(read(regressed, { action: 'assigned', data: { issue: { ...issue, substatus: 'regressed' } } }, headers('issue'))), /not one coming back/);
 
     const assigned = trigger('sentry.trigger.issue-assigned', { assignee: 'relay-bot' });
     assert.equal(read(assigned, { action: 'assigned', data: { issue: { ...issue, assignedTo: { name: 'relay-bot', email: 'relay-bot@acme.dev' } } } }, headers('issue')).match, true);

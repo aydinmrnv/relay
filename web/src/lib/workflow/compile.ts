@@ -215,7 +215,7 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
     warnings.push(`The allowlist is empty. The exported Action works on an issue labelled ${label}, and Relay refuses a label applied by anyone who is not on unattended.authors or unattended.teams. Add the logins who may start runs to an Author allowlist gate.`);
   }
   if (unattended && budget === undefined) {
-    warnings.push('No budget gate: unattended.maxRunCostUsd and maxDailyCostUsd are unset, and the Action will refuse to start until they are.');
+    warnings.push('No budget gate: unattended.maxRunCostUsd and maxDailyCostUsd are unset. The Action and `relay workflow serve` both refuse to start the agents for an event until they are. Add a Budget gate with a per-run cost and a daily budget.');
   }
   if (pipeline === undefined) {
     warnings.push('No agent pipeline in this workflow, so the exported Action runs no agent: it only performs the app steps that need no decision.');

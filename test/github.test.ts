@@ -376,6 +376,24 @@ describe('auto-merge through gh', () => {
     };
   }
 
+  it('claims an issue by removing its label through the API, which says when the label was already gone', async () => {
+    const taken = await fakeGh({ stdout: '[]' });
+    const provider = new GitHubIssueProvider({ cwd: taken.cwd, binary: taken.binary, defaultRepo: { owner: 'acme', name: 'widgets' } });
+    assert.equal(await provider.removeLabel('142', 'relay:go'), true);
+    // Not `gh issue edit --remove-label`, which succeeds whether or not the label was there: two machines would both be told they took it.
+    assert.equal(await taken.argv(), 'api repos/acme/widgets/issues/142/labels/relay%3Ago --method DELETE');
+
+    const gone = await fakeGh({ stderr: 'gh: Label does not exist (HTTP 404)', code: 1 });
+    assert.equal(await new GitHubIssueProvider({ cwd: gone.cwd, binary: gone.binary, defaultRepo: { owner: 'acme', name: 'widgets' } }).removeLabel('142', 'relay:go'), false, 'somebody else took it first');
+
+    const here = await fakeGh({ stdout: '[]' });
+    await new GitHubIssueProvider({ cwd: here.cwd, binary: here.binary }).removeLabel('7', 'needs triage');
+    assert.equal(await here.argv(), 'api repos/{owner}/{repo}/issues/7/labels/needs%20triage --method DELETE', 'gh fills the repository in from where it runs');
+
+    const denied = await fakeGh({ stderr: 'gh: Resource not accessible by integration (HTTP 403)', code: 1 });
+    await assert.rejects(new GitHubIssueProvider({ cwd: denied.cwd, binary: denied.binary }).removeLabel('7', 'relay:go'), /Failed to remove label/);
+  });
+
   it('reads availability from the repository settings, not by trying', async () => {
     const gh = await fakeGh({ stdout: 'true' });
     assert.equal(await autoMergeAllowed('acme/widgets', { cwd: gh.cwd, binary: gh.binary }), true);

@@ -1,8 +1,6 @@
-import { createHash } from 'node:crypto';
-
 import { clip, oneLine } from '../util/text.ts';
-import { webhookEvent } from './events.ts';
-import type { GraphNode, GraphTask, WorkflowEvent } from './types.ts';
+import { deliveryIdOf, githubIssueUrl, webhookEvent } from './events.ts';
+import { isIssueReference, plainText, type GraphNode, type GraphTask, type WorkflowEvent } from './types.ts';
 
 /**
  * An app's own webhook, read as the trigger a workflow names.
@@ -30,6 +28,8 @@ export interface DeliveryContext {
   linear: boolean;
   /** What this server remembers between deliveries: the last result of each CI workflow on each branch. */
   memory: Map<string, string>;
+  /** Whether the delivery was signed with the workflow's secret. Unset means it was. */
+  signed?: boolean;
 }
 
 type Body = Record<string, unknown>;
@@ -62,15 +62,8 @@ function setting(trigger: GraphNode, key: string): string {
 
 const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-const no = (why: string): DeliveryMatch => ({ match: false, why });
-
-function deliveryId(context: DeliveryContext, body: unknown, ...headers: string[]): string {
-  for (const name of headers) {
-    const value = header(context, name);
-    if (value.length > 0) return value.slice(0, 200);
-  }
-  return `delivery-${createHash('sha256').update(JSON.stringify(body ?? null)).digest('hex').slice(0, 16)}`;
-}
+// The reason is printed in a terminal, and parts of it are the sender's words.
+const no = (why: string): DeliveryMatch => ({ match: false, why: oneLine(plainText(why), 240) });
 
 function event(context: DeliveryContext, id: string, actor: string | null, payload: Body, task: GraphTask | null): DeliveryMatch {
   if (payload['key'] === undefined && payload['id'] !== undefined) payload['key'] = payload['id'];
@@ -100,7 +93,7 @@ export const APP_WEBHOOK_TRIGGERS: ReadonlySet<string> = new Set([
  */
 export function matchDelivery(trigger: GraphNode, body: unknown, context: DeliveryContext): DeliveryMatch {
   if (trigger.type === 'http.trigger.webhook') {
-    return { match: true, event: webhookEvent(body, { now: context.now, deliveryId: header(context, 'x-relay-delivery') || header(context, 'x-github-delivery') || header(context, 'linear-delivery') || null, linear: context.linear }) };
+    return { match: true, event: webhookEvent(body, { now: context.now, linear: context.linear, vouched: context.signed !== false }) };
   }
   if (!isRecord(body)) return no('a delivery whose body is not a JSON object');
   const app = trigger.type.split('.')[0];
@@ -117,8 +110,9 @@ export function matchDelivery(trigger: GraphNode, body: unknown, context: Delive
 const SEVERITY: Readonly<Record<string, number>> = { low: 1, medium: 2, moderate: 2, high: 3, critical: 4 };
 
 function issuePayload(issue: Body): { payload: Body; task: GraphTask | null } {
-  const number = typeof issue['number'] === 'number' ? issue['number'] : null;
-  const url = text(issue['html_url']);
+  const number = typeof issue['number'] === 'number' && Number.isSafeInteger(issue['number']) && issue['number'] > 0 ? issue['number'] : null;
+  // The address is what the agents are sent to fetch, so it is taken only when it is a GitHub issue's.
+  const url = githubIssueUrl(issue['html_url']);
   const payload: Body = {
     id: number === null ? url : `#${number}`,
     ...(number === null ? {} : { number }),
@@ -136,7 +130,7 @@ function github(trigger: GraphNode, body: Body, context: DeliveryContext): Deliv
   const kind = header(context, 'x-github-event');
   const action = text(body['action']);
   const sender = text(record(body['sender'])['login']) || null;
-  const id = deliveryId(context, body, 'x-github-delivery');
+  const id = deliveryIdOf(body);
   if (kind === 'ping') return no('GitHub’s ping, which says the webhook is set up');
 
   switch (trigger.type) {
@@ -241,6 +235,16 @@ function person(value: unknown): string {
   return text(who['name']) || text(who['displayName']) || text(who['email']);
 }
 
+/**
+ * Who Linear says did it, for the allowlist. Their email when the delivery
+ * carries one: a name in Linear is whatever its owner typed, and an allowlist
+ * that went by it would take anybody's word for who they are.
+ */
+function linearActor(value: unknown): string | null {
+  const who = record(value);
+  return text(who['email']).trim() || text(who['name']).trim() || null;
+}
+
 /** Whether a person Linear names is the one a trigger was set to: by name, display name, or the part of an email before the @. */
 function isPerson(value: unknown, wanted: string): boolean {
   const who = record(value);
@@ -254,14 +258,16 @@ function linear(trigger: GraphNode, body: Body, context: DeliveryContext): Deliv
   const data = record(body['data']);
   const changed = record(body['updatedFrom']);
   const identifier = text(data['identifier']);
-  if (!/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(identifier)) return no('a Linear issue with no identifier');
+  if (!/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(identifier) || !isIssueReference(identifier)) return no('a Linear issue with no identifier');
   const team = text(record(data['team'])['key']);
   const labels = names(data['labels']);
   const state = text(record(data['state'])['name']);
 
   switch (trigger.type) {
     case 'linear.trigger.issue-assigned': {
-      const newly = action === 'create' ? data['assignee'] !== undefined && data['assignee'] !== null : action === 'update' && 'assigneeId' in changed;
+      // Taking somebody off an issue changes the assignee too, to nobody.
+      const assigned = isRecord(data['assignee']) || text(data['assigneeId']).length > 0;
+      const newly = assigned && (action === 'create' || (action === 'update' && 'assigneeId' in changed));
       if (!newly) return no(`a Linear issue ${action}, without a new assignee`);
       const wanted = setting(trigger, 'assignee');
       if (wanted.length > 0 && !isPerson(data['assignee'], wanted)) return no(`${identifier} assigned to ${person(data['assignee']) || 'nobody'}, not ${wanted}`);
@@ -272,10 +278,16 @@ function linear(trigger: GraphNode, body: Body, context: DeliveryContext): Deliv
       break;
     case 'linear.trigger.issue-labelled': {
       const wanted = setting(trigger, 'label');
-      const newly = action === 'create' || (action === 'update' && 'labelIds' in changed);
-      if (!newly) return no(`a Linear issue ${action}, without its labels changing`);
       if (wanted.length === 0) return no('a label trigger that names no label');
-      if (!labels.some((name) => same(name, wanted))) return no(`${identifier} without the label ${wanted}`);
+      const found = (Array.isArray(data['labels']) ? data['labels'] : []).find((label) => same(text(record(label)['name']), wanted));
+      if (found === undefined) return no(`${identifier} without the label ${wanted}`);
+      if (action === 'create') break;
+      if (action !== 'update' || !('labelIds' in changed)) return no(`a Linear issue ${action}, without its labels changing`);
+      // Any change to the labels arrives here, a removal included. It is this trigger only when the label was not there before.
+      const before = Array.isArray(changed['labelIds']) ? changed['labelIds'].map(text) : null;
+      const labelId = text(record(found)['id']);
+      if (before === null || labelId.length === 0) return no(`${identifier}: a label change that does not say which labels it had`);
+      if (before.includes(labelId)) return no(`${identifier} already had the label ${wanted}`);
       break;
     }
     case 'linear.trigger.issue-state-changed': {
@@ -303,8 +315,7 @@ function linear(trigger: GraphNode, body: Body, context: DeliveryContext): Deliv
   };
   // With a key the engine fetches the ticket itself, comments and all; without one it works from what the delivery said.
   const task: GraphTask = context.linear ? { kind: 'issue', ref: identifier } : { kind: 'prompt', text: [`${identifier}: ${text(data['title'])}`, text(data['description'])].filter((part) => part.trim().length > 0).join('\n\n') };
-  const actor = person(body['actor']) || null;
-  return event(context, deliveryId(context, body, 'linear-delivery'), actor, payload, task);
+  return event(context, deliveryIdOf(body), linearActor(body['actor']), payload, task);
 }
 
 /* ------------------------------------------------------------------ */
@@ -322,7 +333,7 @@ function sentry(trigger: GraphNode, body: Body, context: DeliveryContext): Deliv
 
   const project = text(record(issue['project'])['slug']) || text(record(issue['project'])['name']) || text(issue['project']);
   const wantedProject = setting(trigger, 'project');
-  if (wantedProject.length > 0 && project.length > 0 && !same(project, wantedProject)) return no(`a Sentry issue in ${project}, not ${wantedProject}`);
+  if (wantedProject.length > 0 && !same(project, wantedProject)) return no(project.length === 0 ? `a Sentry issue that names no project, where ${wantedProject} is wanted` : `a Sentry issue in ${project}, not ${wantedProject}`);
 
   switch (trigger.type) {
     case 'sentry.trigger.issue-created': {
@@ -335,7 +346,8 @@ function sentry(trigger: GraphNode, body: Body, context: DeliveryContext): Deliv
       break;
     }
     case 'sentry.trigger.issue-regressed':
-      if (alert || (action !== 'unresolved' && text(issue['substatus']) !== 'regressed')) return no(`a Sentry issue ${action}, not one coming back`);
+      // Both, not either: a person reopening an issue is `unresolved` too, and an issue that regressed last week still says so when it is assigned.
+      if (alert || action !== 'unresolved' || text(issue['substatus']) !== 'regressed') return no(`a Sentry issue ${action}, not one coming back`);
       break;
     case 'sentry.trigger.issue-assigned': {
       if (alert || action !== 'assigned') return no(`a Sentry issue ${action}, not one being assigned`);
@@ -359,6 +371,5 @@ function sentry(trigger: GraphNode, body: Body, context: DeliveryContext): Deliv
     url,
   ].filter((line) => line.length > 0).join('\n\n');
   const actor = person(body['actor']) || null;
-  // Sentry names no delivery: the request id header when there is one, else what the body says.
-  return event(context, deliveryId(context, body, 'request-id'), actor, { id: shortId, title, body: detail, url, project, level: text(issue['level']), labels: ['error'] }, { kind: 'prompt', text: `${title}\n\n${detail}` });
+  return event(context, deliveryIdOf(body), actor, { id: shortId, title, body: detail, url, project, level: text(issue['level']), labels: ['error'] }, { kind: 'prompt', text: `${title}\n\n${detail}` });
 }

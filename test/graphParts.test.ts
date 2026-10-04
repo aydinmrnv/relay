@@ -6,8 +6,9 @@ import { join } from 'node:path';
 
 import { approvalOpen, approvalsDir, createApproval, decideApproval, listApprovals, waitForApproval } from '../src/graph/approvals.ts';
 import { issueEvent, manualEvent, scheduleEvent, signatureValid, signBody, webhookEvent } from '../src/graph/events.ts';
-import { evaluateCondition, evaluateFilter, renderTemplate } from '../src/graph/expression.ts';
+import { evaluateCondition, evaluateFilter, isJsonTemplate, renderJsonTemplate, renderTemplate } from '../src/graph/expression.ts';
 import { nextCronTime, nextWindowOpening, parseCron } from '../src/graph/schedule.ts';
+import { isIssueReference, plainText } from '../src/graph/types.ts';
 import { adoptedRunTrigger, adoptRunTrigger, RUN_TRIGGER_VARIABLE, setRunTrigger } from '../src/unattended/trigger.ts';
 
 const context = {
@@ -87,6 +88,39 @@ describe('a Condition, and the templates around it', () => {
     assert.equal(evaluateCondition('abc', 'matches', '('), false);
   });
 
+  it('passes each value through where it is going, and leaves the template as its author wrote it', () => {
+    const context = { issue: { title: 'a <b> & "c"', labels: ['x', 'y&z'] } };
+    const escape = (value: string): string => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    assert.equal(renderTemplate('<{{issue.title}}> & {{issue.labels}} {{issue.none}}', context, escape), '<a &lt;b&gt; &amp; "c"> & x, y&amp;z ');
+    assert.equal(renderTemplate('/t/{{issue.title}}', context, encodeURIComponent), '/t/a%20%3Cb%3E%20%26%20%22c%22');
+  });
+
+  it('writes a JSON body that stays the JSON its author wrote, whatever a value says', () => {
+    const context = { issue: { title: 'say "hi"\n", "admin": true, "x": "', number: 7, labels: ['a', 'b'], nested: { ok: true }, open: true } };
+    const body = renderJsonTemplate('{"title": "{{issue.title}}", "n": {{issue.number}}, "labels": "{{issue.labels}}", "raw": {{issue.labels}}, "nested": {{issue.nested}}, "open": {{issue.open}}, "bare": {{issue.title}}, "gone": {{issue.gone}}, "empty": "{{issue.gone}}", "quote\\"d {{issue.number}}": 1}', context);
+    assert.deepEqual(JSON.parse(body), {
+      title: context.issue.title,
+      n: 7,
+      labels: 'a, b',
+      raw: ['a', 'b'],
+      nested: { ok: true },
+      open: true,
+      bare: context.issue.title,
+      gone: null,
+      empty: '',
+      'quote"d 7': 1,
+    });
+    assert.deepEqual([isJsonTemplate(' {"a": 1}'), isJsonTemplate('[1]'), isJsonTemplate('done: {{run.id}}'), isJsonTemplate('')], [true, true, false, false]);
+  });
+
+  it('runs a pattern over the start of a long field, not over all of it', () => {
+    const long = `${'a'.repeat(10_000)}needle`;
+    assert.equal(evaluateCondition(long, 'matches', 'needle'), false, 'past the first ten thousand characters');
+    assert.equal(evaluateCondition(long, 'matches', '^a+$'), true);
+    assert.deepEqual(evaluateFilter('issue.body matches "needle"', { issue: { body: long } }), { ok: true, value: false });
+    assert.equal(evaluateCondition(long, 'contains', 'needle'), true, 'a plain search still reads all of it');
+  });
+
   it('fills variables, joins lists, and leaves an unknown one empty', () => {
     assert.equal(renderTemplate('{{issue.id}}: {{ issue.title }} [{{issue.labels}}] {{issue.nope}}.', context), 'ENG-142: Fix the flaky timeout [bug, P1] .');
   });
@@ -105,6 +139,8 @@ describe('the clock', () => {
     assert.equal(next('30 6 1 * *', '2026-10-05T00:00:00Z'), '2026-11-01T06:30:00.000Z');
     assert.equal(next('0 0 * * SUN', '2026-10-05T00:00:00Z'), '2026-10-11T00:00:00.000Z');
     assert.equal(next('0 0 * * 7', '2026-10-05T00:00:00Z'), '2026-10-11T00:00:00.000Z');
+    assert.equal(next('0 9 * * sat-sun', '2026-10-05T00:00:00Z'), '2026-10-10T09:00:00.000Z', 'a weekend, written the way people write one');
+    assert.equal(next('0 9 * * sat-sun', '2026-10-10T09:00:00Z'), '2026-10-11T09:00:00.000Z');
     assert.equal(next('0 12 29 FEB *', '2026-10-05T00:00:00Z'), '2028-02-29T12:00:00.000Z');
     // Both day fields restricted: either is enough, as in cron.
     assert.equal(next('0 0 13 * FRI', '2026-10-05T00:00:00Z'), '2026-10-09T00:00:00.000Z');
@@ -117,10 +153,28 @@ describe('the clock', () => {
   });
 
   it('refuses an expression it cannot read, and returns null for one that never comes round', () => {
-    for (const expression of ['0 9 * *', '61 * * * *', '* * * * MONDAYISH', '*/0 * * * *', '5-1 * * * *']) {
+    for (const expression of ['0 9 * *', '61 * * * *', '* * * * MONDAYISH', '*/0 * * * *', '5-1 * * * *', '1-5-9 * * * *', '1/2/3 * * * *', '0x10 * * * *', '1e1 * * * *', '*/1.5 * * * *', '0 9 * * 1-', ' 0 9 , * *']) {
       assert.equal(parseCron(expression).ok, false, expression);
     }
     assert.equal(next('0 0 31 2 *', '2026-10-05T00:00:00Z'), null);
+  });
+
+  it('reads a day field that opens with * as any day, as cron does', () => {
+    // Every other day of the month, and only when that is a Monday: not "or any Monday".
+    assert.equal(next('0 0 */2 * MON', '2026-10-05T12:00:00Z'), '2026-10-19T00:00:00.000Z', 'the 12th is a Monday and an even day; the 19th is the next Monday on an odd one');
+    assert.equal(next('0 0 13 * */2', '2026-10-05T00:00:00Z'), '2026-10-13T00:00:00.000Z', 'the 13th is a Tuesday, an even weekday');
+  });
+
+  it('fires once for an hour the clock repeats, and once for one it jumps over', () => {
+    // New York, 2026: the clocks go forward at 02:00 on 8 March, and back at 02:00 on 1 November.
+    const zone = 'America/New_York';
+    assert.equal(next('30 2 * * *', '2026-03-07T12:00:00Z', zone), '2026-03-08T07:00:00.000Z', '02:30 does not exist that night: it fires as the jump lands, at 03:00');
+    assert.equal(next('30 2 * * *', '2026-03-08T07:00:00Z', zone), '2026-03-09T06:30:00.000Z', 'and at 02:30 again the next night');
+    assert.equal(next('30 1 * * *', '2026-10-31T12:00:00Z', zone), '2026-11-01T05:30:00.000Z', 'the first 01:30');
+    assert.equal(next('30 1 * * *', '2026-11-01T05:30:00Z', zone), '2026-11-02T06:30:00.000Z', 'not the second, an hour later');
+    // A schedule for every hour is not about one, and runs straight through both.
+    assert.equal(next('0 * * * *', '2026-11-01T05:00:00Z', zone), '2026-11-01T06:00:00.000Z');
+    assert.equal(next('0 * * * *', '2026-03-08T06:00:00Z', zone), '2026-03-08T07:00:00.000Z');
   });
 
   it('knows when a working window is open, and when it next opens', () => {
@@ -170,11 +224,31 @@ describe('events', () => {
     assert.equal(webhookEvent(body, { now }).payload['body'], 'The audit log.');
   });
 
-  it('gives the same delivery the same id, and takes the sender’s when it names one', () => {
+  it('takes as an issue only what a tracker would call one', () => {
+    for (const ref of ['142', '#142', 'acme/widgets#142', 'acme/my.repo_1#7', 'https://github.com/acme/widgets/issues/142', 'ENG-142', 'eng-1', 'https://linear.app/acme/issue/ENG-142', 'https://linear.app/acme/issue/ENG-142/fix-the-timeout']) {
+      assert.equal(isIssueReference(ref), true, ref);
+    }
+    for (const ref of [
+      '', '.env', './spec.md', '../x', '/etc/passwd', 'spec.md', 'x/../../../etc/hosts', 'a/b', 'C:\\Users\\x', '142 ', '-142', '#', 'acme/..#1', 'acme/.#1',
+      'https://github.com/acme/widgets/issues/142/../../../../etc/passwd', 'https://github.com/acme/../issues/1', 'http://github.com/acme/widgets/issues/142', 'https://github.com.evil.example/acme/widgets/issues/1',
+      'https://github.com/acme/widgets/pull/142', 'https://linear.app/acme/issue/../x', 'file:///etc/passwd', 'ENG-142/../../x', 'ENG-', '--deliver=merge', '142\n../x',
+    ]) {
+      assert.equal(isIssueReference(ref), false, JSON.stringify(ref));
+    }
+    assert.deepEqual(['a\u001b[2Jb', 'a\u0007b\u202Ec', 'line one\nline two\ttabbed'].map(plainText), ['a [2Jb', 'a b c', 'line one\nline two\ttabbed']);
+  });
+
+  it('takes nobody’s word for who sent an unsigned delivery', () => {
+    const body = { title: 'x', actor: 'repo-owner' };
+    assert.equal(webhookEvent(body, { now, vouched: false }).actor, null);
+    assert.equal(webhookEvent(body, { now, vouched: true }).actor, 'repo-owner');
+    assert.equal(webhookEvent(body, { now }).actor, 'repo-owner', 'a caller that says nothing has vouched for it itself');
+  });
+
+  it('names a delivery after what it said, which is the part a signature covers', () => {
     const body = { title: 'x' };
     assert.equal(webhookEvent(body, { now }).id, webhookEvent({ title: 'x' }, { now: new Date() }).id);
     assert.notEqual(webhookEvent(body, { now }).id, webhookEvent({ title: 'y' }, { now }).id);
-    assert.equal(webhookEvent(body, { now, deliveryId: 'abc-123' }).id, 'abc-123');
   });
 
   it('checks a signature over the bytes as sent, in any of the headers apps use', () => {

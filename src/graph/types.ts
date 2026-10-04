@@ -230,3 +230,53 @@ export const PIPELINE_TYPES: ReadonlySet<string> = new Set(['pipeline.action.run
 export function pipelineOf(graph: WorkflowGraph): GraphNode | undefined {
   return graph.nodes.find((node) => PIPELINE_TYPES.has(node.type));
 }
+
+/* ------------------------------------------------------------------ */
+/* What an event nobody vetted may name                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Whether text names a tracker issue, and nothing else.
+ *
+ * `relay run <ref>` reads anything that is not an issue as a file: a spec on
+ * this machine, whose first line becomes the pull request's title. A person
+ * naming a file means it. An event does not get to: a webhook body that said
+ * `"issue": "../.env"` would have the agents handed the file. So a reference
+ * that arrives in an event is held to the shapes a tracker's own references
+ * have — a number, `owner/repo#n`, a GitHub issue address, a Linear key or
+ * address — and anything else is not a reference.
+ */
+export function isIssueReference(ref: string): boolean {
+  return (
+    /^#?\d{1,10}$/.test(ref) ||
+    /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.\.?#)[A-Za-z0-9._-]{1,100}#\d{1,10}$/.test(ref) ||
+    /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.\.?\/)[A-Za-z0-9._-]{1,100}\/issues\/\d{1,10}$/.test(ref) ||
+    /^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,7}$/.test(ref) ||
+    /^https:\/\/linear\.app\/[A-Za-z0-9-]{1,60}\/issue\/[A-Za-z][A-Za-z0-9]{0,9}-\d{1,7}(?:\/[A-Za-z0-9-]{0,200})?$/.test(ref)
+  );
+}
+
+/**
+ * The keys of a ticket the walk writes itself: the estimate a step priced,
+ * what a model answered, the issue a step filed. An event's body is spread
+ * into the same object, so these are taken out of it first — a webhook that
+ * said `"estimate": 0` would otherwise walk through a Filter that exists to
+ * stop expensive work.
+ */
+export const ENGINE_KEYS: readonly string[] = ['estimate', 'estimateUsd', 'triage', 'createdRef'];
+
+/**
+ * The variables only a workflow's own steps read: the chat webhooks, the
+ * bridge, the webhook's signing secret, the headers of an HTTP request. Never
+ * passed to anything an agent runs in. (`LINEAR_API_KEY` is not here: the
+ * engine itself reads Linear issues with it.)
+ */
+export function isWorkflowCredential(name: string): boolean {
+  return ['SLACK_WEBHOOK_URL', 'DISCORD_WEBHOOK_URL', 'BRIDGE_WEBHOOK_URL', 'RELAY_WEBHOOK_SECRET'].includes(name) || /^HTTP_HEADERS(_\d+)?$/.test(name);
+}
+
+/** Text from an event, made safe to print and to store: control characters and direction overrides become spaces. */
+export function plainText(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ');
+}

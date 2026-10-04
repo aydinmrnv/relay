@@ -233,8 +233,8 @@ Workflow, unattended
   Listening  POST http://127.0.0.1:4598/hooks/demo (signed with RELAY_WEBHOOK_SECRET)
   Delivery   capped at a draft pull request: nothing merges without a person
 
-2026-10-04T19:47:04.662Z ignored a delivery whose signature did not match
-2026-10-04T19:47:04.675Z event webhook-d201d9ac1fa66ad6: Export crashes on the second click
+2026-10-04T21:02:13.972Z ignored a delivery whose signature did not match
+2026-10-04T21:02:14.024Z event delivery-8d0857247154f1b1: Export crashes on the second click
 
 Demo: approve, then tell the channel
   Started by a webhook, from @ada: Export crashes on the second click
@@ -243,8 +243,8 @@ Demo: approve, then tell the channel
   ✓ Author allowlist  @ada is allowed.
   ✓ Only bugs  Passed: issue.labels contains "bug"
   … Waiting for approval: Export crashes on the second click
-    Approve with `relay workflow approve ap-cuf6799d`, or reject with `relay workflow reject ap-cuf6799d`, in this repository.
-  ✓ Human approval  Approved by ada.  3.0s
+    Approve with `relay workflow approve ap-qs8mwd8g`, or reject with `relay workflow reject ap-qs8mwd8g`, in this repository.
+  ✓ Human approval  Approved by ada.  4.1s
   ✓ Tell the channel  POST http://127.0.0.1:4599/told → 200
 
 ✓ Finished: Demo: approve, then tell the channel · Export crashes on the second click
@@ -254,10 +254,14 @@ A run a trigger starts is unattended, with everything that means below: it
 stops at a draft pull request, reads only trusted comments, and its agents
 never see a secret-named variable. Deliveries are signed (HMAC-SHA256, the
 scheme GitHub, Linear and Sentry already use), one sent twice starts one run,
-and a delivery that is not the trigger starts nothing and says why. The app
-steps read their credentials from the environment — `SLACK_WEBHOOK_URL`,
-`LINEAR_API_KEY`, `HTTP_HEADERS` — and those are never handed on to the
-agents. [The reference](docs/cli.md#workflows) has every step and every
+and a delivery that is not the trigger starts nothing and says why. An event
+may not start the agents until the workflow has a Budget gate with a per-run
+cost and a daily budget, and `.relay/STOP` stops every one of them. What an
+event says is treated as a stranger's words all the way through: it can name
+an issue in a tracker and never a file, and its text is escaped before it
+lands in a Slack message, a JSON body or a URL. The app steps read their
+credentials from the environment — `SLACK_WEBHOOK_URL`, `LINEAR_API_KEY`,
+`HTTP_HEADERS` — and those are never handed on to the agents. [The reference](docs/cli.md#workflows) has every step and every
 trigger.
 
 **Unattended, from your repository.** Export compiles the graph into files your

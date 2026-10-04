@@ -22,7 +22,9 @@ import { estimateRun } from '../workflow/estimate.ts';
 import { runLiveness } from '../workflow/liveness.ts';
 import { createApproval, decideApproval, waitForApproval, type ApprovalRecord } from './approvals.ts';
 import type { ApprovalAnswer, GraphEffects, PipelineResult, PipelineRun } from './executor.ts';
-import type { GraphRecord, GraphTask, WorkflowEvent, WorkflowGraph } from './types.ts';
+import { isWorkflowCredential, type GraphRecord, type GraphTask, type WorkflowEvent, type WorkflowGraph } from './types.ts';
+
+export { isWorkflowCredential };
 
 /**
  * What a workflow's steps do to the world, for real, in one repository.
@@ -43,6 +45,8 @@ export interface EffectsOptions {
   issueProvider: IssueProvider;
   graph: WorkflowGraph;
   signal: AbortSignal;
+  /** Aborted when asking has not worked: whatever the pipeline's run still has going is ended, not asked. */
+  force?: AbortSignal;
   emit: (record: GraphRecord) => void;
   env?: NodeJS.ProcessEnv;
   fetch?: typeof globalThis.fetch;
@@ -80,18 +84,30 @@ export function triggerLabel(event: WorkflowEvent, graph: WorkflowGraph): string
   return `${what} (workflow “${graph.name}”)`;
 }
 
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+/** The longest one timer is set for. Node's hold about 24.8 days, and one asked for longer fires at once. */
+const LONGEST_TIMER_MS = 2_000_000_000;
+
+export function abortableSleep(ms: number, signal: AbortSignal, setTimer: typeof setTimeout = setTimeout): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(new Error('cancelled'));
+    let left = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+    let timer: NodeJS.Timeout;
     const onAbort = (): void => {
       clearTimeout(timer);
       reject(new Error('cancelled'));
     };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
+    // A wait longer than a timer holds is slept in pieces.
+    const sleep = (): void => {
+      const piece = Math.min(left, LONGEST_TIMER_MS);
+      left -= piece;
+      timer = setTimer(() => {
+        if (left > 0) return sleep();
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, piece);
+    };
     signal.addEventListener('abort', onAbort, { once: true });
+    sleep();
   });
 }
 
@@ -175,7 +191,7 @@ export function createEffects(options: EffectsOptions): GraphEffects {
       }
     },
 
-    runPipeline: (input) => runPipelineChild({ ...input, graph, repoRoot, signal, launcher: options.launcher ?? selfLauncher(), env, now }),
+    runPipeline: (input) => runPipelineChild({ ...input, graph, repoRoot, signal, launcher: options.launcher ?? selfLauncher(), env, now, ...(options.force === undefined ? {} : { force: options.force }) }),
 
     async aiStep({ prompt, vendor, event }) {
       const config = shaped(event);
@@ -185,7 +201,10 @@ export function createEffects(options: EffectsOptions): GraphEffects {
       if (harness === undefined) return { ok: false, text: '', agent, error: `no agent called ${provider} is set up on this machine` };
       // An event nobody vetted wrote part of this prompt, so the turn gets what
       // a reviewer's turn gets: no writes, and no secret-named variables.
-      const withheld = event.attended ? undefined : withholdSecrets({ allow: config.unattended.allowEnv, provider }).env;
+      const withheld: Record<string, string | undefined> = event.attended ? {} : { ...withholdSecrets({ allow: config.unattended.allowEnv, provider, env }).env };
+      // The workflow's own credentials are for its steps, whoever started it. A read-only turn still has a
+      // shell, and what it prints becomes `{{ai.text}}`: one `printenv` away from a Slack message.
+      for (const name of Object.keys(env)) if (isWorkflowCredential(name)) withheld[name] = undefined;
       const session = await harness.start({
         prompt: `You are answering one question for an automated workflow. Read the repository if it helps; change nothing. Reply with the answer first, in as few words as it takes.\n\n${prompt}`,
         cwd: repoRoot,
@@ -194,7 +213,7 @@ export function createEffects(options: EffectsOptions): GraphEffects {
         purpose: 'ai-step',
         timeoutMs: 5 * 60_000,
         signal,
-        ...(withheld === undefined ? {} : { env: withheld }),
+        ...(Object.keys(withheld).length === 0 ? {} : { env: withheld }),
       });
       if (!session.ok) return { ok: false, text: session.text, agent, error: session.error ?? (session.timedOut ? 'timed out after five minutes' : 'the turn failed'), ...(session.usage?.costUsd === undefined ? {} : { costUsd: session.usage.costUsd }) };
       return { ok: true, text: session.text, agent, ...(session.usage?.costUsd === undefined ? {} : { costUsd: session.usage.costUsd }) };
@@ -248,20 +267,15 @@ interface PipelineChildInput {
   env: NodeJS.ProcessEnv;
   now: () => Date;
   onLine: (line: Record<string, unknown>) => void;
-}
-
-/**
- * The variables only a workflow's own steps read: the chat webhooks, the
- * bridge, the webhook's signing secret, the headers of an HTTP request. Never
- * passed on to the pipeline's run. (`LINEAR_API_KEY` is not here: the engine
- * itself reads Linear issues with it.)
- */
-export function isWorkflowCredential(name: string): boolean {
-  return ['SLACK_WEBHOOK_URL', 'DISCORD_WEBHOOK_URL', 'BRIDGE_WEBHOOK_URL', 'RELAY_WEBHOOK_SECRET'].includes(name) || /^HTTP_HEADERS(_\d+)?$/.test(name);
+  force?: AbortSignal;
+  /** How long a run is given to stop when asked, before it is told. A seam for the tests. */
+  graceMs?: number;
 }
 
 /** How long a run is given to cancel cleanly before its process group is ended. */
 const CANCEL_GRACE_MS = 10_000;
+/** How long it is given after that before it is killed outright. */
+const KILL_GRACE_MS = 5_000;
 
 /**
  * Runs `relay run --json` for the workflow's pipeline and hands every line it
@@ -307,19 +321,31 @@ export async function runPipelineChild(input: PipelineChildInput): Promise<Pipel
       let stderr = '';
       let settled = false;
       let escalate: NodeJS.Timeout | undefined;
+      const grace = input.graceMs ?? CANCEL_GRACE_MS;
 
+      // Asked, then told, then ended: a run that will not stop must not need `kill -9` from another terminal.
       const onAbort = (): void => {
         if (process.platform === 'win32') child.kill();
         else child.kill('SIGINT');
-        escalate = setTimeout(() => killTree(child, 'SIGTERM'), CANCEL_GRACE_MS);
+        escalate = setTimeout(() => {
+          killTree(child, 'SIGTERM');
+          escalate = setTimeout(() => killTree(child, 'SIGKILL'), Math.min(grace, KILL_GRACE_MS));
+          escalate.unref();
+        }, grace);
         escalate.unref();
       };
+      const onForce = (): void => killTree(child, 'SIGKILL');
       signal.addEventListener('abort', onAbort, { once: true });
+      input.force?.addEventListener('abort', onForce, { once: true });
+      // The signal may have fired while the overlay was being written, before anything was listening for it.
+      if (signal.aborted) onAbort();
+      if (input.force?.aborted === true) onForce();
 
       const finish = (result: PipelineResult): void => {
         if (settled) return;
         settled = true;
         signal.removeEventListener('abort', onAbort);
+        input.force?.removeEventListener('abort', onForce);
         if (escalate !== undefined) clearTimeout(escalate);
         resolve(result);
       };

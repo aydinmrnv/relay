@@ -14,6 +14,7 @@ import type { Brand } from '../brand';
 import type { NodeRunStatus, Run, RunEvent, RunPhase, RunStatus, Workflow, WorkflowEdge, WorkflowNode } from './schema';
 import { evaluateCondition, evaluateFilter } from './engine/expression';
 import { INJECTION_RULES, screenText } from './injection';
+import { isJsonTemplate, renderJsonTemplate } from './engine/expression';
 import { renderTemplate } from './template';
 
 export interface SimulateOptions {
@@ -120,17 +121,22 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
   let refused = false;
   let failed = false;
   const visited = new Set<string>();
-  // A "Merge paths" node waits for every incoming connection. A branch a
-  // Condition or a gate did not take never arrives, so it is counted as it is
-  // skipped: the join continues once every path has either arrived or been
-  // ruled out, and is itself skipped when none arrived.
-  const joins = new Map<string, { arrived: number; ruledOut: number }>();
+  // The engine's walk, rule for rule (`src/graph/executor.ts`). Every node
+  // keeps count of the paths into it: how many brought the run, and how many
+  // a Condition or a gate upstream ruled out. An ordinary node runs when the
+  // first path arrives, and is skipped only once every path into it has been
+  // ruled out. A "Merge paths" node waits to hear from all of them, and runs
+  // if any came.
+  const paths = new Map<string, { arrived: number; ruledOut: number }>();
   const isJoin = (nodeId: string) => getNodeType(nodesById.get(nodeId)?.data.typeId ?? '')?.id === 'logic.action.merge-paths';
 
-  // Execution is a queue of (node, via-handle). Each node runs once; join nodes wait for all inputs.
+  // Execution is a queue of nodes, each run once.
   const queue: Array<{ nodeId: string }> = [{ nodeId: triggerNode.id }];
+  // Only what the trigger leads to: a connection from a node nothing reaches never brings anything.
+  const reachable = new Set<string>([triggerNode.id]);
+  for (const id of reachable) for (const edge of outgoing.get(id) ?? []) reachable.add(edge.target);
   const incomingCount = new Map<string, number>();
-  for (const edge of workflow.edges) incomingCount.set(edge.target, (incomingCount.get(edge.target) ?? 0) + 1);
+  for (const edge of workflow.edges) if (reachable.has(edge.source)) incomingCount.set(edge.target, (incomingCount.get(edge.target) ?? 0) + 1);
 
   try {
     while (queue.length > 0) {
@@ -158,12 +164,7 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       const edges = outgoing.get(nodeId) ?? [];
       for (const edge of edges) {
         const handle = edge.sourceHandle ?? def.outputs[0]?.id;
-        if (handles !== 'all' && (handle === undefined || !handles.includes(handle))) {
-          markSkipped(edge.target);
-          continue;
-        }
-        if (isJoin(edge.target)) arriveAtJoin(edge.target, true);
-        else queue.push({ nodeId: edge.target });
+        hear(edge.target, handles === 'all' || (handle !== undefined && handles.includes(handle)));
       }
     }
   } catch (error) {
@@ -176,37 +177,35 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
 
   /* ---------------------------------------------------------------- */
 
-  function markSkipped(nodeId: string) {
-    if (isJoin(nodeId)) {
-      arriveAtJoin(nodeId, false);
-      return;
-    }
-    if (run.nodeStatus[nodeId] === 'pending') {
-      run.nodeStatus[nodeId] = 'skipped';
-      for (const edge of outgoing.get(nodeId) ?? []) markSkipped(edge.target);
-    }
+  function skip(nodeId: string) {
+    run.nodeStatus[nodeId] = 'skipped';
+    for (const edge of outgoing.get(nodeId) ?? []) hear(edge.target, false);
   }
 
-  function arriveAtJoin(nodeId: string, arrived: boolean) {
-    if (visited.has(nodeId) || run.nodeStatus[nodeId] === 'skipped') return;
-    const state = joins.get(nodeId) ?? { arrived: 0, ruledOut: 0 };
+  /** One path into a node has been decided: it brought the run, or it will not. */
+  function hear(nodeId: string, arrived: boolean) {
+    const status = run.nodeStatus[nodeId];
+    if (visited.has(nodeId) || !nodesById.has(nodeId) || (status !== 'pending' && status !== 'waiting')) return;
+    const state = paths.get(nodeId) ?? { arrived: 0, ruledOut: 0 };
     if (arrived) state.arrived += 1;
     else state.ruledOut += 1;
-    joins.set(nodeId, state);
+    paths.set(nodeId, state);
     const expected = incomingCount.get(nodeId) ?? 1;
-    if (state.arrived + state.ruledOut < expected) {
+    const heardAll = state.arrived + state.ruledOut >= expected;
+    if (!isJoin(nodeId)) {
+      if (arrived && state.arrived === 1) queue.push({ nodeId });
+      else if (!arrived && heardAll && state.arrived === 0) skip(nodeId);
+      return;
+    }
+    if (!heardAll) {
       if (arrived) {
         setStatus(nodeId, 'waiting');
         emit({ nodeId, kind: 'log', status: 'waiting', message: `Merge paths: waiting for ${expected - state.arrived - state.ruledOut} more path(s).` });
       }
       return;
     }
-    if (state.arrived > 0) {
-      queue.push({ nodeId });
-      return;
-    }
-    run.nodeStatus[nodeId] = 'skipped';
-    for (const edge of outgoing.get(nodeId) ?? []) markSkipped(edge.target);
+    if (state.arrived > 0) queue.push({ nodeId });
+    else skip(nodeId);
   }
 
   function finish(status: RunStatus): Run {
@@ -366,7 +365,9 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       case 'http.action.request': {
         tick(600 + rng() * 900);
         const url = String(config['url'] ?? 'https://example.com');
-        return { status: 'done', message: `${String(config['method'] ?? 'POST')} ${url} → 200 OK`, detail: renderTemplate(String(config['body'] ?? ''), context), nextHandles: 'all' };
+        // As a real run sends it: a value inside a JSON string is escaped as one.
+        const body = String(config['body'] ?? '');
+        return { status: 'done', message: `${String(config['method'] ?? 'POST')} ${url} → 200 OK`, detail: isJsonTemplate(body) ? renderJsonTemplate(body, context) : renderTemplate(body, context), nextHandles: 'all' };
       }
       case 'http.action.post-run-json':
         tick(700);

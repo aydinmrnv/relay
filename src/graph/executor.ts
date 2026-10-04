@@ -2,10 +2,23 @@ import { screenText } from '../unattended/injection.ts';
 import { errorMessage } from '../util/errors.ts';
 import { clip, oneLine } from '../util/text.ts';
 import { formatCost } from '../workflow/usage.ts';
-import { evaluateCondition, evaluateFilter, renderTemplate } from './expression.ts';
+import { evaluateCondition, evaluateFilter, isJsonTemplate, renderJsonTemplate, renderTemplate } from './expression.ts';
 import { nextWindowOpening } from './schedule.ts';
 import { BRIDGE_VARIABLE, nodeSupport } from './support.ts';
-import { triggerOf, type GraphNode, type GraphNodeStatus, type GraphRecord, type GraphRunStatus, type GraphTask, type WorkflowEvent, type WorkflowGraph } from './types.ts';
+import {
+  ENGINE_KEYS,
+  isIssueReference,
+  isWorkflowCredential,
+  plainText,
+  triggerOf,
+  type GraphNode,
+  type GraphNodeStatus,
+  type GraphRecord,
+  type GraphRunStatus,
+  type GraphTask,
+  type WorkflowEvent,
+  type WorkflowGraph,
+} from './types.ts';
 
 /**
  * Runs a workflow as it was drawn.
@@ -145,24 +158,29 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
   const dry = options.dryRun === true;
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
   const outgoing = new Map<string, WorkflowGraph['edges']>();
+  for (const edge of graph.edges) outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge]);
+  // Only what the trigger leads to. An edge from a node nothing reaches will never bring
+  // anything, and a join that waited for it would wait for ever.
+  const reachable = new Set<string>([triggerOf(graph).id]);
+  for (const id of reachable) for (const edge of outgoing.get(id) ?? []) reachable.add(edge.to);
   const incoming = new Map<string, number>();
-  for (const edge of graph.edges) {
-    outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge]);
-    incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
-  }
+  for (const edge of graph.edges) if (reachable.has(edge.from)) incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
 
   const status: Record<string, GraphNodeStatus | 'pending'> = Object.fromEntries(graph.nodes.map((node) => [node.id, 'pending']));
   const unwired: string[] = [];
   // Held in one object so the closures below and the code after the walk read the same thing.
-  const state: { pipeline: PipelineResult | null; pipelineStarted: boolean; extraCostUsd: number; refused: boolean; failed: boolean } = {
+  const state: { pipeline: PipelineResult | null; pipelineStarted: boolean; extraCostUsd: number; refused: boolean; failed: boolean; budgeted: boolean } = {
     pipeline: null,
     pipelineStarted: false,
     extraCostUsd: 0,
     refused: false,
     failed: false,
+    budgeted: false,
   };
 
   const issue: Record<string, unknown> = { ...event.payload };
+  // What the walk writes for itself is not the event's to set: `{{trigger.*}}` still has the body as it came.
+  for (const key of ENGINE_KEYS) delete issue[key];
   if (issue['key'] === undefined && issue['id'] !== undefined) issue['key'] = issue['id'];
   const run: Record<string, unknown> = { id: '', status: 'running', cost: '', prUrl: '', branch: '', tests: 'not run', summary: '', codeReviewer: '', diff: '' };
   const context: Record<string, unknown> = {
@@ -173,42 +191,67 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     product: { name: options.product ?? 'Relay' },
   };
   const at = (): string => effects.now().toISOString();
-  const title = oneLine(String(issue['title'] ?? issue['id'] ?? (event.task?.kind === 'prompt' ? event.task.text : event.task?.ref) ?? 'event'), 120);
+  // Text from the event is printed in a terminal and stored in a run's record: it carries no control characters there.
+  const title = oneLine(plainText(String(issue['title'] ?? issue['id'] ?? (event.task?.kind === 'prompt' ? event.task.text : event.task?.ref) ?? 'event')), 120);
+
+  // What a step says is partly the event's words and partly whatever an API
+  // answered. Neither gets to move a cursor, and neither gets to repeat a
+  // credential the step was using: a webhook's address, an API's header.
+  const secrets: Array<[string, string]> = [];
+  for (const [name, value] of Object.entries(effects.env)) {
+    if (typeof value !== 'string' || !(isWorkflowCredential(name) || name === 'LINEAR_API_KEY')) continue;
+    if (value.trim().length >= 8) secrets.push([name, value.trim()]);
+    if (!name.startsWith('HTTP_HEADERS')) continue;
+    try {
+      for (const header of Object.values(JSON.parse(value) as Record<string, unknown>)) if (typeof header === 'string' && header.length >= 8) secrets.push([name, header]);
+    } catch {
+      // Not JSON: the step that reads it says so.
+    }
+  }
+  const said = (value: string): string => {
+    let clean = plainText(value);
+    for (const [name, secret] of secrets) if (clean.includes(secret)) clean = clean.split(secret).join(`[${name}]`);
+    return clean;
+  };
 
   effects.emit({
     type: 'workflow_started',
     at: at(),
     workflow: { id: graph.id, name: graph.name },
-    event: { id: event.id, source: event.source, attended: event.attended, actor: event.actor, title },
+    event: { id: event.id, source: event.source, attended: event.attended, actor: event.actor === null ? null : oneLine(plainText(event.actor), 100), title },
     nodes: graph.nodes.map((node) => ({ id: node.id, nodeType: node.type, name: node.name, real: nodeSupport(node.type).real })),
   });
 
-  // The same walk as a test run: a queue of nodes, each run once, with a
-  // Merge paths node waiting for every path that has not been ruled out.
+  // The same walk as a test run: a queue of nodes, each run once. Every node
+  // keeps count of the paths into it: how many brought the run, and how many
+  // a decision upstream ruled out. An ordinary node runs when the first path
+  // arrives, and is skipped only once every path into it has been ruled out.
+  // A Merge paths node waits to hear from all of them, and runs if any came.
   const visited = new Set<string>();
-  const joins = new Map<string, { arrived: number; ruledOut: number }>();
+  const paths = new Map<string, { arrived: number; ruledOut: number }>();
   const isJoin = (id: string): boolean => nodesById.get(id)?.type === 'logic.action.merge-paths';
   const queue: string[] = [triggerOf(graph).id];
   let cancelled = false;
 
-  const markSkipped = (id: string): void => {
-    if (isJoin(id)) return arriveAtJoin(id, false);
-    if (status[id] !== 'pending') return;
+  const skip = (id: string): void => {
     status[id] = 'skipped';
-    for (const edge of outgoing.get(id) ?? []) markSkipped(edge.to);
+    for (const edge of outgoing.get(id) ?? []) hear(edge.to, false);
   };
-  const arriveAtJoin = (id: string, arrived: boolean): void => {
-    if (visited.has(id) || status[id] === 'skipped') return;
-    const join = joins.get(id) ?? { arrived: 0, ruledOut: 0 };
-    if (arrived) join.arrived += 1;
-    else join.ruledOut += 1;
-    joins.set(id, join);
-    if (join.arrived + join.ruledOut < (incoming.get(id) ?? 1)) return;
-    if (join.arrived > 0) queue.push(id);
-    else {
-      status[id] = 'skipped';
-      for (const edge of outgoing.get(id) ?? []) markSkipped(edge.to);
-    }
+  /** One path into `id` has been decided: it brought the run, or it will not. */
+  const hear = (id: string, arrived: boolean): void => {
+    if (visited.has(id) || status[id] !== 'pending' || !nodesById.has(id)) return;
+    const tally = paths.get(id) ?? { arrived: 0, ruledOut: 0 };
+    if (arrived) tally.arrived += 1;
+    else tally.ruledOut += 1;
+    paths.set(id, tally);
+    const heardAll = tally.arrived + tally.ruledOut >= (incoming.get(id) ?? 1);
+    if (isJoin(id)) {
+      if (!heardAll) return;
+      if (tally.arrived > 0) queue.push(id);
+      else skip(id);
+    } else if (arrived) {
+      if (tally.arrived === 1) queue.push(id);
+    } else if (heardAll && tally.arrived === 0) skip(id);
   };
 
   try {
@@ -242,17 +285,15 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
         node: id,
         nodeType: node.type,
         status: result.status,
-        message: result.message,
-        detail: result.detail ?? null,
+        message: said(result.message),
+        detail: result.detail === undefined ? null : said(result.detail),
         durationMs: Math.max(0, effects.now().getTime() - startedAt),
         costUsd: result.costUsd ?? null,
       });
 
       for (const edge of outgoing.get(id) ?? []) {
         const handle = edge.handle ?? node.outputs[0] ?? null;
-        if (result.next !== 'all' && (handle === null || !result.next.includes(handle))) markSkipped(edge.to);
-        else if (isJoin(edge.to)) arriveAtJoin(edge.to, true);
-        else queue.push(edge.to);
+        hear(edge.to, result.next === 'all' || (handle !== null && result.next.includes(handle)));
       }
     }
   } catch (error) {
@@ -308,14 +349,27 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     const value = node.config[key];
     return value === undefined || value === null ? fallback : String(value);
   }
-  function rendered(node: GraphNode, key: string, fallback = ''): string {
-    return renderTemplate(text(node, key, fallback), context);
+  function rendered(node: GraphNode, key: string, fallback = '', encode?: (value: string) => string): string {
+    return renderTemplate(text(node, key, fallback), context, encode);
+  }
+  /** A node's URL. A variable inside it is percent-encoded, so an id cannot turn into a path; one that is the whole address is taken as it is. */
+  function renderedUrl(node: GraphNode, key: string): string {
+    const template = text(node, key).trim();
+    return renderTemplate(template, context, /^\{\{\s*[a-zA-Z0-9_.-]+\s*\}\}$/.test(template) ? undefined : encodeURIComponent).trim();
+  }
+  function waiting(node: GraphNode, message: string, detail: string | null, approval?: string): void {
+    effects.emit({ type: 'node_waiting', at: at(), node: node.id, message: said(message), detail: detail === null ? null : said(detail), ...(approval === undefined ? {} : { approval }) });
   }
 
   async function perform(node: GraphNode): Promise<NodeResult> {
     if (node.kind === 'trigger') {
       if (!event.attended && !graph.enabled) {
         return { status: 'refused', message: 'Refused: this workflow is paused, so nothing starts it by itself.', detail: 'Switch it to Active in the studio and export it again, or start it by hand.', next: [] };
+      }
+      if (!event.attended) {
+        // The repository's stop file stops every workflow in it, whether or not its canvas has a kill switch.
+        const stop = await effects.stopReason();
+        if (stop !== null) return { status: 'refused', message: `Refused: ${stop}.`, detail: 'Remove the file to let events start runs again.', next: [] };
       }
       return { status: 'done', message: `${event.attended ? 'Started by hand' : 'Received'}: ${title}`, detail: clip(JSON.stringify(event.payload, null, 2), 4000), next: 'all' };
     }
@@ -372,7 +426,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
         const minutes = Math.max(0, Number(node.config['minutes'] ?? 10));
         if (!Number.isFinite(minutes)) return { status: 'failed', message: 'The wait has no number of minutes.', next: [] };
         if (dry) return { status: 'done', message: `Dry run: would wait ${minutes} minutes.`, next: 'all' };
-        effects.emit({ type: 'node_waiting', at: at(), node: node.id, message: `Waiting ${minutes} minute${minutes === 1 ? '' : 's'}.`, detail: null });
+        waiting(node, `Waiting ${minutes} minute${minutes === 1 ? '' : 's'}.`, null);
         await wait(minutes * 60_000);
         return { status: 'done', message: `Waited ${minutes} minute${minutes === 1 ? '' : 's'}.`, next: 'all' };
       }
@@ -383,7 +437,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
         if (!opening.ok) return { status: 'failed', message: opening.error, next: [] };
         if (opening.waitMs === 0) return { status: 'done', message: `Inside ${window} (${zone}): no wait.`, next: 'all' };
         if (dry) return { status: 'done', message: `Dry run: would hold until ${opening.opensAt.toISOString()}.`, next: 'all' };
-        effects.emit({ type: 'node_waiting', at: at(), node: node.id, message: `Holding until ${window} (${zone}).`, detail: `Opens at ${opening.opensAt.toISOString()}.` });
+        waiting(node, `Holding until ${window} (${zone}).`, `Opens at ${opening.opensAt.toISOString()}.`);
         await wait(opening.waitMs);
         return { status: 'done', message: `Held until ${window} (${zone}).`, next: 'all' };
       }
@@ -396,7 +450,8 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     }
 
     const app = node.type.split('.')[0];
-    if (app === 'slack') return chat(node, 'SLACK_WEBHOOK_URL', 'Slack', (message) => ({ text: message }));
+    // Slack reads `<!channel>` as a ping and `<url|label>` as a link, so what a ticket said is escaped before it is one.
+    if (app === 'slack') return chat(node, 'SLACK_WEBHOOK_URL', 'Slack', (message) => ({ text: message }), (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
     // Text from a ticket must never ping a channel.
     if (app === 'discord') return chat(node, 'DISCORD_WEBHOOK_URL', 'Discord', (message) => ({ content: clip(message, 1900), allowed_mentions: { parse: [] } }));
     if (app === 'github-issues') return githubIssue(node);
@@ -434,7 +489,12 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     if (authors.includes('*')) return { status: 'done', message: 'Anyone is allowed: the allowlist is *.', next: ['pass'] };
     const actor = event.actor?.replace(/^@/, '') ?? null;
     if (actor === null || actor.length === 0) {
-      return { status: 'refused', message: 'Refused: the event does not say who started it, and the allowlist names people.', detail: 'Send the login as "actor" in the webhook body, or allow * if the sender is already trusted.', next: ['refused'] };
+      return {
+        status: 'refused',
+        message: 'Refused: nothing vouches for who started this event, and the allowlist names people.',
+        detail: 'Send the login as "actor" in a signed webhook body (an unsigned delivery’s word for who sent it is not taken), or allow * if the sender is already trusted.',
+        next: ['refused'],
+      };
     }
     if (authors.some((login) => login.toLowerCase() === actor.toLowerCase())) return { status: 'done', message: `@${actor} is allowed.`, next: ['pass'] };
     if (teams.length > 0) {
@@ -445,8 +505,14 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
   }
 
   async function budget(node: GraphNode): Promise<NodeResult> {
-    const maxRun = numberOrNull(node.config['maxRunCostUsd']);
-    const maxDaily = numberOrNull(node.config['maxDailyCostUsd']);
+    const perRun = money(node.config['maxRunCostUsd']);
+    const perDay = money(node.config['maxDailyCostUsd']);
+    // A ceiling that cannot be read is not "no ceiling": the person who typed it meant one.
+    if (!perRun.ok || !perDay.ok) {
+      return { status: 'failed', message: `The ${perRun.ok ? 'daily budget' : 'per-run cost'} “${oneLine(String(node.config[perRun.ok ? 'maxDailyCostUsd' : 'maxRunCostUsd']), 40)}” is not an amount. Write a number of dollars, such as 2.50.`, next: [] };
+    }
+    const maxRun = perRun.value;
+    const maxDaily = perDay.value;
     if (maxRun === null && maxDaily === null) {
       return { status: 'done', message: 'No ceiling is set, so nothing is refused.', detail: 'Fill in a per-run or daily cost, or this gate lets everything through.', next: ['pass'] };
     }
@@ -461,20 +527,27 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
       return { status: 'done', message: `Started by hand, ${held}. The daily budget counts what Relay starts by itself.`, next: ['pass'] };
     }
     if (maxDaily === null) return { status: 'done', message: `Within budget: no daily ceiling, this run ${held}.`, next: ['pass'] };
+    if (maxRun === null) {
+      // A run in flight has spent nothing yet, so what it reserves of the day is its cap. With no cap it reserves nothing, and the day's ceiling is passed by runs that were each let in.
+      return { status: 'refused', message: `Refused: a daily budget of ${formatCost(maxDaily)} cannot be kept with no per-run cost.`, detail: 'Fill in the per-run cost on the Budget gate. A run in flight reserves that much of the day.', next: ['refused'] };
+    }
+    const day = await today(maxRun, maxDaily);
+    if (day.refusal !== null) return { status: 'refused', message: day.refusal, detail: 'Never queued for tomorrow: that is the same spend with a delay in front of it.', next: ['refused'] };
+    state.budgeted = true;
+    return { status: 'done', message: `Within budget: ${day.said}, this run ${held}.`, next: ['pass'] };
+  }
+
+  /** Whether one more run, held to `maxRun`, fits in what is left of today's `maxDaily`. */
+  async function today(maxRun: number, maxDaily: number): Promise<{ refusal: string | null; said: string }> {
     const spend = await effects.spend();
     // Each run in flight has reported nothing yet, so it reserves its whole cap — the rule `relay serve` uses.
-    const committed = spend.spentUsd + spend.inFlight * (maxRun ?? 0);
-    const wouldCommit = committed + (maxRun ?? 0);
+    const committed = spend.spentUsd + spend.inFlight * maxRun;
     const floor = spend.unpriced === 0 ? '' : ` (${spend.unpriced} turn${spend.unpriced === 1 ? '' : 's'} reported no price, so today’s spend is a floor)`;
-    if (wouldCommit > maxDaily || spend.spentUsd >= maxDaily) {
-      return {
-        status: 'refused',
-        message: `Refused: ${formatCost(spend.spentUsd)} spent today across ${spend.runs} unattended run${spend.runs === 1 ? '' : 's'}, and another could take it past ${formatCost(maxDaily)}${floor}.`,
-        detail: 'Never queued for tomorrow: that is the same spend with a delay in front of it.',
-        next: ['refused'],
-      };
-    }
-    return { status: 'done', message: `Within budget: ${formatCost(committed)} of ${formatCost(maxDaily)} committed today, this run ${held}${floor}.`, next: ['pass'] };
+    const over = committed + maxRun > maxDaily || spend.spentUsd >= maxDaily;
+    return {
+      refusal: over ? `Refused: ${formatCost(spend.spentUsd)} spent today across ${spend.runs} unattended run${spend.runs === 1 ? '' : 's'}, and another could take it past ${formatCost(maxDaily)}${floor}.` : null,
+      said: `${formatCost(committed)} of ${formatCost(maxDaily)} committed today${floor}`,
+    };
   }
 
   async function concurrency(node: GraphNode): Promise<NodeResult> {
@@ -513,7 +586,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
       approvers: lines(node.config['approvers']),
       expiresAt: new Date(effects.now().getTime() + hours * 3_600_000),
     };
-    const answer = await effects.approval(ask, (how, id) => effects.emit({ type: 'node_waiting', at: at(), node: node.id, message: `Waiting for approval: ${title}`, detail: how, ...(id === undefined ? {} : { approval: id }) }));
+    const answer = await effects.approval(ask, (how, id) => waiting(node, `Waiting for approval: ${title}`, how, id));
     const who = answer.by === null ? 'a person' : answer.by;
     if (answer.reason === 'timeout') {
       const waited = hours >= 1 ? `${hours} hour${hours === 1 ? '' : 's'}` : `${Math.round(hours * 60)} minutes`;
@@ -539,6 +612,29 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     if (state.pipelineStarted) return { status: 'failed', message: 'This workflow has a second agent pipeline. A run works on one change, so only the first ran.', next: [] };
     const task = taskFor();
     if (task === null) return { status: 'failed', message: 'There is nothing for the agents to work on: the event has no issue, no title and no description.', next: [] };
+    if (!event.attended) {
+      // `relay run` reads anything that is not an issue as a file on this machine. An event does not get to name one.
+      if (task.kind === 'issue' && !isIssueReference(task.ref)) {
+        return { status: 'refused', message: `Refused: “${oneLine(task.ref, 60)}” is not an issue in a tracker, and an event may only name one of those.`, next: [] };
+      }
+      // The rule `relay serve` starts under: nobody is here to notice the bill, so both ceilings are set before an event may spend.
+      const compiled = (graph.config['unattended'] !== null && typeof graph.config['unattended'] === 'object' ? graph.config['unattended'] : {}) as Record<string, unknown>;
+      const cap = money(compiled['maxRunCostUsd']);
+      const daily = money(compiled['maxDailyCostUsd']);
+      if (!cap.ok || !daily.ok || cap.value === null || daily.value === null) {
+        return {
+          status: 'refused',
+          message: 'Refused: an event may not start the agents with no ceiling on what they spend.',
+          detail: 'Add a Budget gate with both a per-run cost and a daily budget, and export the workflow again. A run started by hand needs neither.',
+          next: [],
+        };
+      }
+      // A Budget gate on the way here has already held today's spend against the ceiling. Where the canvas put it somewhere else, it is held here.
+      if (!state.budgeted) {
+        const day = await today(cap.value, daily.value);
+        if (day.refusal !== null) return { status: 'refused', message: day.refusal, detail: 'Never queued for tomorrow: that is the same spend with a delay in front of it.', next: [] };
+      }
+    }
     state.pipelineStarted = true;
     if (dry) {
       return { status: 'done', message: `Dry run: would start the agents on ${task.kind === 'issue' ? task.ref : `“${oneLine(task.text, 80)}”`}.`, next: 'all' };
@@ -583,7 +679,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
   }
 
   function taskFor(): GraphTask | null {
-    // A step before the pipeline may have filed a new ticket; the agents work on that one.
+    // A step before the pipeline may have filed a new ticket; the agents work on that one. (Only a step: the key is taken out of what an event sends.)
     const created = issue['createdRef'];
     if (typeof created === 'string' && created.length > 0) return { kind: 'issue', ref: created };
     if (event.task !== null) return event.task;
@@ -653,11 +749,13 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
   /* ------------------------------- apps ------------------------------- */
 
   async function httpRequest(node: GraphNode): Promise<NodeResult> {
-    const url = rendered(node, 'url').trim();
+    const url = renderedUrl(node, 'url');
     const configured = text(node, 'method', 'POST').toUpperCase();
     const method = ['POST', 'GET', 'PUT', 'PATCH', 'DELETE'].includes(configured) ? configured : 'POST';
     if (!/^https?:\/\//i.test(url)) return { status: 'failed', message: `“${oneLine(url, 80)}” is not an http(s) URL.`, next: [] };
-    const body = rendered(node, 'body');
+    // The request carries a credential in its headers, so a ticket's title must not be able to add a field to what is sent with it.
+    const template = text(node, 'body');
+    const body = isJsonTemplate(template) ? renderJsonTemplate(template, context) : renderTemplate(template, context);
     if (dry) return { status: 'done', message: `Dry run: would ${method} ${redactUrl(url)}.`, ...(method === 'GET' ? {} : { detail: body }), next: 'all' };
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     // Headers are where an API's credential goes, so they are never in the workflow: they come from the environment.
@@ -673,30 +771,52 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return { status: 'failed', message: `${variable} is not a JSON object of headers.`, next: [] };
       for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) headers[name.toLowerCase()] = String(value);
     }
-    const response = await effects.fetch(url, { method, headers, ...(method === 'GET' ? {} : { body }), signal: AbortSignal.any([effects.signal, AbortSignal.timeout(30_000)]) });
-    const said = `${method} ${redactUrl(url)} → ${response.status}`;
-    return response.ok ? { status: 'done', message: said, next: 'all' } : { status: 'failed', message: said, detail: clip(await response.text().catch(() => ''), 1000), next: [] };
+    const response = await request(url, { method, headers, ...(method === 'GET' ? {} : { body }) }, 30_000);
+    if (typeof response === 'string') return { status: 'failed', message: `${method} ${redactUrl(url)} did not go through: ${response}.`, next: [] };
+    const outcome = `${method} ${redactUrl(url)} → ${response.status}`;
+    return response.ok ? { status: 'done', message: outcome, next: 'all' } : { status: 'failed', message: outcome, detail: clip(await response.text().catch(() => ''), 1000), next: [] };
   }
 
   async function postRunJson(node: GraphNode): Promise<NodeResult> {
-    const url = rendered(node, 'url').trim();
+    const url = renderedUrl(node, 'url');
     if (!/^https?:\/\//i.test(url)) return { status: 'failed', message: `“${oneLine(url, 80)}” is not an http(s) URL.`, next: [] };
     if (dry) return { status: 'done', message: `Dry run: would post the run document to ${redactUrl(url)}.`, next: 'all' };
     const document = { workflow: { id: graph.id, name: graph.name }, event: { id: event.id, source: event.source, actor: event.actor }, issue, run: context['runDocument'] ?? null };
-    const response = await effects.fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(document), signal: AbortSignal.any([effects.signal, AbortSignal.timeout(30_000)]) });
-    const said = `Posted the run document to ${redactUrl(url)} → ${response.status}`;
-    return response.ok ? { status: 'done', message: said, next: 'all' } : { status: 'failed', message: said, next: [] };
+    const response = await request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(document) }, 30_000);
+    if (typeof response === 'string') return { status: 'failed', message: `The run document did not reach ${redactUrl(url)}: ${response}.`, next: [] };
+    const outcome = `Posted the run document to ${redactUrl(url)} → ${response.status}`;
+    return response.ok ? { status: 'done', message: outcome, next: 'all' } : { status: 'failed', message: outcome, next: [] };
   }
 
-  async function chat(node: GraphNode, variable: string, app: string, body: (message: string) => object): Promise<NodeResult> {
-    const message = rendered(node, 'text').trim();
+  /**
+   * One request to somewhere a step was pointed at. A request that never got
+   * an answer comes back as a reason, in words that are not the address: what
+   * `fetch` throws quotes the URL it was given, and a webhook's URL is its
+   * credential.
+   */
+  async function request(url: string, init: RequestInit, timeoutMs: number): Promise<Response | string> {
+    try {
+      return await effects.fetch(url, { ...init, signal: AbortSignal.any([effects.signal, AbortSignal.timeout(timeoutMs)]) });
+    } catch (error) {
+      if (effects.signal.aborted) throw new Cancelled();
+      const cause = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+      const name = error instanceof Error ? error.name : '';
+      return name === 'TimeoutError' ? `no answer within ${Math.round(timeoutMs / 1000)} seconds` : typeof cause === 'string' ? `the connection failed (${cause})` : 'the request could not be made';
+    }
+  }
+
+  async function chat(node: GraphNode, variable: string, app: string, body: (message: string) => object, encode?: (value: string) => string): Promise<NodeResult> {
+    const message = rendered(node, 'text', '', encode).trim();
     if (message.length === 0) return { status: 'failed', message: `${app}: the message is empty once its variables are filled in.`, next: [] };
     if (dry) return { status: 'done', message: `Dry run: would post to ${app}.`, detail: message, next: 'all' };
     const url = effects.env[variable]?.trim();
     if (url === undefined || url.length === 0) {
       return { status: 'failed', message: `${app}: ${variable} is not set, so there is nowhere to post.`, detail: `Make a webhook in ${app} and export it as ${variable} where the workflow runs.`, next: [] };
     }
-    const response = await effects.fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body(message)), signal: AbortSignal.any([effects.signal, AbortSignal.timeout(20_000)]) });
+    // Said without the value: the address is the credential.
+    if (!isWebhookAddress(url)) return { status: 'failed', message: `${app}: ${variable} is not an https:// address.`, detail: `Copy the webhook’s whole URL from ${app}, starting with https://.`, next: [] };
+    const response = await request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body(message)) }, 20_000);
+    if (typeof response === 'string') return { status: 'failed', message: `${app}: ${response}.`, next: [] };
     if (!response.ok) return { status: 'failed', message: `${app} answered HTTP ${response.status}.`, detail: clip(await response.text().catch(() => ''), 500), next: [] };
     return { status: 'done', message: `Posted to ${app}.`, detail: message, next: 'all' };
   }
@@ -717,9 +837,10 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     const message = ['text', 'body', 'message', 'title'].map((key) => config[key]).find((value): value is string => typeof value === 'string' && value.trim().length > 0) ?? '';
     if (dry) return { status: 'done', message: `Dry run: would hand ${connector}.${action} to your bridge.`, ...(message.length === 0 ? {} : { detail: message }), next: 'all' };
     const body = { run: run['id'], prUrl: run['prUrl'], status: run['status'], message, action: { connector, action, config }, issue, workflow: graph.name, repository: graph.repository };
-    const response = await effects.fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.any([effects.signal, AbortSignal.timeout(30_000)]) });
-    const said = `Handed ${connector}.${action} to your bridge → ${response.status}`;
-    return response.ok ? { status: 'done', message: said, ...(message.length === 0 ? {} : { detail: message }), next: 'all' } : { status: 'failed', message: said, next: [] };
+    const response = await request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, 30_000);
+    if (typeof response === 'string') return { status: 'failed', message: `${connector}.${action} did not reach your bridge: ${response}.`, next: [] };
+    const outcome = `Handed ${connector}.${action} to your bridge → ${response.status}`;
+    return response.ok ? { status: 'done', message: outcome, ...(message.length === 0 ? {} : { detail: message }), next: 'all' } : { status: 'failed', message: outcome, next: [] };
   }
 
   /** The GitHub issue the event is about: its number, or a reference `gh` accepts. */
@@ -890,11 +1011,27 @@ function lines(value: unknown): string[] {
     .filter(Boolean);
 }
 
-/** A number somebody typed, or null when the field is empty or not a number: "unset", never zero. */
+/** A number the walk wrote for itself, or null when there is none. */
 function numberOrNull(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * An amount somebody typed into a gate: `2.50`, `$20`, `1,000`. Empty is "no
+ * ceiling" and says so with null. Anything else that is not an amount is an
+ * error rather than no ceiling — the difference between a typo and a run with
+ * nothing to stop it.
+ */
+function money(value: unknown): { ok: true; value: number | null } | { ok: false } {
+  if (value === null || value === undefined) return { ok: true, value: null };
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? { ok: true, value } : { ok: false };
+  const typed = String(value).trim();
+  if (typed.length === 0) return { ok: true, value: null };
+  const digits = typed.replace(/^\$\s*/, '').replace(/,(?=\d{3}(\D|$))/g, '');
+  if (!/^\d+(\.\d+)?$|^\.\d+$/.test(digits)) return { ok: false };
+  return { ok: true, value: Number(digits) };
 }
 
 function stepLabel(step: string | undefined): string {
@@ -909,6 +1046,16 @@ function stepLabel(step: string | undefined): string {
       return 'Merged';
     default:
       return step ?? 'Step';
+  }
+}
+
+/** Whether a chat webhook's address is one: https, or plain http to this machine, where a stand-in for the app may be listening. */
+function isWebhookAddress(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || (parsed.protocol === 'http:' && /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/.test(parsed.hostname));
+  } catch {
+    return false;
   }
 }
 

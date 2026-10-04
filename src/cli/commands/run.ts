@@ -176,6 +176,15 @@ export async function resolveIssueSource(
   // `relay run 142` has meant issue 142 since the first release, and that is
   // not something a file called `142` in the working directory gets to change.
   if (isTrackerRef(ref!)) return { kind: 'tracker', ref: ref! };
+  // A file is a person's to name. A run an event started was handed its
+  // reference by whatever sent the event, and reading that as a path would
+  // put any file on this machine in front of the agents and in a pull request.
+  if (adoptedRunTrigger() !== undefined) {
+    throw new RelayError('A run that an event started works on a tracker issue or a description, never on a file.', {
+      code: 'BAD_TASK',
+      hint: 'The event named something that is not an issue. Start the run by hand to work from a file.',
+    });
+  }
   return { kind: 'local', task: await readTaskFile(ref!, cwd) };
 }
 

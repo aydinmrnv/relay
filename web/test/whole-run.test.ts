@@ -6,7 +6,9 @@ import { createMachineRun, MachineRunFold } from '@/lib/companion/machine-run';
 import type { RunStreamRecord, RunTask } from '@/lib/companion/types';
 import { compileWorkflow } from '@/lib/workflow/compile';
 import type { Run, Workflow, WorkflowNode } from '@/lib/workflow/schema';
-import { instantiateTemplate } from '@/lib/workflow/templates';
+import { simulateRun } from '@/lib/workflow/simulate';
+import { nodeSupport } from '@/lib/workflow/engine/support';
+import { instantiateTemplate, TEMPLATES } from '@/lib/workflow/templates';
 
 /**
  * The whole path a real run takes, end to end across the two packages: the
@@ -175,4 +177,49 @@ test('a runner that cannot walk the graph still gets the pipeline-only record', 
   assert.equal(run.machine?.scope, undefined);
   assert.ok(Object.values(run.nodeStatus).includes('skipped'));
   assert.ok(run.events.some((event) => /not run here/.test(event.message)));
+});
+
+test('every template that starts by itself carries the two ceilings an event needs before it may start the agents', async () => {
+  let checked = 0;
+  for (const template of TEMPLATES) {
+    const workflow = instantiateTemplate(template.id, BRAND, 'acme/api')!;
+    const graph = compileWorkflow(workflow).graph as { nodes: Array<{ id: string; type: string; kind: string }>; config: { unattended?: Record<string, unknown> } };
+    const trigger = graph.nodes.find((entry) => entry.kind === 'trigger')!;
+    const pipeline = graph.nodes.find((entry) => entry.type === 'pipeline.action.run' || entry.type === 'pipeline.action.fast');
+    if (pipeline === undefined || !nodeSupport(trigger.type).real || trigger.type === 'logic.trigger.manual') continue;
+    checked += 1;
+    assert.equal(typeof graph.config.unattended?.['maxRunCostUsd'], 'number', `${template.id} has no per-run cost`);
+    assert.equal(typeof graph.config.unattended?.['maxDailyCostUsd'], 'number', `${template.id} has no daily budget`);
+
+    // And the engine agrees: walked for an event nobody is watching, the pipeline is not refused for want of a ceiling.
+    const made: World = { records: [], posted: [], linear: [] };
+    const event = { id: 'delivery-1', source: 'webhook', attended: false, actor: 'maintainer', payload: { id: 'ENG-142', key: 'ENG-142', title: 'Fix the flaky timeout', body: 'It fails on CI.', labels: ['bug'] }, task: { kind: 'prompt', text: 'Fix the flaky timeout' }, at: NOW.toISOString() };
+    await engine.executeGraph(engine.parseGraph(graph), event, effects(made, { env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/x' } }), { dryRun: true });
+    const said = made.records.filter((record) => record['type'] === 'node_finished').map((record) => String(record['message']));
+    assert.ok(!said.some((message) => /no ceiling on what they spend/.test(message)), `${template.id}: ${said.join(' | ')}`);
+  }
+  assert.ok(checked >= 5, `only ${checked} templates start by themselves`);
+});
+
+test('a test run and a real one agree about a step that two paths lead to', async () => {
+  // The allowlist passes and the budget refuses: the "tell them why" step both gates share runs once, and the Merge paths after it carries on.
+  const workflow = workflowOf(
+    [
+      node('logic.trigger.manual', 'start'),
+      node('logic.action.condition', 'small', { left: '{{issue.title}}', op: 'contains', right: 'flaky' }),
+      node('logic.action.condition', 'urgent', { left: '{{issue.title}}', op: 'contains', right: 'outage' }),
+      node('slack.action.post-message', 'told', { text: 'Not started: {{issue.title}}' }),
+      node('pipeline.action.run', 'run'),
+      node('logic.action.merge-paths', 'join'),
+      node('slack.action.post-message', 'after', { text: 'Looked at: {{issue.title}}' }),
+    ],
+    [['start', 'small'], ['small', 'urgent', 'true'], ['small', 'told', 'false'], ['urgent', 'run', 'true'], ['urgent', 'told', 'false'], ['run', 'join'], ['told', 'join'], ['join', 'after']],
+  );
+  const { run, made } = await runWhole(workflow, { kind: 'prompt', text: 'Fix the flaky timeout' }, { env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/x' } });
+  assert.deepEqual([run.nodeStatus['told'], run.nodeStatus['run'], run.nodeStatus['join'], run.nodeStatus['after']], ['done', 'skipped', 'done', 'done']);
+  assert.deepEqual(made.posted.map((entry) => (entry.body as { text: string }).text), ['Not started: Fix the flaky timeout', 'Looked at: Fix the flaky timeout']);
+
+  // The studio's own test run walks the same canvas to the same statuses.
+  const played = await simulateRun(workflow, { speed: 'instant', brand: BRAND, seed: 7, payload: { title: 'Fix the flaky timeout' } });
+  assert.deepEqual([played.nodeStatus['told'], played.nodeStatus['run'], played.nodeStatus['join'], played.nodeStatus['after']], ['done', 'skipped', 'done', 'done']);
 });

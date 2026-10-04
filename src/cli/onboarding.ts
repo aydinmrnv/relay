@@ -9,10 +9,12 @@ import { relayDir } from '../storage/config.ts';
  * `config.json` is deliberately absent: it records deliberate choices and is
  * meant to be committed.
  *
- * The last three are what `relay serve` leaves behind: the ledger of issues
- * this machine has already picked up, the kill-switch file, and the locks that
+ * Three are what `relay serve` leaves behind: the ledger of issues this
+ * machine has already picked up, the kill-switch file, and the locks that
  * serialise both. A STOP file that got committed would stop every clone's
  * server, and a ledger that did would tell them the work was already done.
+ * The approvals are what a workflow is waiting on a person for, here and now:
+ * a committed answer would approve the same step in every clone.
  */
 export const RELAY_IGNORE_ENTRIES = [
   '.relay/runs/',
@@ -20,6 +22,7 @@ export const RELAY_IGNORE_ENTRIES = [
   '.relay/unattended.json',
   '.relay/STOP',
   '.relay/*.lock',
+  '.relay/approvals/',
 ] as const;
 
 /**

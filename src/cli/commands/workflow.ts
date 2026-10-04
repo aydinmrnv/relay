@@ -10,7 +10,7 @@ import { DEFAULT_WEBHOOK_PORT, serveWorkflow, WEBHOOK_SECRET_VARIABLE, type Serv
 import { BRIDGE_VARIABLE, nodeSupport } from '../../graph/support.ts';
 import { parseGraph, triggerOf, type GraphRecord, type WorkflowEvent, type WorkflowGraph } from '../../graph/types.ts';
 import { relayDir } from '../../storage/config.ts';
-import { Prompter } from '../../ui/prompt.ts';
+import { isPromptCancelled, Prompter } from '../../ui/prompt.ts';
 import { glyphs } from '../../ui/theme.ts';
 import { errorMessage, RelayError } from '../../util/errors.ts';
 import { formatDuration, oneLine, pluralize } from '../../util/text.ts';
@@ -211,7 +211,7 @@ function emitter(graph: WorkflowGraph, options: { json: boolean; verbose: boolea
 /* run                                                                 */
 /* ------------------------------------------------------------------ */
 
-function terminalApproval(json: boolean): ((record: ApprovalRecord, signal: AbortSignal) => Promise<{ approved: boolean; by: string }>) | undefined {
+function terminalApproval(json: boolean, cancel: () => void): ((record: ApprovalRecord, signal: AbortSignal) => Promise<{ approved: boolean; by: string }>) | undefined {
   if (json) return undefined;
   const prompter = new Prompter();
   if (!prompter.interactive) {
@@ -227,6 +227,10 @@ function terminalApproval(json: boolean): ((record: ApprovalRecord, signal: Abor
     try {
       const approved = await asking.confirm(`  Approve “${oneLine(record.subject, 80)}”?`, false);
       return { approved, by: userInfo().username };
+    } catch (error) {
+      // Ctrl-C at the question is Ctrl-C. The prompt took the key, so the run is told here, rather than left waiting on a question nobody can see.
+      if (isPromptCancelled(error) && !signal.aborted) cancel();
+      throw error;
     } finally {
       asking.close();
     }
@@ -261,7 +265,8 @@ async function eventFor(cli: CliContext, graph: WorkflowGraph, issueRef: string 
       throw new RelayError(`Cannot read --event ${options.event} as JSON: ${errorMessage(error)}`, { code: 'BAD_FLAG' });
     }
     // An event file stands in for a delivery nobody vetted, so the guardrails decide, as they would for a real one.
-    return webhookEvent(body, { now, linear: (process.env['LINEAR_API_KEY'] ?? '').trim().length > 0 });
+    // Who it says sent it is taken at its word, as a signed delivery's is: the person at this terminal chose the file.
+    return webhookEvent(body, { now, linear: (process.env['LINEAR_API_KEY'] ?? '').trim().length > 0, vouched: true });
   }
   if (options.prompt !== undefined) {
     if (options.prompt.trim().length === 0) throw new RelayError('--prompt is empty.', { code: 'BAD_FLAG' });
@@ -289,19 +294,24 @@ export async function workflowRunCommand(workflowRef: string | undefined, issueR
   const event = await eventFor(cli, graph, issueRef, options);
   const json = options.json === true;
 
+  // Two signals: the first asks the run to stop, the second ends whatever has not.
   const controller = new AbortController();
-  let asked = false;
+  const force = new AbortController();
   const onSignal = (): void => {
-    if (asked) return;
-    asked = true;
-    if (!json) out(warning('  Stopping: the run is asked to stop, and work so far stays on its branch.'));
+    if (controller.signal.aborted) {
+      if (force.signal.aborted) return;
+      if (!json) out(warning('  Again: ending the run now.'));
+      force.abort();
+      return;
+    }
+    if (!json) out(warning('  Stopping: the run is asked to stop, and work so far stays on its branch. Press Ctrl-C again to end it now.'));
     controller.abort();
   };
   const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   for (const signal of signals) process.on(signal, onSignal);
 
   try {
-    const askAtTerminal = terminalApproval(json);
+    const askAtTerminal = terminalApproval(json, onSignal);
     const effects = createEffects({
       repoRoot: cli.repo.root,
       config: cli.config,
@@ -309,6 +319,7 @@ export async function workflowRunCommand(workflowRef: string | undefined, issueR
       issueProvider: cli.issueProvider,
       graph,
       signal: controller.signal,
+      force: force.signal,
       emit: emitter(graph, { json, verbose: options.verbose === true }),
       ...(askAtTerminal === undefined ? {} : { askAtTerminal }),
     });
@@ -417,7 +428,7 @@ function printServeLog(entry: ServeLog): void {
       section('Workflow, unattended');
       rows([{ label: 'Trigger', value: entry.trigger }, { label: 'Listening', value: entry.detail }, { label: 'Delivery', value: 'capped at a draft pull request: nothing merges without a person' }]);
       out();
-      hint('To stop it: Ctrl-C. The run in flight finishes; press it again to stop that too.');
+      hint('To stop it: Ctrl-C. The run in flight finishes; press it again to stop that too, and a third time to end it at once.');
       out();
       break;
     case 'event':
@@ -448,7 +459,8 @@ function parsePort(value: string | undefined): number | undefined {
 export async function workflowServeCommand(workflowRef: string | undefined, options: WorkflowServeOptions = {}): Promise<number> {
   loadEnvFile(options.envFile);
   const cli = await createCliContext();
-  const graph = await loadWorkflow(await resolveWorkflowFile(cli.repo.root, workflowRef));
+  const file = await resolveWorkflowFile(cli.repo.root, workflowRef);
+  const graph = await loadWorkflow(file);
   const json = options.json === true;
   if (!graph.enabled) {
     throw new RelayError(`“${graph.name}” is paused, so nothing may start it by itself.`, { code: 'WORKFLOW_PAUSED', hint: 'Switch it to Active in the studio and export it again.' });
@@ -459,23 +471,35 @@ export async function workflowServeCommand(workflowRef: string | undefined, opti
     if (!Number.isInteger(pollSeconds) || pollSeconds < 5 || pollSeconds > 3600) throw new RelayError(`--interval must be a whole number of seconds between 5 and 3600 (got "${options.interval}").`, { code: 'BAD_FLAG' });
   }
 
-  // Two signals, as in `relay serve`: the first stops taking events, the second stops the run in flight.
+  // As in `relay serve`: the first signal stops taking events, the second stops the run in flight. A third ends what has not stopped.
   const accepting = new AbortController();
   const running = new AbortController();
+  const force = new AbortController();
   const onSignal = (signal: NodeJS.Signals): void => {
-    if (accepting.signal.aborted) {
-      if (signal === 'SIGHUP') return;
+    if (!accepting.signal.aborted) {
+      if (!json) out(warning(`\n  ${signal}: taking no more events. A run in flight will finish.`));
+      accepting.abort();
+      return;
+    }
+    if (signal === 'SIGHUP') return;
+    if (!running.signal.aborted) {
       if (!json) out(warning(`  ${signal} again: stopping the run in flight.`));
       running.abort();
       return;
     }
-    if (!json) out(warning(`\n  ${signal}: taking no more events. A run in flight will finish.`));
-    accepting.abort();
+    if (force.signal.aborted) return;
+    if (!json) out(warning(`  ${signal} a third time: ending it now.`));
+    force.abort();
   };
   const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   for (const signal of signals) process.on(signal, onSignal);
 
-  const emit = emitter(graph, { json, verbose: options.verbose === true });
+  const log = (entry: ServeLog): void => {
+    if (json) emitJsonLine('workflow', { type: 'serve', at: new Date().toISOString(), entry });
+    else printServeLog(entry);
+  };
+  const triggerAtStart = JSON.stringify(triggerOf(graph));
+  let saidTriggerChanged = false;
   try {
     const outcome = await serveWorkflow({
       graph,
@@ -487,16 +511,34 @@ export async function workflowServeCommand(workflowRef: string | undefined, opti
       ...(parsePort(options.port) === undefined ? {} : { port: parsePort(options.port)! }),
       ...(pollSeconds === undefined ? {} : { pollSeconds }),
       ...(options.once === true ? { maxEvents: 1 } : {}),
-      log: (entry) => {
-        if (json) emitJsonLine('workflow', { type: 'serve', at: new Date().toISOString(), entry });
-        else printServeLog(entry);
-      },
+      log,
       run: async (event, signal): Promise<GraphOutcome> => {
+        // Read again for every event, so pausing the workflow, switching its kill switch off or tightening a
+        // gate takes effect when the file is exported, not when somebody remembers to restart this.
+        let current: WorkflowGraph;
+        try {
+          current = await loadWorkflow(file);
+        } catch (error) {
+          throw new Error(`The workflow file can no longer be read, so nothing was started. ${errorMessage(error)}`);
+        }
+        if (!saidTriggerChanged && JSON.stringify(triggerOf(current)) !== triggerAtStart) {
+          saidTriggerChanged = true;
+          log({ type: 'error', detail: 'The trigger in the workflow file has changed. This still listens for the one it started with: restart `relay workflow serve` to keep the new one.' });
+        }
         const effects = claimingLabel(
-          createEffects({ repoRoot: cli.repo.root, config: cli.config, harnesses: cli.harnesses, issueProvider: cli.issueProvider, graph, signal, emit }),
+          createEffects({
+            repoRoot: cli.repo.root,
+            config: cli.config,
+            harnesses: cli.harnesses,
+            issueProvider: cli.issueProvider,
+            graph: current,
+            signal,
+            force: force.signal,
+            emit: emitter(current, { json, verbose: options.verbose === true }),
+          }),
           cli,
         );
-        return executeGraph(graph, event, effects, { dryRun: options.dryRun === true });
+        return executeGraph(current, event, effects, { dryRun: options.dryRun === true });
       },
     });
     if (json) emitJsonLine('workflow', { type: 'serve_finished', at: new Date().toISOString(), ...outcome });

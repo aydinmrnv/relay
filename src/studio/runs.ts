@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createLineSplitter, parseJsonLine } from '../process/lines.ts';
 import { CONFIG_OVERLAY_VARIABLE, DEFAULT_CONFIG, mergeConfig } from '../storage/config.ts';
 import { errorMessage } from '../util/errors.ts';
-import { parseGraph } from '../graph/types.ts';
+import { isWorkflowCredential, parseGraph } from '../graph/types.ts';
 import { studioRunOverlay } from './overlay.ts';
 import type { CompanionRunView, RunStage, RunStreamRecord, RunTask, StartRunRequest } from './protocol.ts';
 
@@ -175,7 +175,7 @@ export function watchChild(child: ChildProcess): void {
  * checks out a repository per run needs one named; any other refuses one,
  * because it would run somewhere other than where the studio asked.
  */
-export function parseStartRequest(body: unknown, options: { repositoryPerRun?: boolean } = {}): StartRunRequest {
+export function parseStartRequest(body: unknown, options: { repositoryPerRun?: boolean; /** Whether this companion walks a whole workflow. Unset means it does. */ workflow?: boolean } = {}): StartRunRequest {
   if (body === null || typeof body !== 'object') throw new TaskError('Expected a JSON object.');
   const raw = body as Record<string, unknown>;
   const workflow = raw['workflow'] as Record<string, unknown> | undefined;
@@ -185,7 +185,9 @@ export function parseStartRequest(body: unknown, options: { repositoryPerRun?: b
   const config = raw['config'];
   if (config === null || typeof config !== 'object' || Array.isArray(config)) throw new TaskError('The request carries no compiled config.');
   const parsed: StartRunRequest = { workflow: { id: workflow['id'], name: workflow['name'] }, config: config as Record<string, unknown>, task: parseTask(raw['task']) };
-  if (raw['graph'] !== undefined && raw['graph'] !== null) {
+  // A companion that only runs the pipeline says so in its capabilities, and a studio that reads them sends no graph.
+  // One sent anyway is left out: a cloud runner has nobody to answer an approval, and would hold its one slot on it.
+  if (raw['graph'] !== undefined && raw['graph'] !== null && options.workflow !== false) {
     // Read strictly, here, so a workflow this Relay cannot run is refused before anything is spawned.
     try {
       // One config, not two: the pipeline is shaped by the same compiled config a pipeline-only run would get.
@@ -355,9 +357,14 @@ export class StudioRuns {
       args = workflowRunArguments(run.request.task, graphPath);
     }
 
+    const env: NodeJS.ProcessEnv = { ...process.env, [CONFIG_OVERLAY_VARIABLE]: overlayPath, NO_COLOR: '1', FORCE_COLOR: '0' };
+    // What `relay connect --env-file` loaded is for a workflow's own steps. `relay workflow run` reads it and keeps
+    // it from the pipeline; a run of the pipeline alone has no steps to read it, only agents and a test suite.
+    if (run.request.graph === undefined) for (const name of Object.keys(env)) if (isWorkflowCredential(name)) delete env[name];
+
     const child = spawn(this.launcher.command, [...this.launcher.args, ...args], {
       cwd: root,
-      env: { ...process.env, [CONFIG_OVERLAY_VARIABLE]: overlayPath, NO_COLOR: '1', FORCE_COLOR: '0' },
+      env,
       // A pipe on stdin, never the companion's terminal: nothing in the run
       // may wait for an answer from a person who is looking at a browser.
       stdio: ['pipe', 'pipe', 'pipe'],

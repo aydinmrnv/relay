@@ -128,7 +128,8 @@ function graph(nodes: GraphNode[], edges: Array<[GraphNode, GraphNode, string?]>
     enabled: true,
     nodes,
     edges: edges.map(([from, to, handle]) => ({ from: from.id, to: to.id, handle: handle ?? null })),
-    config: { version: 1, agents: {}, workflow: { deliver: 'pr' } },
+    // Both ceilings, as an export with a Budget gate carries them: an event may not start the agents without.
+    config: { version: 1, agents: {}, workflow: { deliver: 'pr' }, unattended: { maxRunCostUsd: 5, maxDailyCostUsd: 50 } },
     ...extra,
   });
 }
@@ -143,7 +144,8 @@ const messageOf = (made: World, target: GraphNode): string => {
 };
 
 const byHand = (): WorkflowEvent => manualEvent({ kind: 'issue', ref: '142' }, NOW);
-const delivery = (body: Record<string, unknown>): WorkflowEvent => webhookEvent(body, { now: NOW });
+/** A signed delivery: what it says about who sent it is vouched for. */
+const delivery = (body: Record<string, unknown>): WorkflowEvent => webhookEvent(body, { now: NOW, vouched: true });
 
 describe('a workflow run as it was drawn', () => {
   it('runs the gates, the pipeline and the steps after it, and hands the pull request to the message', async () => {
@@ -273,12 +275,23 @@ describe('guardrails, when nobody started the run', () => {
     assert.match(outcome.summary, /refused at gates\.action\.kill-switch/);
   });
 
-  it('refuses when .relay/STOP is present, even with the switch on', async () => {
+  it('refuses when .relay/STOP is present, even with the switch on, and on a canvas with no kill switch at all', async () => {
     const gate = node('gates.action.kill-switch', { enabled: true });
-    const made = world({ stop: '.relay/STOP is present: deploy freeze' });
-    const outcome = await executeGraph(guarded(gate).graph, delivery({ title: 'Fix it' }), made.effects);
-    assert.equal(outcome.status, 'refused');
-    assert.match(messageOf(made, gate), /deploy freeze/);
+    const withSwitch = guarded(gate);
+    const trigger = node('http.trigger.webhook');
+    const pipeline = node('pipeline.action.run');
+    for (const drawn of [withSwitch.graph, graph([trigger, pipeline], [[trigger, pipeline]])]) {
+      const made = world({ stop: '.relay/STOP is present: deploy freeze' });
+      const outcome = await executeGraph(drawn, delivery({ title: 'Fix it' }), made.effects);
+      assert.equal(outcome.status, 'refused');
+      assert.match(made.records.find((record) => record.type === 'node_finished')?.message ?? '', /deploy freeze/, 'the trigger itself says why');
+      assert.equal(made.pipelines.length, 0);
+    }
+    // The file stops what starts by itself. A person at the controls is not that.
+    const byPerson = world({ stop: '.relay/STOP is present: deploy freeze' });
+    const manual = node('logic.trigger.manual');
+    const run = node('pipeline.action.run');
+    assert.equal((await executeGraph(graph([manual, run], [[manual, run]]), byHand(), byPerson.effects)).status, 'succeeded');
   });
 
   it('lets a person at the controls past the kill switch and the allowlist', async () => {
@@ -297,7 +310,7 @@ describe('guardrails, when nobody started the run', () => {
     for (const [config, body, expected] of [
       [{ authors: '' }, { title: 'x', actor: 'octocat' }, /the allowlist is empty/],
       [{ authors: 'hubot' }, { title: 'x', actor: 'octocat' }, /@octocat is not on the allowlist/],
-      [{ authors: 'hubot' }, { title: 'x' }, /does not say who started it/],
+      [{ authors: 'hubot' }, { title: 'x' }, /nothing vouches for who started this event/],
     ] as const) {
       const gate = node('gates.action.allowlist', config);
       const made = world();
@@ -331,6 +344,57 @@ describe('guardrails, when nobody started the run', () => {
     const outcome = await executeGraph(built.graph, delivery({ title: 'x', issue: 9 }), over.effects);
     assert.equal(outcome.status, 'refused');
     assert.match(messageOf(over, gate), /\$11\.00 spent today across 3 unattended runs.*past \$20\.00.*2 turns reported no price/);
+    assert.equal(over.pipelines.length, 0);
+  });
+
+  it('reads an amount as somebody types one, and fails a ceiling it cannot read rather than dropping it', async () => {
+    const typed = node('gates.action.budget', { maxRunCostUsd: '$5', maxDailyCostUsd: '$1,000' });
+    const made = world({ spend: { spentUsd: 9, runs: 3, unpriced: 0, inFlight: 0 } });
+    assert.equal((await executeGraph(guarded(typed).graph, delivery({ title: 'x' }), made.effects)).status, 'succeeded');
+    assert.match(messageOf(made, typed), /\$9\.00 of \$1000\.00 committed today/);
+
+    for (const config of [{ maxRunCostUsd: 5, maxDailyCostUsd: 'twenty' }, { maxRunCostUsd: '5 dollars', maxDailyCostUsd: 20 }, { maxRunCostUsd: -1, maxDailyCostUsd: 20 }]) {
+      const gate = node('gates.action.budget', config);
+      const unread = world();
+      const outcome = await executeGraph(guarded(gate).graph, delivery({ title: 'x' }), unread.effects);
+      assert.equal(outcome.status, 'failed', JSON.stringify(config));
+      assert.match(messageOf(unread, gate), /is not an amount/);
+      assert.equal(unread.pipelines.length, 0);
+    }
+  });
+
+  it('refuses a daily budget with no per-run cost: runs in flight would reserve nothing of it', async () => {
+    const gate = node('gates.action.budget', { maxDailyCostUsd: 20 });
+    const made = world({ spend: { spentUsd: 19.99, runs: 3, unpriced: 0, inFlight: 3 } });
+    const outcome = await executeGraph(guarded(gate).graph, delivery({ title: 'x', issue: 9 }), made.effects);
+    assert.equal(outcome.status, 'refused');
+    assert.match(messageOf(made, gate), /cannot be kept with no per-run cost/);
+    assert.equal(made.pipelines.length, 0);
+  });
+
+  it('will not let an event start the agents with no ceiling, and keeps the day’s ceiling where no gate stood in front', async () => {
+    const trigger = node('http.trigger.webhook');
+    const pipeline = node('pipeline.action.run');
+    const edges: Array<[GraphNode, GraphNode, string?]> = [[trigger, pipeline]];
+
+    // No Budget gate anywhere: the export carries no ceilings.
+    for (const unattended of [undefined, { maxRunCostUsd: 5 }, { maxDailyCostUsd: 50 }, { maxRunCostUsd: null, maxDailyCostUsd: null }]) {
+      const made = world();
+      const config = { version: 1, agents: {}, workflow: { deliver: 'pr' }, ...(unattended === undefined ? {} : { unattended }) };
+      const outcome = await executeGraph(graph([trigger, pipeline], edges, { config }), delivery({ title: 'x' }), made.effects);
+      assert.equal(outcome.status, 'refused', JSON.stringify(unattended));
+      assert.match(messageOf(made, pipeline), /no ceiling on what they spend/);
+      assert.equal(made.pipelines.length, 0);
+      // A person starting the same workflow is their own ceiling.
+      const mine = world();
+      assert.equal((await executeGraph(graph([trigger, pipeline], edges, { config }), byHand(), mine.effects)).status, 'succeeded');
+    }
+
+    // Ceilings in the export, and a canvas whose gate is not on the way to the pipeline: the day is still held.
+    const over = world({ spend: { spentUsd: 48, runs: 12, unpriced: 0, inFlight: 0 } });
+    const outcome = await executeGraph(graph([trigger, pipeline], edges), delivery({ title: 'x' }), over.effects);
+    assert.equal(outcome.status, 'refused');
+    assert.match(messageOf(over, pipeline), /\$48\.00 spent today.*past \$50\.00/);
     assert.equal(over.pipelines.length, 0);
   });
 
@@ -643,6 +707,219 @@ describe('the steps after the pipeline', () => {
     await executeGraph(graph([trigger, move], [[trigger, move]]), byHand(), github.effects);
     assert.match(messageOf(github, move), /not about a Linear issue/);
     assert.equal(github.linear.length, 0);
+  });
+});
+
+describe('what an event may not do', () => {
+  const unattended = (payload: Record<string, unknown>, task: WorkflowEvent['task']): WorkflowEvent => ({ id: 'delivery-1', source: 'webhook', attended: false, actor: null, payload, task, at: NOW.toISOString() });
+
+  it('never names a file for the agents to read: only a tracker’s own reference is a reference', async () => {
+    const trigger = node('http.trigger.webhook');
+    const pipeline = node('pipeline.action.run');
+    const drawn = graph([trigger, pipeline], [[trigger, pipeline]]);
+
+    for (const body of [
+      { issue: { title: 'Fix it', html_url: '/Users/someone/project/.env' } },
+      { issue: { title: 'Fix it', html_url: 'https://github.com/acme/api/issues/7/../../../../etc/passwd' } },
+      { title: 'Fix it', issue: 'x/../../../etc/hosts' },
+      { title: 'Fix it', issue: './spec.md' },
+      { title: 'Fix it', createdRef: '/etc/passwd' },
+      { title: 'Fix it', data: { identifier: 'ENG-1/../../x' } },
+    ]) {
+      const made = world();
+      await executeGraph(drawn, delivery(body), made.effects);
+      // What is left is the event's own words, as a description: never the path.
+      assert.deepEqual(made.pipelines.map((run) => run.task), [{ kind: 'prompt', text: 'Fix it' }], JSON.stringify(body));
+    }
+
+    // The references a tracker does use still arrive as issues.
+    for (const [body, ref] of [
+      [{ issue: 142 }, '142'],
+      [{ issue: 'acme/api#142' }, 'acme/api#142'],
+      [{ issue: 'ENG-142' }, 'ENG-142'],
+      [{ issue: { number: 142, html_url: 'https://github.com/acme/api/issues/142', title: 't' } }, 'https://github.com/acme/api/issues/142'],
+      [{ issue: 'https://linear.app/acme/issue/ENG-142/fix-the-timeout' }, 'https://linear.app/acme/issue/ENG-142/fix-the-timeout'],
+    ] as const) {
+      const made = world();
+      await executeGraph(drawn, delivery(body), made.effects);
+      assert.deepEqual(made.pipelines.map((run) => run.task), [{ kind: 'issue', ref }], JSON.stringify(body));
+    }
+
+    // And an event built some other way that names one anyway is refused at the pipeline, before anything is spawned.
+    const made = world();
+    const outcome = await executeGraph(drawn, unattended({ title: 'x' }, { kind: 'issue', ref: '../.env' }), made.effects);
+    assert.equal(outcome.status, 'refused');
+    assert.match(messageOf(made, pipeline), /is not an issue in a tracker/);
+    assert.equal(made.pipelines.length, 0);
+  });
+
+  it('cannot set what the walk keeps for itself: an estimate, a model’s answer, a ticket a step filed', async () => {
+    const trigger = node('http.trigger.webhook');
+    const cheap = node('logic.action.filter', { expression: 'issue.estimate <= 3' });
+    const triaged = node('logic.action.condition', { left: '{{issue.triage}}', op: 'equals', right: 'fixable' });
+    const pipeline = node('pipeline.action.run');
+    const made = world();
+    const outcome = await executeGraph(
+      graph([trigger, cheap, triaged, pipeline], [[trigger, cheap], [trigger, triaged], [cheap, pipeline], [triaged, pipeline, 'true']]),
+      delivery({ title: 'x', estimate: 0, estimateUsd: 0, triage: 'fixable' }),
+      made.effects,
+    );
+    assert.match(messageOf(made, cheap), /Did not pass/, 'no estimate was made, so the filter stays closed');
+    assert.match(messageOf(made, triaged), /has no value in this run/);
+    assert.equal(made.pipelines.length, 0);
+    assert.equal(outcome.nodes[pipeline.id], 'skipped');
+  });
+
+  it('cannot ping a Slack channel, add a field to a JSON body, or walk out of a URL', async () => {
+    const trigger = node('http.trigger.webhook');
+    const slack = node('slack.action.post-message', { text: 'New: {{issue.title}} <https://example.com|see it>' });
+    const discord = node('discord.action.send-message', { text: 'New: {{issue.title}}' });
+    const http = node('http.action.request', {
+      method: 'POST',
+      url: 'https://api.acme.dev/tickets/{{issue.id}}/notes?by={{issue.author}}',
+      body: '{"title": "{{issue.title}}", "labels": "{{issue.labels}}", "number": {{issue.number}}, "author": {{issue.author}}, "missing": {{issue.nothing}}}',
+    });
+    const made = world({ env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/T/B/X', DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/1/x', HTTP_HEADERS: '{"authorization":"Bearer t0ken-t0ken"}' } });
+    const body = { id: '1/../../admin/users?role=owner#', title: '<!channel> "urgent", "assignee": "mallory" & <https://evil.example|click>', author: 'a&b=c', number: 7, labels: ['bug', 'p"1'] };
+    await executeGraph(graph([trigger, slack, discord, http], [[trigger, slack], [slack, discord], [discord, http]]), delivery(body), made.effects);
+
+    const [toSlack, toDiscord, toApi] = made.requests;
+    // The author's own link survives; the ticket's text is text.
+    assert.equal(JSON.parse(toSlack!.body).text, 'New: &lt;!channel&gt; "urgent", "assignee": "mallory" &amp; &lt;https://evil.example|click&gt; <https://example.com|see it>');
+    assert.deepEqual(JSON.parse(toDiscord!.body).allowed_mentions, { parse: [] });
+    assert.equal(toApi!.url, 'https://api.acme.dev/tickets/1%2F..%2F..%2Fadmin%2Fusers%3Frole%3Downer%23/notes?by=a%26b%3Dc');
+    assert.deepEqual(JSON.parse(toApi!.body), { title: body.title, labels: 'bug, p"1', number: 7, author: 'a&b=c', missing: null });
+  });
+
+  it('takes a variable that is the whole address as the address, and a body that is not JSON as it is written', async () => {
+    const trigger = node('http.trigger.webhook');
+    const http = node('http.action.request', { method: 'POST', url: '{{trigger.callback}}', body: 'done: {{issue.title}}' });
+    const made = world();
+    await executeGraph(graph([trigger, http], [[trigger, http]]), delivery({ title: 'say "hi"', callback: 'https://ci.acme.dev/hook?job=7' }), made.effects);
+    assert.equal(made.requests[0]!.url, 'https://ci.acme.dev/hook?job=7');
+    assert.equal(made.requests[0]!.body, 'done: say "hi"');
+  });
+
+  it('never repeats a credential, whatever a step or the network says back', async () => {
+    const trigger = node('logic.trigger.manual');
+    const slack = node('slack.action.post-message', { text: 'hello' });
+    const edges: Array<[GraphNode, GraphNode, string?]> = [[trigger, slack]];
+
+    // A webhook address with its scheme left off: `fetch` would quote it in the error it throws.
+    const malformed = world({ env: { SLACK_WEBHOOK_URL: 'hooks.slack.com/services/T000/B000/s3cr3t-path' } });
+    await executeGraph(graph([trigger, slack], edges), byHand(), malformed.effects);
+    assert.match(messageOf(malformed, slack), /SLACK_WEBHOOK_URL is not an https:\/\/ address/);
+    assert.equal(malformed.requests.length, 0);
+    assert.doesNotMatch(JSON.stringify(malformed.records), /s3cr3t-path/);
+
+    // A request that throws, quoting where it was going.
+    const thrown = world({ env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/T000/B000/s3cr3t-path' } });
+    thrown.effects.fetch = (async (input: unknown) => {
+      throw Object.assign(new TypeError(`fetch failed for ${String(input)}`), { cause: { code: 'ENOTFOUND' } });
+    }) as typeof globalThis.fetch;
+    const outcome = await executeGraph(graph([trigger, slack], edges), byHand(), thrown.effects);
+    assert.equal(outcome.status, 'failed');
+    assert.equal(messageOf(thrown, slack), 'Slack: the connection failed (ENOTFOUND).');
+    assert.doesNotMatch(JSON.stringify(thrown.records), /s3cr3t-path/);
+
+    // An API that echoes the header it was sent.
+    const http = node('http.action.request', { url: 'https://api.acme.dev/x', body: '{}' });
+    const echoed = world({ env: { HTTP_HEADERS: '{"authorization":"Bearer t0ken-t0ken-t0ken"}' }, respond: () => ({ status: 403, body: 'bad token: Bearer t0ken-t0ken-t0ken' }) });
+    await executeGraph(graph([trigger, http], [[trigger, http]]), byHand(), echoed.effects);
+    assert.doesNotMatch(JSON.stringify(echoed.records), /t0ken-t0ken/);
+    assert.match(JSON.stringify(echoed.records), /bad token: \[HTTP_HEADERS\]/);
+  });
+
+  it('cannot move the cursor of the terminal a run is printed in', async () => {
+    const trigger = node('http.trigger.webhook');
+    const condition = node('logic.action.condition', { left: '{{issue.title}}', op: 'contains', right: 'zzz' });
+    const made = world();
+    const event = delivery({ title: 'Fix \u001b[2J\u001b[1;1H it\u0007 ‮now', actor: 'mal\u001b]0;owned\u0007lory' });
+    await executeGraph(graph([trigger, condition], [[trigger, condition]]), event, made.effects);
+    // Every line a person reads: the title, who sent it, what each step said. (`{{trigger.*}}` keeps the body as it came, for the steps.)
+    const printed = made.records.map((record) => (record.type === 'workflow_started' ? `${record.event.title} ${record.event.actor ?? ''}` : record.type === 'node_finished' && record.node !== trigger.id ? record.message : record.type === 'workflow_finished' ? record.summary : '')).join('\n');
+    // eslint-disable-next-line no-control-regex
+    assert.doesNotMatch(printed, /[\u0000-\u0008\u000b-\u001f\u007f‮]/);
+    assert.match(printed, /Fix/);
+  });
+});
+
+describe('paths that meet', () => {
+  it('runs a step two refusals share, and what follows the Merge paths after it', async () => {
+    const trigger = node('http.trigger.webhook');
+    const allow = node('gates.action.allowlist', { authors: 'alice' });
+    const budget = node('gates.action.budget', { maxRunCostUsd: 5, maxDailyCostUsd: 20 });
+    const pipeline = node('pipeline.action.run');
+    const notify = node('slack.action.post-message', { text: 'refused: {{issue.title}}' });
+    const merge = node('logic.action.merge-paths');
+    const after = node('http.action.post-run-json', { url: 'https://audit.example/log' });
+    const made = world({ env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/T/B/X' }, spend: { spentUsd: 19, runs: 4, unpriced: 0, inFlight: 0 } });
+    const outcome = await executeGraph(
+      graph(
+        [trigger, allow, budget, pipeline, notify, merge, after],
+        [[trigger, allow], [allow, budget, 'pass'], [allow, notify, 'refused'], [budget, pipeline, 'pass'], [budget, notify, 'refused'], [pipeline, merge], [notify, merge], [merge, after]],
+      ),
+      delivery({ title: 'x', actor: 'alice' }),
+      made.effects,
+    );
+    // The allowlist passed, so its Refused path never came. The budget's did, and that is enough for the step they share.
+    assert.equal(outcome.nodes[notify.id], 'done');
+    assert.equal(outcome.nodes[pipeline.id], 'skipped');
+    assert.equal(outcome.nodes[merge.id], 'done');
+    assert.equal(outcome.nodes[after.id], 'done');
+    assert.deepEqual(made.requests.map((request) => new URL(request.url).hostname), ['hooks.slack.com', 'audit.example']);
+  });
+
+  it('holds a Merge paths for a path that is still coming through a step with two ways in', async () => {
+    const trigger = node('logic.trigger.manual');
+    const condition = node('logic.action.condition', { left: '{{issue.title}}', op: 'contains', right: 'x' });
+    const a = node('logic.action.filter', { expression: '' });
+    const b = node('logic.action.filter', { expression: '' });
+    const shared = node('logic.action.filter', { expression: '' });
+    const pipeline = node('pipeline.action.run');
+    const other = node('logic.action.filter', { expression: '' });
+    const join = node('logic.action.merge-paths');
+    const post = node('slack.action.share-pr', { text: 'PR: {{run.prUrl}}' });
+    const made = world({ env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/T/B/X' } });
+    const event: WorkflowEvent = { id: 'm', source: 'manual', attended: true, actor: null, payload: { title: 'x' }, task: { kind: 'prompt', text: 'x' }, at: NOW.toISOString() };
+    const outcome = await executeGraph(
+      graph(
+        [trigger, condition, a, b, shared, pipeline, other, join, post],
+        [[trigger, condition], [trigger, other], [condition, a, 'true'], [condition, b, 'false'], [a, shared], [b, shared], [shared, pipeline], [pipeline, join], [other, join], [join, post]],
+      ),
+      event,
+      made.effects,
+    );
+    const order = made.records.filter((record) => record.type === 'node_finished' && record.status === 'done').map((record) => (record.type === 'node_finished' ? record.node : ''));
+    assert.ok(order.indexOf(pipeline.id) < order.indexOf(join.id), 'the join waited for the pipeline');
+    assert.equal(outcome.nodes[b.id], 'skipped');
+    assert.equal(outcome.nodes[shared.id], 'done', 'one of its two ways in was ruled out, and the other arrived');
+    assert.equal(JSON.parse(made.requests[0]!.body).text, 'PR: https://github.com/acme/api/pull/143');
+  });
+
+  it('skips a step only when every way into it is ruled out, and does not wait on a step nothing reaches', async () => {
+    const trigger = node('logic.trigger.manual');
+    const condition = node('logic.action.condition', { left: '{{issue.id}}', op: 'contains', right: 'nope' });
+    const a = node('logic.action.filter', { expression: 'issue.id == "never"' });
+    const shared = node('slack.action.post-message', { text: 'shared' });
+    const orphan = node('slack.action.post-message', { text: 'orphan' });
+    const join = node('logic.action.merge-paths');
+    const after = node('slack.action.post-message', { text: 'after' });
+    const made = world({ env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/x/y' } });
+    const outcome = await executeGraph(
+      graph(
+        [trigger, condition, a, shared, orphan, join, after],
+        // `shared` is reached from the condition's True output and from a filter that closes: neither comes.
+        // `join` hears from the trigger, and from `orphan`, which nothing leads to.
+        [[trigger, condition], [trigger, a], [condition, shared, 'true'], [a, shared], [trigger, join], [orphan, join], [join, after]],
+      ),
+      byHand(),
+      made.effects,
+    );
+    assert.equal(outcome.nodes[shared.id], 'skipped');
+    assert.equal(outcome.nodes[orphan.id], 'skipped');
+    assert.equal(outcome.nodes[join.id], 'done');
+    assert.deepEqual(made.requests.map((request) => JSON.parse(request.body).text), ['after']);
   });
 });
 

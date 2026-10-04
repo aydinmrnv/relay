@@ -18,6 +18,7 @@ import {
 } from '../src/issues/local.ts';
 import { ISSUE_PROVIDER_REGISTRY, ISSUE_TRACKER_REGISTRY } from '../src/issues/registry.ts';
 import { resolveIssueSource } from '../src/cli/commands/run.ts';
+import { setRunTrigger } from '../src/unattended/trigger.ts';
 import { DEFAULT_CONFIG } from '../src/storage/config.ts';
 import { RelayError } from '../src/util/errors.ts';
 import { issueLinkFor } from '../src/workflow/delivery.ts';
@@ -275,6 +276,21 @@ describe('what `relay run` decides to work from', () => {
   it('prefers the issue over a file that happens to share its name', async () => {
     await repo.writeFile('142', '# Not this\n\nBody.\n');
     assert.deepEqual(await resolveIssueSource('142', {}, repo.root), { kind: 'tracker', ref: '142' });
+  });
+
+  it('reads no file for a run that an event started, whatever the event named', async () => {
+    await repo.writeFile('.env', 'STRIPE_SECRET_KEY=sk_live_not_a_task\n');
+    setRunTrigger({ source: 'workflow', label: 'an incoming webhook (workflow “Ticket to pull request”)', actor: null, at: new Date().toISOString() });
+    try {
+      for (const ref of ['.env', './.env', '../outside.md', '/etc/hosts']) {
+        await assert.rejects(resolveIssueSource(ref, {}, repo.root), /works on a tracker issue or a description, never on a file/, ref);
+      }
+      // What a workflow does hand over still works: an issue, or a description.
+      assert.deepEqual(await resolveIssueSource('142', {}, repo.root), { kind: 'tracker', ref: '142' });
+      assert.equal((await resolveIssueSource(undefined, { prompt: 'Fix the flaky timeout' }, repo.root))?.kind, 'local');
+    } finally {
+      setRunTrigger(undefined);
+    }
   });
 
   it('reads anything else as a path', async () => {

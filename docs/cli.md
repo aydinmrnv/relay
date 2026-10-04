@@ -146,7 +146,8 @@ paired studio uses to
   passed, an approval that is waiting (answered from the run panel), measured
   phases, costs and diffs, a message that was posted. The studio can stop the
   run the way Ctrl-C would. The app steps read their credentials from the
-  environment `relay connect` was started with, or from `--env-file`.
+  environment `relay connect` was started with, or from `--env-file`; a run
+  of the pipeline alone is started without them.
 - **install an export.** The files Export produces are written into the
   repository, and nothing else can be: `.relay/config.json`, merged into the
   existing one rather than replacing it, so the tracker, harnesses and test
@@ -1101,21 +1102,25 @@ doing:
 
 | Step | What a real run does |
 |---|---|
-| Kill switch, allowlist | Decide whether an *event* may start a run. A person starting the workflow by hand passes them: they are at the controls. `.relay/STOP` stops every unattended start. |
-| Budget gate | The day's spend is summed from this machine's run records, with each run in flight holding its whole per-run cap, as in [`relay serve`](#unattended). The per-run cap stops the run at a phase boundary. |
+| Kill switch, allowlist | Decide whether an *event* may start a run. A person starting the workflow by hand passes them: they are at the controls. `.relay/STOP` stops every unattended start, on a canvas with a kill switch or without one. The allowlist goes by who the event says started it, and takes that only from a signed delivery; a Linear event names its sender by email address. |
+| Budget gate | The day's spend is summed from this machine's run records, with each run in flight holding its whole per-run cap, as in [`relay serve`](#unattended). The per-run cap stops the run at a phase boundary. An amount is read as it is typed (`2.50`, `$20`); one that cannot be read fails the gate rather than lifting the ceiling, and a daily budget with no per-run cost is refused. An AI step's own turn is not part of the day's total. |
 | Injection screen | [The engine's patterns](#untrusted-input), over the title and description the agents are about to read. |
-| Human approval | Waits for a person. `relay workflow approve <id>` or `reject <id>` in the repository, Approve and Reject in the studio's run panel, or a y/n in the terminal the workflow runs in. Nobody answering before the timeout takes the Rejected path. |
+| Human approval | Waits for a person. `relay workflow approve <id>` or `reject <id>` in the repository, Approve and Reject in the studio's run panel, or a y/n in the terminal the workflow runs in. Nobody answering before the timeout takes the Rejected path. An answer from the studio is taken only from one the person at `relay connect`'s terminal has already allowed: the pairing token alone releases nothing. |
 | Condition, Filter | Evaluated against the event and the run. A Filter's expression reads fields with `==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `matches` and `in`, joined by `&&`, `\|\|` and `!`; a field with no value makes its comparison false. It is a small language, not JavaScript: there is nothing in it to call. |
-| AI step | One read-only turn of a coding CLI signed in on the machine: Claude Code for a Claude model, Codex for GPT. Relay calls no model API. The answer is `{{issue.triage}}` to the steps after it. |
+| AI step | One read-only turn of a coding CLI signed in on the machine: Claude Code for a Claude model, Codex for GPT. Relay calls no model API. The answer is `{{issue.triage}}` to the steps after it. The turn never sees the workflow's own credentials, whoever started the run. |
 | Estimate cost | The median of what earlier finished runs in the repository cost. With none, there is no estimate, and a Filter that reads it is false. |
 | Wait, Wait for business hours | A real wait, in the process running the workflow. |
-| Agent pipeline, Deliver, Comment | `relay run`, as a child process, shaped by the workflow. Delivery stops at a pull request. |
-| Slack, Discord | Posted through a webhook: `SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`. A webhook posts to the channel it was made for, whatever the node's Channel field says. |
+| Agent pipeline, Deliver, Comment | `relay run`, as a child process, shaped by the workflow. Delivery stops at a pull request. An event may start it only when the workflow was exported with both ceilings (a Budget gate with a per-run cost and a daily budget); the day's ceiling is held here when no gate stood in front. An event names an issue in a tracker or describes the work; it never names a file. |
+| Slack, Discord | Posted through a webhook: `SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`. A webhook posts to the channel it was made for, whatever the node's Channel field says. What a variable fills in cannot ping a channel or pose as a link: `<`, `>` and `&` are escaped for Slack, and Discord is told to parse no mentions. |
 | GitHub | `gh`, as whoever is signed in: comment, label, assign, close or open an issue; comment on, label or request review of the pull request the run opened. |
 | Linear | Its API, with `LINEAR_API_KEY`: comment, move to a state, attach the pull request, add a label, file an issue. |
-| HTTP request | Sent. Headers come from `HTTP_HEADERS` (a JSON object), never from the workflow file. |
+| HTTP request | Sent. Headers come from `HTTP_HEADERS` (a JSON object), never from the workflow file. A variable inside the URL is percent-encoded (one that is the whole URL is taken as it is). In a body that is JSON, a variable inside a string is escaped as a string, and one standing alone is written as JSON: a number, quoted text, or `null`. |
 | Any other app's step | Relay has no connection to it. With `BRIDGE_WEBHOOK_URL` set, the step is posted there as JSON for an endpoint of yours to perform (n8n, a Zapier catch hook, a server); without it the step is skipped and reported as **not performed**. It is never reported as done. |
 | Transform | Not run: the payload passes through unchanged. |
+
+Where paths meet, a step runs when the first of them arrives, and is skipped
+only when every path into it was ruled out. A Merge paths step waits to hear
+from every path first.
 
 A step that needs a variable which is not set **fails**, by name, rather than
 being skipped quietly. A step that fails after the pull request is open does
@@ -1135,12 +1140,12 @@ listens for is the workflow's trigger node:
 
 | Trigger | How it is kept |
 |---|---|
-| Incoming webhook | `POST http://127.0.0.1:4480/hooks/<path>` with a JSON body: `title`, `body`, `url`, `actor`, and `issue` (a number, a URL or a Linear key) when the agents should fetch the issue themselves. `--port` and `--host` move it. |
-| On a schedule, Every N minutes | A five-field cron expression in the trigger's time zone, or an interval. A workflow on a schedule has no ticket, so it usually files one first (see the dependency-upgrade template). |
-| GitHub: a label on an issue | Polled with `gh` every `--interval` seconds. The label comes off as the agents start, which is the acknowledgement. |
+| Incoming webhook | `POST http://127.0.0.1:4480/hooks/<path>` with a JSON body: `title`, `body`, `url`, `actor`, and `issue` when the agents should fetch the issue themselves: a number, `owner/repo#n`, a GitHub issue URL, a Linear key or a Linear issue URL. Anything else in `issue` is not a reference, and the run works from the title and body instead. `--port` and `--host` move it. |
+| On a schedule, Every N minutes | A five-field cron expression in the trigger's time zone, or an interval. A workflow on a schedule has no ticket, so it usually files one first (see the dependency-upgrade template). A machine that slept through several ticks owes one run when it wakes, not one for each. When the clocks change, an hour that comes twice fires once and an hour that is skipped fires as the clock lands. |
+| GitHub: a label on an issue | Polled with `gh` every `--interval` seconds. The label comes off as the agents start, which is the acknowledgement, and GitHub tells exactly one of two machines that it was the one to take it off. |
 | GitHub: issue opened, assigned or commented on; a workflow run failed; a code scanning or Dependabot alert | GitHub's own webhook, pointed at `/hooks/<app>` on this server. |
-| Linear: issue assigned, created, labelled or moved | Linear's own webhook. |
-| Sentry: issue created, regressed or assigned, and alert rules | Sentry's own webhook. |
+| Linear: issue assigned, created, labelled or moved | Linear's own webhook. "Labelled" is the label being added, not any change to an issue that carries it; "assigned" is not an issue being unassigned. |
+| Sentry: issue created, regressed or assigned, and alert rules | Sentry's own webhook. "Regressed" is Sentry reopening a resolved issue, not a person doing so. A project filter ignores a delivery that names no project. |
 
 A run a trigger starts is **unattended**, and gets everything that word means
 [above](#unattended): capped at a draft pull request, trusted comments only,
@@ -1156,7 +1161,22 @@ arrive, so the secret you give the app is this one. An app's own trigger will
 not start without the secret; a plain Incoming webhook may go unsigned only on
 `127.0.0.1`, and `--host` anything else without one is refused. A delivery
 that is not the trigger — the wrong event, another assignee — is answered 200
-and starts nothing, and the log says why. One sent twice starts one run.
+and starts nothing, and the log says why. One sent twice starts one run: a
+delivery is known by its body, the part the signature covers, and the same
+body within ten minutes is the same delivery.
+
+**Without a secret**, the listener takes a delivery only from a script on the
+same machine. It has to be addressed to `127.0.0.1` or `localhost` (not to a
+name a tunnel or another site points here), typed `Content-Type:
+application/json`, and carry none of the headers a browser adds to a request a
+web page makes: any page you have open can post to a local port, and none of
+them should be able to start a run. Nothing vouches for who sent an unsigned
+delivery, so its `actor` is not taken, and an allowlist that names people
+refuses it. Allow `*`, or sign.
+
+The workflow file is read again for each event. Export it paused, switch its
+kill switch off or tighten a gate, and the next event meets the new file; a
+changed trigger needs a restart, and the log says so.
 
 An app has to be able to reach the listener: run it on a server, or put a
 tunnel in front of it. The readings of GitHub's, Linear's and Sentry's
@@ -1165,8 +1185,11 @@ not recognised starts nothing — but they have not been exercised against the
 live services, so try a trigger with `--dry-run` before trusting it with a
 budget.
 
-Ctrl-C stops taking events and lets the run in flight finish; a second one
-stops that run too. `--once` runs the first event and exits.
+Ctrl-C stops taking events and lets the run in flight finish; events still
+waiting are not started, and the log says how many. A second Ctrl-C asks that
+run to stop too, and a third ends it at once. (`relay workflow run` has the
+last two: the first asks, the second ends.) `--once` runs the first event and
+exits.
 
 ## The session
 
@@ -1505,8 +1528,10 @@ Worktrees live outside the repository, at `~/.relay/workspaces/<owner>/<repo>/is
 `config.json` is the one file here meant to be committed. Everything else
 describes one machine, and `relay init` and `relay start` add it to
 `.gitignore`: `.relay/runs/`, `.relay/onboarding.json`, `.relay/unattended.json`,
-`.relay/STOP` and `.relay/*.lock`. A committed `STOP` would stop every clone's
-server, and a committed ledger would tell them the work had been picked up.
+`.relay/STOP`, `.relay/*.lock` and `.relay/approvals/`. A committed `STOP` would
+stop every clone's server, a committed ledger would tell them the work had been
+picked up, and a committed approval would answer a question in every clone that
+was only asked in one.
 
 ### Recordings
 

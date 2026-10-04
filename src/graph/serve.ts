@@ -7,7 +7,7 @@ import { issueEvent, scheduleEvent, signatureValid } from './events.ts';
 import type { GraphOutcome } from './executor.ts';
 import { isTimeZone, nextCronTime, parseCron } from './schedule.ts';
 import { APP_WEBHOOK_TRIGGERS, matchDelivery } from './triggers.ts';
-import { triggerOf, type GraphNode, type WorkflowEvent, type WorkflowGraph } from './types.ts';
+import { plainText, triggerOf, type GraphNode, type WorkflowEvent, type WorkflowGraph } from './types.ts';
 
 /**
  * Keeps a workflow's trigger: the thing that starts a run when nobody does.
@@ -69,6 +69,12 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_QUEUED = 50;
 /** Deliveries remembered, so one sent twice starts one run. */
 const REMEMBERED = 1_000;
+/**
+ * How long one is remembered. Long enough for an app's retry, short enough
+ * that a body sent on purpose every morning (`{"title":"nightly"}`) is a new
+ * event each time.
+ */
+const REMEMBER_MS = 10 * 60_000;
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -78,7 +84,7 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
       signal.removeEventListener('abort', done);
       resolve();
     };
-    // Node's timers hold at most about 24 days.
+    // Node's timers hold at most about 24 days; a caller that waits longer looks at the clock when it wakes.
     const timer = setTimeout(done, Math.min(ms, 2_000_000_000));
     signal.addEventListener('abort', done, { once: true });
   });
@@ -86,6 +92,36 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 
 function isLoopbackHost(host: string): boolean {
   return host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host);
+}
+
+/**
+ * Why an unsigned delivery is refused, or null when it may be read.
+ *
+ * With no secret the listener is bound to this machine, and the only thing
+ * standing behind a delivery is that it came from here. A browser is on this
+ * machine too, and any page it has open can post to a local port. So an
+ * unsigned delivery has to look like what a script sends and a page cannot:
+ * addressed to this machine by a loopback name (a hostile page that points
+ * its own domain here is not), carrying none of the headers a browser adds to
+ * a request a page makes, and typed as JSON, which a page may not send
+ * across origins without asking first — and nothing here answers that ask.
+ */
+export function unsignedRefusal(headers: Readonly<Record<string, string | string[] | undefined>>): string | null {
+  const one = (name: string): string => {
+    const value = headers[name];
+    return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
+  };
+  let host = '';
+  try {
+    host = new URL(`http://${one('host')}`).hostname.replace(/^\[|\]$/g, '');
+  } catch {
+    host = '';
+  }
+  if (!isLoopbackHost(host)) return `Unsigned deliveries are taken only when they are addressed to this machine (127.0.0.1 or localhost). Set ${WEBHOOK_SECRET_VARIABLE} and sign what you send to reach it any other way.`;
+  const site = one('sec-fetch-site');
+  if (one('origin').length > 0 || (site.length > 0 && site !== 'none')) return `Unsigned deliveries are not taken from a web page. Set ${WEBHOOK_SECRET_VARIABLE} and sign what you send.`;
+  if (!/^application\/json\s*(;|$)/i.test(one('content-type'))) return 'Send the event as JSON, with Content-Type: application/json.';
+  return null;
 }
 
 /** The path a workflow's webhook is delivered to: `/hooks/<path suffix>`, or `/hooks/<app>` for an app's own trigger. */
@@ -109,18 +145,31 @@ export async function serveWorkflow(options: ServeWorkflowOptions): Promise<Serv
   const trigger = triggerOf(graph);
 
   const queue: WorkflowEvent[] = [];
-  const seen = new Set<string>();
+  /** What has been taken already, and until when that is remembered. */
+  const seen = new Map<string, number>();
   const results: ServeWorkflowOutcome['results'] = [];
   let wake: (() => void) | undefined;
   let fatal: string | undefined;
 
-  /** Queues an event, unless it is one already seen or the queue is full. Says which. */
-  const offer = (event: WorkflowEvent): 'queued' | 'duplicate' | 'full' | 'closed' => {
+  const remembered = (id: string): boolean => {
+    const until = seen.get(id);
+    if (until === undefined) return false;
+    if (until > now().getTime()) return true;
+    seen.delete(id);
+    return false;
+  };
+
+  /**
+   * Queues an event, unless it is one already seen or the queue is full. Says
+   * which. A delivery is remembered for a few minutes; an issue's label is
+   * remembered for as long as the server runs, so a refusal is said once.
+   */
+  const offer = (event: WorkflowEvent, forget: 'soon' | 'never' = 'soon'): 'queued' | 'duplicate' | 'full' | 'closed' => {
     if (signal.aborted) return 'closed';
-    if (seen.has(event.id)) return 'duplicate';
+    if (remembered(event.id)) return 'duplicate';
     if (queue.length >= MAX_QUEUED) return 'full';
-    seen.add(event.id);
-    if (seen.size > REMEMBERED) seen.delete(seen.values().next().value as string);
+    seen.set(event.id, forget === 'never' ? Number.POSITIVE_INFINITY : now().getTime() + REMEMBER_MS);
+    if (seen.size > REMEMBERED) seen.delete(seen.keys().next().value as string);
     queue.push(event);
     wake?.();
     return 'queued';
@@ -146,7 +195,7 @@ export async function serveWorkflow(options: ServeWorkflowOptions): Promise<Serv
       const path = webhookPath(trigger);
       const memory = new Map<string, string>();
       server = createServer((request, response) => {
-        void handleWebhook(request, response, { trigger, path, secret, offer, log, now, memory, linear: (options.env['LINEAR_API_KEY'] ?? '').trim().length > 0 });
+        void handleWebhook(request, response, { trigger, path, secret, offer: (event) => offer(event), log, now, memory, linear: (options.env['LINEAR_API_KEY'] ?? '').trim().length > 0 });
       });
       await new Promise<void>((resolve, reject) => {
         server!.once('error', reject);
@@ -179,7 +228,8 @@ export async function serveWorkflow(options: ServeWorkflowOptions): Promise<Serv
             // Woken early is not the hour: a long wait is slept in pieces.
             if (now().getTime() < next.getTime()) continue;
             offer(scheduleEvent(next, ''));
-            next = nextCronTime(parsed.schedule, next, zone);
+            // From now, not from the tick. A machine that slept through nine of them owes one run, not nine in a row.
+            next = nextCronTime(parsed.schedule, new Date(Math.max(next.getTime(), now().getTime())), zone);
           }
         })(),
       );
@@ -212,11 +262,11 @@ export async function serveWorkflow(options: ServeWorkflowOptions): Promise<Serv
               for (const summary of (await provider.listIssues({ labels: [label], limit: 50 }, { signal })) ?? []) {
                 const ref = summary.ref ?? String(summary.number);
                 // Considered once per server, so a refusal is said once and the label stays where its author can see it.
-                if (seen.has(`issue-label:${ref}`)) continue;
+                if (remembered(`issue-label:${ref}`)) continue;
                 const issue = await provider.getIssue(ref, { signal });
                 const actor = (await provider.labelActor?.(ref, label, { signal })) ?? null;
                 const event = issueEvent(issue, ref, { attended: false, actor, now: now() });
-                offer({ ...event, id: `issue-label:${ref}`, payload: { ...event.payload, triggerLabel: label } });
+                offer({ ...event, id: `issue-label:${ref}`, payload: { ...event.payload, triggerLabel: label } }, 'never');
               }
             } catch (error) {
               if (!signal.aborted) log({ type: 'error', detail: `Could not read the tracker: ${errorMessage(error)}` });
@@ -240,17 +290,22 @@ export async function serveWorkflow(options: ServeWorkflowOptions): Promise<Serv
   let reason = 'asked to stop';
   try {
     for (;;) {
+      // Asked to stop: the run in flight was allowed to finish, and what is still waiting is not started.
+      if (signal.aborted) break;
       if (queue.length === 0) {
-        if (signal.aborted) break;
         await new Promise<void>((resolve) => {
-          wake = resolve;
-          signal.addEventListener('abort', () => resolve(), { once: true });
+          const done = (): void => {
+            signal.removeEventListener('abort', done);
+            wake = undefined;
+            resolve();
+          };
+          wake = done;
+          signal.addEventListener('abort', done, { once: true });
         });
-        wake = undefined;
         continue;
       }
       const event = queue.shift()!;
-      log({ type: 'event', id: event.id, source: event.source, title: String(event.payload['title'] ?? event.payload['id'] ?? '') });
+      log({ type: 'event', id: event.id, source: event.source, title: plainText(String(event.payload['title'] ?? event.payload['id'] ?? '')) });
       try {
         const outcome = await options.run(event, options.runSignal);
         results.push({ id: event.id, status: outcome.status, exitCode: outcome.exitCode });
@@ -294,22 +349,77 @@ interface WebhookContext {
   linear: boolean;
 }
 
-function answer(response: ServerResponse, status: number, body: Record<string, unknown>): void {
+/** How long a sender that was refused is given to finish sending, and how much of it is thrown away, before it is cut off. */
+const HANG_UP_MS = 5_000;
+const DISCARD_BYTES = 8 * 1024 * 1024;
+
+function answer(response: ServerResponse, status: number, body: Record<string, unknown>, close = false): void {
   const text = JSON.stringify(body);
-  response.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+  response.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(text),
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    ...(close ? { connection: 'close' } : {}),
+  });
   response.end(text);
 }
 
-async function readBody(request: IncomingMessage): Promise<Buffer | null> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const buffer = chunk as Buffer;
-    size += buffer.length;
-    if (size > MAX_BODY_BYTES) return null;
-    chunks.push(buffer);
-  }
-  return Buffer.concat(chunks);
+/**
+ * Answers a request that was refused before its body was read.
+ *
+ * A sender is not listening while it is still sending. Answered at once and
+ * hung up on, it finds the connection gone under its feet and never reads the
+ * refusal; left alone, the rest of what it sends sits unread and it waits for
+ * ever. So what is still arriving is thrown away until the sender is done,
+ * then it is told why, and the connection ends with the answer. One that keeps
+ * sending past a few megabytes, or for more than a few seconds, is cut off.
+ */
+function refuse(response: ServerResponse, status: number, body: Record<string, unknown>): void {
+  const request = response.req;
+  let said = false;
+  let discarded = 0;
+  const say = (cut: boolean): void => {
+    if (said) return;
+    said = true;
+    clearTimeout(patience);
+    if (response.destroyed || response.socket === null) return;
+    answer(response, status, body, true);
+    if (cut) response.once('finish', () => response.socket?.destroy());
+  };
+  const patience = setTimeout(() => say(true), HANG_UP_MS);
+  patience.unref();
+  if (request.readableEnded) return say(false);
+  request.on('data', (chunk: Buffer) => {
+    discarded += chunk.length;
+    if (discarded > DISCARD_BYTES) say(true);
+  });
+  request.once('end', () => say(false));
+  request.once('error', () => say(true));
+  request.once('close', () => say(false));
+  request.resume();
+}
+
+function readBody(request: IncomingMessage): Promise<Buffer | null> {
+  // By hand rather than `for await`, which destroys the request when it is left early and takes the answer with it.
+  return new Promise((resolve, reject) => {
+    const declared = Number(request.headers['content-length'] ?? '0');
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return resolve(null);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const onData = (chunk: Buffer): void => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        request.off('data', onData);
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    };
+    request.on('data', onData);
+    request.once('end', () => resolve(Buffer.concat(chunks)));
+    request.once('error', reject);
+  });
 }
 
 async function handleWebhook(request: IncomingMessage, response: ServerResponse, context: WebhookContext): Promise<void> {
@@ -317,12 +427,20 @@ async function handleWebhook(request: IncomingMessage, response: ServerResponse,
     const url = new URL(request.url ?? '/', 'http://localhost');
     if (request.method === 'GET' && url.pathname === '/healthz') return answer(response, 200, { ok: true });
     if (url.pathname !== context.path) return answer(response, 404, { error: 'Nothing listens at this path.' });
-    if (request.method !== 'POST') return answer(response, 405, { error: 'Send the event as a POST.' });
+    if (request.method !== 'POST') return refuse(response, 405, { error: 'Send the event as a POST.' });
+    const signed = context.secret.length > 0;
+    if (!signed) {
+      const refusal = unsignedRefusal(request.headers);
+      if (refusal !== null) {
+        context.log({ type: 'ignored', reason: 'an unsigned delivery that did not come from a script on this machine' });
+        return refuse(response, 403, { error: refusal });
+      }
+    }
 
     const raw = await readBody(request);
-    if (raw === null) return answer(response, 413, { error: 'The body is larger than 1 MB.' });
+    if (raw === null) return refuse(response, 413, { error: 'The body is larger than 1 MB.' });
     // Checked against the bytes as they arrived, before anything reads them as JSON.
-    if (context.secret.length > 0 && !signatureValid(context.secret, raw, request.headers)) {
+    if (signed && !signatureValid(context.secret, raw, request.headers)) {
       context.log({ type: 'ignored', reason: 'a delivery whose signature did not match' });
       return answer(response, 401, { error: 'The signature does not match. Sign the body with HMAC-SHA256 and send it as X-Relay-Signature: sha256=<hex>.' });
     }
@@ -334,7 +452,7 @@ async function handleWebhook(request: IncomingMessage, response: ServerResponse,
       return answer(response, 400, { error: 'The body is not JSON.' });
     }
     // Read as the trigger the workflow names. An app sends every kind of event to one URL; most are not this one.
-    const read = matchDelivery(context.trigger, body, { headers: request.headers, now: context.now(), linear: context.linear, memory: context.memory });
+    const read = matchDelivery(context.trigger, body, { headers: request.headers, now: context.now(), linear: context.linear, memory: context.memory, signed });
     if (!read.match) {
       context.log({ type: 'ignored', reason: read.why });
       // A 200, so the app does not send it again: it arrived, and it is not what starts this workflow.
@@ -345,7 +463,7 @@ async function handleWebhook(request: IncomingMessage, response: ServerResponse,
       case 'queued':
         return answer(response, 202, { accepted: true, id: event.id });
       case 'duplicate':
-        return answer(response, 200, { accepted: false, id: event.id, reason: 'This delivery was already received.' });
+        return answer(response, 200, { accepted: false, id: event.id, reason: 'This delivery was already received. The same body within ten minutes is one event.' });
       case 'full':
         context.log({ type: 'ignored', reason: 'a delivery that arrived while the queue was full' });
         return answer(response, 429, { error: 'Too many events are waiting. Send it again later.' });

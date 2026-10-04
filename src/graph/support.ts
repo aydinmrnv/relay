@@ -115,7 +115,7 @@ const SENTRY_HOOK = `\`relay workflow serve\` reads Sentry’s own webhook ${APP
 
 const TRIGGERS: Readonly<Record<string, NodeSupport>> = {
   'logic.trigger.manual': real('Started by a person: `relay workflow run`, or Run on your computer in the studio.'),
-  'http.trigger.webhook': real('`relay workflow serve` listens for it. Signed deliveries are checked against RELAY_WEBHOOK_SECRET when it is set.', 'RELAY_WEBHOOK_SECRET'),
+  'http.trigger.webhook': real('`relay workflow serve` listens for it. With RELAY_WEBHOOK_SECRET set, deliveries must be signed with it. Without it, only a script on the same machine can deliver, and an allowlist that names people refuses what it sends.', 'RELAY_WEBHOOK_SECRET'),
   'schedule.trigger.cron': real('`relay workflow serve` keeps the clock, in the time zone given.'),
   'schedule.trigger.interval': real('`relay workflow serve` keeps the clock.'),
   'github-issues.trigger.issue-labelled': real('`relay workflow serve` watches for the label with `gh`; the exported Action fires on the event itself.'),
