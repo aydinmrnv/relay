@@ -64,6 +64,10 @@ Launch readiness. Relay is in beta, and free while it is.
 
 ### The CLI and the Action
 
+- A pull request Relay opens carries its receipts as a table: each claim an
+  agent made about the change, beside what Relay measured, and whether the two
+  agree.
+
 - Ctrl-C stops `relay run`, `relay resume` and `relay watch` cleanly.
 - The Action installs the CLI from the release tarball, and releases are made
   only from builds that passed CI.

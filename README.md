@@ -123,7 +123,9 @@ the studio uses.
 - **Receipts.** Each check a run makes is kept as a row: what an agent claimed,
   what Relay measured, where each came from, and whether they agree. A row with
   no claim to compare says "measured"; a row with nothing measured says
-  "unverified". Neither is counted as agreement.
+  "unverified". Neither is counted as agreement. Every pull request Relay
+  opens carries them as a table, so the reviewer reads the evidence where the
+  review happens.
 - **Recordings.** `relay recording` writes a finished run to one file, cleaned
   of this machine's paths and of anything shaped like a credential, and the
   studio plays it back at [`/r`](https://relay-olive-omega.vercel.app/r): drag

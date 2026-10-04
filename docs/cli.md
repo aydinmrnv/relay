@@ -789,6 +789,13 @@ A run that fails or is cancelled never reaches this phase. Its work is still
 committed to the run branch so a `git worktree prune` cannot take it, and
 nothing is published.
 
+The pull request's body is the run's own evidence, not the implementer's
+account of its work: the review rounds, the findings and how each was answered,
+the test command and its exit code, the cost, and the **receipts** — a table of
+each thing somebody said about the change beside what Relay measured from git,
+the test suite and the CLIs' own reports, with whether the two agree. A row
+that disagrees is counted at the top of the table.
+
 ### Delivery consent
 
 On an interactive terminal a run ends with the questions its policy left
