@@ -550,8 +550,9 @@ export async function beginChatgptSignIn(options: SignInOptions = {}): Promise<P
   let settled = false;
   /** Set by the first callback carrying this attempt's state: a code is exchanged once. */
   let claimed = false;
-  let resolveResult!: (result: SignInResult) => void;
-  let rejectResult!: (error: Error) => void;
+  // Initialised rather than declared with a definite-assignment assertion, which Node 22.6 cannot strip.
+  let resolveResult: (result: SignInResult) => void = () => undefined;
+  let rejectResult: (error: Error) => void = () => undefined;
   const result = new Promise<SignInResult>((resolve, reject) => {
     resolveResult = resolve;
     rejectResult = reject;
