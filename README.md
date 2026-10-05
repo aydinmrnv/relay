@@ -33,6 +33,12 @@ flow on a canvas once — what starts a run, the guardrails in front of it, the
 agents, where the result goes and who hears about it — and Relay runs the same
 steps every time a ticket arrives, stopping wherever a guardrail says no.
 
+The canvas is not a mock-up of something else. `relay workflow run` walks the
+graph you drew and performs it on your own machine: it evaluates the
+conditions, waits at the approval for a person, runs the agents, opens the
+pull request and posts in the channel. A step it has no way to perform is
+reported as *not performed*, never as done.
+
 What makes it more than an automation canvas is the node in the middle. The
 **Agent pipeline** is not one model call. Claude Code and Codex plan the work,
 attack each other's plan against the real code, implement it in an isolated git
@@ -89,9 +95,18 @@ package on current npm.)
    the same canvas light up from a real run: the plan, the reviews, the diff,
    the tests and the pull request, with what the CLIs actually charged.
 4. **Export it** to run unattended. *Install into your repository* writes the
-   engine's config and a GitHub Actions workflow straight into it (or download
-   them as a `.zip`), and the export lists each secret to add. Commit them, and
-   a label on a GitHub issue starts the workflow on your own Actions minutes.
+   workflow, the engine's config and a GitHub Actions workflow straight into it
+   (or download them as a `.zip`), and the export lists each secret to add.
+   Then either keep its trigger on a machine of your own, where every step
+   runs as drawn:
+
+   ```bash
+   relay workflow check                 # what each step needs, and what Relay cannot perform
+   relay workflow serve                 # listen for its webhook, its schedule, its label
+   ```
+
+   or commit the files, and a label on a GitHub issue starts the pipeline on
+   your own Actions minutes.
 
 The **Guide** (`/guide`) walks through the same path and explains every concept
 the studio uses.
@@ -100,10 +115,17 @@ the studio uses.
 
 - **Two vendors check each other.** The model that reviews a plan or a diff is
   never the one that wrote it (below).
+- **The workflow you drew is the workflow that runs.** One table says which
+  steps Relay performs, and the engine and the studio read the same copy of
+  it: the canvas badges a step "test runs only" exactly when a real run would
+  skip it, and a real run says "not performed" rather than pretend. Today
+  that badge is on one node.
 - **Receipts.** Each check a run makes is kept as a row: what an agent claimed,
   what Relay measured, where each came from, and whether they agree. A row with
   no claim to compare says "measured"; a row with nothing measured says
-  "unverified". Neither is counted as agreement.
+  "unverified". Neither is counted as agreement. Every pull request Relay
+  opens carries them as a table, so the reviewer reads the evidence where the
+  review happens.
 - **Recordings.** `relay recording` writes a finished run to one file, cleaned
   of this machine's paths and of anything shaped like a credential, and the
   studio plays it back at [`/r`](https://relay-olive-omega.vercel.app/r): drag
@@ -126,6 +148,8 @@ the studio uses.
 - **Your subscriptions, your runners.** No API keys to paste. Agents run on your
   computer or your own Actions minutes, where Relay never sees your code.
 
+![A Linear step selected in the builder: “Runs for real. Done through Linear’s API with a personal API key. Reads LINEAR_API_KEY from the environment the runner was started with.”](docs/images/real-step.png)
+
 | Describe it | Spend forecast |
 |---|---|
 | ![A sentence becoming a Sentry-to-pull-request workflow as it is typed](docs/images/describe.png) | ![The spend forecast: typical and 90th-percentile cost per run, a monthly projection and where the money goes](docs/images/forecast.png) |
@@ -138,12 +162,12 @@ sense, like wiring a ticket into something that expects a pull request.
 
 | Building block | Nodes |
 |---|---|
-| **Triggers** | What hands the agents a task. A label on a GitHub issue starts an exported workflow by itself today, and a manual start works anywhere. The rest can be designed and test-run in the studio, and are not wired to real events yet: a ticket assigned (Linear, Jira, Shortcut), main going red (GitHub Actions, GitLab CI, CircleCI, Buildkite), a new error or crash (Sentry, Datadog, Crashlytics), a security alert (Dependabot, code scanning, Snyk), a flag that finished rolling out, a bug report in Slack or Zendesk, a schedule, a webhook |
-| **Guardrails** | Budget gate, author allowlist, injection screen, human approval, concurrency limit, kill switch. Each refuses by default and says why |
+| **Triggers** | What hands the agents a task. Kept for real by `relay workflow serve`: an incoming webhook, a schedule, a label on a GitHub issue, and the webhooks GitHub, Linear and Sentry send themselves (an issue assigned or labelled, main going red, a security alert, a new error). A manual start works anywhere. The rest can be designed and test-run, and are started by hand or through an Incoming webhook until something reads their events: Jira, Shortcut, GitLab CI, CircleCI, Buildkite, Datadog, Crashlytics, Snyk, LaunchDarkly, Slack, Zendesk |
+| **Guardrails** | Budget gate, author allowlist, injection screen, human approval, concurrency limit, kill switch. Each refuses by default and says why. An approval is real: the run waits until a person answers, in the studio or with `relay workflow approve` |
 | **Agent pipeline** | Run the pipeline (choose the planner, plan reviewer, implementer and code reviewer, the review depth and the round limits), a fast run with no reviews, or a cost estimate |
 | **Delivery** | Deliver the change — commit, branch or draft pull request — and comment the summary on the issue. A run started from the studio or by an event stops at a pull request; only `relay run` at a terminal, with a person there, can be allowed to merge |
-| **Logic** | Condition, filter, transform, an AI step for triage or classification, merge paths, wait, wait for business hours, notes. Played in test runs; the export cannot evaluate them, and says which it left out |
-| **Actions** | What closes the loop where the work was asked for: move the ticket and attach the PR, ask Slack for review, reply in the thread, link the fix on the Sentry issue, leave support an internal note, call any HTTP endpoint |
+| **Logic** | Condition, filter, an AI step for triage or classification, merge paths, wait, wait for business hours, notes. Performed in a real run, and a Filter is evaluated the same way in a test run. The AI step is one read-only turn of your own Claude Code or Codex: Relay calls no model API. Transform passes its payload through unchanged. The exported GitHub Action cannot evaluate them, and says which it left out |
+| **Actions** | What closes the loop where the work was asked for: move the ticket and attach the PR, ask Slack for review, link the fix on the Sentry issue, leave support an internal note, call any HTTP endpoint. Performed today in Slack and Discord (a webhook), GitHub (`gh`), Linear (its API) and over HTTP. A step in any other app is handed to a bridge URL of yours, or skipped and reported |
 
 Select a node and the side panel shows its settings, what it will do with them,
 and what it did in the last test run. Select nothing and the panel reads the
@@ -153,10 +177,11 @@ every check it has not passed.
 ### Templates
 
 Each template is a situation teams hand to coding agents, with its guardrails
-already in place. Each one says how it runs today: "GitHub label to pull
-request" runs unattended through the exported Action, and the others are
-started by hand until their triggers are wired to real events. A workflow made
-from a template starts paused. The catalog is kept to the ~45 apps these
+already in place. Each one says how it runs today. Seven of the ten start by
+themselves under `relay workflow serve`: a label, a schedule, and the events
+GitHub, Linear and Sentry deliver. The Zendesk, Slack and LaunchDarkly ones are
+started by hand, or from an Incoming webhook, until something reads those
+apps' events. A workflow made from a template starts paused. The catalog is kept to the ~45 apps these
 situations involve; anything else is one Incoming webhook or HTTP request away.
 
 | Template | For when |
@@ -174,15 +199,70 @@ situations involve; anything else is one Incoming webhook or HTTP request away.
 
 ## Running a workflow for real
 
-There are two ways, and they use the same engine.
+There are three ways, and they use the same engine.
 
 **On your computer, from the studio.** With `relay connect` running in your
 repository, *Run on your computer* sends the compiled workflow to the companion,
-which runs the pipeline there with your own sign-ins and streams every phase
-back to the canvas. The trigger and the guardrails in front of the pipeline
+which performs every step of it there with your own sign-ins and streams each
+back to the canvas: a guardrail that passed, an approval that is waiting for
+you (answer it from the run panel), the plan, the reviews, the diff and the
+tests, the pull request, the Slack message. The kill switch and the allowlist
 decide whether an *event* may start a run, so a person pressing the button
-passes over them; the per-run cost cap still applies, and delivery stops at a
-pull request. Reload the tab mid-run and the studio picks the run back up.
+passes them; the per-run cost cap still applies, and delivery stops at a pull
+request. Reload the tab mid-run and the studio picks the run back up.
+
+**Unattended, on a machine of your own.** `relay workflow serve` keeps the
+workflow's trigger and runs the whole graph each time it fires:
+
+```bash
+relay workflow check ticket-to-pr     # what each step needs; which steps Relay cannot perform
+relay workflow run ticket-to-pr --prompt "Fix the flaky retry test" --dry-run
+relay workflow serve ticket-to-pr     # an incoming webhook, a schedule, a label, or the app's own events
+relay workflow approve ap-7kq2m9xt    # the yes a Human approval step is waiting for
+```
+
+This is that command with a small workflow in it — a webhook, an allowlist, a
+filter, an approval and an HTTP step — taking one delivery that was not
+signed, one that was, and a yes from another terminal:
+
+```
+$ RELAY_WEBHOOK_SECRET=… relay workflow serve demo --port 4598
+
+Workflow, unattended
+  Trigger    Incoming webhook
+  Listening  POST http://127.0.0.1:4598/hooks/demo (signed with RELAY_WEBHOOK_SECRET)
+  Delivery   capped at a draft pull request: nothing merges without a person
+
+2026-10-04T21:02:13.972Z ignored a delivery whose signature did not match
+2026-10-04T21:02:14.024Z event delivery-8d0857247154f1b1: Export crashes on the second click
+
+Demo: approve, then tell the channel
+  Started by a webhook, from @ada: Export crashes on the second click
+
+  ✓ Incoming webhook  Received: Export crashes on the second click
+  ✓ Author allowlist  @ada is allowed.
+  ✓ Only bugs  Passed: issue.labels contains "bug"
+  … Waiting for approval: Export crashes on the second click
+    Approve with `relay workflow approve ap-qs8mwd8g`, or reject with `relay workflow reject ap-qs8mwd8g`, in this repository.
+  ✓ Human approval  Approved by ada.  4.1s
+  ✓ Tell the channel  POST http://127.0.0.1:4599/told → 200
+
+✓ Finished: Demo: approve, then tell the channel · Export crashes on the second click
+```
+
+A run a trigger starts is unattended, with everything that means below: it
+stops at a draft pull request, reads only trusted comments, and its agents
+never see a secret-named variable. Deliveries are signed (HMAC-SHA256, the
+scheme GitHub, Linear and Sentry already use), one sent twice starts one run,
+and a delivery that is not the trigger starts nothing and says why. An event
+may not start the agents until the workflow has a Budget gate with a per-run
+cost and a daily budget, and `.relay/STOP` stops every one of them. What an
+event says is treated as a stranger's words all the way through: it can name
+an issue in a tracker and never a file, and its text is escaped before it
+lands in a Slack message, a JSON body or a URL. The app steps read their
+credentials from the environment — `SLACK_WEBHOOK_URL`, `LINEAR_API_KEY`,
+`HTTP_HEADERS` — and those are never handed on to the agents. [The reference](docs/cli.md#workflows) has every step and every
+trigger.
 
 **Unattended, from your repository.** Export compiles the graph into files your
 repository already knows how to run — installed straight into it through
@@ -191,20 +271,23 @@ repository already knows how to run — installed straight into it through
 | File | What it is |
 |---|---|
 | `.relay/config.json` | The engine's configuration: which agent plays which role, review depth, round limits, guardrails, how far delivery may go |
+| `.relay/workflows/<name>.json` | The whole workflow, compiled for `relay workflow`: every node with its settings filled in, and no secret in it |
 | `.github/workflows/<name>.yml` | A GitHub Actions workflow that runs the engine on your own runner minutes |
 | `SETUP.md` | The secrets to add, and where each one comes from |
 | `<name>-workflow.json` | The graph itself, to import back into the studio |
 
-The exported Action works on one GitHub issue per run. A GitHub issue trigger
-(a label added, an issue opened or assigned, a comment) becomes an Actions
-event, and the run still requires the trigger label and a labeller on the
-allowlist. Any other trigger exports as a workflow you start yourself with an
-issue number (`workflow_dispatch`), or from anything that can send an HTTP
-request (`repository_dispatch`), and the export says so. Slack, Discord and
-HTTP actions are wired straight into the YAML; any other app is posted as JSON
-to a bridge URL you choose, such as an n8n or Zapier webhook or your own server.
+The exported Action is narrower than `relay workflow`: it works on one GitHub
+issue per run and decides its guardrails inside Relay, so it cannot evaluate a
+Condition or wait for an approval. A GitHub issue trigger (a label added, an
+issue opened or assigned, a comment) becomes an Actions event, and the run
+still requires the trigger label and a labeller on the allowlist. Any other
+trigger exports as a workflow you start yourself with an issue number
+(`workflow_dispatch`), or from anything that can send an HTTP request
+(`repository_dispatch`), and the export says so. Slack, Discord and HTTP
+actions are wired straight into the YAML; any other app is posted as JSON to a
+bridge URL you choose, such as an n8n or Zapier webhook or your own server.
 
-Whatever the canvas cannot express in those files is listed as a warning in the
+Whatever the canvas cannot express in the Action is listed as a warning in the
 export and in `SETUP.md`. A workflow with errors, placeholder names on its
 allowlist or no repository does not export. Secrets you typed into a node are
 never written to the files; they become named repository secrets. A paused
@@ -307,16 +390,21 @@ beta: write to support@nullstack.one to ask for access.
 |---|---|---|
 | Accounts (Clerk: email, Google, GitHub), onboarding, cloud sync, share links and remixes, version history | | |
 | The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | |
-| Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your computer, installing an export | Every trigger except a label on a GitHub issue and a manual start | Triggers from Linear, Jira, Sentry, CI and the other apps |
-| Connecting Slack and Discord: the webhook is checked with the app, kept encrypted, and rechecked from the dashboard | Other apps' connections: "Mark ready" records a label and signs in to nothing | Sign-in for every connector |
-| Relay Cloud (invite-only beta): a machine of your own on Azure, woken for a run and put to sleep when idle | Logic nodes and most app actions, which are marked "test runs only" | |
-| Exported workflows running on GitHub Actions, started by a label on a GitHub issue | Approvals: decided by the simulator; a real run does not wait for one | Approvals from Slack and email |
+| Running a workflow as drawn, with `relay workflow run` or *Run on your computer*: guardrails, conditions, filters, the AI step, waits, the pipeline, delivery | Transform: its payload passes through unchanged | A sandbox to run Transform's JavaScript in |
+| Human approval: the run waits for a yes or a no, from the studio's run panel or `relay workflow approve` | | Approvals asked and answered in Slack or by email |
+| Triggers kept by `relay workflow serve`: an incoming webhook, a schedule, a label on a GitHub issue, and the webhooks GitHub, Linear and Sentry send (read from the apps' documented deliveries, not yet exercised against the live services) | Every other app's trigger: Jira, Zendesk, Slack, LaunchDarkly, the other CI services | Reading those apps' events directly |
+| Steps in Slack and Discord (a webhook), GitHub (`gh`), Linear (its API), and HTTP requests | Steps in every other app, unless you give them a bridge URL: then they are posted there, and otherwise reported as not performed | A connection to every app |
+| Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your computer, answering its approvals, installing an export | | |
+| Connecting Slack and Discord in the studio: the webhook is checked with the app, kept encrypted, and rechecked from the dashboard | Other apps' connections: "Mark ready" records a label and signs in to nothing | Sign-in for every connector; a real run using the studio's stored connections rather than the runner's environment |
+| Relay Cloud (invite-only beta): a machine of your own on Azure, woken for a run and put to sleep when idle. It runs the pipeline and its delivery | | The whole workflow, and triggers, on Relay Cloud |
+| Exported workflows running on GitHub Actions, started by a label on a GitHub issue | | The Action evaluating the canvas's own decisions |
 | The playground (`/play`, no account), recordings of real runs (`/r`, `relay recording`) and their receipts | | |
 | The engine, from a terminal or from CI, with GitHub and Linear issues | | Org-wide guardrails, an audit log, and a self-hosted runner in your VPC |
 
 The engine reads issues from GitHub and Linear today. The studio lets you design
-against every app in the catalog, each template says how it runs today, and the
-export says which parts need the bridge and which it left out.
+against every app in the catalog; every node says what a real run does with
+it, each template says how it starts today, and `relay workflow check` says
+the same about an exported workflow, variable by variable.
 
 ## The CLI: the studio's companion, and the engine
 
@@ -326,10 +414,10 @@ The `relay` CLI in `src/` is the studio's side of your computer.
 paired studio can use — loopback only, the studio's origin only, a token made
 for that start of `relay connect` which travels once, in the fragment of the
 link it opens, and a question in the terminal before the first run or install. Through it the
-studio starts the vendor CLIs' own sign-ins, runs a workflow's pipeline in your
+studio starts the vendor CLIs' own sign-ins, runs a workflow in your
 repository and streams it back, and installs an export. A run started this way
-takes the pipeline's shape from the workflow and everything else from the
-repository's own config, and stops at a pull request.
+takes the workflow's steps and the pipeline's shape from the canvas and
+everything else from the repository's own config, and stops at a pull request.
 
 Behind the Agent pipeline node is the engine — the same CLI. It is what a run
 from the studio performs on your computer, what the exported GitHub Action
@@ -338,8 +426,10 @@ runs, and it works on its own from a terminal:
 ```bash
 relay connect                                 # pair with the studio
 relay start                                   # dependencies, sign-in, config, and a first run
-relay run 142                                 # a GitHub issue, a Linear ID, or a spec file
+relay run 142                                 # the pipeline: a GitHub issue, a Linear ID, or a spec file
 relay run --prompt "Fix the flaky timeout in the retry test"
+relay workflow run ticket-to-pr 142           # a whole workflow from the studio, as drawn
+relay workflow serve ticket-to-pr             # keep its trigger, and run it each time
 ```
 
 A run looks like this, and every step leaves a real artifact on disk rather than
@@ -379,10 +469,11 @@ not support the design, the defaults change.
 | Path | What |
 |---|---|
 | [`web/`](web/README.md) | The workflow studio: a Next.js app with the builder, templates, runs, integrations and the export |
-| `src/` | The `relay` CLI (TypeScript, Node ≥ 22.6): the studio companion in `src/studio/`, the Relay Cloud hub and runner in `src/cloud/`, and the engine |
+| `src/` | The `relay` CLI (TypeScript, Node ≥ 22.6): the studio companion in `src/studio/`, the workflow runtime in `src/graph/`, the Relay Cloud hub and runner in `src/cloud/`, and the engine |
 | `action.yml` | The GitHub Action that exported workflows run |
 | [`docs/cli.md`](docs/cli.md) | The CLI reference: the companion and the engine |
 | [`docs/design/`](docs/design/relay-cloud-runners.md) | Relay Cloud runners: how they work, and what is next. [How workflows run for real](docs/design/workflow-execution.md), locally and in the cloud |
+| [`docs/deploying.md`](docs/deploying.md) | Deploying the studio, and hosting Relay Cloud on Azure |
 | [`eval/`](eval/README.md) | The eval harness and its fixtures |
 | `test/`, `scripts/`, `bin/` | The engine's tests, CI fixtures and entry point |
 | `scripts/azure/` | Deploys the Relay Cloud hub on Azure, and creates a development runner VM |
@@ -406,80 +497,8 @@ CI runs the engine's suite on macOS, Linux and Windows, runs the Action against
 a fixture repository, and lints, typechecks, tests and builds the studio.
 [CONTRIBUTING.md](CONTRIBUTING.md) says what a change needs.
 
-### Deploying the studio
-
-On Vercel, import the repository with `web` as the root directory, then:
-
-1. **Storage → Create → Neon** (free tier). It sets `DATABASE_URL`; tables are
-   created on the first request.
-2. Add the Clerk keys, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
-   `CLERK_SECRET_KEY` (for launch, a production instance: `npx clerk deploy`).
-   Sign-in methods — email, Google, GitHub — are switched on in the Clerk
-   dashboard; Clerk sends the verification and password-reset emails.
-3. Add `RELAY_CREDENTIALS_KEY` (`openssl rand -base64 32`), which encrypts
-   the Slack and Discord webhooks people connect.
-4. Add a Clerk webhook for `user.deleted` pointing at `/api/webhooks/clerk`,
-   with its signing secret in `CLERK_WEBHOOK_SIGNING_SECRET`, so an account
-   deleted in Clerk takes its studio data with it.
-
-Every variable is described in [`web/.env.example`](web/.env.example). Without
-a database or the Clerk keys the deployment keeps the site up, but the studio
-stays closed and `/sign-in` says sign-in is not available. `GET /api/health`
-answers 503 and names what is missing until all four are set, so use it as the
-deployment's health check.
-
-### Relay Cloud on Azure
-
-`scripts/azure/deploy-hub.sh` deploys the hub and everything the runner
-machines need: a resource group, one network per runner region, the hub as a
-system service with a managed identity scoped to that resource group, and a
-public HTTPS address (a static IP with Caddy, or Tailscale Funnel for trying it
-out). It is safe to run again and keeps every setting it was not given;
-`--upgrade` ships new code and `--rotate-secret` replaces the secret runner
-tokens are signed with.
-
-```bash
-az login
-scripts/azure/deploy-hub.sh --expose public-ip \
-  --clerk-publishable-key pk_live_… --allow user_2abc…   # a new hub VM with its own address
-scripts/azure/deploy-hub.sh --upgrade
-```
-
-Then set `RELAY_CLOUD_HUB_URL` to the address it prints on the studio's
-deployment. Who may have a machine is `--allow` (Clerk user ids, or `'*'`);
-nobody may until you say, and `--allow none` empties the list again.
-
-The hub's VM must be the hub's alone. Its identity has Contributor on the
-runners' resource group, which includes running commands as root on every
-runner, and its disk holds the secret runner tokens are signed with. The
-script refuses a VM that has the coding CLIs installed. Pin what runners
-install with `--claude-code-version` and `--codex-version`. The
-[design](docs/design/relay-cloud-runners.md#hosting-on-azure) lists what it
-costs and what the hub cannot do for you: network isolation between runners,
-capacity, and stopping machines while the hub itself is down.
-
-### A development runner VM on Azure
-
-`scripts/azure/create-runner.sh` builds a VM for working on Relay: Ubuntu 24.04
-on `Standard_B2ats_v2` with Claude Code, Codex, gh, bubblewrap and Relay
-installed. It has no public IP; you reach it over Tailscale. Agents on it run
-as a user who can sudo, so it is not a Relay Cloud machine and never a place
-for the hub.
-
-```bash
-az login
-scripts/azure/create-runner.sh --group <group> --name <vm>                             # lists the regions you may deploy to
-scripts/azure/create-runner.sh --group <group> --name <vm> --location northcentralus   # prints a Tailscale link to approve the VM
-```
-
-It uses `~/.ssh/id_ed25519.pub` unless `--ssh-key` names another. With
-Tailscale on, connect with `ssh relay@<the VM's Tailscale name>`. On the VM,
-sign in to `gh`, then run `relay connect --no-open --port 4478` in a clone. A
-tunnel (`ssh -N -L 4478:127.0.0.1:4478 …`) lets a studio in your browser pair
-with the VM as if `relay connect` were running on your own computer.
-
-To stop paying for compute, run `az vm deallocate -g <group> -n <vm>`. To
-remove everything, run `az group delete -n <group>`.
+Deploying the studio on Vercel, hosting the Relay Cloud hub on Azure and
+making a development runner VM are in [docs/deploying.md](docs/deploying.md).
 
 ## License and security
 

@@ -2,24 +2,32 @@
  * What running a workflow for real looks like today, in one line, so a
  * template never reads as more finished than it is.
  *
- * Only a GitHub issue event can start an exported workflow on its own: the
- * Action fires on it directly. Every other trigger is designed, validated and
- * test-run here, and runs for real when a person starts it on their machine or
- * Relay Cloud with the ticket or a description. The steps before and after the
- * pipeline (Slack, Linear, Zendesk…) are simulated until app connections ship.
- * See docs/design/workflow-execution.md for the plan that closes the gap.
+ * Three things can run a workflow. A test run plays every node here, for
+ * free. `relay workflow` (the CLI, and Run on your computer) walks the same
+ * graph and performs it: which steps it performs is `./engine/support`, a
+ * table the engine and the studio share byte for byte. The exported GitHub
+ * Action is narrower than both: it runs the pipeline for one GitHub issue and
+ * the app steps it can place, and cannot make a decision the canvas draws.
  */
 import { getNodeType } from '../connectors';
+import { nodeSupport, testRunsOnly, type NodeSupport } from './engine/support';
 import type { Workflow } from './schema';
 
+export { nodeSupport, type NodeSupport };
+
+/** Whether nothing but a test run plays this step: the engine does not perform it, and it cannot be handed to a bridge. */
+export function isSimulatedOnly(typeId: string): boolean {
+  return testRunsOnly(typeId);
+}
+
 /**
- * Steps a test run plays that nothing performs for real: not the CLI, not
- * the exported Action. They are worth drawing — a Condition says what the
- * workflow is meant to decide — but they must not read as working.
+ * Steps the exported GitHub Action does not perform, though `relay workflow`
+ * does. The Action decides the allowlist and the budget inside Relay and then
+ * runs the pipeline on the issue it was given; nothing in a workflow file
+ * evaluates a Condition, waits for a person or asks a model.
  */
-export const SIMULATED_ONLY: ReadonlySet<string> = new Set([
+export const ACTION_CANNOT: ReadonlySet<string> = new Set([
   'gates.action.approval',
-  'http.trigger.webhook',
   'logic.action.condition',
   'logic.action.filter',
   'logic.action.transform',
@@ -30,8 +38,26 @@ export const SIMULATED_ONLY: ReadonlySet<string> = new Set([
   'schedule.action.business-hours',
 ]);
 
-export function isSimulatedOnly(typeId: string): boolean {
-  return SIMULATED_ONLY.has(typeId);
+export interface RealRunGap {
+  nodeId: string;
+  name: string;
+  /** Handed to the person's bridge when they have one; skipped otherwise. */
+  bridge: boolean;
+  note: string;
+}
+
+/** The steps of a workflow a real run does not perform itself, and why. Empty when it performs every one. */
+export function realRunGaps(workflow: Workflow): RealRunGap[] {
+  const gaps: RealRunGap[] = [];
+  for (const node of workflow.nodes) {
+    const def = getNodeType(node.data.typeId);
+    if (def === undefined || def.kind !== 'action') continue;
+    const support = nodeSupport(def.id);
+    if (support.real) continue;
+    const label = typeof node.data.label === 'string' && node.data.label.trim().length > 0 ? node.data.label.trim() : `${def.connector.name} · ${def.name}`;
+    gaps.push({ nodeId: node.id, name: label, bridge: support.bridge, note: support.note });
+  }
+  return gaps;
 }
 
 export interface Readiness {
@@ -46,14 +72,26 @@ const GITHUB_NATIVE = new Set(['github-issues']);
 export function readiness(workflow: Workflow): Readiness {
   const trigger = workflow.nodes.map((node) => getNodeType(node.data.typeId)).find((def) => def?.kind === 'trigger');
   if (trigger === undefined || trigger.id === 'logic.trigger.manual') {
-    return { unattended: false, headline: 'Started by hand', detail: 'Run it on your computer or Relay Cloud with an issue or a description.' };
+    return { unattended: false, headline: 'Started by hand', detail: 'Run it on your computer with an issue or a description: the guardrails, the pipeline and the steps after it all run for real.' };
   }
   if (GITHUB_NATIVE.has(trigger.connectorId)) {
-    return { unattended: true, headline: 'Runs unattended today', detail: 'Export it: the GitHub Action starts on the issue event, behind the same guardrails.' };
+    const served = trigger.id === 'github-issues.trigger.issue-labelled' ? ' On a machine of your own, relay workflow serve watches for the label and runs every step.' : nodeSupport(trigger.id).real ? ' On a machine of your own, relay workflow serve takes GitHub’s webhook and runs every step.' : '';
+    return { unattended: true, headline: 'Runs unattended today', detail: `Export it: the GitHub Action starts on the issue event, behind the same guardrails.${served}` };
+  }
+  if (nodeSupport(trigger.id).real) {
+    // A webhook or a clock is kept on any machine. An app's own events have to reach it, signed.
+    const fromApp = trigger.connectorId !== 'http' && trigger.connectorId !== 'schedule';
+    return {
+      unattended: true,
+      headline: 'Runs unattended today',
+      detail: fromApp
+        ? `Export it, run relay workflow serve on a machine ${trigger.connector.name} can reach, and point ${trigger.connector.name}’s webhook at it. It takes the signed deliveries, and runs every step each time this happens.`
+        : `Export it and run relay workflow serve on a machine of your own: it keeps this trigger (${trigger.name.toLowerCase()}) and runs every step each time it fires.`,
+    };
   }
   return {
     unattended: false,
     headline: 'Test it here, run it by hand',
-    detail: `Starting it from ${trigger.connector.name} events is not wired up yet. Test runs play every node; a real run on your computer or Relay Cloud does the pipeline and delivery.`,
+    detail: `Nothing listens for ${trigger.connector.name} events yet. Point ${trigger.connector.name}’s webhook at an Incoming webhook trigger to start it by itself, or run it by hand: a real run performs every step it can and says which it could not.`,
   };
 }

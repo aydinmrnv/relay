@@ -1,12 +1,51 @@
 # Running workflows for real: local, cloud, and the part in between
 
-**Status: design, not built.** This covers how a workflow drawn on the canvas
+**Status: partly built.** This covers how a workflow drawn on the canvas
 runs for real, whether it runs on the user's own computer or in Relay Cloud,
-and the order to build it in. It builds on
+and the order to build it in. What exists today is the half that needs no
+hosted control plane: the engine walks the graph itself (`src/graph/`, [`relay
+workflow`](../cli.md#workflows)), on the user's own machine, with that machine
+as the always-on part. The hosted control plane below — the studio keeping
+triggers, queuing jobs for Relay Cloud, holding app connections for a run — is
+still the design. See [What is built](#what-is-built). It builds on
 [Relay Cloud runners](relay-cloud-runners.md), which covers the machines. This
 document covers what runs on them, and what runs somewhere else.
 
+## What is built
+
+- **One walk, performed.** `executeGraph` in `src/graph/executor.ts` is the
+  simulator's walk — the same queue, joins and skipped branches — with every
+  effect injected. A test run still uses the simulator; the two share the
+  condition and filter evaluator and the table of which steps are real
+  (`src/graph/expression.ts`, `support.ts`), copied byte for byte into the
+  studio and held there by a test in each package. Phase 0's `advance()` with
+  resumable state is not built: a real run holds its state in the process
+  that runs it, so a wait or an approval is that process waiting.
+- **A local control plane.** `relay workflow serve` is the always-on part on a
+  machine of the user's own: it takes webhooks (generic, and GitHub's,
+  Linear's and Sentry's own), keeps a schedule, polls for a label, and runs
+  the prefix, the pipeline and the suffix. Its ledger is the run records on
+  that machine's disk.
+- **Attended runs of the whole graph.** *Run on your computer* sends the
+  compiled graph; `relay connect` runs `relay workflow run`, and the tab folds
+  its node records. The tab is still the one following: close it and the run
+  finishes, with its steps, but the studio's record stops updating.
+- **App steps with the runner's own credentials.** Slack and Discord webhooks,
+  `gh`, Linear's API and HTTP requests, read from the environment of the
+  machine that runs the workflow. The studio's stored connections are not
+  used by a run yet.
+- **Approvals.** A file under `.relay/approvals/`, answered by the CLI, the
+  studio through the companion, or the terminal. Signed links in Slack and
+  email are not built.
+
+Not built: everything that needs the studio to be the control plane (hooks on
+the hosted site, the `job` table, the hub claiming jobs), Relay Cloud running
+more than the pipeline, per-workflow runners, and the Action as a dispatched
+runner.
+
 ## Where things stand
+
+*(As this was written, before the work above.)*
 
 A workflow is a graph: a trigger, guardrails, the Agent pipeline, delivery,
 and actions after it. Today there are four ways to "run" one, and each treats

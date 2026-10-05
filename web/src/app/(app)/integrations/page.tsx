@@ -129,8 +129,8 @@ function IntegrationsInner() {
           <>
             The apps coding work comes from and the places people hear back, grouped by the job they do. A <strong className="font-medium text-foreground">trigger</strong> hands the agents a task when something
             happens: a ticket assigned, main going red, a new crash. An <strong className="font-medium text-foreground">action</strong> closes the loop where the work was asked for. Anything else with a URL works
-            through an Incoming webhook or an HTTP request. {REAL_APPS} connect for real: {brand.name} checks the webhook with the app and keeps it encrypted. The rest can be marked ready while their sign-in is
-            built. You can design and test against every app without connecting any.
+            through an Incoming webhook or an HTTP request. {REAL_APPS} connect here: {brand.name} checks the webhook with the app and keeps it encrypted. GitHub, Linear and Sentry need nothing connected here: a real run acts in them from your
+            runner, with gh, an API key or a signed webhook. The rest can be marked ready while their connection is built. You can design and test against every app without connecting any.
           </>
         }
       />

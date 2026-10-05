@@ -224,11 +224,15 @@ export interface StopRecord {
  * budget counts the runs that carry it. Absent means a person ran the command.
  */
 export interface TriggerRecord {
-  /** `serve` for the daemon, `action` for the same thing running in CI. */
-  source: 'serve' | 'action';
-  /** The label that was on the issue. */
+  /**
+   * `serve` for the daemon, `action` for the same thing running in CI, and
+   * `workflow` for a workflow's own trigger: a webhook, a schedule, a label it
+   * watched for (`relay workflow serve`).
+   */
+  source: 'serve' | 'action' | 'workflow';
+  /** The label that was on the issue. For a workflow, what started it, in words: `an incoming webhook`. */
   label: string;
-  /** Who put it there, from the tracker's own event history. */
+  /** Who put it there, from the tracker's own event history, or who the event says sent it. */
   actor: string | null;
   /** The `org/team` that authorised them, when membership is what did. */
   team?: string;

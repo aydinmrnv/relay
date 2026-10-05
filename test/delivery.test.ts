@@ -22,7 +22,8 @@ import {
 } from '../src/workflow/delivery.ts';
 import { delivering } from '../src/workflow/phases/delivery.ts';
 import { RecordingObserver } from '../src/workflow/observer.ts';
-import { pullRequestDraft } from '../src/workflow/publishRun.ts';
+import { pullRequestDraft, receiptsSection } from '../src/workflow/publishRun.ts';
+import type { Receipt } from '../src/replay/receipts.ts';
 import { createRunState, transition, type DeliveryStep, type RunState } from '../src/workflow/state.ts';
 import type { IssueProvider } from '../src/github/types.ts';
 import { createTempRepo, type TempRepo } from './helpers/tempRepo.ts';
@@ -301,6 +302,45 @@ describe('delivery plan', () => {
     const state = finishedRun(repo.root);
     const caps = capable({ secrets: { findings: [], scanned: 4, suppressed: 1 } });
     assert.deepEqual(stepsThatRun(state, 'pr', caps), ['commit', 'push', 'pullRequest']);
+  });
+});
+
+describe('the receipts in a pull request', () => {
+  const receipt = (overrides: Partial<Receipt>): Receipt => ({
+    id: 'r',
+    subject: 'Tests',
+    phase: 'TESTING',
+    at: '2026-08-12T10:06:00Z',
+    claim: { by: 'codex', text: '`npm test` exited 0', source: 'events.jsonl' },
+    measured: { by: 'Relay', text: '`npm test` exited 0 in 42s', source: 'state.tests' },
+    verdict: 'match',
+    ...overrides,
+  });
+
+  it('puts each claim beside what was measured, where the reviewer is', () => {
+    const body = pullRequestDraft(finishedRun(repo.root), undefined, [
+      receipt({}),
+      receipt({ subject: 'Files changed', claim: null, measured: { by: 'git', text: '3 files | +40 −7', source: 'git diff' }, verdict: 'measured' }),
+      receipt({ subject: 'Delivery', phase: 'DELIVERING', claim: null, verdict: 'measured' }),
+    ]).body;
+    assert.match(body, /### Receipts/);
+    assert.match(body, /\| Tests \| \*\*codex:\*\* `npm test` exited 0 \| \*\*Relay:\*\* `npm test` exited 0 in 42s \| ✓ agree \|/);
+    // A pipe in what somebody said must not end the cell, and a row with no claim says so rather than leaving a gap.
+    assert.match(body, /\| Files changed \| — \| \*\*git:\*\* 3 files \\\| \+40 −7 \| measured \|/);
+    assert.doesNotMatch(body, /\| Delivery \|/, 'the pull request is the delivery: it cannot report on itself');
+    assert.ok(body.indexOf('### Receipts') < body.indexOf('Closes #13'), 'above the line GitHub reads');
+  });
+
+  it('says so at the top of the table when a claim and a measurement disagree', () => {
+    const rows = receiptsSection([receipt({ verdict: 'mismatch', measured: { by: 'Relay', text: '`npm test` exited 1', source: 'state.tests' } })]);
+    assert.ok(rows.some((line) => /\*\*1 row disagrees\.\*\*/.test(line)));
+    assert.ok(rows.some((line) => /\*\*✗ disagree\*\*/.test(line)));
+  });
+
+  it('adds nothing when there is nothing to show, or nobody asked', () => {
+    assert.deepEqual(receiptsSection([]), []);
+    assert.deepEqual(receiptsSection([receipt({ phase: 'DELIVERING' })]), []);
+    assert.doesNotMatch(pullRequestDraft(finishedRun(repo.root)).body, /Receipts/);
   });
 });
 

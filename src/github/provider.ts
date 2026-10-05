@@ -303,16 +303,20 @@ export class GitHubIssueProvider implements IssueProvider {
    * Removes a label. A label that was not there is reported as `false` rather
    * than raised: `relay serve` removes the trigger label to claim an issue, and
    * "somebody else already claimed it" is an ordinary outcome of that race.
+   *
+   * Through the API's own "remove a label" rather than `gh issue edit`, which
+   * works out the new set of labels itself and succeeds whether or not the
+   * label was there. GitHub answers this one with a 404 when it was not, so of
+   * two machines that take the same issue, exactly one is told it did.
    */
   async removeLabel(ref: string, label: string, options: { signal?: AbortSignal } = {}): Promise<boolean> {
     const parsed = parseIssueRef(ref);
-    const slug = this.slugFor(parsed);
-    const args = ['issue', 'edit', String(parsed.number), '--remove-label', label];
-    if (slug !== undefined) args.push('--repo', slug);
-    const result = await this.gh(args, options);
+    // With no repository named, `gh` fills these two in from the one it is run in.
+    const slug = this.slugFor(parsed) ?? '{owner}/{repo}';
+    const result = await this.gh(['api', `repos/${slug}/issues/${parsed.number}/labels/${encodeURIComponent(label)}`, '--method', 'DELETE'], options);
     if (result.ok) return true;
     const stderr = result.stderr.trim();
-    if (/not found|does not exist|Unable to find label|was not found on/i.test(stderr)) return false;
+    if (/HTTP 404|not found|does not exist|Unable to find label|was not found on/i.test(stderr)) return false;
     throw new RelayError(`Failed to remove label "${label}" from issue #${parsed.number}: ${lastLines(stderr)}`, {
       code: 'GH_FAILED',
       hint: 'Check that the token `gh` is using may write issues in this repository.',

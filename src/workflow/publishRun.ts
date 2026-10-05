@@ -1,6 +1,8 @@
 import { mergeBranch, pushBranch } from '../git/publish.ts';
 import { createPullRequest, mergePullRequest } from '../github/pullRequest.ts';
 import { issueTitle } from '../issues/identity.ts';
+import { readPlanRevisions, readRunPatches } from '../replay/artifacts.ts';
+import { receiptsFor, type Receipt } from '../replay/receipts.ts';
 import { draftReasons } from './delivery.ts';
 import { reviewsCode } from '../storage/config.ts';
 import { RUN_FILES, type RunStore } from '../storage/runs.ts';
@@ -72,7 +74,9 @@ export async function openRunPullRequest(context: PublishContext): Promise<PullR
   const workspace = requireWorkspace(state, 'open a pull request for');
 
   const plan = await context.store.readArtifact(RUN_FILES.plan);
-  const result = await createPullRequest(pullRequestDraft(state, plan), {
+  // The receipts go where the reviewer is. Read from the run's own record, and never a reason not to open the pull request.
+  const receipts = await runReceipts(context).catch(() => undefined);
+  const result = await createPullRequest(pullRequestDraft(state, plan, receipts), {
     cwd: state.repository.root,
     ...(context.signal === undefined ? {} : { signal: context.signal }),
   });
@@ -168,7 +172,54 @@ export async function mergeRunBranch(context: PublishContext): Promise<MergeReco
  * carries blocking findings nobody answered opens as a **draft**, with those
  * reasons at the top. Delivery is automatic; looking ready to merge is not.
  */
-export function pullRequestDraft(state: RunState, approvedPlan?: string): {
+/** The run's receipts as they stand before delivery: what was claimed about the work, beside what was measured. */
+async function runReceipts(context: PublishContext): Promise<Receipt[]> {
+  const { state, store } = context;
+  return receiptsFor({ state, events: await store.readEvents(), patches: await readRunPatches(store), planRevised: await readPlanRevisions(store, state) });
+}
+
+const VERDICT_WORDS: Readonly<Record<Receipt['verdict'], string>> = { match: '✓ agree', mismatch: '**✗ disagree**', measured: 'measured', unverified: 'unverified' };
+
+/** One side of a receipt as a table cell: who, and what they said, with nothing in it that would end the cell. */
+function receiptCell(side: Receipt['claim']): string {
+  if (side === null) return '—';
+  const text = side.text.replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim();
+  return `**${side.by}:** ${text.length > 180 ? `${text.slice(0, 177)}…` : text}`;
+}
+
+/** What a row is about, short enough to be a row heading: a finding's subject is its whole summary. */
+function receiptSubject(subject: string): string {
+  const text = subject.replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim();
+  return text.length > 90 ? `${text.slice(0, 87)}…` : text;
+}
+
+/**
+ * The receipts, as the table a reviewer reads: each thing somebody said about
+ * this change beside what Relay measured, and whether the two agree. The rows
+ * about delivery are left out — the pull request is the delivery, and it is
+ * being opened as this is written.
+ */
+export function receiptsSection(receipts: readonly Receipt[]): string[] {
+  const rows = receipts.filter((receipt) => receipt.phase !== 'DELIVERING');
+  if (rows.length === 0) return [];
+  const disagree = rows.filter((receipt) => receipt.verdict === 'mismatch').length;
+  return [
+    '',
+    '### Receipts',
+    '',
+    disagree === 0
+      ? 'What was said about this change, beside what Relay measured from git, the test suite’s exit code and the CLIs’ own reports.'
+      : `What was said about this change, beside what Relay measured. **${disagree} row${disagree === 1 ? '' : 's'} disagree${disagree === 1 ? 's' : ''}.**`,
+    '',
+    '| | Claimed | Measured | |',
+    '|---|---|---|---|',
+    ...rows.map((receipt) => `| ${receiptSubject(receipt.subject)} | ${receiptCell(receipt.claim)} | ${receiptCell(receipt.measured)} | ${VERDICT_WORDS[receipt.verdict]} |`),
+    '',
+    '<sub>“measured” had no claim to compare; “unverified” has no measurement that settles it. Neither counts as agreement.</sub>',
+  ];
+}
+
+export function pullRequestDraft(state: RunState, approvedPlan?: string, receipts?: readonly Receipt[]): {
   title: string;
   body: string;
   base: string;
@@ -238,6 +289,8 @@ export function pullRequestDraft(state: RunState, approvedPlan?: string): {
         (unpriced === 0 ? '' : ` — ${unpriced} turn(s) reported no price, so this is a floor`),
     );
   }
+
+  if (receipts !== undefined) lines.push(...receiptsSection(receipts));
 
   // Only a tracker that numbers its issues has something GitHub can close. A
   // task written on this machine simply has no such line, and the delivery

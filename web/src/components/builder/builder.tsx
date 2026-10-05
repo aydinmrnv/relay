@@ -590,7 +590,11 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
         setRun(result);
         setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: result.nodeStatus[node.id], phase: undefined } })));
         const where = result.machine?.host ?? 'your machine';
-        if (result.status === 'succeeded') toast.success(`Finished on ${where}${result.costUsd > 0 ? ` · $${result.costUsd.toFixed(2)}` : ''}`, { description: result.prUrl ?? 'The work is on its run branch.' });
+        // What there is to show for it: the pull request, the branch the work is on, or, for a workflow with no code in it, that its steps were performed.
+        const outcome = result.prUrl ?? (result.branch === undefined ? 'Every step it reached was performed.' : 'The work is on its run branch.');
+        if (result.status === 'succeeded') toast.success(`Finished on ${where}${result.costUsd > 0 ? ` · $${result.costUsd.toFixed(2)}` : ''}`, { description: outcome });
+        // A guardrail said no. That is the workflow working, not the run failing.
+        else if (result.status === 'refused') toast(`Refused on ${where}`, { description: result.summary });
         else if (result.status === 'failed') toast.error(`The run on ${where} failed`, { description: result.summary });
         else if (result.status === 'cancelled') toast(`Stopped the run on ${where}`, { description: result.summary });
       } catch (error) {
@@ -786,8 +790,9 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
                       {cloudTarget ? <Cloud /> : <Laptop />} {cloudTarget ? 'Run in Relay Cloud…' : canRunOnMachine ? `Run on ${machineHost ?? 'your computer'}…` : 'Run on your computer…'}
                     </DropdownMenuItem>
                     {canRunOnMachine ? null : (
+                      // Pairing a computer is the studio's, behind an account; the playground says so before the click, not after it.
                       <DropdownMenuItem render={<Link href="/connect" />}>
-                        <Plug /> Connect your computer
+                        <Plug /> {playground ? 'Connect your computer (free account)' : 'Connect your computer'}
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuGroup>

@@ -155,7 +155,7 @@ export function Palette({ onAdd }: { onAdd: (def: NodeTypeDef) => void }) {
 /** Marks a step that only test runs play, wherever nodes are listed. */
 export function SimulatedOnly() {
   return (
-    <span className="shrink-0 rounded border px-1 text-[9px] font-normal tracking-wide text-muted-foreground uppercase" title="Played in test runs. Real runs and the exported workflow do not perform this step yet.">
+    <span className="shrink-0 rounded border px-1 text-[10px] font-normal tracking-wide text-muted-foreground uppercase" title="Played in test runs. Nothing performs this step in a real run yet, and a real run says so.">
       test runs only
     </span>
   );

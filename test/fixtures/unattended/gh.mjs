@@ -121,6 +121,16 @@ if (group === 'api') {
   const path = action ?? '';
   const events = /issues\/(\d+)\/events$/.exec(path);
   if (events !== null) done(JSON.stringify(state.events?.[events[1]] ?? []));
+  // "Remove a label from an issue": a 404 when the label is not on it, which is how a claim is lost.
+  const label = /issues\/(\d+)\/labels\/(.+)$/.exec(path);
+  if (label !== null && flag('--method') === 'DELETE') {
+    const issue = issueBy(label[1]);
+    const name = decodeURIComponent(label[2]);
+    if (issue === undefined) fail('gh: Not Found (HTTP 404)', 1);
+    if (!issue.labels.includes(name)) fail('gh: Label does not exist (HTTP 404)', 1);
+    issue.labels = issue.labels.filter((existing) => existing !== name);
+    done(JSON.stringify(issue.labels.map((existing) => ({ name: existing }))));
+  }
   // Team membership: nothing in the fixture belongs to a team, and a 404 is
   // exactly what GitHub answers for "not a member".
   if (/^orgs\//.test(path)) fail('gh: Not Found (HTTP 404)', 1);

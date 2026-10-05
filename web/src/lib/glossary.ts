@@ -59,7 +59,7 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'workflow',
     title: 'Workflow',
     short: 'A graph that says what starts a run, what checks it, what the agents do, and where the result goes.',
-    long: `A workflow is a diagram you drag together: one trigger on the left, then gates, the agent pipeline and delivery, then whoever should hear about it. ${PRODUCT} saves it to your account, can play it back as a test run, and compiles it into files a repository runs on its own GitHub Actions minutes.`,
+    long: `A workflow is a diagram you drag together: one trigger on the left, then gates, the agent pipeline and delivery, then whoever should hear about it. ${PRODUCT} saves it to your account, can play it back as a test run, runs it for real on your computer as it is drawn, and compiles it into files a repository runs with the relay CLI or on its own GitHub Actions minutes.`,
     href: '/workflows',
   },
   trigger: {
@@ -101,8 +101,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
   approval: {
     term: 'approval',
     title: 'Human approval',
-    short: 'Holds a run for a named person’s yes or no. Played in test runs; real runs do not wait for one yet.',
-    long: 'Use it where a run should not start just because a ticket arrived — customer-reported bugs, anything expensive, anything touching production code. In a test run the answer is played: approved most of the time and rejected now and then, so both branches get exercised. Nothing waits for a real person yet: a real run and the exported workflow do not perform this step, and Export says so.',
+    short: 'Holds a run for a named person’s yes or no. A real run waits for the answer; a test run plays one.',
+    long: 'Use it where a run should not start just because a ticket arrived — customer-reported bugs, anything expensive, anything touching production code. A real run stops here until somebody answers: with Approve or Reject in the run panel, or `relay workflow approve` in the repository. A no, or nobody answering before the timeout, takes the Rejected path. In a test run the answer is played: approved most of the time and rejected now and then, so both branches get exercised. The exported GitHub Action does not perform this step, and Export says so.',
   },
   'kill-switch': {
     term: 'kill-switch',
@@ -165,7 +165,7 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
     term: 'export',
     title: 'Export',
     short: 'Compiles the workflow into files a repository needs to run it on its own GitHub Actions minutes.',
-    long: `You get .relay/config.json (what the ${PRODUCT} CLI reads), a GitHub Actions workflow under .github/workflows/, a SETUP.md listing the secrets to add, and the graph as JSON so it can be imported again. Commit them, add the secrets, and the workflow runs on your repository with your own subscriptions. Nothing is hosted or billed by ${PRODUCT}. The Action is narrower than the canvas: it works on one GitHub issue per run and cannot evaluate a Condition or wait for an approval. So each step is placed by where it sits in the graph, a step the Action cannot decide is left out, and every such difference is listed as a warning in the export.`,
+    long: `You get .relay/config.json (what the ${PRODUCT} CLI reads), the workflow compiled for the CLI under .relay/workflows/, a GitHub Actions workflow under .github/workflows/, a SETUP.md listing the secrets to add, and the graph as JSON so it can be imported again. Commit them, add the secrets, and the workflow runs on your repository with your own subscriptions: as drawn with \`relay workflow run\` and \`relay workflow serve\`, or on GitHub Actions. Nothing is hosted or billed by ${PRODUCT}. The Action is narrower than the canvas: it works on one GitHub issue per run and cannot evaluate a Condition or wait for an approval. So each step is placed by where it sits in the graph, a step the Action cannot decide is left out, and every such difference is listed as a warning in the export.`,
     href: '/workflows',
   },
   connection: {
@@ -248,7 +248,7 @@ Whichever you pick, the agents run with your own Claude and ChatGPT plans, the s
     term: 'execution',
     title: 'Where runs execute',
     short: 'A real run executes on the runner you picked — your computer or Relay Cloud — and an exported workflow runs unattended on your repository’s own GitHub Actions minutes.',
-    long: `There are three places work happens, and they answer different questions. **The runner you picked** (/runners): "Run on your computer" or "Run in Relay Cloud" sends the Agent pipeline there — the pipeline and delivery only, started by a person — with your own sign-ins, streaming every phase back to the canvas. **Your repository’s GitHub Actions**: Export compiles the graph into plain files you commit; a label on a GitHub issue is a real trigger there, on your own Actions minutes, free on public repositories. That is the only way a workflow starts by itself today. **Your browser**: a test run never executes anything; it is played back node by node with simulated agents, costs and refusals. Hosted microVMs for exported runs and a self-hosted runner in your own network are planned, not built.`,
+    long: `There are three places work happens, and they answer different questions. **The runner you picked** (/runners): "Run on your computer" sends the whole workflow there and performs every step of it, with your own sign-ins, streaming each back to the canvas; "Run in Relay Cloud" runs the pipeline and its delivery. **A machine of your own, unattended**: \`relay workflow serve\` keeps a workflow's trigger — an incoming webhook, a schedule, a label — and runs it each time. **Your repository’s GitHub Actions**: Export compiles the graph into plain files you commit; a label on a GitHub issue is a real trigger there, on your own Actions minutes, free on public repositories. **Your browser**: a test run never executes anything; it is played back node by node with simulated agents, costs and refusals. Hosted microVMs for exported runs and a self-hosted runner in your own network are planned, not built.`,
     href: '/settings#running',
   },
 };

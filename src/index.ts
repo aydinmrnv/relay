@@ -3,9 +3,11 @@ import { exitCodeFor, isCommanderError } from './cli/exit.ts';
 import { reportError } from './cli/output.ts';
 import { buildVersion } from './update/installation.ts';
 import { adoptConfigOverlay } from './storage/config.ts';
+import { adoptRunTrigger } from './unattended/trigger.ts';
 
 async function main(): Promise<void> {
   adoptConfigOverlay();
+  adoptRunTrigger();
   let version = 'unknown';
   try {
     // The version and, for a packed copy, the commit it was built from.

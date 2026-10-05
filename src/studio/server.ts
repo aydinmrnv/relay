@@ -128,7 +128,7 @@ export function createCompanion(options: CompanionOptions): Companion {
           return;
         }
         if (answer.asked) refusals.set(key, (refusals.get(key) ?? 0) + 1);
-        log({ kind: 'refused', message: `Did not ${ask.action === 'run' ? 'start a run' : 'install an export'} for ${ask.origin ?? 'a program on this machine'}: not confirmed in this terminal.` });
+        log({ kind: 'refused', message: `Did not ${ask.action === 'run' ? 'start a run' : ask.action === 'approve' ? 'answer an approval' : 'install an export'} for ${ask.origin ?? 'a program on this machine'}: not confirmed in this terminal.` });
         throw new HttpError(403, answer.reason);
       })
       .finally(() => asking.delete(key));

@@ -1,16 +1,15 @@
-import { readdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
+import { readPlanRevisions, readRunPatches } from '../../replay/artifacts.ts';
 import { buildRunBundle, type RunBundle } from '../../replay/bundle.ts';
 import type { ReceiptVerdict } from '../../replay/receipts.ts';
 import { resolveRun, RunStore, RUN_FILES } from '../../storage/runs.ts';
 import { DEFAULT_STUDIO_URL, trustedStudioOrigin } from '../../studio/protocol.ts';
-import { readJsonFile } from '../../storage/atomic.ts';
 import { packageVersion } from '../../update/installation.ts';
 import { pluralize } from '../../util/text.ts';
 import { phaseLabel } from '../../workflow/phases.ts';
-import type { RunState } from '../../workflow/state.ts';
 import { createCliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
 import { emitJson } from '../json.ts';
@@ -43,7 +42,7 @@ export async function recordingCommand(runRef: string, options: RecordingOptions
     events: await store.readEvents(),
     landing: await landingOf(cli.repo.root, state),
     relayVersion: await packageVersion().catch(() => 'unknown'),
-    patches: await readPatches(store),
+    patches: await readRunPatches(store),
     planRevised: await readPlanRevisions(store, state),
     includePatches: options.patches !== false,
     home: homedir(),
@@ -107,34 +106,6 @@ function studioRecordingsUrl(): string {
 
 function optional<K extends string>(key: K, value: string | undefined): Partial<Record<K, string>> {
   return value === undefined ? {} : ({ [key]: value } as Record<K, string>);
-}
-
-/** Every patch the run captured, in the order it captured them: the implementation, then each revision. */
-async function readPatches(store: RunStore): Promise<Array<{ label: string; patch: string }>> {
-  let names: string[];
-  try {
-    names = await readdir(store.path('patches'));
-  } catch {
-    return [];
-  }
-  const order = (label: string): number => (label === 'implementation' ? 0 : Number.parseInt(/^revision-round-(\d+)$/.exec(label)?.[1] ?? '9999', 10));
-  const patches: Array<{ label: string; patch: string }> = [];
-  for (const name of names.filter((entry) => entry.endsWith('.patch'))) {
-    const patch = await store.readArtifact(`patches/${name}`);
-    if (patch !== undefined) patches.push({ label: name.slice(0, -'.patch'.length), patch });
-  }
-  return patches.sort((a, b) => order(a.label) - order(b.label) || a.label.localeCompare(b.label));
-}
-
-/** Whether each plan revision rewrote the plan, from the discussion file the round left. */
-async function readPlanRevisions(store: RunStore, state: RunState): Promise<Record<number, boolean>> {
-  const revised: Record<number, boolean> = {};
-  for (const review of state.reviews) {
-    if (review.kind !== 'plan') continue;
-    const discussion = await readJsonFile<{ planRevised?: unknown }>(store.path('discussion', `plan-round-${review.round}.json`)).catch(() => undefined);
-    if (typeof discussion?.planRevised === 'boolean') revised[review.round] = discussion.planRevised;
-  }
-  return revised;
 }
 
 function countVerdicts(bundle: RunBundle): Record<ReceiptVerdict, number> {

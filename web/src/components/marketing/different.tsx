@@ -58,9 +58,10 @@ export function Different() {
     { label: cloud ? 'Your code stays on your computer, on a machine of yours in Relay Cloud, or on your own CI runner' : 'Your code stays on your computer or on your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'A rough spend forecast before the first real run', ours: 'yes', agents: 'no', canvases: 'no' },
     { label: 'Build a workflow from a sentence without spending AI credits', ours: 'yes', agents: 'no', canvases: 'partial' },
-    { label: 'Guardrails that refuse by default: budgets, allowlists, approval', ours: 'yes', agents: 'partial', canvases: 'partial' },
+    { label: 'The canvas is what runs: a step that cannot be performed is reported as not performed, never as done', ours: 'yes', agents: 'no', canvases: 'partial', note: 'One table says which steps are real, and the engine and the studio read the same copy of it.' },
+    { label: 'Guardrails that refuse by default: budgets, allowlists, an approval that waits for a person', ours: 'yes', agents: 'partial', canvases: 'partial' },
     { label: 'Unattended runs can never merge on their own', ours: 'yes', agents: 'partial', canvases: 'no' },
-    { label: 'Exports to plain files you own: a config and a GitHub Actions workflow', ours: 'yes', agents: 'no', canvases: 'partial' },
+    { label: 'Exports to plain files you own, run by an open-source CLI or GitHub Actions: nothing hosted in the loop', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'Public share links that anyone can remix', ours: 'yes', agents: 'no', canvases: 'partial' },
   ];
 

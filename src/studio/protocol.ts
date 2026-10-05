@@ -73,8 +73,11 @@ export function isLoopbackOrigin(origin: string): boolean {
  * in to GitHub itself, through `gh`'s device flow (a cloud runner again).
  * `chatgpt`: Sign in with ChatGPT, which finishes on a loopback address and so
  * only on the machine whose browser the person is using — never a cloud runner.
+ * `workflow`: a run may carry the whole compiled workflow, and the companion
+ * performs every step of it — the guardrails and logic before the pipeline,
+ * the app steps after it — not the pipeline alone.
  */
-export type CompanionCapability = 'agents' | 'runs' | 'install' | 'repositories' | 'github' | 'chatgpt';
+export type CompanionCapability = 'agents' | 'runs' | 'install' | 'repositories' | 'github' | 'chatgpt' | 'workflow';
 
 export interface CompanionRepository {
   root: string;
@@ -206,6 +209,12 @@ export interface StartRunRequest {
   task: RunTask;
   /** `owner/name` on GitHub. Required by a companion with the `repositories` capability, refused by one without. */
   repository?: string;
+  /**
+   * The workflow compiled for the engine (`src/graph/types.ts`). With it, a
+   * companion that has the `workflow` capability runs the whole graph; without
+   * it, or on an older companion, the run is the pipeline alone.
+   */
+  graph?: unknown;
 }
 
 export type RunStatus = 'running' | 'exited';
@@ -236,7 +245,8 @@ export interface CompanionRunView {
  * One line of `GET /v1/runs/:id/events`, which is newline-delimited JSON.
  *
  * `engine` carries a line of `relay run --json` verbatim — the documented
- * stream, not a re-description of it. `exit` is the last record. `ping` keeps
+ * stream, not a re-description of it — and, for a run that carried its
+ * workflow, the lines of `relay workflow run --json` around them. `exit` is the last record. `ping` keeps
  * idle connections open and carries nothing. `?since=<seq>` skips the records
  * before that one, for a follower picking a stream back up.
  */

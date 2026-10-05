@@ -332,17 +332,21 @@ const REALITY: Array<{ what: string; status: Reality; detail: string }> = [
   { what: 'The catalog, the canvas and validation', status: 'real', detail: 'Every node and rule you see is the one the export and the CLI use.' },
   { what: 'The compiler and its files', status: 'real', detail: 'Export produces a config, an Actions workflow and a SETUP.md you can commit today. Steps the Action cannot decide are left out, and the export lists them.' },
   { what: 'Signing in to Claude Code and Codex', status: 'real', detail: 'Through the runner: runs the vendors’ own CLI logins on your computer, or on your machine in Relay Cloud, and reads their status.' },
-  { what: 'Running a workflow for real', status: 'real', detail: 'On the runner you picked: your computer through relay connect, or Relay Cloud. The pipeline runs in the repository with your own sign-ins and streams back to the canvas.' },
+  { what: 'Running a workflow for real', status: 'real', detail: 'On your computer, through relay connect or relay workflow run: every step, as drawn. The guardrails decide, the conditions are evaluated, the pipeline runs in the repository with your own sign-ins, and the steps after it post where they say. A Relay Cloud machine runs the pipeline and its delivery.' },
+  { what: 'Human approval, Conditions, Filters, the AI step, waits and the cost estimate', status: 'real', detail: 'Performed in a real run. An approval waits for a person: answered in the run panel, or with relay workflow approve. A Filter is evaluated the same way in a test run. The exported Action still does not perform them.' },
+  { what: 'A run started by a webhook, a schedule or a label', status: 'real', detail: 'relay workflow serve keeps the trigger on a machine of your own: it listens for the incoming webhook (signed deliveries, when a secret is set), keeps the clock for a schedule, and watches for a label on a GitHub issue.' },
+  { what: 'A run started by GitHub, Linear or Sentry', status: 'real', detail: 'relay workflow serve reads the webhooks those apps send, signed with the secret you gave them: an issue assigned or labelled, a build gone red, a security alert, a new error. Written against the apps’ documented deliveries; a delivery it does not recognise starts nothing and says why.' },
+  { what: 'Steps in Slack, Discord, GitHub and Linear, and HTTP requests', status: 'real', detail: 'Posted through a Slack or Discord webhook, done with gh, done through Linear’s API with your key, or sent to the URL. Each reads its credential from the runner’s environment; none is written into the workflow.' },
   { what: 'Installing an export into your repository', status: 'real', detail: 'Through relay connect on your computer, or by unzipping the download yourself.' },
-  { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions, started by a label on an issue. This is the only way a workflow starts by itself today.' },
+  { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions, started by a label on an issue. The Action runs the pipeline and the steps it can place; it does not make the decisions the canvas draws.' },
   { what: 'Accounts, sync, share links and version history', status: 'real', detail: 'Kept in the studio’s database, under your account.' },
   { what: 'Describe-to-workflow and the spend forecast', status: 'real', detail: 'The sentence parser runs in your browser with no model call. The forecast is built from simulated runs, so it is an estimate.' },
   { what: 'Importing and exporting your data', status: 'real', detail: 'Everything in your account as one plain JSON file, and back again.' },
   { what: 'Slack and Discord connections', status: 'real', detail: 'A webhook you paste is checked with the app and kept encrypted. The studio posts test messages through it; an exported workflow posts with the same URL held as a secret in its repository.' },
   { what: 'Test runs', status: 'simulated', detail: 'Phases, review rounds, costs, refusals and pull request numbers are played back, seeded per workflow.' },
-  { what: 'Connections to every other app', status: 'simulated', detail: '“Mark ready” records a label so you can design against the whole catalog. Nothing is signed in to; in an export those steps go to an endpoint of your own.' },
-  { what: 'Approvals, Conditions, Filters, AI steps, waits and the cost estimate', status: 'simulated', detail: 'Played in test runs, where an approval is usually granted and sometimes refused. A real run and the exported workflow do not perform them yet.' },
-  { what: 'A run started by Linear, Sentry, a schedule or a webhook', status: 'later', detail: 'A real run is started by a person, or by a label on a GitHub issue through the Actions export. Nothing listens to the other triggers yet.' },
+  { what: 'Steps in every other app', status: 'simulated', detail: '“Mark ready” records a label so you can design against the whole catalog; nothing is signed in to. In a real run each such step is handed to a bridge of your own (BRIDGE_WEBHOOK_URL: n8n, a Zapier catch hook, your server), or skipped, and the run says which.' },
+  { what: 'A run started by any other app’s own events', status: 'later', detail: 'Nothing reads Zendesk, Slack, LaunchDarkly, Jira or the other CI services yet. Point the app’s webhook at an Incoming webhook trigger, which is real, or start the workflow by hand.' },
+  { what: 'Transform, and approvals asked in Slack or by email', status: 'later', detail: 'Transform passes its payload through unchanged. An approval is answered in the studio or at a terminal, not from a chat message.' },
   { what: 'A runner in your own network, or one isolated VM per exported run', status: 'later', detail: 'A machine of your own can join Relay Cloud by hand; the studio does not offer it. Exporting to GitHub Actions is what runs unattended today.' },
 ];
 
@@ -488,7 +492,8 @@ function Faq({ slug }: { slug: string }) {
           </ul>
           <p>
             The Action is narrower than the canvas: it works on one GitHub issue per run, and cannot evaluate a Condition or wait for an approval. A step it cannot decide is left out of the workflow file, and the
-            export names every one in its warnings.
+            export names every one in its warnings. The CLI is not narrower: <span className="font-mono text-xs">relay workflow run</span> performs the workflow as drawn, and{' '}
+            <span className="font-mono text-xs">relay workflow serve</span> keeps its trigger on a machine of your own.
           </p>
         </>
       ),

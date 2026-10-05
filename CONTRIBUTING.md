@@ -53,9 +53,24 @@ proxy or an error file.
 Add a `defineConnector({...})` entry to a file under
 `web/src/lib/connectors/catalog/`. Triggers and actions become palette nodes,
 `fields` become the inspector form, and typed ports stop nonsense connections.
-Only a label on a GitHub issue starts an exported workflow by itself today, so
-a new app's trigger is one the studio can design and test-run; say so in its
-description rather than implying more.
+That is enough for the studio to design and test-run it. Until the engine
+performs it, a real run hands the step to the person's bridge or reports it as
+not performed, and every screen says so by itself.
+
+To make a step **real**, the engine has to do it:
+
+1. Add its type to the table in `src/graph/support.ts`, with the variables it
+   reads and one sentence on how it is done.
+2. Perform it in `src/graph/executor.ts`, through `GraphEffects`, so the walk
+   stays testable without a network. A trigger an app delivers by webhook is
+   read in `src/graph/triggers.ts`, and must fail closed: a delivery that is
+   not recognisably the trigger starts nothing.
+3. Run `npm run sync:studio`. The studio holds a byte-for-byte copy of
+   `src/graph/support.ts` and `expression.ts` under
+   `web/src/lib/workflow/engine/`, because the two packages cannot import each
+   other; a test in each fails when the copies differ. Edit the one in `src/`.
+4. Test it in `test/graph.test.ts` with the world played by a list, and say in
+   the pull request whether you ran it against the live app.
 
 ## Pull requests
 

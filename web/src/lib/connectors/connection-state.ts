@@ -5,7 +5,8 @@
  */
 import type { Connection, Workflow } from '@/lib/workflow/schema';
 import { credentialSpec } from './credentials';
-import { getNodeType, type Connector, type NodeTypeDef } from './index';
+import { nodeSupport } from '@/lib/workflow/engine/support';
+import { getNodeType, nodeTypeId, type Connector, type NodeTypeDef } from './index';
 
 export type ConnectionState =
   /** Part of the studio: nothing to connect. */
@@ -78,6 +79,19 @@ export function appsInUse(workflows: Workflow[]): Map<string, AppUsage> {
     }
   }
   return usage;
+}
+
+/**
+ * What a real run does for this app with nothing connected in the studio:
+ * how many of its triggers and steps the engine performs with the runner's
+ * own tools and environment (`gh`, a Linear key, a webhook), and which
+ * variables those read. Zero performed means the app is designed against
+ * only: its steps go to a bridge, or are skipped and reported.
+ */
+export function runnerSupport(connector: Connector): { performed: number; total: number; needs: string[] } {
+  const types = [...connector.triggers.map((spec) => nodeTypeId(connector.id, 'trigger', spec.id)), ...connector.actions.map((spec) => nodeTypeId(connector.id, 'action', spec.id))];
+  const real = types.map((type) => nodeSupport(type)).filter((support) => support.real);
+  return { performed: real.length, total: types.length, needs: [...new Set(real.flatMap((support) => support.needs))] };
 }
 
 /**

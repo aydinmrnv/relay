@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { HelpTip } from '@/components/app/help-tip';
+import { RichText } from '@/components/app/rich-text';
 import { CopyConfirmButton } from '@/components/watermelon/copy-confirm';
 import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
@@ -22,6 +23,8 @@ import { cn } from '@/lib/utils';
 import { Spinner } from '@/components/ui/spinner';
 import { companionFetch, useCompanion, useCompanionCan } from '@/lib/companion/client';
 import { repositoryLabel, type InstallResponse } from '@/lib/companion/types';
+import { nodeSupport } from '@/lib/workflow/readiness';
+import { useStudioLinks } from '@/lib/studio-links';
 
 interface Props {
   workflow: Workflow | null;
@@ -53,11 +56,16 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
   const canInstall = useCompanionCan('install');
   const machine = useCompanion((state) => state.hello);
   const [installing, setInstalling] = useState(false);
+  const playground = useStudioLinks().playground;
 
   if (workflow === null || compiled === null) return null;
 
   const secrets = [...new Map(compiled.secrets.map((secret) => [secret.name, secret])).values()];
   const blocked = errors.length > 0;
+  const slug = slugify(workflow.name);
+  // Whether `relay workflow serve` can keep this workflow's trigger: a webhook, a schedule, a label.
+  const trigger = compiled.graph.nodes.find((node) => node.kind === 'trigger');
+  const servable = trigger !== undefined && trigger.type !== 'logic.trigger.manual' && nodeSupport(trigger.type).real;
   const needsRepository = !isRepository(workflow.repository);
 
   const downloadOne = (path: string, content: string) => {
@@ -71,7 +79,11 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
   const install = async () => {
     setInstalling(true);
     try {
-      const files = compiled.files.filter((file) => file.path !== 'SETUP.md').map((file) => ({ path: file.path, content: file.content }));
+      // An older relay connect refuses a path it does not know, and with it the whole install: it is sent the files it knows.
+      const takesWorkflows = (machine?.capabilities ?? []).includes('workflow');
+      const files = compiled.files
+        .filter((file) => file.path !== 'SETUP.md' && (takesWorkflows || !file.path.startsWith('.relay/workflows/')))
+        .map((file) => ({ path: file.path, content: file.content }));
       const result = await companionFetch<InstallResponse>('/v1/install', { method: 'POST', body: { files } });
       markExported(workflow.id);
       const changed = result.files.filter((file) => file.status !== 'unchanged');
@@ -103,7 +115,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
             <HelpTip term="export" detailed />
           </DialogTitle>
           <DialogDescription>
-            The files a repository needs to run this workflow on its own GitHub Actions minutes, with your own Claude and ChatGPT subscriptions. Nothing is hosted or billed by {brand.name}.
+            The files a repository needs to run this workflow: as drawn with the relay CLI on a machine of yours, and on its own GitHub Actions minutes. Your own Claude and ChatGPT subscriptions; nothing is hosted or billed by {brand.name}.
           </DialogDescription>
         </DialogHeader>
 
@@ -157,7 +169,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     Unzip at the root of {workflow.repository === undefined || workflow.repository === '' ? 'your repository' : <span className="font-mono">{workflow.repository}</span>}, or{' '}
                     <Link href="/connect" className="underline underline-offset-2">
-                      connect your computer
+                      {playground ? 'make a free account and connect your computer' : 'connect your computer'}
                     </Link>{' '}
                     to install it there directly.
                   </p>
@@ -183,7 +195,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
             <Step n={3} title="Commit and push">
               <p className="mt-0.5 text-xs text-muted-foreground">The workflow file is picked up by GitHub on the next push to the default branch.</p>
             </Step>
-            <Step n={4} title="Start it">
+            <Step n={4} title="Start it on GitHub Actions">
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {compiled.start.by === 'label' ? (
                   <>
@@ -200,6 +212,19 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
                 )}
               </p>
             </Step>
+            <Step n={5} title="Or run all of it with the CLI">
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                The Action runs the pipeline. The CLI runs the workflow as drawn: every guardrail, condition and approval, and the steps after the pipeline. No account, and nothing hosted.
+              </p>
+              <pre className="mt-1.5 overflow-x-auto rounded-md bg-muted/60 px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
+                {`relay workflow check ${slug}\nrelay workflow run ${slug} 142\n${servable ? `relay workflow serve ${slug}` : `relay workflow run ${slug} --prompt "…"`}`}
+              </pre>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {servable
+                  ? 'serve keeps this workflow’s trigger on a machine of yours and runs it each time it fires.'
+                  : 'Nothing listens for this trigger yet, so it is started by hand, or from an Incoming webhook trigger.'}
+              </p>
+            </Step>
           </ol>
 
           <div className="flex min-h-0 min-w-0 flex-col gap-2">
@@ -207,7 +232,8 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
               <ul className="flex flex-col gap-1">
                 {compiled.warnings.map((warning, index) => (
                   <li key={index} className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs">
-                    <AlertTriangle className="mt-0.5 size-3 shrink-0" /> {warning}
+                    <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+                    <RichText text={warning} inline className="min-w-0" />
                   </li>
                 ))}
               </ul>
@@ -224,7 +250,7 @@ export function ExportDialog({ workflow, open, onOpenChange }: Props) {
               {compiled.files.map((file) => (
                 <TabsContent key={file.path} value={file.path} className="flex min-h-0 flex-col gap-2">
                   <p className="text-xs text-pretty text-muted-foreground">
-                    <span className="font-mono text-[11px] text-foreground">{file.path}</span> · {file.description}
+                    <span className="font-mono text-[11px] text-foreground">{file.path}</span> · <RichText text={file.description} inline />
                   </p>
                   <div className="relative min-h-0 rounded-lg border bg-muted/40">
                     <div className="absolute top-2 right-2 z-10 flex gap-1">

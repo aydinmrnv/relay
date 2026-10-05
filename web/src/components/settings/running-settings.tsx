@@ -65,8 +65,8 @@ export function RunningSettings() {
         }
         description={
           <>
-            On your repository’s own GitHub Actions: free on public repositories, included minutes on private ones. A label on a GitHub issue starts an exported workflow there, which is the only way a workflow starts
-            by itself today. A run you press in the builder happens on the runner you picked in{' '}
+            On your repository’s own GitHub Actions: free on public repositories, included minutes on private ones. A label on a GitHub issue starts an exported workflow there. On a machine of your own, relay workflow serve
+            keeps any trigger it can read and runs the whole workflow. A run you press in the builder happens on the runner you picked in{' '}
             <a href="/runners" className="font-medium text-foreground underline underline-offset-4">
               Where agents run
             </a>

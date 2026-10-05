@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { motion } from 'motion/react';
 import { useCalmMotion } from '@/components/motion/use-calm-motion';
 import {
@@ -22,6 +23,7 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { TextShimmer } from '@/components/21st/text-shimmer';
 import type { NodeRunStatus, Run, RunEvent, RunStatus, Workflow } from '@/lib/workflow/schema';
 import { formatMs } from '@/lib/workflow/simulate';
+import { CompanionError, companionFetch } from '@/lib/companion/client';
 
 /** A node's status as the timeline shows it: `stopped` is a node that was mid-way when the run was cancelled. */
 type Shown = NodeRunStatus | RunStatus | 'stopped';
@@ -139,6 +141,10 @@ export function RunTimeline({ run, workflow, compact = false, className }: Props
                     {lines.map((event) => (
                       <EventLine key={`${event.kind}-${position.get(event)}`} event={event} compact={compact} reduce={reduce === true} open={live && event.kind === 'phase' && event.status === 'running'} />
                     ))}
+                    {/* A real run holding at a Human approval: the answer goes to the runner it is waiting on. */}
+                    {live && group.nodeId !== null && run.nodeStatus[group.nodeId] === 'waiting'
+                      ? group.events.filter((event) => event.approvalId !== undefined).slice(-1).map((event) => <ApprovalAnswer key={event.approvalId} approvalId={event.approvalId!} runner={run.machine?.runner ?? 'machine'} />)
+                      : null}
                     {endSummary !== undefined && !compact ? <li className="text-xs text-pretty text-muted-foreground">{endSummary}</li> : null}
                   </ul>
                 ) : null}
@@ -165,6 +171,53 @@ export function RunTimeline({ run, workflow, compact = false, className }: Props
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Yes or no to a run that is waiting on a person. The answer is written on
+ * the runner, to the same record `relay workflow approve` writes, and the run
+ * carries on within a second of it. A step that names its approvers is
+ * answered by name; the name is asked for only then.
+ */
+function ApprovalAnswer({ approvalId, runner }: { approvalId: string; runner: 'machine' | 'cloud' }) {
+  const [busy, setBusy] = useState(false);
+  const [as, setAs] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const answer = async (approved: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await companionFetch(`/v1/approvals/${encodeURIComponent(approvalId)}`, { method: 'POST', runner, body: { approved, ...(as === null || as.trim().length === 0 ? {} : { as: as.trim() }) } });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      // Refused for who is asking: the step lists its approvers, so say which of them this is.
+      if (caught instanceof CompanionError && caught.status === 403) setAs((current) => current ?? '');
+      setError(message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <li className="mt-1 flex flex-col gap-1.5">
+      {as === null ? null : (
+        <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          Answering as
+          <input value={as} onChange={(event) => setAs(event.target.value)} placeholder="your login" className="h-6 w-36 rounded border bg-background px-1.5 text-[11px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50" />
+        </label>
+      )}
+      <div className="flex items-center gap-1.5">
+        <button type="button" disabled={busy} onClick={() => void answer(true)} className="h-6 rounded-md bg-foreground px-2 text-[11px] font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
+          Approve
+        </button>
+        <button type="button" disabled={busy} onClick={() => void answer(false)} className="h-6 rounded-md border px-2 text-[11px] font-medium transition-colors hover:bg-muted disabled:opacity-50">
+          Reject
+        </button>
+        {busy ? <Loader2 className="size-3 animate-spin text-muted-foreground" /> : null}
+      </div>
+      {error === null ? null : <p className="text-[11px] text-pretty text-destructive">{error}</p>}
+    </li>
   );
 }
 

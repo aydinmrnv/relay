@@ -444,7 +444,7 @@ describe('relay start — idempotence', () => {
     // And what `relay serve` leaves behind: a committed STOP file would stop
     // every clone's server, and a committed ledger would tell them the work
     // had already been picked up.
-    for (const entry of ['.relay/runs/', '.relay/unattended.json', '.relay/STOP', '.relay/*.lock']) {
+    for (const entry of ['.relay/runs/', '.relay/unattended.json', '.relay/STOP', '.relay/*.lock', '.relay/approvals/']) {
       assert.ok(gitignore.split('\n').includes(entry), `${entry} is not ignored:\n${gitignore}`);
     }
   });

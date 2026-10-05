@@ -15,6 +15,8 @@ import {
   type InstallResponse,
   type RunStreamRecord,
 } from './protocol.ts';
+import { approvalOpen, decideApproval, listApprovals } from '../graph/approvals.ts';
+import { isRelayError } from '../util/errors.ts';
 import { printable } from './confirm.ts';
 import { parseStartRequest, QueueFullError, TaskError, type StudioRuns } from './runs.ts';
 
@@ -30,7 +32,7 @@ import { parseStartRequest, QueueFullError, TaskError, type StudioRuns } from '.
  */
 
 export interface CompanionEvent {
-  kind: 'paired' | 'refused' | 'login' | 'run-started' | 'run-finished' | 'installed' | 'error';
+  kind: 'paired' | 'refused' | 'login' | 'run-started' | 'run-finished' | 'installed' | 'approval' | 'error';
   message: string;
 }
 
@@ -64,7 +66,7 @@ export interface RouterOptions {
 export interface AuthorizeRequest {
   /** The page that asked, as the transport saw it, or null when it was not a browser. */
   origin: string | null;
-  action: 'run' | 'install';
+  action: 'run' | 'install' | 'approve';
   /** One line saying what would happen, safe to print on a terminal. */
   summary: string;
 }
@@ -142,7 +144,7 @@ export function createRouter(options: RouterOptions): Router {
   const logout = options.logout ?? liveLogout;
   const install = options.installFiles ?? liveInstallFiles;
   const startedAt = new Date().toISOString();
-  const capabilities: CompanionCapability[] = options.capabilities ?? (options.runs === null ? ['agents', 'chatgpt'] : ['agents', 'runs', 'install', 'chatgpt']);
+  const capabilities: CompanionCapability[] = options.capabilities ?? (options.runs === null ? ['agents', 'chatgpt'] : ['agents', 'runs', 'install', 'chatgpt', 'workflow']);
   const repositoryPerRun = capabilities.includes('repositories');
 
   function hello(authorized: boolean): HelloResponse {
@@ -236,7 +238,7 @@ export function createRouter(options: RouterOptions): Router {
         const runs = requireRuns();
         let started: CompanionRunView;
         try {
-          const parsed = parseStartRequest(await request.json(), { repositoryPerRun });
+          const parsed = parseStartRequest(await request.json(), { repositoryPerRun, workflow: capabilities.includes('workflow') });
           await options.authorize?.({ origin: request.origin ?? null, action: 'run', summary: describeRequest(parsed.workflow.name, parsed.task, parsed.repository ?? repositoryName(options.repository)) });
           started = await runs.start(parsed);
         } catch (error) {
@@ -267,6 +269,33 @@ export function createRouter(options: RouterOptions): Router {
         const stopped = await requireRuns().cancel(a ?? '');
         if (!stopped) throw new RouteError(404, 'That run is not running here.');
         return json(202, { ok: true });
+      }
+
+      // What a workflow running here is waiting on a person for, and the
+      // person's answer. The same file `relay workflow approve` writes, so an
+      // answer from the studio and one from a terminal cannot disagree.
+      case 'GET /v1/approvals': {
+        if (!capabilities.includes('workflow') || options.repository === null) throw new RouteError(404, 'No such route.');
+        const records = await listApprovals(options.repository.root);
+        return json(200, { approvals: records.filter((record) => approvalOpen(record)) });
+      }
+
+      case 'POST /v1/approvals/:': {
+        if (!capabilities.includes('workflow') || options.repository === null) throw new RouteError(404, 'No such route.');
+        const body = objectBody(await request.json());
+        if (typeof body['approved'] !== 'boolean') throw new RouteError(400, 'Say whether it is approved: {"approved": true} or {"approved": false}.');
+        const as = typeof body['as'] === 'string' ? printable(body['as'], 80) : '';
+        // An approval releases a run that was held for a person. The pairing token is not that person:
+        // the studio answering has to be one somebody at this terminal has already said yes to.
+        await options.authorize?.({ origin: request.origin ?? null, action: 'approve', summary: `${body['approved'] ? 'approve' : 'reject'} ${printable(a ?? '', 40)}` });
+        try {
+          const record = await decideApproval(options.repository.root, a ?? '', { approved: body['approved'], by: as.length > 0 ? as : 'the studio' });
+          log({ kind: 'approval', message: `${record.status === 'approved' ? 'Approved' : 'Rejected'} from the studio${as.length > 0 ? ` as ${as}` : ''}: ${printable(record.subject, 80)}.` });
+          return json(200, record);
+        } catch (error) {
+          if (isRelayError(error)) throw new RouteError(error.code === 'APPROVAL_NOT_FOUND' ? 404 : error.code === 'APPROVAL_NOT_ALLOWED' ? 403 : 409, [error.message, error.hint].filter(Boolean).join(' '));
+          throw error;
+        }
       }
 
       case 'POST /v1/install': {

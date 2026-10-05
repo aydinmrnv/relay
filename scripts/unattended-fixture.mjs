@@ -212,9 +212,11 @@ function verify() {
   // a second pass starts nothing, so by now the labels only say who touched
   // them last. The call log says what Relay did and in what order — and the
   // removal has to come before the run delivered anything.
+  // The removal is the API's own "remove a label", which answers 404 when the
+  // label was already gone: that is what lets one of two machines know it lost.
   const flagOf = (call, name) => (call.includes(name) ? call[call.indexOf(name) + 1] : undefined);
   const unlabelledAt = state.calls.findIndex(
-    (call) => call[0] === 'issue' && call[1] === 'edit' && call[2] === '142' && flagOf(call, '--remove-label') === 'relay:go',
+    (call) => call[0] === 'api' && /\/issues\/142\/labels\/relay%3Ago$/.test(call[1] ?? '') && flagOf(call, '--method') === 'DELETE',
   );
   const pullRequestAt = state.calls.findIndex((call) => call[0] === 'pr' && call[1] === 'create');
   check(

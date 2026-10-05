@@ -47,6 +47,7 @@
     "test:watch": "node --test --watch --experimental-strip-types \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
     "generate:man": "node scripts/generate-man.mjs",
+    "sync:studio": "node scripts/sync-studio.mjs",
     "prepack": "npm run clean && npm run build && node scripts/stamp-build.mjs && npm run generate:man && npm pack --dry-run --ignore-scripts"
   },
   "dependencies": {

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { CATEGORY_LABELS } from '@/lib/connectors';
-import { connectionState, nothingToConnect, type AppUsage, type ConnectionState } from '@/lib/connectors/connection-state';
+import { connectionState, nothingToConnect, type AppUsage, type ConnectionState, runnerSupport } from '@/lib/connectors/connection-state';
 import { credentialSpec } from '@/lib/connectors/credentials';
 import type { Connection } from '@/lib/workflow/schema';
 import { cn } from '@/lib/utils';
@@ -41,6 +41,9 @@ export const ConnectorCard = memo(function ConnectorCard({ match, connection, us
   const AuthIcon = AUTH_ICON[connector.auth];
   const state = connectionState(connector, connection);
   const real = credentialSpec(connector.id) !== undefined;
+  // An app the engine acts in with the runner's own tools is not "planned", even with nothing held here.
+  const runner = runnerSupport(connector);
+  const onRunner = runner.performed === 0 ? null : 'Runs on your runner';
   const used = usage?.workflows ?? [];
   const templates = templatesUsing(connector.id).length;
 
@@ -102,12 +105,14 @@ export const ConnectorCard = memo(function ConnectorCard({ match, connection, us
             <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               <AuthIcon className="size-3.5 shrink-0" aria-hidden />
               {/* An app with no sign-in built yet says so on the card, not only in its sheet: "OAuth sign-in" on its own reads as something that works. */}
-              <span className="truncate">{builtIn ? 'Always available' : state === 'runner' ? 'Runs on your runner' : state === 'open' || real ? authLabel(connector) : `Planned: ${authLabel(connector).toLowerCase()}`}</span>
+              <span className="truncate" title={onRunner === null ? undefined : `A real run performs ${runner.performed} of this app’s ${runner.total} triggers and steps with what is on the runner${runner.needs.length === 0 ? '' : ` (${runner.needs.join(', ')})`}. The studio holds nothing for it.`}>
+                {builtIn ? 'Always available' : state === 'runner' ? 'Runs on your runner' : state === 'open' || real ? authLabel(connector) : (onRunner ?? `Planned: ${authLabel(connector).toLowerCase()}`)}
+              </span>
             </span>
           ) : (
             <ConnectionStatus state={state} connection={connection} />
           )}
-          <CardAction state={state} real={real} name={connector.name} onConnect={() => onConnect(connector.id)} onOpen={() => onOpen(connector.id)} onUnmark={() => onDisconnect(connector.id)} />
+          <CardAction state={state} real={real} onRunner={onRunner !== null} name={connector.name} onConnect={() => onConnect(connector.id)} onOpen={() => onOpen(connector.id)} onUnmark={() => onDisconnect(connector.id)} />
         </div>
       </div>
     </motion.div>
@@ -115,10 +120,18 @@ export const ConnectorCard = memo(function ConnectorCard({ match, connection, us
 });
 
 /** The one thing to do from the card: connect, fix, manage, or take a marker back. */
-function CardAction({ state, real, name, onConnect, onOpen, onUnmark }: { state: ConnectionState; real: boolean; name: string; onConnect: () => void; onOpen: () => void; onUnmark: () => void }) {
+function CardAction({ state, real, onRunner, name, onConnect, onOpen, onUnmark }: { state: ConnectionState; real: boolean; onRunner: boolean; name: string; onConnect: () => void; onOpen: () => void; onUnmark: () => void }) {
   const button = 'relative z-10 shrink-0';
   switch (state) {
     case 'missing':
+      // An app a real run already acts in from the runner has nothing to mark: the card opens what it needs there.
+      if (!real && onRunner) {
+        return (
+          <Button size="xs" variant="ghost" className={button} onClick={onOpen}>
+            <Settings2 data-icon="inline-start" /> What it needs
+          </Button>
+        );
+      }
       return (
         <Button size="xs" variant="outline" className={button} onClick={onConnect}>
           {real ? <Plug data-icon="inline-start" /> : <CircleDashed data-icon="inline-start" />} {real ? 'Connect' : 'Mark ready'}

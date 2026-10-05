@@ -73,7 +73,7 @@ export interface UnattendedRunSummary {
   label: string;
   actor: string | null;
   team: string | null;
-  source: 'serve' | 'action';
+  source: 'serve' | 'action' | 'workflow';
   /** What it cost, or null when no turn in it published a price. */
   costUsd: number | null;
   /** Turns that published none, so a cost that is present may be a floor. */

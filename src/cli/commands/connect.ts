@@ -1,6 +1,8 @@
+import { resolve } from 'node:path';
+
 import { discoverRepository } from '../../git/repository.ts';
 import { packageVersion } from '../../update/installation.ts';
-import { isRelayError, RelayError } from '../../util/errors.ts';
+import { errorMessage, isRelayError, RelayError } from '../../util/errors.ts';
 import { loadPairingToken, pairingPath, pairingUrl } from '../../studio/pairing.ts';
 import { openInBrowser } from '../../studio/open.ts';
 import { DEFAULT_COMPANION_PORT, DEFAULT_STUDIO_URL, isLoopbackOrigin, type CompanionRepository, type CompanionRunView, type HelloResponse } from '../../studio/protocol.ts';
@@ -22,6 +24,8 @@ export interface ConnectOptions {
   /** `--open` forces the pairing page open, `--no-open` never opens it; unset opens it for a person at a terminal. */
   open?: boolean;
   newToken?: boolean;
+  /** A file of `NAME=value` lines: what a workflow's own steps read (a Slack webhook, a Linear key) when the studio runs one here. */
+  envFile?: string;
   json?: boolean;
 }
 
@@ -49,6 +53,15 @@ const PAIRING_HINT_MS = 30_000;
  * asks for is confirmed in this terminal.
  */
 export async function connectCommand(options: ConnectOptions = {}): Promise<number> {
+  if (options.envFile !== undefined) {
+    // Into this process, so every run the studio starts here inherits it. The
+    // pipeline's own run does not: `relay workflow` keeps these from the agents.
+    try {
+      process.loadEnvFile(resolve(options.envFile));
+    } catch (error) {
+      throw new RelayError(`Cannot read --env-file ${options.envFile}: ${errorMessage(error)}`, { code: 'BAD_FLAG' });
+    }
+  }
   const hub = options.hub ?? process.env['RELAY_HUB_URL'];
   if (hub !== undefined && hub.length > 0) return runnerCommand(hub, options);
   const json = options.json === true;

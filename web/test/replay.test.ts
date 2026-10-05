@@ -144,7 +144,7 @@ test('each patch is dated by the phase that produced it', () => {
 
 test('what is not a recording is turned away with a reason', () => {
   assert.match(String((parseRecordingText('not json') as { error: string }).error), /not JSON/);
-  assert.match(String((parseRecording({ nodes: [], edges: [] }) as { error: string }).error), /no `bundle` version/);
+  assert.match(String((parseRecording({ nodes: [], edges: [] }) as { error: string }).error), /nothing in it says which version of a recording it is/);
   assert.match(String((parseRecording({ bundle: 2 }) as { error: string }).error), /version 2/);
   assert.match(String((parseRecording({ ...(tiny() as object), stream: [] }) as { error: string }).error), /stream is empty/);
   assert.match(String((parseRecording({ ...(tiny() as object), run: {} }) as { error: string }).error), /which run/);

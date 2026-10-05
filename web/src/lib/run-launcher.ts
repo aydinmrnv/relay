@@ -3,7 +3,7 @@
 import { BRAND } from './brand';
 import { useStudio } from './store';
 import { simulateRun, type SimulateOptions } from './workflow/simulate';
-import { compileWorkflow } from './workflow/compile';
+import { compileWorkflow, type CompiledGraph } from './workflow/compile';
 import type { Run, RunEvent, Workflow } from './workflow/schema';
 import { CompanionError, companionFetch, companionRequest, useCompanion } from './companion/client';
 import { createMachineRun, markLost, MachineRunFold } from './companion/machine-run';
@@ -110,27 +110,44 @@ function closeFailed(run: Run, why: string): Run {
 
 /** The `.relay/config.json` the export would write for this workflow: what the machine's run is shaped by. */
 export function compiledConfig(workflow: Workflow): Record<string, unknown> {
+  return compiledForRun(workflow).config;
+}
+
+/** What a run on a runner is sent: the engine config, and the whole workflow compiled for the engine. */
+function compiledForRun(workflow: Workflow): { config: Record<string, unknown>; graph: CompiledGraph } {
   const state = useStudio.getState();
   const compiled = compileWorkflow(workflow, BRAND, { auth: state.settings.auth });
   const file = compiled.files.find((entry) => entry.path === '.relay/config.json');
   if (file === undefined) throw new Error('The compiler produced no config.');
-  return JSON.parse(file.content) as Record<string, unknown>;
+  return { config: JSON.parse(file.content) as Record<string, unknown>, graph: compiled.graph };
+}
+
+/** Whether the current runner performs a whole workflow, or the pipeline alone (an older `relay connect`, a Relay Cloud machine). */
+export function runsWholeWorkflow(): boolean {
+  const { hello, target } = useCompanion.getState();
+  return target !== 'cloud' && (hello?.capabilities ?? []).includes('workflow');
 }
 
 /**
- * Runs the workflow's pipeline for real on the current runner and follows it
- * to the end: on the paired machine, in the repository `relay connect` was
- * started in, or on the person's Relay Cloud machine, in the repository the
- * run names.
+ * Runs the workflow for real on the current runner and follows it to the end:
+ * on the paired machine, in the repository `relay connect` was started in, or
+ * on the person's Relay Cloud machine, in the repository the run names.
+ *
+ * A runner that can is sent the whole workflow and performs every step of it.
+ * One that cannot (an older `relay connect`, a Relay Cloud machine) is sent
+ * the engine config alone and runs the pipeline and its delivery.
  */
 export async function launchMachineRun(workflow: Workflow, task: RunTask, options: Pick<LaunchOptions, 'onEvent'> & { repository?: string } = {}): Promise<Run> {
   const { hello, target } = useCompanion.getState();
+  const whole = runsWholeWorkflow();
+  const compiled = compiledForRun(workflow);
   const view = await companionFetch<CompanionRunView>('/v1/runs', {
     method: 'POST',
     runner: target,
-    body: { workflow: { id: workflow.id, name: workflow.name }, config: compiledConfig(workflow), task, ...(options.repository === undefined ? {} : { repository: options.repository }) },
+    body: { workflow: { id: workflow.id, name: workflow.name }, config: compiled.config, task, ...(whole ? { graph: compiled.graph } : {}), ...(options.repository === undefined ? {} : { repository: options.repository }) },
   });
   const run = createMachineRun(workflow, {
+    ...(whole ? { scope: 'workflow' as const } : {}),
     id: `run_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`,
     companionRunId: view.id,
     host: target === 'cloud' ? 'Relay Cloud' : (hello?.machine ?? 'your computer'),
@@ -154,6 +171,7 @@ export async function attachMachineRun(saved: Run): Promise<Run | undefined> {
   const workflow = useStudio.getState().workflows[saved.workflowId];
   if (workflow === undefined) return undefined;
   const base = createMachineRun(workflow, {
+    ...(saved.machine.scope === undefined ? {} : { scope: saved.machine.scope }),
     id: saved.id,
     companionRunId: saved.machine.companionRunId,
     host: saved.machine.host,

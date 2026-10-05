@@ -1,8 +1,9 @@
 /**
  * Graph → files a repository can use.
  *
- * Export writes the config the Relay CLI reads, plus a GitHub Actions
- * workflow that runs it on the repository's own minutes. The Action is
+ * Export writes the config the Relay CLI reads, the workflow compiled for the
+ * engine to run as drawn (`relay workflow`), and a GitHub Actions workflow
+ * that runs the pipeline on the repository's own minutes. The Action is
  * narrower than the canvas: it works on one GitHub issue per run, decides its
  * guardrails inside Relay, and cannot evaluate a Condition. So every step is
  * placed by where it sits in the graph — after delivery, on the budget
@@ -10,9 +11,9 @@
  * down as a warning rather than silently dropped or silently run.
  */
 import { BRAND, slugify, type Brand } from '../brand';
-import { getConnector, getNodeType, type NodeTypeDef } from '../connectors';
+import { defaultConfig, getConnector, getNodeType, type NodeTypeDef } from '../connectors';
 import { ACTION_REF, CLI_INSTALL_COMMAND } from '../links';
-import { SIMULATED_ONLY } from './readiness';
+import { ACTION_CANNOT, isSimulatedOnly } from './readiness';
 import { isSecretField } from './redact';
 import { isRepository, type AuthPreference, type Workflow, type WorkflowEdge, type WorkflowNode } from './schema';
 import { isPlaceholderLogin, isUnattendedTrigger } from './validate';
@@ -39,8 +40,32 @@ export interface CompiledStart {
   event?: string;
 }
 
+/**
+ * The workflow as the engine runs it (`src/graph/types.ts` in the CLI): every
+ * node with its defaults filled in and its outputs named, no secret in it, and
+ * the engine config beside it. Self-contained, because the engine has no
+ * catalog to look anything up in.
+ */
+export interface CompiledGraph {
+  version: 1;
+  id: string;
+  name: string;
+  repository: string | null;
+  enabled: boolean;
+  nodes: Array<{ id: string; type: string; kind: 'trigger' | 'action'; name: string; config: Record<string, unknown>; outputs: string[] }>;
+  edges: Array<{ from: string; handle: string | null; to: string }>;
+  config: Record<string, unknown>;
+}
+
+/** Where the compiled workflow goes in the repository: what `relay workflow run <name>` finds. */
+export function compiledGraphPath(workflow: Pick<Workflow, 'name'>): string {
+  return `.relay/workflows/${slugify(workflow.name)}.json`;
+}
+
 export interface CompiledOutput {
   files: CompiledFile[];
+  /** The workflow compiled for the engine: also the `.relay/workflows/` file, and what a run on a paired machine is sent. */
+  graph: CompiledGraph;
   /** Reasons these files should not be used yet. The export dialog will not hand them over while there are any. */
   blockers: string[];
   warnings: string[];
@@ -190,7 +215,7 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
     warnings.push(`The allowlist is empty. The exported Action works on an issue labelled ${label}, and Relay refuses a label applied by anyone who is not on unattended.authors or unattended.teams. Add the logins who may start runs to an Author allowlist gate.`);
   }
   if (unattended && budget === undefined) {
-    warnings.push('No budget gate: unattended.maxRunCostUsd and maxDailyCostUsd are unset, and the Action will refuse to start until they are.');
+    warnings.push('No budget gate: unattended.maxRunCostUsd and maxDailyCostUsd are unset. The Action and `relay workflow serve` both refuse to start the agents for an event until they are. Add a Budget gate with a per-run cost and a daily budget.');
   }
   if (pipeline === undefined) {
     warnings.push('No agent pipeline in this workflow, so the exported Action runs no agent: it only performs the app steps that need no decision.');
@@ -199,9 +224,13 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
   if (webhook !== null && CREDENTIAL_URL.test(webhook)) {
     warnings.push('The URL in “Post the run as JSON” looks like it carries a credential, and it is written to .relay/config.json, which you commit. Use an endpoint whose address is not itself the secret.');
   }
-  const simulated = [...new Set(found.filter((entry) => entry.def.kind === 'action' && SIMULATED_ONLY.has(entry.def.id)).map((entry) => entry.def.name))];
-  if (simulated.length > 0) {
-    warnings.push(`${list(simulated)} ${simulated.length === 1 ? 'is' : 'are'} played in test runs only. The exported files do not perform ${simulated.length === 1 ? 'it' : 'them'}: Relay decides the allowlist and the budget itself, then runs the pipeline on the issue it is given.`);
+  const beyondTheAction = [...new Set(found.filter((entry) => entry.def.kind === 'action' && ACTION_CANNOT.has(entry.def.id)).map((entry) => entry.def.name))];
+  if (beyondTheAction.length > 0) {
+    warnings.push(`The exported Action does not perform ${list(beyondTheAction)}: it decides the allowlist and the budget itself, then runs the pipeline on the issue it is given. \`relay workflow\` performs ${beyondTheAction.length === 1 ? 'it' : 'them'}: run the whole workflow with \`relay workflow run\`, or keep its trigger on a machine of your own with \`relay workflow serve\`.`);
+  }
+  const testOnly = [...new Set(found.filter((entry) => entry.def.kind === 'action' && isSimulatedOnly(entry.def.id)).map((entry) => entry.def.name))];
+  if (testOnly.length > 0) {
+    warnings.push(`${list(testOnly)} ${testOnly.length === 1 ? 'is' : 'are'} played in test runs only: nothing performs ${testOnly.length === 1 ? 'it' : 'them'} in a real run yet, and a real run says so.`);
   }
 
   const secrets: Array<{ name: string; why: string }> = [
@@ -218,16 +247,54 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
 
   const start = startFor(trigger, label, warnings);
   const placed = placeSteps({ workflow, found, trigger, pipeline, delivery, warnings });
-  const yaml = renderActionYaml({ workflow, brand, trigger, pipeline, placed, secrets, warnings, deliver, auth, start, withHeaders });
+  // The variable each HTTP request's headers come from: one name per request
+  // that had headers typed in, the same in the Action's secrets and in the
+  // environment `relay workflow` reads.
+  const withHeaderIds = found.filter((entry) => withHeaders.has(entry.node.id)).map((entry) => entry.node.id);
+  const headerSecrets = new Map(withHeaderIds.map((id, index) => [id, withHeaderIds.length > 1 ? `HTTP_HEADERS_${index + 1}` : 'HTTP_HEADERS']));
+  const yaml = renderActionYaml({ workflow, brand, trigger, pipeline, placed, secrets, warnings, deliver, auth, start, headerSecrets });
+  const graph = compileGraph(workflow, found, relayConfig, headerSecrets);
 
   const files: CompiledFile[] = [
     { path: '.relay/config.json', language: 'json', content: JSON.stringify(relayConfig, null, 2) + '\n', description: 'What the CLI reads. Commit it to the repository this workflow is attached to.' },
+    { path: compiledGraphPath(workflow), language: 'json', content: JSON.stringify(graph, null, 2) + '\n', description: 'The whole workflow, compiled for the engine. `relay workflow run` performs it as drawn; `relay workflow serve` keeps its trigger.' },
     { path: `.github/workflows/${slugify(workflow.name)}.yml`, language: 'yaml', content: yaml, description: 'Runs the pipeline on your own GitHub Actions minutes.' },
     { path: `${brand.slug}-workflow.json`, language: 'json', content: JSON.stringify({ product: brand.name, exportedAt: new Date().toISOString(), workflow }, null, 2) + '\n', description: 'The graph itself, importable back into the builder. Secret fields are left empty.' },
     { path: 'SETUP.md', language: 'markdown', content: renderSetup({ workflow, brand, secrets, warnings, start, auth, agents: pipeline !== undefined }), description: 'What to add where.' },
   ];
 
-  return { files, blockers, warnings, secrets: [...new Map(secrets.map((secret) => [secret.name, secret])).values()], start };
+  return { files, graph, blockers, warnings, secrets: [...new Map(secrets.map((secret) => [secret.name, secret])).values()], start };
+}
+
+/** Settings that mean something only to a test run, and so are not part of what the engine is handed. */
+const TEST_RUN_ONLY_FIELDS: Readonly<Record<string, readonly string[]>> = { 'gates.action.injection-screen': ['tryText'] };
+
+/**
+ * The canvas, compiled for the engine. `workflow` has had its secrets removed
+ * already; a node whose type is no longer in the catalog is left out, as the
+ * validator has said, and so is any edge that touched it.
+ */
+function compileGraph(workflow: Workflow, found: Found[], relayConfig: Record<string, unknown>, headerSecrets: Map<string, string>): CompiledGraph {
+  const known = new Set(found.map((entry) => entry.node.id));
+  return {
+    version: 1,
+    id: workflow.id,
+    name: workflow.name,
+    repository: isRepository(workflow.repository) ? workflow.repository.trim() : null,
+    enabled: workflow.enabled !== false,
+    nodes: found.map(({ node, def }) => {
+      const config: Record<string, unknown> = { ...defaultConfig(def), ...node.data.config };
+      for (const key of Object.keys(config)) if (isSecretField(def.id, key)) delete config[key];
+      for (const key of TEST_RUN_ONLY_FIELDS[def.id] ?? []) delete config[key];
+      const headers = headerSecrets.get(node.id);
+      if (headers !== undefined) config['headersEnv'] = headers;
+      return { id: node.id, type: def.id, kind: def.kind, name: stepName({ node, def }), config, outputs: def.outputs.map((port) => port.id) };
+    }),
+    edges: workflow.edges
+      .filter((edge) => known.has(edge.source) && known.has(edge.target))
+      .map((edge) => ({ from: edge.source, handle: typeof edge.sourceHandle === 'string' && edge.sourceHandle.length > 0 ? edge.sourceHandle : null, to: edge.target })),
+    config: relayConfig,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -547,10 +614,10 @@ function renderActionYaml(input: {
   deliver: string;
   auth: { claude: AuthPreference; codex: AuthPreference };
   start: StartPlan;
-  /** Ids of HTTP request nodes that had headers filled in. */
-  withHeaders: Set<string>;
+  /** The secret each HTTP request's headers come from, for the requests that had headers filled in. */
+  headerSecrets: Map<string, string>;
 }): string {
-  const { workflow, brand, trigger, pipeline, placed, secrets, warnings, auth, start, withHeaders } = input;
+  const { workflow, brand, trigger, pipeline, placed, secrets, warnings, auth, start, headerSecrets } = input;
   const dispatchType = `${brand.slug}-${slugify(workflow.name)}`;
   const repo = workflow.repository !== undefined && workflow.repository.trim().length > 0 ? workflow.repository.trim() : '<owner>/<repo>';
 
@@ -561,8 +628,6 @@ function renderActionYaml(input: {
   ];
 
   const stepLines: string[] = [];
-  let httpHeaders = 0;
-  const httpWithHeaders = placed.filter((step) => withHeaders.has(step.entry.node.id)).length;
 
   for (const { entry, when } of placed) {
     const name = stepName(entry);
@@ -602,9 +667,8 @@ function renderActionYaml(input: {
       // carries them: they come from a repository secret, as a JSON object.
       let headers = '';
       let headerEnv = '';
-      if (withHeaders.has(entry.node.id)) {
-        httpHeaders += 1;
-        const secret = httpWithHeaders > 1 ? `HTTP_HEADERS_${httpHeaders}` : 'HTTP_HEADERS';
+      const secret = headerSecrets.get(entry.node.id);
+      if (secret !== undefined) {
         secrets.push({ name: secret, why: `The headers for “${name}”, as a JSON object such as {"authorization": "Bearer …"}. They are not in the export, because that is where credentials go.` });
         headerEnv = `\n          HEADERS: \${{ secrets.${secret} }}`;
         headers = `
@@ -800,7 +864,8 @@ function renderSetup(input: { workflow: Workflow; brand: Brand; secrets: Array<{
   const { workflow, brand, secrets, warnings, auth, start } = input;
   const unique = new Map(secrets.map((secret) => [secret.name, secret]));
   const repo = workflow.repository !== undefined && workflow.repository.trim().length > 0 ? workflow.repository.trim() : 'OWNER/REPO';
-  const file = `${slugify(workflow.name)}.yml`;
+  const slug = slugify(workflow.name);
+  const file = `${slug}.yml`;
   const claudeHow = auth.claude === 'subscription'
     ? `\`\`\`bash
 claude setup-token                                   # opens a sign-in page; prints a one-year token
@@ -835,12 +900,13 @@ or Actions → ${brand.name} · ${workflow.name} → Run workflow.`;
 
 This bundle runs the workflow on your own GitHub Actions minutes. Nothing is hosted, nothing is billed by ${brand.name}.
 
-## 1. Commit two files
+## 1. Commit three files
 
 - \`.relay/config.json\` — the agents, review level, guardrails and delivery ceiling.
+- \`${compiledGraphPath(workflow)}\` — the whole workflow, compiled for the engine to run as drawn.
 - \`.github/workflows/${file}\` — the Action that runs the pipeline.
 
-Treat \`.relay/config.json\` like code: it decides who may start a run and what it may spend, so changes to it deserve the same review as a change to CI.
+Treat the two under \`.relay/\` like code: they decide who may start a run, what it may spend and what it posts where, so changes to them deserve the same review as a change to CI.
 
 ## 2. Bring your own subscriptions
 
@@ -862,12 +928,19 @@ ${[...unique.values()].map((secret) => `- \`${secret.name}\` — ${secret.why}`)
 
 ${startHow}
 
-## 4. Try it on your own machine first
+## 4. Run the whole workflow yourself
+
+The Action runs the pipeline. The CLI runs the workflow as it was drawn: the guardrails, the conditions, an approval that waits for a person, the pipeline, and the steps after it.
 
 \`\`\`bash
 ${CLI_INSTALL_COMMAND}
-relay start --dry-run        # walks the pipeline with no agent calls
+relay workflow check ${slug}                        # what each step needs, and what Relay cannot perform yet
+relay workflow run ${slug} --prompt "…" --dry-run   # decide everything, start and send nothing
+relay workflow run ${slug} 142                      # for real, on issue 142
+relay workflow serve ${slug}                        # keep its trigger: a webhook, a schedule, a label
 \`\`\`
+
+The app steps read their credentials from the environment (\`SLACK_WEBHOOK_URL\`, \`DISCORD_WEBHOOK_URL\`, \`LINEAR_API_KEY\`, \`HTTP_HEADERS\`), or from a file passed with \`--env-file\`. They are never written into these files, and never handed to the agents.
 ${warnings.length > 0 ? `\n## Things the canvas said that the files could not\n\n${warnings.map((warning) => `- ${warning}`).join('\n')}\n` : ''}
 ## What runs where
 

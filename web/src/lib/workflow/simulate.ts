@@ -12,7 +12,9 @@
 import { getNodeType, type NodeTypeDef } from '../connectors';
 import type { Brand } from '../brand';
 import type { NodeRunStatus, Run, RunEvent, RunPhase, RunStatus, Workflow, WorkflowEdge, WorkflowNode } from './schema';
+import { evaluateCondition, evaluateFilter } from './engine/expression';
 import { INJECTION_RULES, screenText } from './injection';
+import { isJsonTemplate, renderJsonTemplate } from './engine/expression';
 import { renderTemplate } from './template';
 
 export interface SimulateOptions {
@@ -119,17 +121,22 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
   let refused = false;
   let failed = false;
   const visited = new Set<string>();
-  // A "Merge paths" node waits for every incoming connection. A branch a
-  // Condition or a gate did not take never arrives, so it is counted as it is
-  // skipped: the join continues once every path has either arrived or been
-  // ruled out, and is itself skipped when none arrived.
-  const joins = new Map<string, { arrived: number; ruledOut: number }>();
+  // The engine's walk, rule for rule (`src/graph/executor.ts`). Every node
+  // keeps count of the paths into it: how many brought the run, and how many
+  // a Condition or a gate upstream ruled out. An ordinary node runs when the
+  // first path arrives, and is skipped only once every path into it has been
+  // ruled out. A "Merge paths" node waits to hear from all of them, and runs
+  // if any came.
+  const paths = new Map<string, { arrived: number; ruledOut: number }>();
   const isJoin = (nodeId: string) => getNodeType(nodesById.get(nodeId)?.data.typeId ?? '')?.id === 'logic.action.merge-paths';
 
-  // Execution is a queue of (node, via-handle). Each node runs once; join nodes wait for all inputs.
+  // Execution is a queue of nodes, each run once.
   const queue: Array<{ nodeId: string }> = [{ nodeId: triggerNode.id }];
+  // Only what the trigger leads to: a connection from a node nothing reaches never brings anything.
+  const reachable = new Set<string>([triggerNode.id]);
+  for (const id of reachable) for (const edge of outgoing.get(id) ?? []) reachable.add(edge.target);
   const incomingCount = new Map<string, number>();
-  for (const edge of workflow.edges) incomingCount.set(edge.target, (incomingCount.get(edge.target) ?? 0) + 1);
+  for (const edge of workflow.edges) if (reachable.has(edge.source)) incomingCount.set(edge.target, (incomingCount.get(edge.target) ?? 0) + 1);
 
   try {
     while (queue.length > 0) {
@@ -157,12 +164,7 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       const edges = outgoing.get(nodeId) ?? [];
       for (const edge of edges) {
         const handle = edge.sourceHandle ?? def.outputs[0]?.id;
-        if (handles !== 'all' && (handle === undefined || !handles.includes(handle))) {
-          markSkipped(edge.target);
-          continue;
-        }
-        if (isJoin(edge.target)) arriveAtJoin(edge.target, true);
-        else queue.push({ nodeId: edge.target });
+        hear(edge.target, handles === 'all' || (handle !== undefined && handles.includes(handle)));
       }
     }
   } catch (error) {
@@ -175,37 +177,35 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
 
   /* ---------------------------------------------------------------- */
 
-  function markSkipped(nodeId: string) {
-    if (isJoin(nodeId)) {
-      arriveAtJoin(nodeId, false);
-      return;
-    }
-    if (run.nodeStatus[nodeId] === 'pending') {
-      run.nodeStatus[nodeId] = 'skipped';
-      for (const edge of outgoing.get(nodeId) ?? []) markSkipped(edge.target);
-    }
+  function skip(nodeId: string) {
+    run.nodeStatus[nodeId] = 'skipped';
+    for (const edge of outgoing.get(nodeId) ?? []) hear(edge.target, false);
   }
 
-  function arriveAtJoin(nodeId: string, arrived: boolean) {
-    if (visited.has(nodeId) || run.nodeStatus[nodeId] === 'skipped') return;
-    const state = joins.get(nodeId) ?? { arrived: 0, ruledOut: 0 };
+  /** One path into a node has been decided: it brought the run, or it will not. */
+  function hear(nodeId: string, arrived: boolean) {
+    const status = run.nodeStatus[nodeId];
+    if (visited.has(nodeId) || !nodesById.has(nodeId) || (status !== 'pending' && status !== 'waiting')) return;
+    const state = paths.get(nodeId) ?? { arrived: 0, ruledOut: 0 };
     if (arrived) state.arrived += 1;
     else state.ruledOut += 1;
-    joins.set(nodeId, state);
+    paths.set(nodeId, state);
     const expected = incomingCount.get(nodeId) ?? 1;
-    if (state.arrived + state.ruledOut < expected) {
+    const heardAll = state.arrived + state.ruledOut >= expected;
+    if (!isJoin(nodeId)) {
+      if (arrived && state.arrived === 1) queue.push({ nodeId });
+      else if (!arrived && heardAll && state.arrived === 0) skip(nodeId);
+      return;
+    }
+    if (!heardAll) {
       if (arrived) {
         setStatus(nodeId, 'waiting');
         emit({ nodeId, kind: 'log', status: 'waiting', message: `Merge paths: waiting for ${expected - state.arrived - state.ruledOut} more path(s).` });
       }
       return;
     }
-    if (state.arrived > 0) {
-      queue.push({ nodeId });
-      return;
-    }
-    run.nodeStatus[nodeId] = 'skipped';
-    for (const edge of outgoing.get(nodeId) ?? []) markSkipped(edge.target);
+    if (state.arrived > 0) queue.push({ nodeId });
+    else skip(nodeId);
   }
 
   function finish(status: RunStatus): Run {
@@ -319,13 +319,18 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
         const left = renderTemplate(String(config['left'] ?? ''), context);
         const right = String(config['right'] ?? '');
         const op = String(config['op'] ?? 'contains');
-        const outcome = evaluate(left, op, right);
+        const outcome = evaluateCondition(left, op, right);
         tick(50);
         return { status: 'done', message: left.trim().length === 0 ? `${String(config['left'] ?? 'The field')} has no value in this run, so the condition is false.` : `"${left}" ${op} "${right}" → ${outcome}`, nextHandles: [outcome ? 'true' : 'false'] };
       }
-      case 'logic.action.filter':
+      case 'logic.action.filter': {
+        // Evaluated, with the evaluator a real run uses: a test run never takes a path a real one would not.
+        const expression = String(config['expression'] ?? '');
+        const outcome = evaluateFilter(expression, context);
         tick(50);
-        return { status: 'done', message: `Passed: ${String(config['expression'] ?? 'true')}`, nextHandles: 'all' };
+        if (!outcome.ok) return { status: 'failed', message: `The expression “${expression}” cannot be read: ${outcome.error}.`, nextHandles: [] };
+        return outcome.value ? { status: 'done', message: `Passed: ${expression.trim() || 'no expression'}`, nextHandles: 'all' } : { status: 'done', message: `Did not pass: ${expression}. This path stops here.`, nextHandles: [] };
+      }
       case 'logic.action.transform':
         tick(80);
         return { status: 'done', message: 'Payload transformed.', nextHandles: 'all' };
@@ -360,7 +365,9 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
       case 'http.action.request': {
         tick(600 + rng() * 900);
         const url = String(config['url'] ?? 'https://example.com');
-        return { status: 'done', message: `${String(config['method'] ?? 'POST')} ${url} → 200 OK`, detail: renderTemplate(String(config['body'] ?? ''), context), nextHandles: 'all' };
+        // As a real run sends it: a value inside a JSON string is escaped as one.
+        const body = String(config['body'] ?? '');
+        return { status: 'done', message: `${String(config['method'] ?? 'POST')} ${url} → 200 OK`, detail: isJsonTemplate(body) ? renderJsonTemplate(body, context) : renderTemplate(body, context), nextHandles: 'all' };
       }
       case 'http.action.post-run-json':
         tick(700);
@@ -487,7 +494,8 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
     const prUrl = `https://github.com/${repository}/pull/${number}`;
     run.prUrl = prUrl;
     (context.run as Record<string, unknown>).prUrl = prUrl;
-    const title = renderTemplate(String(config['prTitle'] ?? '{{issue.title}}'), context);
+    // A payload with no title leaves only the template's punctuation: say what it is instead of printing ": :".
+    const title = renderTemplate(String(config['prTitle'] ?? '{{issue.title}}'), context).replace(/^[\s:·–—-]+|[\s:·–—-]+$/g, '') || 'Untitled change';
     steps.push(`Opened ${config['draft'] === false ? 'PR' : 'draft PR'} #${number}`);
     tick(4000);
     emit({ nodeId, kind: 'artifact', message: `Pull request #${number}: ${title}`, detail: renderTemplate(String(config['prBody'] ?? ''), context) });
@@ -591,33 +599,6 @@ function defaults(def: NodeTypeDef): Record<string, unknown> {
   return out;
 }
 
-function evaluate(left: string, op: string, right: string): boolean {
-  // A field with no value satisfies nothing: `Number('')` is 0, which would make "under 3" true of every ticket.
-  if (left.trim().length === 0) return op === 'not-equals' && right.trim().length > 0;
-  const l = left.toLowerCase();
-  const r = right.toLowerCase();
-  switch (op) {
-    case 'contains':
-      return l.includes(r);
-    case 'equals':
-      return l === r;
-    case 'not-equals':
-      return l !== r;
-    case 'gt':
-      return Number(left) > Number(right);
-    case 'lt':
-      return Number(left) < Number(right);
-    case 'matches':
-      try {
-        return new RegExp(right, 'i').test(left);
-      } catch {
-        return false;
-      }
-    default:
-      return false;
-  }
-}
-
 function phaseDetail(phase: string, agent: string | undefined, rng: () => number): string {
   const who = agent === undefined ? '' : AGENT_NAMES[agent] ?? agent;
   switch (phase) {
@@ -645,12 +626,14 @@ function phaseDetail(phase: string, agent: string | undefined, rng: () => number
 }
 
 function samplePlan(title: string): string {
-  return `# Plan: ${title}\n\n1. Reproduce with a failing test.\n2. Isolate the timing dependency behind an injected clock.\n3. Make the retry schedule deterministic in tests.\n4. Run the suite twice to confirm stability.\n\nRisks: the clock seam touches two call sites; both are covered by existing tests.`;
+  // The same four steps whatever the ticket, and said to be a sample: no agent read any code in a test run.
+  return `# Plan: ${title}\n\n1. Reproduce it with a failing test.\n2. Make the smallest change that turns the test green.\n3. Cover the case the ticket describes, and the one next to it.\n4. Run the whole suite.\n\nA sample: in a test run no agent has read your code. A real run’s plan names the files it will touch and what could go wrong.`;
 }
 
 function summarize(run: Run, context: Record<string, unknown>): string {
   const issue = context.issue as Record<string, unknown>;
-  const parts = [`${run.workflowName} · ${String(issue['id'] ?? '')} ${String(issue['title'] ?? '')}`.trim()];
+  const subject = [issue['id'], issue['title']].map((part) => String(part ?? '').trim()).filter((part) => part.length > 0).join(' ');
+  const parts = [subject.length === 0 ? run.workflowName : `${run.workflowName} · ${subject}`];
   if (run.phases.length > 0) parts.push(`${run.phases.length} phases in ${formatMs(run.phases.reduce((sum, phase) => sum + phase.ms, 0))}`);
   if (run.diff !== undefined) parts.push(`+${run.diff.additions} −${run.diff.deletions} across ${run.diff.files} files`);
   if (run.tests !== undefined) parts.push(`tests ${run.tests.passed ? 'passed' : 'failed'}`);

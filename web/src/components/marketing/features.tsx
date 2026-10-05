@@ -32,7 +32,7 @@ export function Features() {
     {
       icon: Blocks,
       title: 'Built for the work you hand over',
-      body: 'A red main, a new Sentry error, a security alert, a finished feature flag, a bug report in Slack: each has a workflow that carries its evidence to the agents. A GitHub issue label starts one unattended today; the others are test-run here and started by hand.',
+      body: 'A red main, a new Sentry error, a security alert, a finished feature flag, a bug report in Slack: each has a workflow that carries its evidence to the agents. Seven of the ten start by themselves on a machine of yours; the rest are test-run here and started by hand.',
       proof: `${TEMPLATES.length} ready-made workflows`,
     },
     {

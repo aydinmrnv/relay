@@ -9,10 +9,20 @@ import { notifyCommand } from './commands/notify.ts';
 import { collect, evalCommand } from './commands/eval.ts';
 import { EVAL_COMPARISON_NAMES, EVAL_CONFIG_NAMES } from '../eval/configs.ts';
 import { DEFAULT_COMPANION_PORT } from '../studio/protocol.ts';
+import { DEFAULT_WEBHOOK_PORT } from '../graph/serve.ts';
 import { connectCommand } from './commands/connect.ts';
 import { hubServeCommand, hubTokenCommand } from './commands/hub.ts';
 import { initCommand } from './commands/init.ts';
 import { serveCommand } from './commands/serve.ts';
+import {
+  workflowApprovalsCommand,
+  workflowCheckCommand,
+  workflowDecideCommand,
+  workflowRunCommand,
+  workflowServeCommand,
+  type WorkflowRunOptions,
+  type WorkflowServeOptions,
+} from './commands/workflow.ts';
 import { startCommand } from './commands/start.ts';
 import { updateCommand } from './commands/update.ts';
 import { resumeCommand, runDetachedChild, type RunOptions } from './commands/run.ts';
@@ -106,6 +116,7 @@ const HELP_GROUPS = [
   ['Cloud', ['hub']],
   ['Setup', ['start', 'init', 'doctor', 'chatgpt', 'notify']],
   ['Run', ['run', 'resume', 'stop']],
+  ['Workflows', ['workflow']],
   ['Unattended', ['serve']],
   ['Inspect', ['status', 'watch', 'diff', 'plan', 'logs', 'stats', 'recording']],
   ['Deliver', ['deliver']],
@@ -226,6 +237,7 @@ export function buildProgram(version: string): Command {
     .option('--open', 'open the pairing page even when not at a terminal')
     .option('--no-open', 'never open a browser; print the pairing link instead')
     .option('--new-token', 'replace this machine\'s secret; every start already has a pairing token of its own')
+    .option('--env-file <path>', 'read the credentials a workflow\'s app steps need (SLACK_WEBHOOK_URL, …) from a file of NAME=value lines')
     .option('--hub <url>', 'run as a Relay Cloud runner: dial out to this hub instead of listening (or RELAY_HUB_URL)')
     .option('--token-from <source>', 'with --hub, where the runner token is: env (RELAY_RUNNER_TOKEN), stdin, file:<path>, or azure')
     .option('--json', `${JSON_FLAG} — one object per line: listening, then each event`)
@@ -357,6 +369,62 @@ export function buildProgram(version: string): Command {
     .option('-v, --verbose', 'log every pass, not only what changed')
     .option('--json', `${JSON_FLAG} — one object per line as it decides, then a summary`)
     .action(wrap(serveCommand));
+
+  // A workflow drawn in the studio, run as drawn: the guardrails, the logic,
+  // the pipeline and the steps after it. `relay run` is the pipeline alone.
+  const workflow = program.command('workflow').description('run a workflow from the studio as it was drawn: its guardrails, logic, pipeline and the steps after it');
+  workflow
+    .command('run')
+    .argument('[workflow]', 'a name under .relay/workflows/, or a file; omit when the repository has one')
+    .argument('[issue]', 'the issue to work on: a number, a URL, or a Linear key')
+    .description('run the whole workflow once, for an issue, a description or an event')
+    .option('-p, --prompt <text>', 'describe the change instead of naming an issue')
+    .option('--event <file>', 'a JSON event, as a webhook would deliver it: the guardrails decide, as for a real one')
+    .option('--dry-run', 'decide every guardrail and condition, and start, post and publish nothing')
+    .option('--env-file <path>', 'read the credentials the app steps need from a file of NAME=value lines')
+    .option('-v, --verbose', 'print each step\'s detail, and the run\'s own notes')
+    .option('--json', `${JSON_FLAG} — one object per line as each step finishes`)
+    .action(wrap((ref: string | undefined, issue: string | undefined, options: WorkflowRunOptions) => workflowRunCommand(ref, issue, options)));
+  workflow
+    .command('serve')
+    .argument('[workflow]', 'a name under .relay/workflows/, or a file; omit when the repository has one')
+    .description('keep the workflow\'s trigger: listen for its webhook, its schedule or its label, and run it each time')
+    .option('--port <n>', `port the incoming webhook listens on (default ${DEFAULT_WEBHOOK_PORT})`)
+    .option('--host <address>', 'address to listen on; anything but this machine needs RELAY_WEBHOOK_SECRET', '127.0.0.1')
+    .option('-i, --interval <seconds>', 'seconds between looks at the tracker, for a label trigger')
+    .option('--once', 'run the first event and exit')
+    .option('--dry-run', 'decide every guardrail and condition, and start, post and publish nothing')
+    .option('--env-file <path>', 'read the credentials the app steps need from a file of NAME=value lines')
+    .option('-v, --verbose', 'print each step\'s detail, and the run\'s own notes')
+    .option('--json', `${JSON_FLAG} — one object per line`)
+    .action(wrap((ref: string | undefined, options: WorkflowServeOptions) => workflowServeCommand(ref, options)));
+  workflow
+    .command('check')
+    .argument('[workflow]', 'a name under .relay/workflows/, or a file; omit when the repository has one')
+    .description('say what each step needs, and which steps Relay cannot perform yet')
+    .option('--env-file <path>', 'count the variables in this file as set')
+    .option('--json', JSON_FLAG)
+    .action(wrap((ref: string | undefined, options: { envFile?: string; json?: boolean }) => workflowCheckCommand(ref, options)));
+  workflow
+    .command('approvals')
+    .description('list the approvals a workflow is waiting on')
+    .option('-a, --all', 'include the ones already answered or out of time')
+    .option('--json', JSON_FLAG)
+    .action(wrap((options: { all?: boolean; json?: boolean }) => workflowApprovalsCommand(options)));
+  workflow
+    .command('approve')
+    .argument('<id>', 'the approval, as `relay workflow approvals` lists it')
+    .description('answer yes to a Human approval step, and let the run carry on')
+    .option('--as <login>', 'who is answering, when the step names its approvers')
+    .option('--json', JSON_FLAG)
+    .action(wrap((id: string, options: { as?: string; json?: boolean }) => workflowDecideCommand(true, id, options)));
+  workflow
+    .command('reject')
+    .argument('<id>', 'the approval, as `relay workflow approvals` lists it')
+    .description('answer no to a Human approval step: the run takes its Rejected path')
+    .option('--as <login>', 'who is answering, when the step names its approvers')
+    .option('--json', JSON_FLAG)
+    .action(wrap((id: string, options: { as?: string; json?: boolean }) => workflowDecideCommand(false, id, options)));
 
   program
     .command('clean')

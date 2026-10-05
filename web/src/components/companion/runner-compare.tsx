@@ -362,7 +362,7 @@ export function RunnerComparison({ className }: { className?: string }) {
             ))}
           </ul>
           <p className="mt-1 text-xs text-pretty text-muted-foreground">
-            There is a third place, for work that starts by itself: an exported workflow runs on your repository’s own GitHub Actions minutes, on your plan, with no Relay server involved. That is what a label on a GitHub issue starts today.
+            Work that starts by itself has two more places, neither with a Relay server in it. On a machine of your own, relay workflow serve keeps an exported workflow’s trigger (a webhook, a schedule, a label, an app’s own events) and runs every step. On your repository’s own GitHub Actions minutes, a label on a GitHub issue starts the pipeline.
           </p>
         </div>
         <div className="grid content-start gap-3">

@@ -56,7 +56,7 @@ export function PatchView({ patches, omitted }: { patches: RecordingPatch[]; omi
   if (patch === undefined) {
     return (
       <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        {omitted ? 'This recording was exported without its patches (`--no-patches`). The receipts still say which files changed.' : 'No code has been written yet at this point in the run.'}
+        {omitted ? 'This recording was exported without its patches (relay recording --no-patches). The receipts still say which files changed.' : 'No code has been written yet at this point in the run.'}
       </p>
     );
   }

@@ -686,8 +686,8 @@ line({ type: 'turn.completed', usage: { input_tokens: 3, output_tokens: 1 } });
 
 describe('Sign in with ChatGPT from the studio', () => {
   function pendingSignIn(): { pending: PendingSignIn; finish: (outcome: SignInResult | Error) => void; cancelled: () => boolean } {
-    let resolve!: (result: SignInResult) => void;
-    let reject!: (error: Error) => void;
+    let resolve: (result: SignInResult) => void = () => undefined;
+    let reject: (error: Error) => void = () => undefined;
     let cancelled = false;
     const result = new Promise<SignInResult>((yes, no) => {
       resolve = yes;
