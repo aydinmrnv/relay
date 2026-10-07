@@ -171,8 +171,8 @@ export const GLOSSARY: Record<Term, GlossaryEntry> = {
   connection: {
     term: 'connection',
     title: 'Connections',
-    short: 'Which apps a workflow may talk to. Slack and Discord connect for real, with a webhook the studio checks; other apps can be marked ready.',
-    long: 'You can design and test against the whole catalog without connecting anything. Slack and Discord take a webhook URL: the studio checks it with the app, keeps it encrypted in your account and only ever shows its last four characters. A webhook can post to one channel and do nothing else. Every other app can be marked ready, which records a label and signs in to nothing, until its own sign-in is built.',
+    short: 'Which apps a workflow may talk to. Most connect for real, with a webhook or an API token the studio checks with the app; the rest can be marked ready.',
+    long: 'You can design and test against the whole catalog without connecting anything. Slack and Discord take a webhook URL, which can post to one channel and do nothing else. Apps such as Linear, Sentry, Vercel and Notion take a key or token you make in their settings, which can do what you allowed it there. Either way the studio checks it with the app, keeps it encrypted in your account and only ever shows its last four characters; a run does not act through a stored token yet. Apps that need more than one pasted value can be marked ready, which records a label and signs in to nothing, until their own sign-in is built.',
     href: '/integrations',
   },
   subscription: {

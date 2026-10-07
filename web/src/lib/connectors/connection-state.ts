@@ -97,10 +97,11 @@ export function runnerSupport(connector: Connector): { performed: number; total:
 /**
  * The triggers and actions a real credential cannot carry out: a webhook can
  * post, but it cannot listen or react. Empty when the app has no real
- * credential kind, since then nothing is covered or uncovered yet.
+ * credential kind, since then nothing is covered or uncovered yet, and for
+ * an app that connects with a token, which is its whole sign-in.
  */
 export function uncoveredNodes(connectorId: string, nodes: NodeTypeDef[]): NodeTypeDef[] {
-  const spec = credentialSpec(connectorId);
-  if (spec === undefined) return [];
-  return nodes.filter((def) => def.kind === 'trigger' || !spec.actions.includes(def.specId));
+  const actions = credentialSpec(connectorId)?.actions;
+  if (actions === undefined) return [];
+  return nodes.filter((def) => def.kind === 'trigger' || !actions.includes(def.specId));
 }

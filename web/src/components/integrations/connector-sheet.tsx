@@ -16,7 +16,7 @@ import { useCreateWorkflow } from '@/hooks/use-create-workflow';
 import { useNow } from '@/hooks/use-now';
 import { useStudio, useWorkflows } from '@/lib/store';
 import { appsInUse, connectionState, nothingToConnect, STATE_LABEL, uncoveredNodes, type AppUsage, runnerSupport } from '@/lib/connectors/connection-state';
-import { credentialSpec } from '@/lib/connectors/credentials';
+import { credentialSpec, isWebhook } from '@/lib/connectors/credentials';
 import { CATEGORY_LABELS, nodeTypeId, type ActionSpec, type Connector, type FieldSpec, type PortSpec, type TriggerSpec } from '@/lib/connectors';
 import { workflowFromTrigger } from '@/lib/workflow/templates';
 import { timeAgo } from '@/lib/format';
@@ -68,6 +68,7 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
   const builtIn = isBuiltIn(connector);
   const state = connectionState(connector, connection);
   const spec = credentialSpec(connector.id);
+  const webhook = spec !== undefined && isWebhook(spec);
   const runner = runnerSupport(connector);
   const mode = useConnectMode(connector.id);
   const templates = templatesUsing(connector.id);
@@ -161,7 +162,7 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
               <HelpTip term="connection" className="ml-auto" />
             </p>
             <dl className="mt-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[13px]">
-              <dt className="text-muted-foreground">Posts as</dt>
+              <dt className="text-muted-foreground">{webhook ? 'Posts as' : 'Signed in as'}</dt>
               <dd className="truncate font-medium">{connection.account}</dd>
               <dt className="text-muted-foreground">Credential</dt>
               <dd className="font-mono text-xs leading-5">···{connection.credential.hint}</dd>
@@ -175,11 +176,11 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
                 <Button size="sm" onClick={() => setConnectOpen(true)}>
                   <Plug data-icon="inline-start" /> Paste a new one
                 </Button>
-              ) : (
+              ) : webhook ? (
                 <Button size="sm" variant="outline" disabled={actions.busy !== null} onClick={() => void actions.test(connector)}>
                   {actions.busy === 'test' ? <Spinner data-icon="inline-start" /> : <Send data-icon="inline-start" />} Send a test message
                 </Button>
-              )}
+              ) : null}
               <Button size="sm" variant="outline" disabled={actions.busy !== null} onClick={() => void actions.check(connector)}>
                 {actions.busy === 'check' ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />} Check again
               </Button>
@@ -193,7 +194,8 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
               </Button>
             </div>
             <p className="mt-3 border-t border-dashed pt-2.5 text-[13px] leading-relaxed text-muted-foreground">
-              {spec.scope} Checking asks {connector.name} whether it still works and posts nothing.
+              {spec.scope} Checking asks {connector.name} whether it still works and {webhook ? 'posts nothing' : 'changes nothing there'}.
+              {webhook ? null : ' Runs do not act through it yet: a real run still reads what it needs from the machine it runs on.'}
             </p>
           </section>
         ) : (
@@ -207,7 +209,7 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
               <HelpTip term="connection" className="ml-auto" />
             </p>
             <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-              {spec === undefined ? how.body : `${connector.name} checks it before ${brand.name} keeps it, encrypted. ${spec.scope}`}
+              {spec === undefined ? how.body : `${connector.name} checks it before ${brand.name} keeps it, encrypted. ${spec.scope}${webhook ? '' : ' Runs do not act through it yet: a real run still reads what it needs from the machine it runs on.'}`}
             </p>
             {nothingToConnect(state) ? null : spec === undefined ? (
               <p className="mt-2.5 flex gap-2 border-t border-dashed pt-2.5 text-[13px] leading-relaxed text-muted-foreground">
@@ -248,7 +250,7 @@ function ConnectorDetail({ connector, onOpenApp }: { connector: Connector; onOpe
           </section>
         )}
 
-        {spec === undefined ? null : <Coverage connector={connector} actions={spec.actions} caveat={spec.caveat} name={spec.name} />}
+        {spec?.actions === undefined ? null : <Coverage connector={connector} actions={spec.actions} caveat={spec.caveat} name={spec.name} />}
 
         {usage === undefined ? null : <UsedBy usage={usage} />}
 

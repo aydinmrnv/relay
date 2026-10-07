@@ -1,12 +1,13 @@
 'use client';
 
 import { motion } from 'motion/react';
-import { Blocks, LayoutGrid, Plug, Star, Workflow, type LucideIcon } from 'lucide-react';
+import { Blocks, KeyRound, LayoutGrid, Plug, Star, Workflow, type LucideIcon } from 'lucide-react';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CATEGORY_LABELS, CONNECTORS, JOBS, type Connector, type ConnectorCategory } from '@/lib/connectors';
+import { credentialSpec } from '@/lib/connectors/credentials';
 import { cn } from '@/lib/utils';
 
-export type Filter = 'all' | 'popular' | 'in-use' | 'connected' | ConnectorCategory;
+export type Filter = 'all' | 'popular' | 'in-use' | 'connectable' | 'connected' | ConnectorCategory;
 
 interface FilterDef {
   key: Filter;
@@ -18,6 +19,8 @@ export const SHORTCUT_FILTERS: FilterDef[] = [
   { key: 'all', label: 'All apps', icon: LayoutGrid },
   { key: 'popular', label: 'Popular', icon: Star },
   { key: 'in-use', label: 'In your workflows', icon: Workflow },
+  // The apps with a sign-in built: a webhook or a token the studio checks and keeps.
+  { key: 'connectable', label: 'Connects here', icon: KeyRound },
   { key: 'connected', label: 'Connected', icon: Plug },
 ];
 
@@ -58,6 +61,8 @@ export function inFilter(connector: Connector, filter: Filter, is: { connected: 
       return connector.popular === true;
     case 'in-use':
       return is.used(connector.id);
+    case 'connectable':
+      return credentialSpec(connector.id) !== undefined;
     case 'connected':
       return is.connected(connector.id);
     default:

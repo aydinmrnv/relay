@@ -18,7 +18,7 @@ import { matchConnector, SORT_LABELS, sortMatches, tokenize, type ConnectorMatch
 import { useStudio, useWorkflows } from '@/lib/store';
 import { CONNECTORS, getConnector } from '@/lib/connectors';
 import { appsInUse, type AppUsage } from '@/lib/connectors/connection-state';
-import { CREDENTIAL_SPECS } from '@/lib/connectors/credentials';
+import { CREDENTIAL_SPECS, credentialSpec } from '@/lib/connectors/credentials';
 import type { Connection } from '@/lib/workflow/schema';
 
 export default function IntegrationsPage() {
@@ -46,7 +46,6 @@ function writeParams(patch: Record<string, string | null>) {
 }
 
 const CATALOG_ORDER = new Map(CONNECTORS.map((connector, index) => [connector.id, index]));
-const REAL_APPS = CREDENTIAL_SPECS.map((spec) => getConnector(spec.connectorId)?.name ?? spec.connectorId).join(' and ');
 
 const SORT_ITEMS = (Object.keys(SORT_LABELS) as SortKey[]).map((key) => ({ value: key, label: SORT_LABELS[key] }));
 
@@ -80,11 +79,12 @@ function IntegrationsInner() {
   const is = useMemo(() => ({ connected: isConnected, used: (id: string) => usage.has(id) }), [isConnected, usage]);
 
   const counts = useMemo(() => {
-    const result: Record<string, number> = { all: matches.length, popular: 0, 'in-use': 0, connected: 0 };
+    const result: Record<string, number> = { all: matches.length, popular: 0, 'in-use': 0, connectable: 0, connected: 0 };
     for (const { connector } of matches) {
       result[connector.category] = (result[connector.category] ?? 0) + 1;
       if (connector.popular === true) result['popular'] = (result['popular'] ?? 0) + 1;
       if (is.used(connector.id)) result['in-use'] = (result['in-use'] ?? 0) + 1;
+      if (credentialSpec(connector.id) !== undefined) result['connectable'] = (result['connectable'] ?? 0) + 1;
       if (is.connected(connector.id)) result['connected'] = (result['connected'] ?? 0) + 1;
     }
     return result;
@@ -129,8 +129,8 @@ function IntegrationsInner() {
           <>
             The apps coding work comes from and the places people hear back, grouped by the job they do. A <strong className="font-medium text-foreground">trigger</strong> hands the agents a task when something
             happens: a ticket assigned, main going red, a new crash. An <strong className="font-medium text-foreground">action</strong> closes the loop where the work was asked for. Anything else with a URL works
-            through an Incoming webhook or an HTTP request. {REAL_APPS} connect here: {brand.name} checks the webhook with the app and keeps it encrypted. GitHub, Linear and Sentry need nothing connected here: a real run acts in them from your
-            runner, with gh, an API key or a signed webhook. The rest can be marked ready while their connection is built. You can design and test against every app without connecting any.
+            through an Incoming webhook or an HTTP request. {CREDENTIAL_SPECS.length} apps connect here: paste a webhook for Slack or Discord, or an API token for the others, and {brand.name} checks it with the app and keeps it encrypted. GitHub, Linear and Sentry need nothing connected here for a real run: it acts in them from your
+            runner, with gh, an API key or a signed webhook. The rest can be marked ready while their sign-in is built. You can design and test against every app without connecting any.
           </>
         }
       />
@@ -312,7 +312,7 @@ function NoResults({
             <Plug />
           </EmptyMedia>
           <EmptyTitle>Nothing connected yet</EmptyTitle>
-          <EmptyDescription>You do not need to connect anything to build or test a workflow. Connect Slack or Discord for real, or mark an app ready when you want its nodes to stop asking.</EmptyDescription>
+          <EmptyDescription>You do not need to connect anything to build or test a workflow. Connect an app for real with its webhook or API token, or mark one ready when you want its nodes to stop asking.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button variant="outline" onClick={onShowAll}>

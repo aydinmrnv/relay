@@ -151,7 +151,7 @@ export function DataSettings({ onReplaced }: { onReplaced: () => void }) {
                     <li>{plural(runCount, 'run')} and their timelines</li>
                     <li>
                       {plural(connectionCount, 'app connection')}
-                      {realConnectionCount > 0 ? `, including the ${realConnectionCount === 1 ? 'webhook' : `${realConnectionCount} webhooks`} stored encrypted for ${realConnectionCount === 1 ? 'it' : 'them'} (still valid in the app until you remove ${realConnectionCount === 1 ? 'it' : 'them'} there)` : ''}
+                      {realConnectionCount > 0 ? `, including the ${realConnectionCount === 1 ? 'credential' : `${realConnectionCount} credentials`} stored encrypted for ${realConnectionCount === 1 ? 'it' : 'them'} (still valid in the app until you remove ${realConnectionCount === 1 ? 'it' : 'them'} there)` : ''}
                     </li>
                     <li>
                       your settings: credentials, default repository, playback speed and

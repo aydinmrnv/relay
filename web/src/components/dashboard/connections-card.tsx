@@ -39,8 +39,9 @@ export function appRows(workflows: Workflow[], connections: Record<string, Conne
 
 /**
  * Real connections are asked again when they have not been for a while, so a
- * webhook revoked in Slack shows up here as failing rather than at the next
- * real run. Checking posts nothing. Once per connection per page load.
+ * webhook revoked in Slack or a token that expired shows up here as failing
+ * rather than at the next real run. Checking posts and changes nothing. Once
+ * per connection per page load.
  */
 const checkedThisLoad = new Set<string>();
 
