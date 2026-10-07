@@ -244,7 +244,7 @@ description={`Deletes your account and every workflow, run, saved version, share
             </AlertDialogMedia>
             <AlertDialogTitle>Delete {user.email || 'your account'}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This cannot be undone. Workflows exported to a repository keep running there, and a webhook you connected stays valid in Slack or Discord until you remove it there; everything stored here is gone
+              This cannot be undone. Workflows exported to a repository keep running there, and a webhook or token you connected stays valid in its app until you remove it there; everything stored here is gone
               {hasCloud ? ', and your Relay Cloud machine is removed first' : ''}.
             </AlertDialogDescription>
           </AlertDialogHeader>

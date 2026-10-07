@@ -4,7 +4,7 @@
  * back: the browser gets a `Connection` with a summary instead.
  */
 import { and, eq } from 'drizzle-orm';
-import { credentialHint, credentialSpec, type CredentialSpec } from '@/lib/connectors/credentials';
+import { credentialHint, credentialSpec, isWebhook, type CredentialSpec } from '@/lib/connectors/credentials';
 import type { Connection, CredentialKind } from '@/lib/workflow/schema';
 import { ApiError } from './api';
 import { seal, unseal } from './credentials/crypto';
@@ -71,7 +71,7 @@ export async function connectApp(userId: string, connectorId: string, secret: st
   const spec = specFor(connectorId);
   const value = secret.trim();
   if (!spec.input.pattern.test(value)) throw new ApiError(400, 'CREDENTIAL_SHAPE', spec.input.mismatch);
-  const result = await checkCredential(spec.kind, value);
+  const result = await checkCredential(spec, value);
   if (!result.ok) throw failure(spec, result);
   const hint = credentialHint(value);
   const account = label?.trim() || result.account || `${spec.name} ···${hint}`;
@@ -95,7 +95,7 @@ export async function recheckApp(userId: string, connectorId: string): Promise<C
   const spec = specFor(connectorId);
   const row = await find(userId, connectorId);
   const opened = await unseal(row.secret, userId, connectorId);
-  const result = await checkCredential(spec.kind, opened.value);
+  const result = await checkCredential(spec, opened.value);
   if (!result.ok && result.reason === 'unreachable') throw failure(spec, result);
   const now = new Date();
   const db = await getDb();
@@ -109,15 +109,17 @@ export async function recheckApp(userId: string, connectorId: string): Promise<C
   return toConnection(updated!);
 }
 
-/** Posts a short message through the connection, so the person sees it arrive where they expect. */
+/** Posts a short message through the connection, so the person sees it arrive where they expect. Webhooks only. */
 export async function testApp(userId: string, connectorId: string): Promise<Connection> {
   const spec = specFor(connectorId);
+  // A token signs in to an API and posts nowhere by itself: checking it again is its test.
+  if (!isWebhook(spec)) throw new ApiError(400, 'NOT_TESTABLE', 'There is no test message for this app. Check the connection again instead: that asks the app whether it still works.');
   const row = await find(userId, connectorId);
   // What is true today: the studio keeps the webhook and can post a test
   // through it. A run does not post through it yet; an exported workflow
   // posts with the same URL held as a secret in its own repository.
   const text = `${BRAND.name}: this webhook works, and test messages like this one arrive here. An exported workflow posts here once the same URL is set as a secret in its repository.`;
-  const result = await sendTestMessage(spec.kind, (await unseal(row.secret, userId, connectorId)).value, text);
+  const result = await sendTestMessage(spec, (await unseal(row.secret, userId, connectorId)).value, text);
   if (!result.ok && result.reason === 'unreachable') throw failure(spec, result);
   const now = new Date();
   const db = await getDb();

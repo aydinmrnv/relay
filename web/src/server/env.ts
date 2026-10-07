@@ -52,8 +52,8 @@ export const ACCOUNTS_ENABLED = ACCOUNTS_UNAVAILABLE_REASON === null;
 export const IS_PRODUCTION = PRODUCTION;
 
 /**
- * The key app credentials (a Slack or Discord webhook URL) are encrypted
- * with before they reach the database: 32 random bytes, base64, e.g. from
+ * The key app credentials (a Slack or Discord webhook URL, another app's
+ * API token) are encrypted with before they reach the database: 32 random bytes, base64, e.g. from
  * `openssl rand -base64 32`. Development makes its own and keeps it in
  * `.data/`, next to the embedded database; production needs this set, or
  * apps can only be marked ready.

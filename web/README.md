@@ -53,7 +53,7 @@ The browser keeps using the same zustand store. Clerk says who is signed in (`Cl
 | `GET/PUT/DELETE /api/workflows/:id`, `/api/runs/:id`, `DELETE /api/runs` | Sync. A save names the revision it is based on; a stale one gets a 409 with the server's copy, and the studio keeps both (the other as a "conflicted copy") |
 | `/api/workflows/:id/versions[/:versionId]` | Version history |
 | `/api/workflows/:id/share`, `POST /api/share/:slug/remix`, `/view` | Publishing, refreshing and withdrawing a share link; counting remixes and views |
-| `PUT/DELETE /api/connections/:connectorId`, `POST …/check`, `…/test`, `DELETE /api/connections` | App connections: a Slack or Discord webhook, sealed with `RELAY_CREDENTIALS_KEY` before it is stored; checking one; sending a test message; removing all of them |
+| `PUT/DELETE /api/connections/:connectorId`, `POST …/check`, `…/test`, `DELETE /api/connections` | App connections: a Slack or Discord webhook, or another app's API token, checked with the app and sealed with `RELAY_CREDENTIALS_KEY` before it is stored; checking one again; sending a test message through a webhook; removing all of them |
 | `/api/badge/:slug`, `/s/:slug/opengraph-image` | The README badge (SVG) and the share page's social card |
 | `GET /api/capabilities` | What this deployment has (accounts, guests, Relay Cloud, real connections), read at run time |
 | `GET /api/health` | 200 when the deployment can do its job. In production that needs the database, both Clerk keys, the credentials key and the deletion webhook secret; otherwise 503 with what is missing |
@@ -68,7 +68,7 @@ A production deployment is a Next.js server with a Postgres database and Clerk. 
 |---|---|
 | `DATABASE_URL` | A Postgres database of the studio's own. Tables are created and migrated on first request |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | Accounts. Without them a production build keeps the site up and closes the studio |
-| `RELAY_CREDENTIALS_KEY` | Seals the Slack and Discord webhooks people connect. Without it apps can only be marked ready |
+| `RELAY_CREDENTIALS_KEY` | Seals the webhooks and API tokens people connect apps with. Without it apps can only be marked ready |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Removes the data of an account deleted in Clerk's dashboard |
 
 `/api/health` answers 503 and names what is missing until all four are set, so point the host's health check at it. `RELAY_CLOUD_HUB_URL` is optional: with it the studio offers Relay Cloud to signed-in people, and without it Relay Cloud is described as an invite-only beta nobody can switch on here.
@@ -161,7 +161,7 @@ Add a `defineConnector({...})` entry to one of the catalog files. Triggers and a
 | The catalog, the graph, validation, the compiler and its output files, describe-to-workflow | Test runs (phases, costs, refusals, PR numbers), and the spend forecast built from them |
 | Through `relay connect`: signing in to Claude Code and Codex, runs on your computer, installing an export | Every app's trigger: only a label on a GitHub issue starts an exported workflow |
 | Export to a repository, which then runs on GitHub Actions | App nodes marked "test runs only" in the palette |
-| Slack and Discord connections (a stored, encrypted webhook and a real test message) | Every other app's connection ("Mark ready" records a label and signs in to nothing) |
+| Connections to 20 apps: a Slack or Discord webhook (stored encrypted, with a real test message), or an API token the app confirms (`src/lib/connectors/credentials.ts` lists them) | The other apps' connections ("Mark ready" records a label and signs in to nothing) |
 | Import and export of your data | Approvals (decided by the simulator; a real run does not wait for one) |
 
 The simulated column is what is not built yet: webhooks for every connector, and approvals from Slack and email. A workflow runs for real on your machine through `relay connect`, on your own Relay Cloud machine ([how](../docs/design/relay-cloud-runners.md)), or unattended through its export.

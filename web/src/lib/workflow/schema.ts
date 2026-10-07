@@ -152,7 +152,12 @@ export interface Connection {
   credential?: CredentialSummary;
 }
 
-export type CredentialKind = 'slack-webhook' | 'discord-webhook';
+/**
+ * A webhook posts to the one channel it was made for. An `api-token` is a key
+ * or token the app issues for its API; which app is the connection's own
+ * `connectorId`.
+ */
+export type CredentialKind = 'slack-webhook' | 'discord-webhook' | 'api-token';
 
 /** What the browser is told about a stored credential. Never the credential itself. */
 export interface CredentialSummary {

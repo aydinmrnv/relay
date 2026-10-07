@@ -29,7 +29,6 @@ import { useCompanion } from '@/lib/companion/client';
 import { repositoryLabel } from '@/lib/companion/types';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 
-const REAL_APPS = CREDENTIAL_SPECS.map((spec) => getConnector(spec.connectorId)?.name ?? spec.connectorId).join(' and ');
 
 export default function DashboardPage() {
   const brand = useBrand();
@@ -138,7 +137,7 @@ export default function DashboardPage() {
     {
       id: 'connect',
       title: 'Connect your apps',
-      why: `${REAL_APPS} connect for real: paste a webhook and ${brand.name} checks it with the app. Other apps can be marked ready until their sign-in is built.`,
+      why: `${CREDENTIAL_SPECS.length} apps connect for real: paste a webhook or an API token and ${brand.name} checks it with the app. The rest can be marked ready until their sign-in is built.`,
       done: connected > 0,
       doneNote: [tally.verified > 0 ? `${tally.verified} connected for real` : null, tally.marked > 0 ? `${tally.marked} marked ready` : null, tally.failing > 0 ? `${tally.failing} failing` : null].filter(Boolean).join(', ') + '.',
       ...(tally.missing > 0 ? { warning: `${tally.missing} ${tally.missing === 1 ? 'app your workflows use is' : 'apps your workflows use are'} not connected yet.` } : {}),

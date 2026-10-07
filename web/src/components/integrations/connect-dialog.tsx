@@ -13,7 +13,7 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { useBrand } from '@/hooks/use-brand';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { connectForReal, sendTestMessage } from '@/lib/cloud/connections';
-import { credentialSpec, type CredentialSpec } from '@/lib/connectors/credentials';
+import { credentialSpec, isWebhook, type CredentialSpec } from '@/lib/connectors/credentials';
 import { useStudio } from '@/lib/store';
 import type { Connector } from '@/lib/connectors';
 import { authExplainer, authLabel } from './connector-meta';
@@ -41,9 +41,10 @@ export function useConnectMode(connectorId: string): ConnectMode {
 }
 
 /**
- * Connecting an app. Slack and Discord take a webhook, which the server
- * checks with the app before keeping; everything else can be marked ready,
- * and the dialog says plainly that nothing is signed in to.
+ * Connecting an app. Slack and Discord take a webhook and most other apps a
+ * key or token of their own, which the server checks with the app before
+ * keeping; the rest can be marked ready, and the dialog says plainly that
+ * nothing is signed in to.
  */
 export function ConnectDialog({ connector, open, onOpenChange }: Props) {
   return (
@@ -85,6 +86,7 @@ function RealForm({ connector, spec, onDone }: { connector: Connector; spec: Cre
   const brand = useBrand();
   const existing = useStudio((state) => state.connections[connector.id]);
   const replacing = existing?.credential !== undefined;
+  const webhook = isWebhook(spec);
   const [secret, setSecret] = useState('');
   const [label, setLabel] = useState(replacing ? existing.account : '');
   const [touched, setTouched] = useState(false);
@@ -92,6 +94,7 @@ function RealForm({ connector, spec, onDone }: { connector: Connector; spec: Cre
   const [refusal, setRefusal] = useState<string | null>(null);
 
   const value = secret.trim();
+  const whole = webhook ? 'the whole URL' : 'it whole';
   const shapeOk = spec.input.pattern.test(value);
   // Only complain about the shape once someone has pasted or left the field; not while they type.
   const showMismatch = value.length > 0 && !shapeOk && (touched || value.length > 40);
@@ -103,19 +106,24 @@ function RealForm({ connector, spec, onDone }: { connector: Connector; spec: Cre
     setRefusal(null);
     try {
       const connection = await connectForReal(connector.id, value, label);
-      toast.success(`${connector.name} connected`, {
-        // What the stored webhook is used for today, and what it is not: a run does not post through it yet.
-        description: `${connector.name} accepted ${spec.noun.replace(/^an? /, 'the ')}, and it is stored encrypted as “${connection.account}”. It is used for test messages; an exported workflow still needs it as a secret in its repository.`,
-        action: {
-          label: 'Send a test message',
-          onClick: () => {
-            void sendTestMessage(connector.id).then(
-              () => toast.success('Test message sent', { description: `Look for it in ${connection.account}.` }),
-              (error: unknown) => toast.error(`${connector.name} did not take the test message`, { description: error instanceof Error ? error.message : undefined }),
-            );
+      const accepted = `${connector.name} accepted ${spec.noun.replace(/^an? /, 'the ')}, and it is stored encrypted as “${connection.account}”.`;
+      // What the stored credential is used for today, and what it is not: a run does not act through it yet.
+      if (webhook) {
+        toast.success(`${connector.name} connected`, {
+          description: `${accepted} It is used for test messages; an exported workflow still needs it as a secret in its repository.`,
+          action: {
+            label: 'Send a test message',
+            onClick: () => {
+              void sendTestMessage(connector.id).then(
+                () => toast.success('Test message sent', { description: `Look for it in ${connection.account}.` }),
+                (error: unknown) => toast.error(`${connector.name} did not take the test message`, { description: error instanceof Error ? error.message : undefined }),
+              );
+            },
           },
-        },
-      });
+        });
+      } else {
+        toast.success(`${connector.name} connected`, { description: `${accepted} Runs do not act through it yet: a real run still reads what it needs from the machine it runs on.` });
+      }
       onDone();
     } catch (error) {
       setRefusal(error instanceof Error ? error.message : `${connector.name} did not accept it.`);
@@ -155,8 +163,12 @@ function RealForm({ connector, spec, onDone }: { connector: Connector; spec: Cre
         <Label htmlFor="connect-secret">{spec.input.label}</Label>
         <Input
           id="connect-secret"
+          // A token is hidden as it is typed, and kept out of the browser's saved passwords; a webhook URL is long enough to want to see.
+          type={webhook ? 'text' : 'password'}
           autoFocus
-          autoComplete="off"
+          autoComplete={webhook ? 'off' : 'new-password'}
+          data-1p-ignore
+          data-lpignore="true"
           spellCheck={false}
           value={secret}
           onChange={(event) => {
@@ -170,7 +182,7 @@ function RealForm({ connector, spec, onDone }: { connector: Connector; spec: Cre
           className="font-mono text-xs"
         />
         <p id="connect-secret-help" className={showMismatch ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
-          {showMismatch ? spec.input.mismatch : replacing ? `Replaces the one ending ···${existing.credential!.hint}. Paste the whole URL; it is not shown again after this.` : 'Paste the whole URL. It is not shown again after this.'}
+          {showMismatch ? spec.input.mismatch : replacing ? `Replaces the one ending ···${existing.credential!.hint}. Paste ${whole}; it is not shown again after this.` : `Paste ${whole}. It is not shown again after this.`}
         </p>
       </div>
 
@@ -270,7 +282,7 @@ function MarkerForm({ connector, spec, onDone }: { connector: Connector; spec: C
           <div className="flex gap-2.5 text-[13px] leading-relaxed">
             <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden />
             <p className="text-muted-foreground">
-              <span className="font-medium text-foreground">{connector.name} connects for real.</span> Paste its {spec.input.label.toLowerCase()} and {brand.name} checks it with {connector.name} and keeps it encrypted in your account. That needs an account: free, and what you made in this browser comes with you.
+              <span className="font-medium text-foreground">{connector.name} connects for real.</span> Paste {spec.noun} and {brand.name} checks it with {connector.name} and keeps it encrypted in your account. That needs an account: free, and what you made in this browser comes with you.
             </p>
           </div>
           <div className="flex flex-wrap gap-2 pl-6.5">

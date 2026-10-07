@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/privacy' },
 };
 
-const UPDATED = 'October 1, 2026';
+const UPDATED = 'October 6, 2026';
 
 export default function PrivacyPage() {
   const name = BRAND.name;
@@ -38,7 +38,10 @@ export default function PrivacyPage() {
           branch names from your repository.
         </li>
         <li>The answers you gave when setting up: your role, the tools you said you use, your review preference and the repository you named.</li>
-        <li>Any Slack or Discord webhook you connect. It is encrypted before it is stored, never sent back to your browser, and deleted when you disconnect the app, clear your workspace or delete your account.</li>
+        <li>
+          The credential of any app you connect: a Slack or Discord webhook, or the API key or token you paste for another app. It is encrypted before it is stored, never sent back to your browser, and deleted when you
+          disconnect the app, clear your workspace or delete your account.
+        </li>
         <li>Share links you create, each with a public copy of the workflow and the name shown as its author, which is your Clerk display name at the time.</li>
         <li>Counters of how often your account, or for public pages an IP address, has made certain requests, kept for a day, so that nobody can flood the service.</li>
         <li>Clerk keeps session records, with the IP address and browser that signed in, so you can see and end sessions from Settings and so sign-in attempts can be protected against abuse.</li>
@@ -86,7 +89,7 @@ export default function PrivacyPage() {
         <li>The database is PostgreSQL, run for us by a managed database provider.</li>
         <li>Clerk handles accounts, sign-in and account emails.</li>
         <li>Microsoft Azure runs Relay Cloud machines, for the people who use Relay Cloud.</li>
-        <li>Slack or Discord, when you connect one: the webhook you paste is checked with them, and test messages are posted through it.</li>
+        <li>An app you connect, such as Slack, Discord, Linear or Sentry: the webhook or token you paste is sent to that app, and to nobody else, to be checked. Test messages are posted through a webhook when you ask for one.</li>
       </ul>
       <p>They process data only to run the service. We do not sell data, show ads, or use analytics trackers.</p>
 
