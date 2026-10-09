@@ -25,21 +25,23 @@ export function FinalCta() {
             />
             <div className="flex max-w-2xl flex-col gap-4">
               <h2 className="text-4xl leading-[1.04] font-semibold tracking-[-0.035em] text-balance sm:text-[3.5rem]">
-                Your next ticket could be a pull request.
+                Your next issue could be a pull request.
               </h2>
               <p className="max-w-lg text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg">
-                Start with a template. Try a simulated run. Pick a runner when you’re ready.
+                Connect a repository, pick a workflow, label an issue. It runs on your own GitHub Actions.
               </p>
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 <Hero1Cta href={entry.href}>{entry.label}</Hero1Cta>
-                <Button
-                  variant="outline"
-                  className={cn(PILL, 'h-11 bg-background/70 px-5 backdrop-blur-sm')}
-                  nativeButton={false}
-                  render={<Link href={entry.into('/templates')} />}
-                >
-                  Start from a template
-                </Button>
+                {entry.signIn === null && entry.playground === null ? null : (
+                  <Button
+                    variant="outline"
+                    className={cn(PILL, 'h-11 bg-background/70 px-5 backdrop-blur-sm')}
+                    nativeButton={false}
+                    render={<Link href={entry.playground ?? entry.signIn ?? '/guide'} />}
+                  >
+                    {entry.playground === null ? 'Sign in' : 'Try the demo first'}
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -130,7 +132,7 @@ export function SiteFooter() {
       <div className="border-t">
         <div className="container flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 py-5 text-xs text-muted-foreground">
           <p className="mr-auto">
-            © {new Date().getFullYear()} {OPERATOR}. {brand.name} is open-source orchestration for coding agents.
+            © {new Date().getFullYear()} {OPERATOR}. {brand.name} is open source: automations for your repository, run by coding agents on your own GitHub Actions.
           </p>
           <nav aria-label="Legal" className="flex items-center gap-5">
             <Link href="/privacy" className="hover:text-foreground">

@@ -1,4 +1,3 @@
-import { DemoBanner } from '@/components/app/demo-banner';
 import { SiteHeader } from './site-header';
 import { Hero } from './hero';
 import { HowItWorks } from './how-it-works';
@@ -26,7 +25,6 @@ export function Landing() {
       >
         Skip to content
       </a>
-      <DemoBanner site />
       <SiteHeader overlay />
       <main id="main-content" className="flex-1">
         <Hero />

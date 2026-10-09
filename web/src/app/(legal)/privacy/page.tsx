@@ -37,7 +37,10 @@ export default function PrivacyPage() {
           The records of your runs: test runs, and runs on your own runner. A run’s record has its phases, costs and summary, and for a real run the progress lines the engine reported, which can include file names and
           branch names from your repository.
         </li>
-        <li>The answers you gave when setting up: your role, the tools you said you use, your review preference and the repository you named.</li>
+        <li>
+          Your projects and the answers you gave when setting one up: the repositories you named, where each runs, your choice of agents and review, and whether you said its files are installed. To find a repository you name,
+          your browser asks GitHub’s public API about it directly, with no sign-in of yours; that request goes from your browser to GitHub, not through us, and a private repository simply cannot be seen.
+        </li>
         <li>
           The credential of any app you connect: a Slack or Discord webhook, or the API key or token you paste for another app. It is encrypted before it is stored, never sent back to your browser, and deleted when you
           disconnect the app, clear your workspace or delete your account.

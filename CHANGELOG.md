@@ -48,6 +48,33 @@ Launch readiness. Relay is in beta, and free while it is.
 - Answering an approval from the studio needs the same yes at `relay connect`'s
   terminal that starting a run does.
 
+### Projects, and a setup that ends in your repository
+
+- Relay says one thing about itself: it builds automations that run on your
+  own GitHub Actions, in your repository. The site's first button is *Get
+  started*, beside *Sign in*; the playground is called the demo, and is no
+  longer what the main button opens.
+- A project is one repository and where its workflows run: its own GitHub
+  Actions, your computer, or Relay Cloud. An account has as many as it has
+  repositories. The switcher at the top of the sidebar picks the one in view,
+  and the dashboard, the workflows and the runs follow it.
+- Setup after sign-up asks, in order: which repository, where it runs, what
+  the first workflow does, and the rules it runs under — the label that starts
+  it, who may add that label, what a run and a day may cost, which agents do
+  the work. The workflow it makes exports with nothing left to fix.
+- The last step is the install, for the runner you chose: the three files to
+  commit, each agent's sign-in as a repository secret, the repository setting
+  that lets Actions open pull requests, and the label that starts a run. For a
+  public repository the studio can check the files arrived. All of it is under
+  Projects afterwards.
+- Every workflow type says how it starts on the runner you picked. On GitHub
+  Actions an issue event starts it by itself; a schedule or a failed build is
+  started by hand there, and the card says so.
+- A new account opens on setup, not on an empty dashboard. An account never
+  starts with example workflows or runs in it.
+- SETUP.md in an export now says to let Actions open pull requests, which
+  GitHub leaves off for new repositories.
+
 ### The studio
 
 - The command palette (⌘K) no longer crashes the page.

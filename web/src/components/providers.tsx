@@ -130,6 +130,7 @@ function ClerkBridge() {
       emailVerified: email?.verification?.status === 'verified',
       image: user.hasImage ? user.imageUrl : null,
       createdAt: (user.createdAt ?? new Date()).toISOString(),
+      github: user.externalAccounts.find((account) => account.provider === 'github')?.username ?? null,
     };
     void accountChanged(person);
   }, [hydrated, isLoaded, userId, user]);

@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   // Absolute URLs for the social card, so share links preview properly.
   metadataBase: new URL(PUBLIC_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:3000')),
   // The home page says what the product is; every other page says what the page is.
-  title: { default: `${BRAND.name} — Ticket in. Reviewed PR out.`, template: `%s · ${BRAND.name}` },
+  title: { default: `${BRAND.name} — Automations for your repo, on your GitHub Actions`, template: `%s · ${BRAND.name}` },
   description: BRAND.tagline,
   applicationName: BRAND.name,
   // No title here: each page's own title becomes its og:title, instead of every page unfurling as "Relay".

@@ -24,7 +24,7 @@ export function ReplayFrame({ children }: { children: React.ReactNode }) {
           </Link>
           <ThemeToggle className="size-8" />
           <Button size="sm" variant="outline" nativeButton={false} render={<Link href={entry.builder} />}>
-            {entry.signedIn ? 'Open the builder' : 'Open the playground'}
+            {entry.signedIn ? 'Open the builder' : 'Try the demo'}
           </Button>
         </div>
       </header>

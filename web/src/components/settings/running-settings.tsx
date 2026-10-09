@@ -12,46 +12,10 @@ import { HelpTip } from '@/components/app/help-tip';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { AGENT_MARKS } from '@/lib/agents/marks';
 import { useStudio } from '@/lib/store';
+import { projectActions } from '@/hooks/use-projects';
+import { AGENT_CREDENTIALS as CREDENTIALS, type AgentKey } from '@/lib/agent-credentials';
 import { isRepository, type AuthPreference } from '@/lib/workflow/schema';
 import { SettingBlock } from './settings-section';
-
-type AgentKey = 'claude' | 'codex';
-
-interface Credential {
-  secret: string;
-  what: string;
-  commands: (repo: string) => string;
-}
-
-/** What each agent needs in GitHub Actions for each choice. Mirrors the secrets compileWorkflow asks for. */
-const CREDENTIALS: Record<AgentKey, { name: string } & Record<AuthPreference, Credential>> = {
-  claude: {
-    name: 'Claude Code',
-    subscription: {
-      secret: 'CLAUDE_CODE_OAUTH_TOKEN',
-      what: 'A one-year token from claude setup-token, tied to the Claude Pro, Max, Team or Enterprise plan of whoever creates it. Runs count against that plan’s usage.',
-      commands: (repo) => `claude setup-token\ngh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${repo}   # paste the token when asked`,
-    },
-    'api-key': {
-      secret: 'ANTHROPIC_API_KEY',
-      what: 'A key from the Anthropic Console. Runs are billed per token to that Console account.',
-      commands: (repo) => `gh secret set ANTHROPIC_API_KEY -R ${repo}   # paste the key when asked`,
-    },
-  },
-  codex: {
-    name: 'Codex',
-    subscription: {
-      secret: 'CODEX_AUTH_JSON',
-      what: 'The sign-in file Codex keeps at ~/.codex/auth.json after codex login with a ChatGPT plan. OpenAI documents this for CI but asks that it not be used on public repositories. The file rotates: if runs stop signing in, log in again and re-seed the secret.',
-      commands: (repo) => `codex login\ngh secret set CODEX_AUTH_JSON -R ${repo} < ~/.codex/auth.json`,
-    },
-    'api-key': {
-      secret: 'OPENAI_API_KEY',
-      what: 'A key from the OpenAI Platform. Runs are billed per token to that account.',
-      commands: (repo) => `gh secret set OPENAI_API_KEY -R ${repo}   # paste the key when asked`,
-    },
-  },
-};
 
 export function RunningSettings() {
   return (
@@ -79,32 +43,46 @@ export function RunningSettings() {
         </p>
       </SettingBlock>
       <Separator />
-      <RepositorySetting />
+      <RepositoryForNew />
       <Separator />
       <Credentials />
     </Card>
   );
 }
 
+/** Remounted when the project in view changes, so the field never holds the one before, to be written back on leaving it. */
+function RepositoryForNew() {
+  const saved = useStudio((state) => state.settings.defaultRepository);
+  return <RepositorySetting key={saved} />;
+}
+
 function RepositorySetting() {
   const saved = useStudio((state) => state.settings.defaultRepository);
-  const updateSettings = useStudio((state) => state.updateSettings);
   const [value, setValue] = useState(saved);
   const trimmed = value.trim();
   const valid = isRepository(trimmed);
 
+  // A repository named here is a project like any other: it is set up as one, and becomes the one in view.
   const commit = () => {
     if (trimmed === saved) return;
     if (!valid) return;
-    updateSettings({ defaultRepository: trimmed });
-    toast.success(`New workflows will attach to ${trimmed}.`);
+    projectActions.add({ repository: trimmed });
+    toast.success(`New workflows will attach to ${trimmed}.`, { description: 'It is the project in view. Where it runs is set under Projects.' });
   };
 
   return (
     <SettingBlock
       htmlFor="default-repository"
-      title="Default repository"
-      description="New workflows and templates attach to this repository, and the commands below use it. Workflows you already have keep their own."
+      title="Repository for new workflows"
+      description={
+        <>
+          The project in view: new workflows and templates attach to it, and the commands below use it. Workflows you already have keep their own. Switch at the top of the sidebar, or manage every repository under{' '}
+          <a href="/projects" className="font-medium text-foreground underline underline-offset-4">
+            Projects
+          </a>
+          .
+        </>
+      }
     >
       <form
         className="grid max-w-sm gap-1.5"
