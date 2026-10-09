@@ -1,36 +1,42 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Check, CheckCircle2, GitPullRequestDraft, Hand, Lock, Power, ShieldX, Wallet } from 'lucide-react';
+import { Check, CheckCircle2, FileCode2, GitPullRequestDraft, Hand, Lock, Power, ShieldX, Wallet } from 'lucide-react';
 import { useBrand } from '@/hooks/use-brand';
 import { cn } from '@/lib/utils';
 import { AppMark, AppTile, Reveal, SAMPLE, SectionHeading } from './primitives';
 
 /**
- * Four steps, each with a small illustration built from the same pieces the
- * builder uses, so the page shows the product rather than describing it.
+ * The steps of setting a project up, in the order setup asks them, each with
+ * a small illustration built from the same pieces the studio uses, so the
+ * page shows the product rather than describing it.
  */
 export function HowItWorks() {
   const brand = useBrand();
   const steps: Array<{ title: string; body: string; visual: ReactNode }> = [
     {
-      title: 'Pick what starts a run',
-      body: 'A label on a GitHub issue, a ticket assigned in Linear, a new error in Sentry, a schedule or a webhook: each starts a run by itself, on a machine of yours. The rest of the catalog can be drawn and test-run now, and started by hand.',
-      visual: <TriggerVisual />,
+      title: 'Connect a repository',
+      body: `Say which repository. ${brand.name} never asks for access to your code: it writes a workflow file and the rules it runs under, and you commit them like any other change.`,
+      visual: <RepositoryVisual />,
     },
     {
-      title: 'Put guardrails in front',
-      body: 'Set a budget, restrict who can start a run, and add approval where it matters: the run waits there until a person says yes. Failed checks stop the run.',
+      title: 'Pick what it does',
+      body: 'Start with issue to pull request: label an issue, and two agents plan it, write it and review each other. Or describe your own in a sentence and edit it on the canvas.',
+      visual: <WorkflowVisual />,
+    },
+    {
+      title: 'Set the rules',
+      body: 'Who may start a run, what a run and a day may cost, and where a person has to say yes. A run that breaks a rule does not start.',
       visual: <GuardrailVisual />,
     },
     {
-      title: 'Let the agents check each other',
-      body: 'One agent writes the plan and the other attacks it. Then they swap: one writes the code and the other reviews the diff. Blocking findings go back for a fix.',
+      title: 'It runs on your GitHub Actions',
+      body: 'On your repository’s own minutes, with the Claude and ChatGPT plans you already pay for, held as secrets only GitHub has. One agent writes the plan and the other attacks it; then they swap for the code.',
       visual: <ReviewVisual />,
     },
     {
-      title: 'Deliver as far as you allow',
-      body: 'Choose a commit, branch, or draft pull request. Unattended runs stop at a draft PR, leaving the merge to you.',
+      title: 'You get a draft pull request',
+      body: 'Tested, reviewed, and reported back on the issue. A run nobody is watching stops at a draft: the merge is yours.',
       visual: <DeliveryVisual />,
     },
   ];
@@ -40,8 +46,8 @@ export function HowItWorks() {
       <div className="container max-w-6xl">
         <SectionHeading
           eyebrow="How it works"
-          title="A clear path from ticket to pull request"
-          description={`Build the workflow once. ${brand.name} handles each handoff and stops when a guardrail says no.`}
+          title="From your repository to a reviewed pull request"
+          description="Set it up once, in about two minutes. After that a label on an issue is all it takes."
         />
         <ol className="mt-12 border-b sm:mt-14">
           {steps.map((step, index) => (
@@ -76,24 +82,50 @@ function Row({ children, className }: { children: ReactNode; className?: string 
 const SUCCESS_TEXT = 'text-[color-mix(in_oklch,var(--success)_80%,var(--foreground))] dark:text-success';
 const DESTRUCTIVE_TEXT = 'text-[color-mix(in_oklch,var(--destructive)_85%,var(--foreground))] dark:text-destructive';
 
-function TriggerVisual() {
-  // What starts a run with nobody pressing anything: said on the picture, not in a footnote.
-  const triggers = [
-    { id: 'github', name: 'GitHub', event: 'Label added', detail: `${SAMPLE.label} on ${SAMPLE.issue}`, state: 'Runs unattended' },
-    { id: 'linear', name: 'Linear', event: 'Issue assigned', detail: '', state: 'Runs unattended' },
-    { id: 'sentry', name: 'Sentry', event: 'New issue', detail: '', state: 'Runs unattended' },
+function RepositoryVisual() {
+  // What setup leaves in the repository: three files, named as the export names them.
+  const files = ['.github/workflows/issue-to-pull-request.yml', '.relay/config.json', '.relay/workflows/issue-to-pull-request.json'];
+  return (
+    <Panel>
+      <Row>
+        <AppTile connector="github" size={14} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono text-sm font-medium">{SAMPLE.repository}</p>
+          <p className="truncate text-xs text-muted-foreground">runs on GitHub Actions</p>
+        </div>
+        <span className={cn('inline-flex shrink-0 items-center gap-1 text-xs font-medium', SUCCESS_TEXT)}>
+          <Check className="size-3.5" /> Connected
+        </span>
+      </Row>
+      {files.map((file) => (
+        <Row key={file} className="py-2">
+          <FileCode2 className="size-3.5 shrink-0 text-muted-foreground" />
+          <p className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{file}</p>
+        </Row>
+      ))}
+      <p className="bg-muted/40 px-4 py-2.5 font-mono text-xs text-muted-foreground">committed by you · no access to your code is asked for</p>
+    </Panel>
+  );
+}
+
+function WorkflowVisual() {
+  const workflows = [
+    { name: 'Issue to pull request', detail: `label ${SAMPLE.label}`, picked: true },
+    { name: 'Quick fix from an issue', detail: 'one agent, one session', picked: false },
+    { name: 'Describe your own', detail: 'a sentence in, a workflow out', picked: false },
   ];
   return (
     <Panel>
-      {triggers.map((trigger) => (
-        <Row key={trigger.id}>
-          <AppTile connector={trigger.id} size={14} />
+      {workflows.map((workflow) => (
+        <Row key={workflow.name}>
+          <span className={cn('flex size-4 shrink-0 items-center justify-center rounded-full border', workflow.picked && 'border-foreground bg-foreground text-background')}>
+            {workflow.picked ? <Check className="size-3" /> : null}
+          </span>
           <div className="min-w-0 flex-1">
-            <p className="text-xs text-muted-foreground">{trigger.name}</p>
-            <p className="truncate text-sm font-medium">{trigger.event}</p>
+            <p className="truncate text-sm font-medium">{workflow.name}</p>
+            <p className="truncate font-mono text-xs text-muted-foreground">{workflow.detail}</p>
           </div>
-          {trigger.detail.length > 0 ? <span className="hidden truncate font-mono text-xs text-muted-foreground sm:block">{trigger.detail}</span> : null}
-          <span className={cn('shrink-0 text-xs font-medium', SUCCESS_TEXT)}>{trigger.state}</span>
+          {workflow.picked ? <span className={cn('hidden shrink-0 text-xs font-medium sm:block', SUCCESS_TEXT)}>Starts by itself</span> : null}
         </Row>
       ))}
     </Panel>

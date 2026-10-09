@@ -72,6 +72,7 @@ export const config = {
   // Written out, because this list is read at build time and cannot be computed: keep it in step with `STUDIO_ROUTES`.
   matcher: [
     '/dashboard/:path*',
+    '/projects/:path*',
     '/workflows/:path*',
     '/runs/:path*',
     '/templates/:path*',

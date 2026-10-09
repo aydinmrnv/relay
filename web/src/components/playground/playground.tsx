@@ -82,8 +82,12 @@ function PlaygroundHeader() {
         <BrandMark className="size-6" />
         <span className="hidden sm:inline">{brand.name}</span>
       </Link>
-      <Badge variant="secondary">Playground</Badge>
-      <p className="hidden min-w-0 truncate text-xs text-muted-foreground lg:block">No account needed. Your work stays in this browser, and test runs are simulated: nothing is called or billed. Export it, and the relay CLI runs the same workflow for real.</p>
+      <Badge variant="secondary">Demo</Badge>
+      <p className="hidden min-w-0 truncate text-xs text-muted-foreground lg:block">
+        {accounts
+          ? 'This is the demo: no account, your work stays in this browser, and runs are simulated. Make an account to run it in your own repository.'
+          : 'This is the demo: no account, your work stays in this browser, and runs are simulated. Export it, and the relay CLI runs the same workflow for real.'}
+      </p>
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {/* Test runs here are simulated; this is where to see what a real one did. */}
         <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/r" />} className="hidden md:inline-flex">
@@ -92,10 +96,15 @@ function PlaygroundHeader() {
         {pathname === '/play' ? <StartFrom /> : null}
         <ThemeToggle className="size-8" />
         {accounts ? (
-          <Button size="sm" nativeButton={false} render={<Link href="/sign-in" />} title="An account keeps your workflows in any browser, and adds share links, version history and real runs.">
-            <span className="sm:hidden">Sign up</span>
-            <span className="hidden sm:inline">Create a free account</span>
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/sign-in" />} className="hidden sm:inline-flex">
+              Sign in
+            </Button>
+            <Button size="sm" nativeButton={false} render={<Link href="/sign-up" />} title="An account connects your repository and runs workflows on its GitHub Actions. What you made here comes with you.">
+              <span className="sm:hidden">Sign up</span>
+              <span className="hidden sm:inline">Use it on your repo</span>
+            </Button>
+          </>
         ) : null}
       </div>
     </header>

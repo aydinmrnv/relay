@@ -106,7 +106,7 @@ function SignedInMenu() {
             <DropdownMenuGroup>
               {onboarded ? null : (
                 <DropdownMenuItem render={<Link href="/onboarding" />}>
-                  <Rocket /> Finish setting up
+                  <Rocket /> Set up your first project
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => clerk.openUserProfile({ appearance: PROFILE_APPEARANCE })}>

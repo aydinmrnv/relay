@@ -11,6 +11,12 @@ export function Faq() {
 
   const items = [
     {
+      id: 'what',
+      question: 'What is Relay, in a sentence?',
+      answer:
+        'A place to build automations that run on your own GitHub Actions, in your own repository. You connect a repository, pick a workflow such as “label an issue, get a reviewed pull request”, commit the files Relay writes, and GitHub runs it from then on. Each account can have as many projects as it has repositories.',
+    },
+    {
       id: 'cost',
       question: 'Does this cost anything?',
       answer:
@@ -26,7 +32,7 @@ export function Faq() {
       id: 'real',
       question: 'Are the runs in the studio real?',
       answer:
-        `Test runs are simulated so you can explore a workflow for free. For a real run you pick a runner: pair your own computer with relay connect${cloud ? ', or use Relay Cloud, where Relay makes and wakes a machine for you' : ''}. On your computer every step runs as drawn: the guardrails decide, an approval waits for you, the agents open the pull request and the message is posted. To run with nobody there, export the workflow and keep its trigger with relay workflow serve on a machine of yours, or let a label on a GitHub issue start it on your repository’s own GitHub Actions minutes.`,
+        `A run you press in the studio is a test run: simulated and free, so you can explore a workflow before anything real is wired up. Real runs happen where the project runs. On GitHub Actions, where setup starts you, an issue event such as a label starts one in your repository, on its own minutes; its record is the comment on the issue and the job under the Actions tab. Other triggers, such as a schedule or a failed build, are started by hand there for now. Or pair your own computer with relay connect${cloud ? ', or use Relay Cloud, where Relay makes and wakes a machine for you' : ''}: there every step runs as drawn, an approval waits for you, and relay workflow serve keeps any trigger.`,
     },
     ...(cloud
       ? [

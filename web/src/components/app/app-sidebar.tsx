@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'motion/react';
-import { BookOpen, Cable, Laptop, LayoutDashboard, LayoutTemplate, Play, Settings, Loader2, Workflow } from 'lucide-react';
+import { BookOpen, Cable, FolderGit2, Laptop, LayoutDashboard, LayoutTemplate, Play, Settings, Loader2, Workflow } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -28,6 +28,8 @@ import { AGENT_IDS, AGENT_META } from '@/lib/agents/types';
 import { cn } from '@/lib/utils';
 import { BrandMark } from './brand-mark';
 import { AccountMenu } from '@/components/account/account-menu';
+import { ProjectSwitcher } from '@/components/projects/project-switcher';
+import { useActiveProject, useNeedsInstall, useProjectWorkflows, useProjects } from '@/hooks/use-projects';
 
 interface NavItem {
   href: string;
@@ -42,7 +44,8 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
     label: 'Build',
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, hint: 'Overview: recent runs, spend and what to do next' },
-      { href: '/workflows', label: 'Workflows', icon: Workflow, hint: 'Your workflows, and the canvas to edit them' },
+      { href: '/projects', label: 'Projects', icon: FolderGit2, hint: 'Your repositories: where each runs, and whether it is installed there' },
+      { href: '/workflows', label: 'Workflows', icon: Workflow, hint: 'This project’s workflows, and the canvas to edit them' },
       { href: '/templates', label: 'Templates', icon: LayoutTemplate, hint: 'Ready-made workflows to start from' },
     ],
   },
@@ -56,7 +59,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'Learn',
     items: [
-      { href: '/runners', label: 'Where agents run', icon: Laptop, hint: 'Where a run happens: your computer, through relay connect, or Relay Cloud where it is offered' },
+      { href: '/runners', label: 'Where agents run', icon: Laptop, hint: 'Running on a machine instead of GitHub Actions: your computer, through relay connect, or Relay Cloud where it is offered' },
       { href: '/guide', label: 'Guide', icon: BookOpen, hint: 'How the studio works, and what every part does' },
     ],
   },
@@ -65,7 +68,8 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
 export function AppSidebar() {
   const pathname = usePathname();
   const brand = useBrand();
-  const workflows = useStudio((state) => Object.keys(state.workflows).length);
+  // The project in view, like the list the badge sits beside.
+  const workflows = useProjectWorkflows().length;
   const running = useStudio((state) => state.runs.filter((run) => run.status === 'running').length);
   // Real connections only: a marker is a label, and a badge that counts labels says "connected" about nothing.
   const connected = useStudio((state) => Object.values(state.connections).filter((connection) => connection.credential !== undefined).length);
@@ -94,11 +98,12 @@ export function AppSidebar() {
               {/* Collapsed to icons, the rail is as wide as the mark: the words would be cut to their first letters. */}
               <div className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold tracking-tight">{brand.name}</span>
-                <span className="truncate text-xs text-muted-foreground">Workflow studio</span>
+                <span className="truncate text-xs text-muted-foreground">Automations for your repo</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <ProjectSwitcher />
       </SidebarHeader>
       <SidebarContent>
         {GROUPS.map((group) => (
@@ -167,6 +172,25 @@ function AgentsFooter() {
   const target = useCompanion((state) => state.target);
   const cloud = useCompanion((state) => (state.target === 'cloud' ? state.cloud : undefined));
   const cloudOffered = useCapabilities().cloudHub != null;
+  const projects = useProjects();
+  const project = useActiveProject() ?? projects[0];
+  const needsInstall = useNeedsInstall(project);
+  // A project set up on GitHub Actions has its runner already: the repository's own. Nothing here needs connecting for it.
+  if (project?.runner === 'actions' && project.implied !== true && companion !== 'connected' && cloud === undefined) {
+    return (
+      <div className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs group-data-[collapsible=icon]:hidden">
+        <Link href="/projects" className="grid gap-1.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+          <span className="font-medium text-foreground">Runs on GitHub Actions</span>
+          <span className="text-muted-foreground">
+            {needsInstall ? `Not installed in ${project.repository} yet. Runs here are test runs until it is.` : `In ${project.repository}, on its own minutes. Runs here are test runs.`}
+          </span>
+        </Link>
+        <Link href="/projects" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+          {needsInstall ? 'Install it' : 'Manage projects'} →
+        </Link>
+      </div>
+    );
+  }
   return (
     <div className="mx-1 flex flex-col gap-1.5 rounded-lg border bg-background/60 p-2.5 text-xs group-data-[collapsible=icon]:hidden">
       <Link
