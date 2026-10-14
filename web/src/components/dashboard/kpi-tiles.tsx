@@ -74,13 +74,13 @@ export function KpiTiles(props: Props) {
           </>
         ),
     },
-    // Two different kinds of money. What test runs "cost" was never spent;
-    // what real runs cost came out of somebody's Claude or ChatGPT plan. Once
+    // Two different kinds of figure. What test runs "used" was never used;
+    // what real runs used came out of somebody's Claude or ChatGPT plan. Once
     // there is any of the second, it leads, and the first is named beside it.
     props.realSpend > 0
       ? {
           href: '/runs',
-          label: 'Real spend, 7 days',
+          label: 'Usage, 7 days',
           icon: <CircleDollarSign />,
           term: 'cost',
           value: props.realSpend,
@@ -90,7 +90,7 @@ export function KpiTiles(props: Props) {
         }
       : {
           href: '/runs',
-          label: 'Simulated spend, 7 days',
+          label: 'Simulated usage, 7 days',
           icon: <CircleDollarSign />,
           term: 'cost',
           value: props.spend,

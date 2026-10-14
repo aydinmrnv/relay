@@ -57,7 +57,7 @@ import type { Run, RunStatus } from '@/lib/workflow/schema';
 import { formatMs } from '@/lib/workflow/simulate';
 
 /**
- * One run, in full: what it did, what it cost and why it ended the way it
+ * One run, in full: what it did, what it used and why it ended the way it
  * did. The studio's run page and the playground's are both this.
  */
 export function RunDetail({ id }: { id: string }) {
@@ -192,14 +192,14 @@ export function RunDetail({ id }: { id: string }) {
         <StaggerItem>
           <Fact
             icon={<CircleDollarSign />}
-            label="Cost"
+            label="Usage"
             help={<HelpTip term="cost" />}
             value={formatUsd(run.costUsd)}
             hint={
               live
                 ? `Counting as it plays · ${run.phases.length} ${run.phases.length === 1 ? 'phase' : 'phases'} so far`
                 : run.phases.length === 0 && run.costUsd === 0
-                  ? 'No agent work, so nothing to pay for'
+                  ? 'No agent work, so nothing was used'
                   : `${machine === undefined ? 'Simulated' : 'Reported by the CLIs'} · ${run.phases.length} ${run.phases.length === 1 ? 'phase' : 'phases'}`
             }
           />
@@ -278,8 +278,8 @@ export function RunDetail({ id }: { id: string }) {
               <CardDescription>
                 {run.phases.length > 0 || openPhase(run) !== null
                   ? machine === undefined
-                    ? 'Where the time and money went, agent by agent. Simulated from realistic ranges.'
-                    : 'Where the time and money went, agent by agent, as the coding CLIs reported it.'
+                    ? 'Where the time and usage went, agent by agent. Simulated from realistic ranges.'
+                    : 'Where the time and usage went, agent by agent, as the coding CLIs reported it.'
                   : live
                     ? 'Phases appear here as the pipeline reaches them.'
                     : run.status === 'cancelled'
@@ -354,7 +354,7 @@ function Outcome({ run, speed, settings }: { run: Run; speed: string; settings: 
         <p className="font-medium text-pretty">
           {run.status === 'running' && real ? 'Running now' : style.title}.{' '}
           <span className="font-normal text-muted-foreground">
-            {run.status === 'running' ? 'The timeline, phases and cost below fill in as each node finishes.' : STATUS_MEANING[run.status]}
+            {run.status === 'running' ? 'The timeline, phases and usage below fill in as each node finishes.' : STATUS_MEANING[run.status]}
           </span>
         </p>
         {live ? (

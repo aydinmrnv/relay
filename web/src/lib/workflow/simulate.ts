@@ -287,7 +287,7 @@ export async function simulateRun(workflow: Workflow, options: SimulateOptions):
         if (config['mode'] === 'warn') {
           return { status: 'done', message: `Warned, and let through: ${said}.`, detail: 'Set to warn, so the run starts and its notes say what matched.', nextHandles: ['pass'] };
         }
-        return { status: 'refused', message: `Refused: looks like a prompt injection: ${said}.`, detail: 'No agent read it and nothing was spent. A person can read the raw issue and run it by hand.', nextHandles: ['refused'] };
+        return { status: 'refused', message: `Refused: looks like a prompt injection: ${said}.`, detail: 'No agent read it. A person can read the raw issue and run it by hand.', nextHandles: ['refused'] };
       }
       case 'gates.action.approval': {
         const via = String(config['via'] ?? 'dashboard');

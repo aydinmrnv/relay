@@ -157,14 +157,14 @@ function ForecastPanel({ workflow, tickets, onTicketsChange }: { workflow: Workf
     <>
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
-          <Gauge className="size-4" /> Spend forecast · “{workflow.name}”
+          <Gauge className="size-4" /> Usage forecast · “{workflow.name}”
           <HelpTip term="cost" />
         </DialogTitle>
         <DialogDescription>
-          A rough range for what this workflow costs
+          A rough range for what this workflow uses of your plans
           {nothingToSimulate
             ? '.'
-            : `: ${samples} simulated runs through the same guardrails, review rounds and budgets as a test run, projected over the tickets you expect. The review level and your budgets shape it; which agent or model fills a role does not, because nothing here knows what each one charges.`}
+            : `: ${samples} simulated runs through the same guardrails and review rounds as a test run, projected over the tickets you expect, in the dollars the coding CLIs report. The review level and any budget you set shape it; which agent or model fills a role does not, because nothing here knows what each one reports.`}
         </DialogDescription>
       </DialogHeader>
 
@@ -213,8 +213,8 @@ function ForecastPanel({ workflow, tickets, onTicketsChange }: { workflow: Workf
       <DialogFooter showCloseButton className="sm:items-center sm:justify-between">
         <p className="text-xs text-pretty text-muted-foreground">
           {nothingToSimulate
-            ? 'A forecast is a simulation built from the same model as test runs, from typical ranges per phase. Real runs report what the CLIs actually charged.'
-            : `A simulation, built from the same model as test runs: ${samples} seeded runs drawn from typical ranges per phase, resampled into ${FORECAST_TRIALS} weeks and months at your volume, with budgets applied the way the CLI applies them. Treat it as an order of magnitude; real runs report what the CLIs actually charged.`}
+            ? 'A forecast is a simulation built from the same model as test runs, from typical ranges per phase. Real runs show what the CLIs actually reported.'
+            : `A simulation, built from the same model as test runs: ${samples} seeded runs drawn from typical ranges per phase, resampled into ${FORECAST_TRIALS} weeks and months at your volume, with any budget applied the way the CLI applies it. Treat it as an order of magnitude; real runs show what the CLIs actually reported.`}
         </p>
       </DialogFooter>
     </>
@@ -274,7 +274,7 @@ function VolumeControl({ tickets, onChange }: { tickets: number; onChange: (tick
         onValueChange={(value) => set(typeof value === 'number' ? value : (value[0] ?? tickets))}
       />
       <p className="text-xs text-muted-foreground">
-        About {perDay < 10 ? perDay.toFixed(1).replace(/\.0$/, '') : Math.round(perDay)} a working day, {perMonth} a month. Each one starts a run; the budget gate decides whether it goes ahead.
+        About {perDay < 10 ? perDay.toFixed(1).replace(/\.0$/, '') : Math.round(perDay)} a working day, {perMonth} a month. Each one starts a run; the guardrails decide whether it goes ahead.
       </p>
     </section>
   );
@@ -290,7 +290,7 @@ function StatTiles({ forecast }: { forecast: Forecast }) {
   const prShare = forecast.outcomes.pullRequests;
   const tiles = [
     { label: 'Typical run', value: usd(cost.p50), hint: `The median of ${cost.count} runs that reached the agents` },
-    { label: '9 in 10 runs cost under', value: usd(cost.p90), hint: `From ${usd(cost.min)} to ${usd(cost.max)} across them all` },
+    { label: '9 in 10 runs use under', value: usd(cost.p90), hint: `From ${usd(cost.min)} to ${usd(cost.max)} across them all` },
     { label: 'A month', value: `${usd(monthly.p50)}–${usd(monthly.p90)}`, hint: `At ${ticketsPerWeek} a week: a typical month, and 1 month in 10` },
     {
       label: 'Pull requests a month',
@@ -355,7 +355,7 @@ function CostHistogram({ forecast }: { forecast: Forecast }) {
       <div className="flex items-start justify-between gap-2">
         <div>
           <h3 id="forecast-histogram" className="text-sm font-medium">
-            Cost per run
+            Usage per run
           </h3>
           <p className="text-xs text-muted-foreground">
             {forecast.cost?.count} runs that reached the agents
@@ -399,7 +399,7 @@ function CostHistogram({ forecast }: { forecast: Forecast }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="pl-3">Cost</TableHead>
+                <TableHead className="pl-3">Usage</TableHead>
                 <TableHead className="text-right">Runs</TableHead>
                 <TableHead className="pr-3 text-right">Share</TableHead>
               </TableRow>
@@ -447,7 +447,7 @@ function PhaseList({ phases, agents }: { phases: PhaseShare[]; agents: Forecast[
     <section aria-labelledby="forecast-phases" className="flex min-w-0 flex-col gap-3">
       <div>
         <h3 id="forecast-phases" className="flex items-center gap-1.5 text-sm font-medium">
-          Where the money goes <HelpTip term="phase" />
+          Where the usage goes <HelpTip term="phase" />
         </h3>
         <p className="text-xs text-muted-foreground">Average per run, every review round included</p>
       </div>
@@ -561,13 +561,13 @@ function BudgetCallout({ forecast }: { forecast: Forecast }) {
   const daily = budget?.dailyCap ?? null;
   const runCap = budget?.runCap ?? null;
   const { projection } = forecast;
-  if (budget === null && !forecast.unattended) return null;
+  // A Budget gate is optional: with no ceiling anywhere there is nothing to measure against, and nothing to warn about.
+  if (budget === null) return null;
 
   const dailyImpossible = daily !== null && daily.reserveUsd > daily.usd;
   const dailyHit = daily !== null && (dailyImpossible || daily.hitDayRate >= 0.01);
   const capBites = runCap !== null && runCap.hitRate >= 0.1;
-  const unguarded = forecast.unattended && daily === null;
-  const warn = dailyHit || capBites || unguarded;
+  const warn = dailyHit || capBites;
   const ratio = daily === null || daily.usd <= 0 ? 0 : Math.min(1, projection.daily.p90 / daily.usd);
 
   return (
@@ -586,13 +586,13 @@ function BudgetCallout({ forecast }: { forecast: Forecast }) {
           <div className="flex items-baseline justify-between gap-3 text-xs">
             <span className="font-medium">Daily cap {limit(daily.usd)}</span>
             <span className="text-muted-foreground tabular-nums">
-              9 in 10 working days spend under <span className="text-foreground">{usd(projection.daily.p90)}</span>
+              9 in 10 working days use under <span className="text-foreground">{usd(projection.daily.p90)}</span>
             </span>
           </div>
           <div
             className={cn('h-1.5 w-full overflow-hidden rounded-full', dailyHit ? 'bg-destructive/15' : ratio >= 0.75 ? 'bg-warning/20' : 'bg-primary/12')}
             role="meter"
-            aria-label="Busy-day spend against the daily cap"
+            aria-label="Busy-day usage against the daily cap"
             aria-valuenow={Math.round(projection.daily.p90 * 100) / 100}
             aria-valuemin={0}
             aria-valuemax={daily.usd}
@@ -626,11 +626,6 @@ function BudgetCallout({ forecast }: { forecast: Forecast }) {
             )}
           </p>
         </div>
-      ) : unguarded ? (
-        <p className="text-xs text-pretty">
-          No budget gate sets a daily maximum, so nothing stops a busy day. At this volume 9 in 10 working days spend under {usd(projection.daily.p90)}; the busiest simulated day spent{' '}
-          {usd(projection.daily.max)}. Add a Budget gate in front of the pipeline.
-        </p>
       ) : null}
 
       {runCap !== null ? (
@@ -643,8 +638,8 @@ function BudgetCallout({ forecast }: { forecast: Forecast }) {
                 ? `stops ${percent(runCap.hitRate)} of runs at the next phase boundary. Their work stays on the branch; no pull request opens.`
                 : 'no simulated run reached it.'
               : runCap.hitRate > 0
-                ? `${percent(runCap.hitRate)} of runs cost more. Started by hand, the gate only checks the estimate before starting; set "Stop this run above" on the pipeline to stop them mid-run.`
-                : 'no simulated run cost more.'}
+                ? `${percent(runCap.hitRate)} of runs use more. Started by hand, the gate only checks the estimate before starting; set "Stop this run above" on the pipeline to stop them mid-run.`
+                : 'no simulated run used more.'}
           </span>
         </p>
       ) : null}
@@ -667,18 +662,16 @@ export function ForecastSummary({ workflow, className }: { workflow: Workflow; c
       ? null
       : runCap !== null && runCap.enforcedInRun && runCap.hitRate >= 0.1
         ? `${percent(runCap.hitRate)} of runs stop at the ${limit(runCap.usd)} per-run cap`
-        : forecast.unattended && (forecast.budget?.dailyCap ?? null) === null
-          ? 'Nothing caps a day’s spend'
-          : null;
+        : null;
 
   return (
     <section className={cn('grid gap-2.5 rounded-lg border p-3', className)} aria-busy={computing}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-xs font-semibold">
-            <Gauge className="size-3.5" /> Spend forecast <HelpTip term="cost" />
+            <Gauge className="size-3.5" /> Usage forecast <HelpTip term="cost" />
           </p>
-          <p className="text-[11px] text-muted-foreground">Simulated before a cent is spent.</p>
+          <p className="text-[11px] text-muted-foreground">Simulated before any agent runs.</p>
         </div>
         <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
           Details

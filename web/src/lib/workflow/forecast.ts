@@ -604,7 +604,7 @@ const REFUSED_BY: Record<GateKind, string> = {
 function notesFor(forecast: Forecast): string[] {
   const { status, cost, outcomes, projection, budget } = forecast;
   if (status === 'no-trigger') return ['This workflow has no trigger, so nothing ever starts it. Add one and the forecast fills in.'];
-  if (status === 'no-pipeline') return ['This workflow never runs the agent pipeline, so no coding agent spends anything and there is nothing to forecast.'];
+  if (status === 'no-pipeline') return ['This workflow never runs the agent pipeline, so no coding agent runs and there is nothing to forecast.'];
   if (status === 'unreached' || cost === null) {
     const top = outcomes.refusedBy[0];
     if (top !== undefined) return [`None of ${forecast.samples} simulated runs reached the agents: ${percent(top.rate)} were ${REFUSED_BY[top.gate]}${top.gate === 'kill-switch' ? ', which is switched off' : ''}.`];
@@ -613,7 +613,7 @@ function notesFor(forecast: Forecast): string[] {
 
   const notes: string[] = [];
   const perWeek = projection.ticketsPerWeek;
-  notes.push(`A typical run costs ${usd(cost.p50)}, and 9 in 10 cost under ${usd(cost.p90)}; the most expensive of ${forecast.samples} simulated came to ${usd(cost.max)}.`);
+  notes.push(`A typical run uses ${usd(cost.p50)} of your plans, and 9 in 10 use under ${usd(cost.p90)}; the heaviest of ${forecast.samples} simulated came to ${usd(cost.max)}.`);
   // Nothing to project when the budget gate refuses every run; the budget note below says why.
   if (perWeek > 0 && projection.monthly.p90 > 0) {
     const prs = Math.round(projection.pullRequestsPerMonth);
@@ -636,8 +636,6 @@ function notesFor(forecast: Forecast): string[] {
           `. At ${round1(daily.ticketsPerDay)} ${daily.ticketsPerDay === 1 ? 'ticket' : 'tickets'} a working day it is ${daily.hitDayRate === 0 ? 'never' : 'almost never'} hit.`,
       );
     }
-  } else if (forecast.unattended && daily === null && perWeek > 0) {
-    notes.push(`Nothing caps a day's spend: no budget gate sets a daily maximum. At this volume 9 in 10 working days cost under ${usd(projection.daily.p90)}, and the busiest simulated day ${usd(projection.daily.max)}.`);
   }
 
   const runCap = budget?.runCap ?? null;
@@ -649,7 +647,7 @@ function notesFor(forecast: Forecast): string[] {
           : `No simulated run reached your ${formatCeilingUsd(runCap.usd)} per-run cap.`,
       );
     } else if (runCap.hitRate > 0) {
-      notes.push(`${percentCap(runCap.hitRate)} of runs cost more than the budget gate's ${formatCeilingUsd(runCap.usd)} per run. Started by hand, the gate only checks the estimate before starting; set "Stop this run above" on the pipeline to stop them mid-run.`);
+      notes.push(`${percentCap(runCap.hitRate)} of runs use more than the budget gate's ${formatCeilingUsd(runCap.usd)} per run. Started by hand, the gate only checks the estimate before starting; set "Stop this run above" on the pipeline to stop them mid-run.`);
     }
   }
 
@@ -665,7 +663,7 @@ function notesFor(forecast: Forecast): string[] {
   const top = forecast.phases.filter((phase) => phase.phase !== 'OTHER').sort((a, b) => b.share - a.share)[0];
   const reviews = sum(forecast.phases.filter((phase) => phase.phase.startsWith('REVIEWING_')).map((phase) => phase.share));
   if (top !== undefined) {
-    notes.push(`${top.label}${top.agents.length === 0 ? '' : ` (${top.agents.join(', ')})`} is ${percent(top.share)} of the spend` + (reviews > 0 ? `; plan and code review together are ${percent(reviews)}.` : '.'));
+    notes.push(`${top.label}${top.agents.length === 0 ? '' : ` (${top.agents.join(', ')})`} is ${percent(top.share)} of the usage` + (reviews > 0 ? `; plan and code review together are ${percent(reviews)}.` : '.'));
   }
   if (forecast.agents.length > 1) {
     notes.push(`By agent: ${forecast.agents.map((agent) => `${agent.agent} ${percent(agent.share)}`).join(', ')}. On a subscription that is usage against each plan, not an extra bill.`);

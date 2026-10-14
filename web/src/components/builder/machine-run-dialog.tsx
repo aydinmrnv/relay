@@ -35,7 +35,7 @@ interface Props {
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', aider: 'Aider' };
 
 /**
- * "Run on this machine": the one place in the studio that spends real money,
+ * "Run on this machine": the one place in the studio that uses your plans for real,
  * so it says exactly what will happen before it does — where, on what, with
  * which agents, how far delivery goes and what stops it.
  */
@@ -111,10 +111,10 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
         </DialogTitle>
         <DialogDescription className="text-pretty">
           {cloudMode ? (
-            <>The agent pipeline runs for real on your own cloud machine, in {repo === null ? 'the repository you name below' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It spends your plans’ usage — a test run is the free way to check the graph.</>
+            <>The agent pipeline runs for real on your own cloud machine, in {repo === null ? 'the repository you name below' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. It uses your own plans — a test run checks the graph without touching them.</>
           ) : (
             <>
-              {whole ? 'The whole workflow runs for real' : 'The agent pipeline runs for real'} in {repo === null ? 'the repository relay connect was started in' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. {nodes.pipeline === undefined ? 'What its steps do is real: a message is posted, a ticket is moved.' : 'It spends your plans’ usage — a test run is the free way to check the graph.'}
+              {whole ? 'The whole workflow runs for real' : 'The agent pipeline runs for real'} in {repo === null ? 'the repository relay connect was started in' : <span className="font-medium text-foreground">{repo}</span>}, with your own sign-ins, and streams back here. {nodes.pipeline === undefined ? 'What its steps do is real: a message is posted, a ticket is moved.' : 'It uses your own plans — a test run checks the graph without touching them.'}
             </>
           )}
         </DialogDescription>
@@ -219,7 +219,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
         <p className="font-medium text-foreground">What will happen</p>
         <ul className="grid gap-1 text-muted-foreground">
           {nodes.pipeline === undefined ? (
-            <li>This workflow has no agent pipeline, so no agent runs, nothing is spent and no code is touched: its steps are performed in order, and that is all.</li>
+            <li>This workflow has no agent pipeline, so no agent runs and no code is touched: its steps are performed in order, and that is all.</li>
           ) : null}
           <li className={nodes.pipeline === undefined ? 'hidden' : undefined}>
             {fast ? (
@@ -236,8 +236,8 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
           </li>
           <li className={nodes.pipeline === undefined ? 'hidden' : undefined}>
             {cap === null
-              ? 'No per-run cap: set “Stop this run above” on the pipeline node, or “Stop a run above” on a Budget gate, to have the run stop itself.'
-              : `Stops itself once it has cost more than $${cap.toFixed(2)}: the lower of the pipeline node’s limit and the Budget gate’s.`}
+              ? 'No per-run cap is set, so it runs until it finishes or you stop it.'
+              : `Stops itself once it has used more than $${cap.toFixed(2)}: the lower of the pipeline node’s limit and the Budget gate’s.`}
           </li>
           {whole ? (
             <>
@@ -264,7 +264,7 @@ function MachineRunForm({ workflow, onCancel, onRun }: { workflow: Workflow; onC
             </>
           ) : (
             <li>
-              The allowlist and the daily budget decide whether an event may start a run, so a person pressing this passes over them. {cloudMode ? 'A Relay Cloud machine' : 'This relay connect'} runs the pipeline and its delivery; the steps before
+              The allowlist, and a daily budget where one is set, decide whether an event may start a run, so a person pressing this passes over them. {cloudMode ? 'A Relay Cloud machine' : 'This relay connect'} runs the pipeline and its delivery; the steps before
               and after it are not performed by this run. {cloudMode ? '' : 'Update the CLI to run the whole workflow.'}
             </li>
           )}

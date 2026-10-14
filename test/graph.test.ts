@@ -128,7 +128,7 @@ function graph(nodes: GraphNode[], edges: Array<[GraphNode, GraphNode, string?]>
     enabled: true,
     nodes,
     edges: edges.map(([from, to, handle]) => ({ from: from.id, to: to.id, handle: handle ?? null })),
-    // Both ceilings, as an export with a Budget gate carries them: an event may not start the agents without.
+    // Both ceilings, as an export with a Budget gate carries them.
     config: { version: 1, agents: {}, workflow: { deliver: 'pr' }, unattended: { maxRunCostUsd: 5, maxDailyCostUsd: 50 } },
     ...extra,
   });
@@ -372,22 +372,34 @@ describe('guardrails, when nobody started the run', () => {
     assert.equal(made.pipelines.length, 0);
   });
 
-  it('will not let an event start the agents with no ceiling, and keeps the day’s ceiling where no gate stood in front', async () => {
+  it('lets an event start the agents with no ceiling, and keeps the ceilings that are set', async () => {
     const trigger = node('http.trigger.webhook');
     const pipeline = node('pipeline.action.run');
     const edges: Array<[GraphNode, GraphNode, string?]> = [[trigger, pipeline]];
+    const exported = (unattended: unknown): Partial<WorkflowGraph> => ({ config: { version: 1, agents: {}, workflow: { deliver: 'pr' }, ...(unattended === undefined ? {} : { unattended }) } });
 
-    // No Budget gate anywhere: the export carries no ceilings.
-    for (const unattended of [undefined, { maxRunCostUsd: 5 }, { maxDailyCostUsd: 50 }, { maxRunCostUsd: null, maxDailyCostUsd: null }]) {
+    // No Budget gate anywhere, or one with only a per-run cost: the budgets are optional, and nothing is refused for want of one.
+    for (const unattended of [undefined, { maxRunCostUsd: 5 }, { maxRunCostUsd: null, maxDailyCostUsd: null }]) {
+      const made = world({ spend: { spentUsd: 480, runs: 12, unpriced: 0, inFlight: 0 } });
+      const outcome = await executeGraph(graph([trigger, pipeline], edges, exported(unattended)), delivery({ title: 'x' }), made.effects);
+      assert.equal(outcome.status, 'succeeded', JSON.stringify(unattended));
+      assert.equal(made.pipelines.length, 1);
+    }
+
+    // A day's ceiling with nothing for a run in flight to reserve cannot be kept, and one that cannot be read is not "none".
+    for (const [unattended, pattern] of [
+      [{ maxDailyCostUsd: 50 }, /cannot be kept with no per-run cost/],
+      [{ maxRunCostUsd: 'cheap', maxDailyCostUsd: 50 }, /per-run cost is not an amount/],
+      [{ maxRunCostUsd: 5, maxDailyCostUsd: 'plenty' }, /daily budget is not an amount/],
+    ] as const) {
       const made = world();
-      const config = { version: 1, agents: {}, workflow: { deliver: 'pr' }, ...(unattended === undefined ? {} : { unattended }) };
-      const outcome = await executeGraph(graph([trigger, pipeline], edges, { config }), delivery({ title: 'x' }), made.effects);
+      const outcome = await executeGraph(graph([trigger, pipeline], edges, exported(unattended)), delivery({ title: 'x' }), made.effects);
       assert.equal(outcome.status, 'refused', JSON.stringify(unattended));
-      assert.match(messageOf(made, pipeline), /no ceiling on what they spend/);
+      assert.match(messageOf(made, pipeline), pattern);
       assert.equal(made.pipelines.length, 0);
       // A person starting the same workflow is their own ceiling.
       const mine = world();
-      assert.equal((await executeGraph(graph([trigger, pipeline], edges, { config }), byHand(), mine.effects)).status, 'succeeded');
+      assert.equal((await executeGraph(graph([trigger, pipeline], edges, exported(unattended)), byHand(), mine.effects)).status, 'succeeded');
     }
 
     // Ceilings in the export, and a canvas whose gate is not on the way to the pipeline: the day is still held.

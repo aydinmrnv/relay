@@ -38,7 +38,7 @@ export const STATUS_MEANING: Record<RunStatus, string> = {
   running: 'Going right now.',
   succeeded: 'Every node that ran finished, and the pipeline delivered.',
   failed: 'A node failed — usually the tests, or an agent that could not finish.',
-  refused: 'A guardrail said no before any money was spent: budget, allowlist, approval or kill switch.',
+  refused: 'A guardrail said no before any agent ran: allowlist, approval, kill switch, or a budget you set.',
   cancelled: 'Stopped by you, interrupted by closing the tab, or — for a run on a machine — lost track of before it finished.',
   waiting: 'Paused, waiting on a person.',
 };

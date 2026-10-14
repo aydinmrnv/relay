@@ -32,9 +32,9 @@ export interface ServeOptions {
  *
  * This is the only command that starts work with nobody present, which is why
  * it is also the command that refuses the most. It will not start at all until
- * the repository has answered three questions deliberately — who may trigger a
- * run, what one run may cost, and what a day of them may cost — and it stops
- * the moment any of the three kill switches says to.
+ * the repository has said deliberately who may trigger a run, it keeps whatever
+ * budget the repository set for a run and for a day of them, and it stops the
+ * moment any of the three kill switches says to.
  *
  * Ctrl-C means *stop starting*: the runs already in flight finish their own
  * pipelines and deliver what they have, because they are work somebody already
@@ -225,6 +225,14 @@ function parseLimit(value: string): number {
   return parsed;
 }
 
+/** The budgets this server keeps, in the words its opening lines use. Both are optional. */
+function budgetLine(event: Extract<ServeEvent, { type: 'watching' }>): string {
+  const perRun = event.maxRunCostUsd === null ? null : `${formatCost(event.maxRunCostUsd)} per run`;
+  const perDay = event.dailyBudgetEnforced && event.maxDailyCostUsd !== null ? `${formatCost(event.maxDailyCostUsd)} per day` : null;
+  const set = [perRun, perDay].filter((part): part is string => part !== null);
+  return set.length === 0 ? 'none set — runs use your own plans, with no ceiling' : set.join('  ·  ');
+}
+
 /**
  * One line per event, because a server's output is read in a log file weeks
  * later rather than watched. Every refusal names the issue and the reason —
@@ -238,12 +246,7 @@ function printEvent(event: ServeEvent, options: ServeOptions): void {
       section(event.once ? 'Unattended, once' : 'Unattended');
       rows([
         { label: 'Trigger', value: `issues labelled ${event.label}` },
-        {
-          label: 'Budget',
-          value: event.dailyBudgetEnforced
-            ? `${formatCost(event.maxRunCostUsd)} per run  ·  ${formatCost(event.maxDailyCostUsd)} per day`
-            : `${formatCost(event.maxRunCostUsd)} per run`,
-        },
+        { label: 'Budget', value: budgetLine(event) },
         { label: 'Concurrency', value: `${event.maxConcurrentRuns} run(s) at once` },
         !event.once && { label: 'Polling', value: `every ${event.pollSeconds}s` },
         { label: 'Delivery', value: 'capped at a draft pull request — nothing merges without a person' },
@@ -252,7 +255,7 @@ function printEvent(event: ServeEvent, options: ServeOptions): void {
       // Said where the budget is printed, because the line above it reads as
       // a promise: on a runner that keeps no run history the day's total is
       // always zero, and only the per-run figure limits anything.
-      if (!event.dailyBudgetEnforced) {
+      if (!event.dailyBudgetEnforced && event.maxDailyCostUsd !== null) {
         out(warning('  The daily budget is not enforced here: a CI job starts with no record of earlier runs.'));
         out(dim('  The per-run budget still is. See docs/cli.md, "The GitHub Action".'));
       }

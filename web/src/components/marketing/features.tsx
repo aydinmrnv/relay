@@ -20,13 +20,13 @@ export function Features() {
     {
       icon: SquareTerminal,
       title: 'Every claim checked against git',
-      body: `${brand.name} computes the diff itself, judges tests by exit code and takes cost from what the CLIs report. An agent saying “done” proves nothing.`,
+      body: `${brand.name} computes the diff itself, judges tests by exit code and takes usage from what the CLIs report. An agent saying “done” proves nothing.`,
       proof: 'git diff --cached <baseSha>',
     },
     {
       icon: ShieldCheck,
       title: 'Refuses by default',
-      body: 'An empty allowlist means nobody may start a run. Budgets are checked before anything spends, and an unattended run stops at a draft pull request.',
+      body: 'An empty allowlist means nobody may start a run. A ticket that reads like a prompt injection is refused before any agent sees it, and an unattended run stops at a draft pull request.',
       proof: 'unattended.deliver: "pr"',
     },
     {

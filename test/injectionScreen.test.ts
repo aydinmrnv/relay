@@ -207,7 +207,7 @@ describe('the injection screen inside a run', () => {
     assert.equal(final.error?.code, 'INJECTION_SCREEN');
     assert.equal(final.error?.phase, 'FETCHING_ISSUE');
     assert.match(final.error?.message ?? '', /Stopped before any agent read it: #142 looks like a prompt injection: its description hides instructions in an HTML comment/);
-    assert.equal(turns, 0, 'no agent took a turn, so nothing was spent');
+    assert.equal(turns, 0, 'no agent took a turn');
   });
 
   it('runs and warns when the repository chose to be warned', async () => {

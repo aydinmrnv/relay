@@ -162,7 +162,7 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
               </EmptyMedia>
               <EmptyTitle>No test runs yet</EmptyTitle>
               <EmptyDescription>
-                A test run plays a workflow here with a sample ticket — every node, phase, cost and refusal — without calling anything. Start one below, or press Test run in the builder.
+                A test run plays a workflow here with a sample ticket — every node, phase and refusal — without calling anything. Start one below, or press Test run in the builder.
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent className="flex-row justify-center">
@@ -273,7 +273,7 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
                       <TableHead>Workflow</TableHead>
                       <TableHead className="hidden lg:table-cell">Trigger</TableHead>
                       <TableHead>Result</TableHead>
-                      <TableHead className="text-right">Cost</TableHead>
+                      <TableHead className="text-right">Usage</TableHead>
                       <TableHead className="hidden text-right xl:table-cell">Duration</TableHead>
                       <TableHead className="text-right">Started</TableHead>
                       <TableHead className="w-12 pr-3">

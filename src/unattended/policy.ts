@@ -34,14 +34,18 @@ export function triggerLabelOf(config: RelayConfig): string {
  * Refuses to start a server whose guardrails were never configured.
  *
  * The issue this implements is explicit that the guardrails are the feature and
- * not the caveat, so none of them has a permissive default and none of them is
- * inferred here. An unset daily budget does not become "some sensible number" —
- * a ceiling nobody chose is not a ceiling anybody meant — and an empty
- * allowlist does not become "anyone who can label", which on a public
- * repository is a funded denial-of-wallet attack with a UI.
+ * not the caveat, so who may start a run has no permissive default and is not
+ * inferred here: an empty allowlist does not become "anyone who can label",
+ * which on a public repository hands a stranger the agents' usage.
+ *
+ * The budgets are the exception, and are optional. The agents run on the
+ * repository's own Claude and ChatGPT plans, so an unset budget is no ceiling
+ * rather than a refusal, and one that is set is kept. An unset one does not
+ * become "some sensible number" either — a ceiling nobody chose is not a
+ * ceiling anybody meant.
  *
  * Every message names the key to write and why it exists, because the reader is
- * about to make a decision about money and access with nobody to ask.
+ * about to make a decision about access with nobody to ask.
  */
 export function assertUnattendedReady(config: RelayConfig): void {
   const settings = unattendedOf(config);
@@ -56,7 +60,7 @@ export function assertUnattendedReady(config: RelayConfig): void {
   if (!settings.enabled) {
     throw new RelayError('Unattended runs are switched off in this repository.', {
       code: 'UNATTENDED_DISABLED',
-      hint: 'Set unattended.enabled to true in .relay/config.json once the allowlist and budgets below are set.',
+      hint: 'Set unattended.enabled to true in .relay/config.json once the allowlist below is set.',
     });
   }
   if (settings.authors.length === 0 && settings.teams.length === 0) {
@@ -67,23 +71,19 @@ export function assertUnattendedReady(config: RelayConfig): void {
         hint:
           'List the logins in unattended.authors, or the "org/team" slugs in unattended.teams. ' +
           'An empty allowlist is refused rather than read as "anyone": on a public repository that is a way ' +
-          'for a stranger to spend your money.',
+          'for a stranger to use up your plan.',
       },
     );
   }
-  if (settings.maxRunCostUsd === null) {
-    throw new RelayError('No per-run budget is set, so an unattended run has nothing to stop it.', {
-      code: 'UNATTENDED_NOT_CONFIGURED',
-      hint: 'Set unattended.maxRunCostUsd in .relay/config.json, e.g. 2.50.',
-    });
+  // Both budgets are optional. A daily one alone is the one shape that cannot be kept.
+  if (settings.maxDailyCostUsd !== null && settings.maxRunCostUsd === null) {
+    throw new RelayError(
+      `unattended.maxDailyCostUsd (${settings.maxDailyCostUsd}) is set with no unattended.maxRunCostUsd, ` +
+        'and a run in flight reserves its per-run budget out of the day.',
+      { code: 'BAD_CONFIG', hint: 'Set unattended.maxRunCostUsd as well, e.g. 2.50, or unset the daily budget.' },
+    );
   }
-  if (settings.maxDailyCostUsd === null) {
-    throw new RelayError('No daily budget is set, so unattended runs have no ceiling for the day.', {
-      code: 'UNATTENDED_NOT_CONFIGURED',
-      hint: 'Set unattended.maxDailyCostUsd in .relay/config.json, e.g. 20.',
-    });
-  }
-  if (settings.maxRunCostUsd > settings.maxDailyCostUsd) {
+  if (settings.maxRunCostUsd !== null && settings.maxDailyCostUsd !== null && settings.maxRunCostUsd > settings.maxDailyCostUsd) {
     throw new RelayError(
       `unattended.maxRunCostUsd (${settings.maxRunCostUsd}) is above unattended.maxDailyCostUsd ` +
         `(${settings.maxDailyCostUsd}), so the first run of the day could exceed the day's budget.`,
@@ -102,8 +102,9 @@ export function assertUnattendedReady(config: RelayConfig): void {
  *   Nothing merges without a person, whatever the repository config says.
  * - **The merge question is off.** It is the one interactive step Relay has,
  *   and there is nobody at the terminal to answer it.
- * - **The per-run budget applies.** The tighter of the two ceilings wins, so a
- *   repository that already set `workflow.maxCostUsd` lower keeps its number.
+ * - **The per-run budget applies, when there is one.** The tighter of the two
+ *   ceilings wins, so a repository that already set `workflow.maxCostUsd`
+ *   lower keeps its number.
  * - **The issue gets a comment.** Nobody is watching the terminal this ran in,
  *   so the tracker is where the run reports back.
  */
@@ -122,8 +123,8 @@ export function applyUnattendedPolicy(config: RelayConfig): RelayConfig {
         ? settings.maxRunCostUsd
         : Math.min(merged.workflow.maxCostUsd, settings.maxRunCostUsd);
   }
-  // A threshold that would ask a question stops the run instead, because there
-  // is nobody to ask. The per-run budget above is the ceiling that applies.
+  // A threshold that would ask a question has nobody to ask. The per-run
+  // budget above, where one is set, is the ceiling that applies.
   merged.workflow.confirmAboveUsd = null;
   merged.delivery = { ...merged.delivery, comment: true };
 

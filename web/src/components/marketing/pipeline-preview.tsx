@@ -25,7 +25,7 @@ const STAGES = [
     connector: 'github',
     heading: 'Start with the ticket.',
     description:
-      'A labelled issue brings the task and repository into the workflow. Who applied the label and the budget are checked before the agents start.',
+      'A labelled issue brings the task and repository into the workflow. Who applied the label is checked before the agents start.',
     file: `issue ${SAMPLE.issue}`,
     kind: 'input',
     lines: [

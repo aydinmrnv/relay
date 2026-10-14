@@ -16,10 +16,10 @@
 # that rest on it are therefore weaker here than under `relay serve`, and it is
 # better to know that than to find out:
 #
-# - `unattended.maxDailyCostUsd` still has to be set, but each job sees only
-#   its own run, so the day's total never accumulates and never stops anything.
-#   What bounds spending in CI is `unattended.maxRunCostUsd` per run, who is on
-#   the allowlist, and the workflow's own `concurrency:`.
+# - `unattended.maxDailyCostUsd` stops nothing here: each job sees only its own
+#   run, so the day's total never accumulates. What bounds usage in CI is
+#   `unattended.maxRunCostUsd` per run, where it is set, who is on the
+#   allowlist, and the workflow's own `concurrency:`.
 # - `relay stats` has no history to report. The record of a run made here is
 #   the comment Relay posts on the issue and this job's summary and log. To
 #   keep the whole run directory, upload `.relay/runs/` as an artifact in a

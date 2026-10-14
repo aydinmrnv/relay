@@ -122,14 +122,14 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
 
   let deliver = String(cfg(delivery, 'policy', 'pr'));
   if (unattended && deliver === 'merge') {
-    warnings.push('Delivery was capped at "pr": an unattended run may never merge. The kill switch, allowlist and budgets are what make it safe to start at all.');
+    warnings.push('Delivery was capped at "pr": an unattended run may never merge. The kill switch and the allowlist are what make it safe to start at all.');
     deliver = 'pr';
   }
 
-  // The per-run ceiling. The pipeline node has its own; the Budget gate's
-  // applies to unattended runs in the engine, but a run somebody starts from
-  // the studio or a terminal is the same money, so the lower of the two is
-  // what every run is held to.
+  // The per-run ceiling, where one was set. The pipeline node has its own; the
+  // Budget gate's applies to unattended runs in the engine, but a run somebody
+  // starts from the studio or a terminal draws on the same plan, so the lower
+  // of the two is what every run is held to.
   const runCaps = [numberOrNull(cfg(pipeline, 'maxCostUsd', null)), numberOrNull(cfg(budget, 'maxRunCostUsd', null))].filter((value): value is number => value !== null);
   const label = triggerLabelFor(trigger, brand);
 
@@ -211,11 +211,12 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
   }
   if (unattended && (relayConfig.unattended as { authors: string[] }).authors.length === 0 && (relayConfig.unattended as { teams: string[] }).teams.length === 0) {
     // True whatever the trigger is: the Action starts from an issue, and the
-    // engine asks who put the trigger label on it before it spends anything.
+    // engine asks who put the trigger label on it before any agent starts.
     warnings.push(`The allowlist is empty. The exported Action works on an issue labelled ${label}, and Relay refuses a label applied by anyone who is not on unattended.authors or unattended.teams. Add the logins who may start runs to an Author allowlist gate.`);
   }
-  if (unattended && budget === undefined) {
-    warnings.push('No budget gate: unattended.maxRunCostUsd and maxDailyCostUsd are unset. The Action and `relay workflow serve` both refuse to start the agents for an event until they are. Add a Budget gate with a per-run cost and a daily budget.');
+  // A Budget gate is optional, and no gate is no ceiling. The one shape the engine refuses is a day's ceiling with nothing for a run in flight to reserve.
+  if (unattended && numberOrNull(cfg(budget, 'maxDailyCostUsd', null)) !== null && numberOrNull(cfg(budget, 'maxRunCostUsd', null)) === null) {
+    warnings.push('The Budget gate has a daily budget and no per-run cost. The Action and `relay workflow serve` both refuse to start the agents for an event that way: a run in flight reserves its per-run cost out of the day. Fill in the per-run cost, or clear the daily budget.');
   }
   if (pipeline === undefined) {
     warnings.push('No agent pipeline in this workflow, so the exported Action runs no agent: it only performs the app steps that need no decision.');
@@ -226,7 +227,7 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
   }
   const beyondTheAction = [...new Set(found.filter((entry) => entry.def.kind === 'action' && ACTION_CANNOT.has(entry.def.id)).map((entry) => entry.def.name))];
   if (beyondTheAction.length > 0) {
-    warnings.push(`The exported Action does not perform ${list(beyondTheAction)}: it decides the allowlist and the budget itself, then runs the pipeline on the issue it is given. \`relay workflow\` performs ${beyondTheAction.length === 1 ? 'it' : 'them'}: run the whole workflow with \`relay workflow run\`, or keep its trigger on a machine of your own with \`relay workflow serve\`.`);
+    warnings.push(`The exported Action does not perform ${list(beyondTheAction)}: it decides the allowlist and any budget itself, then runs the pipeline on the issue it is given. \`relay workflow\` performs ${beyondTheAction.length === 1 ? 'it' : 'them'}: run the whole workflow with \`relay workflow run\`, or keep its trigger on a machine of your own with \`relay workflow serve\`.`);
   }
   const testOnly = [...new Set(found.filter((entry) => entry.def.kind === 'action' && isSimulatedOnly(entry.def.id)).map((entry) => entry.def.name))];
   if (testOnly.length > 0) {
@@ -837,7 +838,7 @@ ${auth.claude === 'subscription' ? `          CLAUDE_CODE_OAUTH_TOKEN: \${{ secr
 # Trigger: ${trigger?.def.connector.name ?? 'manual'} → ${trigger?.def.name ?? 'run'}.
 ${how.join('\n')}
 #
-# Guardrails (allowlist, budgets, delivery ceiling) are read from .relay/config.json,
+# Guardrails (allowlist, any budget, delivery ceiling) are read from .relay/config.json,
 # never from this file: a workflow file is editable by anyone who can open a PR.
 name: ${yamlString(`${brand.name} · ${workflow.name}`)}
 
@@ -906,7 +907,7 @@ This bundle runs the workflow on your own GitHub Actions minutes. Nothing is hos
 - \`${compiledGraphPath(workflow)}\` — the whole workflow, compiled for the engine to run as drawn.
 - \`.github/workflows/${file}\` — the Action that runs the pipeline.
 
-Treat the two under \`.relay/\` like code: they decide who may start a run, what it may spend and what it posts where, so changes to them deserve the same review as a change to CI.
+Treat the two under \`.relay/\` like code: they decide who may start a run, any ceiling on what it may use and what it posts where, so changes to them deserve the same review as a change to CI.
 
 ## 2. Bring your own subscriptions
 

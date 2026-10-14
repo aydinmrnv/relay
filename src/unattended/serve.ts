@@ -18,8 +18,8 @@ import { applyUnattendedPolicy, decideTrigger, triggerLabelOf, unattendedOf } fr
  *   1. **The kill switch** — before anything, because it is the answer that
  *      overrides every other one.
  *   2. **Concurrency** — the same repository-wide limit `relay run` obeys.
- *   3. **The budget** — checked before the claim, because a run that has
- *      started cannot be un-started.
+ *   3. **The budget**, where one is set — checked before the claim, because
+ *      a run that has started cannot be un-started.
  *   4. **The allowlist** — checked before the label comes off, so a refusal
  *      leaves the label in place where the person who applied it can see it.
  *
@@ -80,8 +80,9 @@ export type ServeEvent =
       label: string;
       pollSeconds: number;
       maxConcurrentRuns: number;
-      maxRunCostUsd: number;
-      maxDailyCostUsd: number;
+      /** `null` where the repository set no ceiling: the budgets are optional. */
+      maxRunCostUsd: number | null;
+      maxDailyCostUsd: number | null;
       /**
        * False in CI. A job there starts from a fresh checkout, so the runs the
        * daily total is summed from are not on disk and the total is always
@@ -132,8 +133,8 @@ export async function serve(deps: ServeDeps): Promise<ServeOutcome> {
     label: triggerLabelOf(config),
     pollSeconds: settings.pollSeconds,
     maxConcurrentRuns: config.workflow.maxConcurrentRuns,
-    maxRunCostUsd: settings.maxRunCostUsd ?? 0,
-    maxDailyCostUsd: settings.maxDailyCostUsd ?? 0,
+    maxRunCostUsd: settings.maxRunCostUsd,
+    maxDailyCostUsd: settings.maxDailyCostUsd,
     dailyBudgetEnforced: deps.source === 'serve',
     once: deps.maxPasses === 1,
   });
@@ -196,8 +197,7 @@ export async function serve(deps: ServeDeps): Promise<ServeOutcome> {
   async function pass(active: RelayConfig): Promise<ServeOutcome | undefined> {
     const settingsNow = unattendedOf(active);
     const label = triggerLabelOf(active);
-    const maxRunCostUsd = settingsNow.maxRunCostUsd ?? 0;
-    const maxDailyCostUsd = settingsNow.maxDailyCostUsd ?? 0;
+    const { maxRunCostUsd, maxDailyCostUsd } = settingsNow;
 
     const refs = await candidates(label);
     deps.log({ type: 'considered', issueRef: deps.only ?? label, count: refs.length });
@@ -214,19 +214,22 @@ export async function serve(deps: ServeDeps): Promise<ServeOutcome> {
         return undefined;
       }
 
-      const spend = dailySpend(await deps.listRuns(), now());
-      const budget: BudgetVerdict = budgetAllows({
-        spend,
-        inFlight: inFlight.size,
-        maxRunCostUsd,
-        maxDailyCostUsd,
-      });
-      if (!budget.ok) {
-        // Loudly, and not by queueing: an issue held until midnight is the same
-        // money with a delay in front of it, and the label left on the issue is
-        // a request that is still visibly outstanding.
-        deps.log({ type: 'budget', detail: budget.detail });
-        return end('budget', budget.detail);
+      // No daily budget is no ceiling on the day. One that is set is kept.
+      if (maxDailyCostUsd !== null) {
+        const spend = dailySpend(await deps.listRuns(), now());
+        const budget: BudgetVerdict = budgetAllows({
+          spend,
+          inFlight: inFlight.size,
+          maxRunCostUsd: maxRunCostUsd ?? 0,
+          maxDailyCostUsd,
+        });
+        if (!budget.ok) {
+          // Loudly, and not by queueing: an issue held until midnight is the same
+          // usage with a delay in front of it, and the label left on the issue is
+          // a request that is still visibly outstanding.
+          deps.log({ type: 'budget', detail: budget.detail });
+          return end('budget', budget.detail);
+        }
       }
 
       const outcomeForRef = await consider(active, label, ref);

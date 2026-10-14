@@ -44,7 +44,7 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-/** A config with every guardrail answered, which is the only kind that serves. */
+/** A config with every guardrail answered, budgets included. */
 function readyConfig(overrides: Partial<RelayConfig['unattended']> = {}): RelayConfig {
   const config = structuredClone(DEFAULT_CONFIG);
   config.workflow.triggerLabel = 'relay:go';
@@ -127,8 +127,8 @@ describe('starting a server at all', () => {
     const cases: Array<[Partial<RelayConfig['unattended']>, RegExp]> = [
       [{ enabled: false }, /switched off/],
       [{ authors: [], teams: [] }, /allowlist is empty/],
-      [{ maxRunCostUsd: null }, /per-run budget/],
-      [{ maxDailyCostUsd: null }, /daily budget/],
+      // A day's ceiling alone cannot be kept: a run in flight reserves its per-run budget out of the day.
+      [{ maxRunCostUsd: null }, /with no unattended.maxRunCostUsd/],
       [{ maxRunCostUsd: 50 }, /above unattended.maxDailyCostUsd/],
     ];
     for (const [overrides, pattern] of cases) {
@@ -148,6 +148,12 @@ describe('starting a server at all', () => {
 
   it('accepts a repository that answered all of them', () => {
     assert.doesNotThrow(() => assertUnattendedReady(readyConfig()));
+  });
+
+  // The agents run on the repository's own plans, so a budget is a choice and not a precondition.
+  it('starts with no budget set, or with only a per-run one', () => {
+    assert.doesNotThrow(() => assertUnattendedReady(readyConfig({ maxRunCostUsd: null, maxDailyCostUsd: null })));
+    assert.doesNotThrow(() => assertUnattendedReady(readyConfig({ maxDailyCostUsd: null })));
   });
 });
 
@@ -473,8 +479,32 @@ describe('serve', () => {
     await serve(job.deps);
     const inCi = job.events.find((event) => event.type === 'watching');
     assert.ok(inCi?.type === 'watching' && inCi.dailyBudgetEnforced === false);
-    // The ceiling is still required and still reported, for whoever parses it.
-    assert.ok(inCi.maxDailyCostUsd > 0);
+    // The ceiling is still reported, for whoever parses it.
+    assert.ok(inCi.maxDailyCostUsd !== null && inCi.maxDailyCostUsd > 0);
+  });
+
+  it('starts runs with no budget set, and reports that there is none', async () => {
+    const tracker = new FakeTracker([issue()]);
+    tracker.actors.set('142', 'maintainer');
+    const config = readyConfig({ maxRunCostUsd: null, maxDailyCostUsd: null });
+    // A day that would be far past any ceiling, were there one.
+    const spent: RunState = createRunState({
+      runId: '20260825T090000-spenta',
+      shortId: 'spenta',
+      issueRef: '9',
+      repository: { root, owner: 'acme', name: 'widgets', defaultBranch: 'main' },
+      config: structuredClone(DEFAULT_CONFIG),
+      now: new Date('2026-08-25T09:00:00Z'),
+      trigger: { source: 'serve', label: 'relay:go', actor: 'maintainer', at: '2026-08-25T09:00:00Z' },
+    });
+    spent.usage = { total: { inputTokens: 1, outputTokens: 1, costUsd: 900, turns: 1, pricedTurns: 1 }, byPhase: {} };
+    const { deps, starts, events } = harness(tracker, { listRuns: async () => [spent] }, config);
+    const outcome = await serve(deps);
+    assert.equal(outcome.stoppedBy, 'once');
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0]?.config.workflow.maxCostUsd, null);
+    const watching = events.find((event) => event.type === 'watching');
+    assert.ok(watching?.type === 'watching' && watching.maxRunCostUsd === null && watching.maxDailyCostUsd === null);
   });
 
   it('starts a run per labelled issue and takes the label off first', async () => {

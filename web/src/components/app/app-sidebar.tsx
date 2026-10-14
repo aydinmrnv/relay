@@ -41,7 +41,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'Build',
     items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, hint: 'Overview: recent runs, spend and what to do next' },
+      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, hint: 'Overview: recent runs, usage and what to do next' },
       { href: '/workflows', label: 'Workflows', icon: Workflow, hint: 'Your workflows, and the canvas to edit them' },
       { href: '/templates', label: 'Templates', icon: LayoutTemplate, hint: 'Ready-made workflows to start from' },
     ],
@@ -49,7 +49,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'Operate',
     items: [
-      { href: '/runs', label: 'Runs', icon: Play, hint: 'Every run, test or real, with its timeline and cost' },
+      { href: '/runs', label: 'Runs', icon: Play, hint: 'Every run, test or real, with its timeline and usage' },
       { href: '/integrations', label: 'Integrations', icon: Cable, hint: 'Apps your workflows can listen to and act on' },
     ],
   },

@@ -30,13 +30,13 @@ export function BuilderTour({ open, onClose }: { open: boolean; onClose: () => v
     {
       id: 'checks',
       title: 'Checks as you go',
-      description: `The badge in the toolbar runs the same rules the ${brand.name} CLI enforces: unattended runs never merge, reviewers must be read-only, and missing budgets or allowlists are called out.`,
+      description: `The badge in the toolbar runs the same rules the ${brand.name} CLI enforces: unattended runs never merge, reviewers must be read-only, and a missing allowlist is called out.`,
       icon: <ShieldCheck className="size-10" strokeWidth={1.6} />,
     },
     {
       id: 'run',
       title: 'Test run for free',
-      description: 'Plays the workflow with a sample ticket — phases, review rounds, costs, refusals — right on the canvas. Nothing is called and nothing is billed. Use the arrow next to it to run with your own payload.',
+      description: 'Plays the workflow with a sample ticket — phases, review rounds, usage, refusals — right on the canvas. Nothing is called and nothing is billed. Use the arrow next to it to run with your own payload.',
       icon: <Play className="size-10" strokeWidth={1.6} />,
     },
     {

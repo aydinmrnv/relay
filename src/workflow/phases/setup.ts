@@ -83,7 +83,7 @@ export async function fetchingIssue(context: EngineContext): Promise<PhaseResult
     if (screen?.refuse === true) {
       throw new RelayError(`Stopped before any agent read it: ${screen.reason}.`, {
         code: 'INJECTION_SCREEN',
-        hint: 'Nothing was run and nothing was spent. The screen is a list of patterns: it can be wrong about an issue that only discusses these phrasings.',
+        hint: 'Nothing was run. The screen is a list of patterns: it can be wrong about an issue that only discusses these phrasings.',
       });
     }
     if (screen !== undefined) observer.warn(`Unattended: ${screen.reason}.`);

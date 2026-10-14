@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Check, CheckCircle2, GitPullRequestDraft, Hand, Lock, Power, ShieldX, Wallet } from 'lucide-react';
+import { Check, CheckCircle2, GitPullRequestDraft, Hand, Lock, Power, ScanText, ShieldX } from 'lucide-react';
 import { useBrand } from '@/hooks/use-brand';
 import { cn } from '@/lib/utils';
 import { AppMark, AppTile, Reveal, SAMPLE, SectionHeading } from './primitives';
@@ -20,7 +20,7 @@ export function HowItWorks() {
     },
     {
       title: 'Put guardrails in front',
-      body: 'Set a budget, restrict who can start a run, and add approval where it matters: the run waits there until a person says yes. Failed checks stop the run.',
+      body: 'Restrict who can start a run, screen the ticket for prompt injection, and add approval where it matters: the run waits there until a person says yes. Failed checks stop the run.',
       visual: <GuardrailVisual />,
     },
     {
@@ -101,8 +101,8 @@ function TriggerVisual() {
 }
 
 function GuardrailVisual() {
-  const gates: Array<{ icon: typeof Wallet; name: string; detail: string; verdict: 'pass' | 'refused' | 'armed' }> = [
-    { icon: Wallet, name: 'Budget', detail: '$6 a run · $40 a day', verdict: 'pass' },
+  const gates: Array<{ icon: typeof Lock; name: string; detail: string; verdict: 'pass' | 'refused' | 'armed' }> = [
+    { icon: ScanText, name: 'Injection screen', detail: 'nothing in the ticket reads as an instruction', verdict: 'pass' },
     { icon: Lock, name: 'Allowlist', detail: '@mallory is not on it', verdict: 'refused' },
     { icon: Hand, name: 'Approval', detail: 'waits for a named person', verdict: 'armed' },
     { icon: Power, name: 'Kill switch', detail: 're-read before every start', verdict: 'armed' },
@@ -118,7 +118,7 @@ function GuardrailVisual() {
           </div>
           {verdict === 'pass' ? (
             <span className={cn('inline-flex shrink-0 items-center gap-1 text-xs font-medium', SUCCESS_TEXT)}>
-              <Check className="size-3.5" /> Within budget
+              <Check className="size-3.5" /> Clean
             </span>
           ) : verdict === 'refused' ? (
             <span className={cn('inline-flex shrink-0 items-center gap-1 text-xs font-medium', DESTRUCTIVE_TEXT)}>
@@ -198,7 +198,7 @@ function DeliveryVisual() {
         <p className="min-w-0 flex-1 truncate text-xs">
           <span className="font-medium">#eng-agents</span>{' '}
           <span className="text-muted-foreground">
-            PR {SAMPLE.pullRequest} is ready for review · cost {SAMPLE.cost}
+            PR {SAMPLE.pullRequest} is ready for review · usage {SAMPLE.cost}
           </span>
         </p>
       </Row>

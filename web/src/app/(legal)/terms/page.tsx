@@ -51,7 +51,7 @@ export default function TermsPage() {
       <h2>Agents and your code</h2>
       <p>
         Coding agents can be wrong. {name} makes them review each other and stops unattended runs at a draft pull request, but you decide what gets merged. The agents run with the permissions of the account they are
-        signed in to, so run them on repositories and machines you are willing to let them change. Test runs in the studio are simulations, and spend forecasts are estimates, not quotes; what the agents cost is
+        signed in to, so run them on repositories and machines you are willing to let them change. Test runs in the studio are simulations, and usage forecasts are estimates, not quotes; what the agents cost is
         between you and their vendors.
       </p>
 

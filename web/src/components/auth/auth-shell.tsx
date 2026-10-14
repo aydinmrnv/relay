@@ -14,7 +14,7 @@ import { stashPairing } from '@/lib/companion/client';
 const POINTS = [
   { icon: GitCompareArrows, title: 'Nothing grades its own homework', body: 'Claude Code and Codex review each other’s plan and diff before a pull request exists.' },
   { icon: KeyRound, title: 'Your plans, on your computer', body: 'No API keys to paste. Agents run on the subscriptions you already pay for, where you signed them in.' },
-  { icon: ShieldCheck, title: 'Guardrails refuse by default', body: 'Budgets, allowlists and approvals stand in front of every unattended run.' },
+  { icon: ShieldCheck, title: 'Guardrails refuse by default', body: 'Allowlists, approvals and a kill switch stand in front of every unattended run.' },
 ];
 
 const RECEIPT = [

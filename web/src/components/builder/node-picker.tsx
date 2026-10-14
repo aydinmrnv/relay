@@ -33,12 +33,12 @@ interface Props {
 /** The likeliest next steps after each kind of output, in the order people reach for them. */
 const SUGGESTED: Record<PortSpec['type'] | 'start', string[]> = {
   start: ['logic.trigger.manual', 'github-issues.trigger.issue-labelled', 'linear.trigger.issue-assigned', 'schedule.trigger.cron', 'http.trigger.webhook', 'sentry.trigger.issue-created'],
-  issue: ['gates.action.budget', 'gates.action.allowlist', 'gates.action.approval', 'pipeline.action.run', 'pipeline.action.fast', 'logic.action.ai-step', 'logic.action.condition'],
+  issue: ['pipeline.action.run', 'gates.action.allowlist', 'gates.action.approval', 'pipeline.action.fast', 'logic.action.ai-step', 'logic.action.condition'],
   run: ['delivery.action.deliver', 'delivery.action.comment-summary', 'slack.action.post-run-summary', 'http.action.post-run-json', 'logic.action.condition'],
   change: ['slack.action.share-pr', 'slack.action.post-message', 'linear.action.attach-pr', 'linear.action.comment', 'discord.action.share-pr', 'http.action.request'],
   event: ['logic.action.condition', 'logic.action.ai-step', 'slack.action.post-message', 'http.action.request', 'schedule.action.delay'],
   message: ['slack.action.post-message', 'discord.action.send-message'],
-  any: ['gates.action.budget', 'pipeline.action.run', 'logic.action.condition', 'slack.action.post-message', 'http.action.request'],
+  any: ['pipeline.action.run', 'logic.action.condition', 'slack.action.post-message', 'http.action.request'],
 };
 
 /** The input a node would be connected on, given what flows out of the source. */
@@ -96,7 +96,7 @@ function PickerList({ source, needsTrigger, onPick }: Omit<Props, 'open' | 'onOp
 
   return (
     <Command shouldFilter={false} className="rounded-none! p-0">
-      <CommandInput value={query} onValueChange={setQuery} placeholder={`Search ${NODE_TYPES.length} triggers and actions: “slack”, “budget”, “pull request”…`} autoFocus />
+      <CommandInput value={query} onValueChange={setQuery} placeholder={`Search ${NODE_TYPES.length} triggers and actions: “slack”, “allowlist”, “pull request”…`} autoFocus />
       <CommandList className="max-h-[min(60vh,440px)] p-1">
         <CommandEmpty>Nothing that fits here matches “{query}”. Try the HTTP request node for anything else.</CommandEmpty>
         {searching ? (

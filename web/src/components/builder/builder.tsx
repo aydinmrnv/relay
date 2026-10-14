@@ -749,7 +749,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
             {validation === null ? null : <ValidationButton issues={validation.issues} errors={validation.errors} warnings={validation.warnings} onSelect={(nodeId) => selectNode(nodeId, true)} />}
             {mobile ? null : (
               <>
-                <IconButton label="Spend forecast: a rough range for what this workflow costs" onClick={() => setForecastOpen(true)}>
+                <IconButton label="Usage forecast: a rough range for what this workflow uses of your plans" onClick={() => setForecastOpen(true)}>
                   <CircleDollarSign />
                 </IconButton>
                 <IconButton label="Version history" onClick={() => setHistoryOpen(true)}>
@@ -834,7 +834,7 @@ function BuilderInner({ workflowId }: { workflowId: string }) {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setForecastOpen(true)}>
-                    <CircleDollarSign /> Spend forecast
+                    <CircleDollarSign /> Usage forecast
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setHistoryOpen(true)}>
                     <History /> Version history

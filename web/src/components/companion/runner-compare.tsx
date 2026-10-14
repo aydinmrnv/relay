@@ -121,7 +121,7 @@ const SAME = [
   'The studio never asks you for a model credential, and has no route that reads one.',
   'Runs land in your own repository: a branch, a secret scan, and a pull request for you to merge.',
   'Test runs are free and stay in this browser, whichever runner you pick.',
-  'The same guardrails, budgets and refusals — the runner only changes where the agents work.',
+  'The same guardrails and refusals — the runner only changes where the agents work.',
 ];
 
 const PICK = [

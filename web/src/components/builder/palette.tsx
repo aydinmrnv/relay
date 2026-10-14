@@ -21,7 +21,7 @@ type KindFilter = 'all' | 'trigger' | 'action';
 /** The core nodes, in the order a workflow usually uses them, with a word on when to reach for each. */
 const BLOCKS: Array<{ title: string; hint: string; ids: string[] }> = [
   { title: 'Start', hint: 'Every workflow begins with one trigger.', ids: ['logic.trigger.manual', 'schedule.trigger.cron', 'http.trigger.webhook'] },
-  { title: 'Guardrails', hint: 'Put these in front of the pipeline. Each refuses by default.', ids: ['gates.action.budget', 'gates.action.allowlist', 'gates.action.approval', 'gates.action.kill-switch', 'gates.action.concurrency'] },
+  { title: 'Guardrails', hint: 'Put these in front of the pipeline. Each refuses by default.', ids: ['gates.action.allowlist', 'gates.action.approval', 'gates.action.kill-switch', 'gates.action.concurrency', 'gates.action.budget'] },
   { title: 'Agents', hint: 'Where the code gets written, reviewed and tested.', ids: ['pipeline.action.run', 'pipeline.action.fast', 'pipeline.action.estimate'] },
   { title: 'Deliver', hint: 'How far a finished run carries its work.', ids: ['delivery.action.deliver', 'delivery.action.comment-summary'] },
   {

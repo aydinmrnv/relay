@@ -221,19 +221,17 @@ export function validateWorkflow(workflow: Workflow, context: ValidationContext 
     }
   }
 
-  // Guardrails are opt-in, and their absence is worth saying out loud.
+  // Who may start a run is opt-in, and its absence is worth saying out loud.
+  // A Budget gate is not asked for: the agents run on plans their owner
+  // already has, so a ceiling is a choice and its absence is not a problem.
   if (unattended && pipelines.length > 0) {
-    const hasBudget = nodes.some((node) => resolveNode(node)?.id === 'gates.action.budget');
     // A person approving each run is a stronger answer to "who may start this" than a list.
     const hasAllowlist = nodes.some((node) => resolveNode(node)?.id === 'gates.action.allowlist' || resolveNode(node)?.id === 'gates.action.approval');
-    if (!hasBudget) {
-      issues.push({ level: 'warning', message: 'No budget gate.', hint: 'Anyone who can trigger this can spend money. Put a Budget gate between the trigger and the pipeline.' });
-    }
     // An allowlist is about who may ask. A red build, a crash or a finished
-    // flag is not asked for by anyone, so there is nobody to list; the budget
-    // and concurrency gates are what bound those.
+    // flag is not asked for by anyone, so there is nobody to list; a
+    // concurrency limit is what bounds those.
     if (!hasAllowlist && triggers.some((node) => startedByPerson(resolveNode(node)))) {
-      issues.push({ level: 'warning', message: 'No author allowlist.', hint: 'On a public repository, a drive-by label is a funded denial-of-wallet attack.' });
+      issues.push({ level: 'warning', message: 'No author allowlist.', hint: 'On a public repository, anyone who can add a label could start runs on your plans.' });
     } else if (!hasAllowlist) {
       // Nobody asks for a red build, so a test run needs no list. The export
       // is different: its Action starts from a labelled issue, and the engine

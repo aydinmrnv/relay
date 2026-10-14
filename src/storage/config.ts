@@ -202,12 +202,13 @@ export interface RelayConfig {
    * Runs that begin without a person: `relay serve` watching for the trigger
    * label, and the GitHub Action doing the same thing on `issues.labeled`.
    *
-   * Every key here is a guardrail, and none of them has a permissive default. A
-   * public repository where any drive-by can start a paid agent run by typing a
-   * label is a funded denial-of-wallet attack, so the shipped configuration
-   * cannot start anything at all: the switch is off, the allowlist is empty and
-   * both budgets are unset. `relay serve` refuses to run until somebody has
-   * answered all three deliberately.
+   * Every key here is a guardrail. A public repository where any drive-by can
+   * start an agent run by typing a label hands a stranger its plans' usage, so
+   * the shipped configuration cannot start anything at all: the switch is off
+   * and the allowlist is empty, and `relay serve` refuses to run until somebody
+   * has answered both deliberately. The two budgets are optional: unset is no
+   * ceiling, because the agents run on the repository's own plans, and one
+   * that is set is kept.
    */
   unattended: {
     /**
@@ -222,11 +223,13 @@ export interface RelayConfig {
     teams: string[];
     /**
      * Dollars unattended runs may report in one UTC day, across the whole
-     * repository. Reached means stop starting runs and say so — never queue
-     * them for tomorrow, which is the same spend with a delay in front of it.
+     * repository, or `null` for no ceiling. Reached means stop starting runs
+     * and say so — never queue them for tomorrow, which is the same usage with
+     * a delay in front of it. Needs `maxRunCostUsd`: a run in flight reserves
+     * that much of the day.
      */
     maxDailyCostUsd: number | null;
-    /** Dollars any one unattended run may report before it stops itself. */
+    /** Dollars any one unattended run may report before it stops itself, or `null` for no ceiling. */
     maxRunCostUsd: number | null;
     /** Seconds between polls of the tracker. */
     pollSeconds: number;

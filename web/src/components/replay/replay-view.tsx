@@ -239,7 +239,7 @@ export function ReplayView({ recording }: { recording: Recording }) {
           <Card>
             <CardHeader>
               <CardTitle>Pipeline phases</CardTitle>
-              <CardDescription>Where the time and money went, agent by agent, as the run recorded it. Costs are known once the run has finished.</CardDescription>
+              <CardDescription>Where the time and usage went, agent by agent, as the run recorded it. Usage is known once the run has finished.</CardDescription>
             </CardHeader>
             {run.phases.length > 0 || current !== null ? (
               <CardContent>

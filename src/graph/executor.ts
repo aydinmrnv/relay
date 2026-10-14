@@ -571,7 +571,7 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
     }
     const said = `${matches.slice(0, 3).join('; ')}${matches.length > 3 ? `, and ${matches.length - 3} more` : ''}`;
     if (node.config['mode'] === 'warn') return { status: 'done', message: `Warned, and let through: ${said}.`, next: ['pass'] };
-    return { status: 'refused', message: `Refused: looks like a prompt injection: ${said}.`, detail: 'No agent read it and nothing was spent. A person can read it and start the run by hand.', next: ['refused'] };
+    return { status: 'refused', message: `Refused: looks like a prompt injection: ${said}.`, detail: 'No agent read it. A person can read it and start the run by hand.', next: ['refused'] };
   }
 
   async function approval(node: GraphNode): Promise<NodeResult> {
@@ -617,22 +617,30 @@ export async function executeGraph(graph: WorkflowGraph, event: WorkflowEvent, e
       if (task.kind === 'issue' && !isIssueReference(task.ref)) {
         return { status: 'refused', message: `Refused: “${oneLine(task.ref, 60)}” is not an issue in a tracker, and an event may only name one of those.`, next: [] };
       }
-      // The rule `relay serve` starts under: nobody is here to notice the bill, so both ceilings are set before an event may spend.
+      // The rule `relay serve` starts under: the budgets are optional, and one that is set is kept. A ceiling that cannot be read is not "no ceiling".
       const compiled = (graph.config['unattended'] !== null && typeof graph.config['unattended'] === 'object' ? graph.config['unattended'] : {}) as Record<string, unknown>;
       const cap = money(compiled['maxRunCostUsd']);
       const daily = money(compiled['maxDailyCostUsd']);
-      if (!cap.ok || !daily.ok || cap.value === null || daily.value === null) {
+      if (!cap.ok || !daily.ok) {
         return {
           status: 'refused',
-          message: 'Refused: an event may not start the agents with no ceiling on what they spend.',
-          detail: 'Add a Budget gate with both a per-run cost and a daily budget, and export the workflow again. A run started by hand needs neither.',
+          message: `Refused: the workflow's ${cap.ok ? 'daily budget' : 'per-run cost'} is not an amount, so there is no telling what ceiling was meant.`,
+          detail: 'Write a number of dollars on the Budget gate, such as 2.50, or leave it empty for no ceiling, and export the workflow again.',
           next: [],
         };
       }
-      // A Budget gate on the way here has already held today's spend against the ceiling. Where the canvas put it somewhere else, it is held here.
-      if (!state.budgeted) {
+      if (daily.value !== null && cap.value === null) {
+        return {
+          status: 'refused',
+          message: `Refused: a daily budget of ${formatCost(daily.value)} cannot be kept with no per-run cost.`,
+          detail: 'Fill in the per-run cost on the Budget gate, and export the workflow again. A run in flight reserves that much of the day.',
+          next: [],
+        };
+      }
+      // A Budget gate on the way here has already held today's usage against the ceiling. Where the canvas put it somewhere else, it is held here.
+      if (!state.budgeted && cap.value !== null && daily.value !== null) {
         const day = await today(cap.value, daily.value);
-        if (day.refusal !== null) return { status: 'refused', message: day.refusal, detail: 'Never queued for tomorrow: that is the same spend with a delay in front of it.', next: [] };
+        if (day.refusal !== null) return { status: 'refused', message: day.refusal, detail: 'Never queued for tomorrow: that is the same usage with a delay in front of it.', next: [] };
       }
     }
     state.pipelineStarted = true;

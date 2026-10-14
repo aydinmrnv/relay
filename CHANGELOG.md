@@ -36,10 +36,11 @@ Launch readiness. Relay is in beta, and free while it is.
   a file; what it says is escaped before it lands in a Slack message, a JSON
   body or a URL; and it cannot set what the run works out for itself, such as
   an estimate.
-- An event may start the agents only when the workflow has a Budget gate with
-  a per-run cost and a daily budget. `.relay/STOP` stops every workflow's
-  unattended starts, and `relay workflow serve` reads the workflow file again
-  for each event, so pausing it needs no restart.
+- A Budget gate is optional. Runs use your own Claude and ChatGPT plans, so
+  with no gate there is no ceiling and an event may start the agents without
+  one; a per-run or daily budget that is set is kept. `.relay/STOP` stops every
+  workflow's unattended starts, and `relay workflow serve` reads the workflow
+  file again for each event, so pausing it needs no restart.
 - With no secret set, an incoming webhook is taken only from a script on the
   same machine, never from a web page, and nobody's word is taken for who
   sent it.
@@ -65,8 +66,16 @@ Launch readiness. Relay is in beta, and free while it is.
   signing out with unsent changes asks first.
 - The builder works on a phone, and shortcuts show the right keys on Windows
   and Linux.
-- Test runs, simulated pull requests and simulated spend are labelled as such
+- Test runs, simulated pull requests and simulated usage are labelled as such
   everywhere. Apps that cannot be connected yet say "Planned".
+- Runs are described as what they are: usage on your own plans, which Relay
+  does not bill. The dashboard's Spend card and the spend forecast are now
+  Usage and the usage forecast, with the same figures the coding CLIs report.
+- No template or described workflow adds a Budget gate, and a workflow without
+  one is no longer warned about. The gate is still in the palette, and a
+  sentence that names a budget ("under $5") still gets one.
+- A Kill switch and a Concurrency limit hand on what they were given, so
+  either can sit straight in front of the pipeline.
 - Templates start paused, like every other new workflow.
 - The product is called Relay; renaming it was removed.
 - Relay Cloud is described as what it is, an invite-only beta, with its limits,
@@ -94,6 +103,9 @@ Launch readiness. Relay is in beta, and free while it is.
   and keep secret-looking environment variables away from the agents.
 - The reference says how agents are confined, on which operating system, and
   that the daily budget is not enforced on GitHub Actions.
+- `relay serve` and the Action start with `unattended.maxRunCostUsd` and
+  `unattended.maxDailyCostUsd` unset: no budget is no ceiling. A daily budget
+  still needs a per-run one beside it.
 
 ### `relay connect` and Relay Cloud
 

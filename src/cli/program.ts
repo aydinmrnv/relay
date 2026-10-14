@@ -359,7 +359,7 @@ export function buildProgram(version: string): Command {
   // are config, not flags — see `unattended` in .relay/config.json.
   program
     .command('serve')
-    .description('watch the tracker and start a run per labelled issue, inside a budget and an allowlist')
+    .description('watch the tracker and start a run per labelled issue, inside an allowlist and any budget you set')
     .option('--once', 'make one pass over the tracker and exit, instead of polling')
     .option('--issue <ref>', 'consider only this issue (implies --once) — what the GitHub Action passes')
     .option('--label <name>', 'trigger label to watch for, overriding workflow.triggerLabel')

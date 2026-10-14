@@ -52,7 +52,7 @@ type Review = 'light' | 'standard' | 'thorough';
 const ROLES: Array<{ id: Role; icon: LucideIcon; title: string; body: string }> = [
   { id: 'solo', icon: User, title: 'Building on my own', body: 'Side projects, a startup, freelance work.' },
   { id: 'team', icon: Users, title: 'Part of a team', body: 'A shared repository and a tracker full of tickets.' },
-  { id: 'oss', icon: BookOpen, title: 'Maintaining open source', body: 'Issues from strangers, and a budget to protect.' },
+  { id: 'oss', icon: BookOpen, title: 'Maintaining open source', body: 'Issues from strangers, and only some of them yours to hand over.' },
   { id: 'learning', icon: GraduationCap, title: 'Learning', body: 'Seeing how agent pipelines work, hands on.' },
 ];
 
@@ -574,14 +574,13 @@ function madeForYouSentence(sources: string[], destinations: string[], review: R
   const source = SOURCES.find((option) => option.id === sources[0]) ?? SOURCES.find((option) => option.id === (role === 'oss' ? 'github-issues' : 'linear'))!;
   const unattended = source.id !== 'manual';
   const pipeline = review === 'light' ? 'run a quick fix with light review' : review === 'thorough' ? 'run the pipeline with a thorough review' : 'run the pipeline';
-  const budget = unattended ? `, stay under $${role === 'learning' ? 2 : 5} a run` : '';
   const allowlist = unattended && role === 'oss' ? ', only for maintainers alice and bob' : '';
   const told = destinations
     .map((id) => DESTINATIONS.find((option) => option.id === id)?.phrase)
     .filter((phrase): phrase is string => phrase !== undefined)
     .slice(0, 2);
   const tail = told.length === 0 ? '' : ` and ${told.join(' and ')}`;
-  return `${source.phrase}${allowlist}${budget}, ${pipeline} and open a draft PR${tail}.`;
+  return `${source.phrase}${allowlist}, ${pipeline} and open a draft PR${tail}.`;
 }
 
 function rankTemplates(sources: string[], destinations: string[]) {

@@ -73,7 +73,7 @@ export interface WeekStats {
   finished: number;
   succeeded: number;
   successRate: number | null;
-  /** Every run's cost: what test runs would have cost, plus what real runs did. */
+  /** Every run's usage, in dollars: what test runs would have reported, plus what real runs did. */
   spend: number;
   /** The part of `spend` that real runs reported, and so was really used from somebody's plan. */
   realSpend: number;
@@ -113,7 +113,7 @@ export interface SpendRow {
   runs: number;
 }
 
-/** Spend per workflow over the last 7 days, simulated and real, largest first; the tail folds into one row. */
+/** Usage per workflow over the last 7 days, simulated and real, largest first; the tail folds into one row. */
 export function spendByWorkflow(runs: Run[], workflows: Record<string, Workflow>, now: number, limit = 5): { rows: SpendRow[]; other: SpendRow | null; total: number; real: number } {
   const weekAgo = now - 7 * DAY;
   const map = new Map<string, SpendRow>();
@@ -144,38 +144,23 @@ export function spendByWorkflow(runs: Run[], workflows: Record<string, Workflow>
   };
 }
 
-export const FALLBACK_DAILY_CEILING = 40;
-
 export interface Ceiling {
-  /** The tightest daily ceiling set on any Budget gate, or the fallback. */
-  usd: number;
-  /** Which workflow set it; undefined when falling back. */
+  /** The tightest daily ceiling set on any Budget gate, or null when no workflow sets one: a Budget gate is optional. */
+  usd: number | null;
+  /** Which workflow set it. */
   source?: { id: string; name: string };
-  /** How many workflows have a Budget gate at all. */
-  guarded: number;
-  /** Enabled workflows whose pipeline has no Budget gate in front of it. */
-  unguarded: number;
 }
 
 /**
- * The daily spending ceiling to measure today's spend against: the lowest
- * `maxDailyCostUsd` on any Budget gate, because that is where the first gate
- * starts refusing runs.
+ * The daily ceiling to measure today's usage against, where there is one: the
+ * lowest `maxDailyCostUsd` on any Budget gate, because that is where the first
+ * gate starts refusing runs.
  */
 export function dailyCeiling(workflows: Workflow[]): Ceiling {
   let best: Ceiling['source'];
   let usd = Number.POSITIVE_INFINITY;
-  let guarded = 0;
-  let unguarded = 0;
   for (const workflow of workflows) {
-    const gates = workflow.nodes.filter((node) => getNodeType(node.data.typeId)?.id === 'gates.action.budget');
-    const hasPipeline = workflow.nodes.some((node) => getNodeType(node.data.typeId)?.connectorId === 'pipeline');
-    if (gates.length === 0) {
-      if (workflow.enabled && hasPipeline) unguarded += 1;
-      continue;
-    }
-    guarded += 1;
-    for (const gate of gates) {
+    for (const gate of workflow.nodes.filter((node) => getNodeType(node.data.typeId)?.id === 'gates.action.budget')) {
       // An emptied field is no daily ceiling, here as in the export and the test run: there is nothing to measure against.
       const value = numberOrNull(gate.data.config['maxDailyCostUsd']);
       if (value !== null && value < usd) {
@@ -184,10 +169,10 @@ export function dailyCeiling(workflows: Workflow[]): Ceiling {
       }
     }
   }
-  return best === undefined ? { usd: FALLBACK_DAILY_CEILING, guarded, unguarded } : { usd, source: best, guarded, unguarded };
+  return best === undefined ? { usd: null } : { usd, source: best };
 }
 
-/** Today's spend, and the part of it real runs reported. */
+/** Today's usage, and the part of it real runs reported. */
 export function spendToday(runs: Run[], now: number): { total: number; real: number } {
   const start = startOfToday(now).getTime();
   let total = 0;
