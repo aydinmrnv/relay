@@ -67,14 +67,14 @@ export function Pricing() {
               </p>
               <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
                 {cloud
-                  ? 'Pair your own computer with relay connect, run on a Relay Cloud machine (invite-only beta), or export to your repository. Your providers bill their own usage.'
-                  : 'Pair your own computer with relay connect, or export to your repository. Your providers bill their own usage.'}
+                  ? 'Run on your repository’s own GitHub Actions, pair your own computer with relay connect, or use a Relay Cloud machine (invite-only beta). Your providers bill their own usage.'
+                  : 'Run on your repository’s own GitHub Actions, or pair your own computer with relay connect. Your providers bill their own usage.'}
               </p>
               <ul className="my-6 space-y-3 border-t pt-6">
                 {[
+                  'Run on your GitHub Actions minutes',
                   'Use your Claude Code and Codex sign-ins',
-                  cloud ? 'Run on your computer or on a machine of your own, in an isolated worktree' : 'Run on your own computer, in an isolated worktree',
-                  'Automate with your GitHub Actions minutes',
+                  cloud ? 'Or run on your computer or a machine of your own, in an isolated worktree' : 'Or run on your own computer, in an isolated worktree',
                   'Keep your config and changes in your repo',
                 ].map((item) => (
                   <li key={item} className="flex items-start gap-2.5 text-sm">

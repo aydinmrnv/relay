@@ -36,15 +36,17 @@ export const SECTIONS = [
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 /**
- * The way into the studio, the same on every button. The studio needs an
- * account, so someone signed out is sent to sign in — one form that also
- * makes a new account — and `into` then carries on to the page the link was
- * for. Only a development copy without accounts opens the studio directly.
+ * The way into the studio, the same on every button, and named for where it
+ * goes. The studio needs an account: someone new makes one and lands in
+ * setup, someone with one signs in and lands on their dashboard, and `into`
+ * carries on to the page a link was for. Only a development copy without
+ * accounts opens the studio directly.
  *
- * `playground` is the builder without an account, for a visitor who wants to
- * see it before making one. Where a deployment has no sign-in at all it is
- * the only way in, so every button leads there instead of to a sign-in page
- * that can only say it is unavailable.
+ * `playground` is the demo: the builder without an account, where nothing
+ * runs for real. It is never the main button while there is a studio to send
+ * people to. Where a deployment has no sign-in at all it is the only thing
+ * there is, so the button leads there and says "demo", instead of promising
+ * a product behind a sign-in page that can only say it is unavailable.
  */
 export function useStudioEntry() {
   const signedIn = useAccount((state) => state.status === 'signed-in');
@@ -54,8 +56,12 @@ export function useStudioEntry() {
   return {
     signedIn,
     invite,
-    href: closed ? '/play' : invite ? '/sign-in' : '/dashboard',
-    label: signedIn ? 'Go to dashboard' : 'Try it free',
+    /** No accounts on this deployment: the demo is all a visitor can open. */
+    closed,
+    href: closed ? '/play' : invite ? '/sign-up' : '/dashboard',
+    label: closed ? 'Try the demo' : invite ? 'Get started' : 'Open dashboard',
+    /** For someone who already has an account. `null` when they are in, or where there is nothing to sign in to. */
+    signIn: invite && !closed ? '/sign-in' : null,
     into: (path: string) => (closed ? '/play' : invite ? signInThenTo(path) : path),
     // `null` where the main button already goes there, so no page shows two buttons to one place.
     playground: invite && !closed ? '/play' : null,

@@ -28,6 +28,7 @@ import { DescribeWorkflowDialog } from '@/components/workflows/describe-workflow
 
 const TITLES: Record<string, string> = {
   dashboard: 'Dashboard',
+  projects: 'Projects',
   workflows: 'Workflows',
   runs: 'Runs',
   integrations: 'Integrations',
@@ -38,7 +39,7 @@ const TITLES: Record<string, string> = {
   connect: 'Connect your computer',
 };
 
-const PAGES = ['dashboard', 'workflows', 'templates', 'runs', 'integrations', 'runners', 'connect', 'guide', 'settings'] as const;
+const PAGES = ['dashboard', 'projects', 'workflows', 'templates', 'runs', 'integrations', 'runners', 'connect', 'guide', 'settings'] as const;
 
 export function AppHeader() {
   const pathname = usePathname();

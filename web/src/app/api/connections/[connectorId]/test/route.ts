@@ -3,7 +3,8 @@ import { assertCredentials, testApp } from '@/server/connections';
 import { LIMITS } from '@/server/rate-limit';
 
 /**
- * Posts a short "this channel is connected" message through the connection.
+ * Posts a short "this channel is connected" message through a webhook
+ * connection; an app connected with a token has none, and is told so.
  * The words are the server's own: nothing a request sends ends up in
  * somebody's channel, where `<!channel>` would ping everyone in it.
  */

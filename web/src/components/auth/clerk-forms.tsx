@@ -92,8 +92,8 @@ function ClerkForm({ title, children }: { title: string; children: React.ReactNo
 }
 
 /**
- * Sign in or sign up, in one form: "Try it free" and "Sign in" both land
- * here, and an email Clerk does not know carries on into making an account
+ * Sign in or sign up, in one form: "Sign in" lands here, and an email
+ * Clerk does not know carries on into making an account
  * (`withSignUp`) instead of stopping at "no such account".
  */
 export function ClerkSignIn({ next }: { next: string }) {
@@ -174,7 +174,11 @@ function AccountWhy() {
       <ul className="grid gap-1">
         <li className="flex gap-1.5">
           <Check className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
-          <span>Your workflows, runs and settings in every browser you sign in to, with version history and public share links.</span>
+          <span>Your projects: each a repository of yours, with workflows that run on its own GitHub Actions. Setup takes about two minutes.</span>
+        </li>
+        <li className="flex gap-1.5">
+          <Check className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
+          <span>Your workflows and settings in every browser you sign in to, with version history and public share links.</span>
         </li>
         {cloud ? (
           <li className="flex gap-1.5">
@@ -187,7 +191,7 @@ function AccountWhy() {
         <li className="flex gap-1.5">
           <Laptop className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
           <span>
-            {cloud ? 'Or your' : 'Your'} own computer, paired with relay connect, running on the Claude and ChatGPT plans you already have.{' '}
+            Or your own computer, paired with relay connect, for work that needs your own toolchain.{' '}
             <Link href="/runners" className="underline underline-offset-4 hover:text-foreground">
               {cloud ? 'See the two side by side' : 'How that works'}
             </Link>

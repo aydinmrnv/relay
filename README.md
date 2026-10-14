@@ -20,10 +20,10 @@ other, and every claim is shown beside what git and your tests say.
 
 **[Watch a real run →](https://relay-olive-omega.vercel.app/r)** — Relay working
 on its own repository, played back step by step, with the pull request it
-opened. **[Open the playground →](https://relay-olive-omega.vercel.app/play)** — the
-builder in your browser, with no account and nothing to install. Or
-**[try it free](https://relay-olive-omega.vercel.app)**: make a free account
-and your workflows, share links and version history follow you to any browser.
+opened. **[Get started](https://relay-olive-omega.vercel.app)**: make a free
+account, connect a repository, and Relay builds automations that run on that
+repository's own GitHub Actions. Or **[try the demo →](https://relay-olive-omega.vercel.app/play)** —
+the builder in your browser, with no account and nothing run for real.
 Relay is in beta, and free while it is.
 
 ![The Relay studio: a Linear-to-pull-request workflow on the canvas](docs/images/studio.png)
@@ -55,11 +55,13 @@ as a commit, a branch or a draft pull request, as far as you allow.
 
 ## Quick start
 
-**Try it free:** <https://relay-olive-omega.vercel.app>. Sign in, or create a
-free account in the same form, answer four onboarding questions and get a
-first workflow built from your answers. Test runs are simulated, and a real
-run uses the Claude and ChatGPT plans you already have: Relay charges nothing
-for either.
+**Get started:** <https://relay-olive-omega.vercel.app>. Create a free
+account and setup takes you through it: connect a repository, choose where it
+runs (its own GitHub Actions, recommended, or your computer), pick a first
+workflow, set who may start it, and then the steps that
+install it in the repository. Each account can have a project per repository.
+Test runs are simulated, and a real run uses the Claude and ChatGPT plans you
+already have: Relay charges nothing for either.
 
 To look before you sign up, the **playground** at
 [`/play`](https://relay-olive-omega.vercel.app/play) is the same builder with
@@ -324,9 +326,12 @@ they go when you remove the machine.
 [The design](docs/design/relay-cloud-runners.md) covers how that machine is
 run, reached, kept cheap and kept working.
 
-What Relay itself holds: the notification connections you add in the studio (a
-Slack or Discord webhook, which can post to one channel and nothing else),
-encrypted with a key only the server has. The one credential the CLI reads is
+What Relay itself holds: the app connections you add in the studio, encrypted
+with a key only the server has. That is a Slack or Discord webhook, which can
+post to one channel and nothing else, or the API key or token you paste for
+one of the other apps that connect (Linear, Notion, Sentry, Vercel and the
+like), which can do what you allowed it where you made it. It holds no token
+for a code host: GitHub is reached from the runner. The one credential the CLI reads is
 a Linear API key, from `LINEAR_API_KEY`, when an issue lives in Linear.
 
 ## Why a run nobody watched is worth reading
@@ -397,7 +402,7 @@ beta: write to support@nullstack.one to ask for access.
 | Triggers kept by `relay workflow serve`: an incoming webhook, a schedule, a label on a GitHub issue, and the webhooks GitHub, Linear and Sentry send (read from the apps' documented deliveries, not yet exercised against the live services) | Every other app's trigger: Jira, Zendesk, Slack, LaunchDarkly, the other CI services | Reading those apps' events directly |
 | Steps in Slack and Discord (a webhook), GitHub (`gh`), Linear (its API), and HTTP requests | Steps in every other app, unless you give them a bridge URL: then they are posted there, and otherwise reported as not performed | A connection to every app |
 | Through `relay connect`: signing in to Claude Code and Codex, running a workflow on your computer, answering its approvals, installing an export | | |
-| Connecting Slack and Discord in the studio: the webhook is checked with the app, kept encrypted, and rechecked from the dashboard | Other apps' connections: "Mark ready" records a label and signs in to nothing | Sign-in for every connector; a real run using the studio's stored connections rather than the runner's environment |
+| Connecting 20 apps in the studio: a Slack or Discord webhook, or an API key or token for Linear, Shortcut, Notion, Figma, CircleCI, Buildkite, Bitrise, Vercel, Netlify, Sentry, Bugsnag, Rollbar, Snyk, Semgrep, LaunchDarkly, Statsig, Intercom and Plain. Each is checked with the app, kept encrypted, and rechecked from the dashboard | The other apps' connections: "Mark ready" records a label and signs in to nothing | Sign-in for the apps that need an OAuth app, an app install, several values or an address of their own (Jira, Zendesk, Gmail, the GitHub family and the other code hosts, and so on); a real run using the studio's stored connections rather than the runner's environment |
 | Relay Cloud (invite-only beta): a machine of your own on Azure, woken for a run and put to sleep when idle. It runs the pipeline and its delivery | | The whole workflow, and triggers, on Relay Cloud |
 | Exported workflows running on GitHub Actions, started by a label on a GitHub issue | | The Action evaluating the canvas's own decisions |
 | The playground (`/play`, no account), recordings of real runs (`/r`, `relay recording`) and their receipts | | |

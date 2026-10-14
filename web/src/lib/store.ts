@@ -83,6 +83,8 @@ export interface StudioState {
   renameWorkflow: (id: string, name: string, description?: string) => void;
   updateWorkflowMeta: (id: string, patch: Partial<Pick<Workflow, 'name' | 'description' | 'repository'>>) => void;
   markExported: (id: string) => void;
+  /** Records that a workflow's files are in its repository, or with `false` that they are not after all. */
+  markInstalled: (id: string, installed: boolean) => void;
   toggleWorkflow: (id: string, enabled: boolean) => void;
   deleteWorkflow: (id: string) => void;
   duplicateWorkflow: (id: string) => Workflow | undefined;
@@ -287,6 +289,13 @@ export const useStudio = create<StudioState>()(
           const existing = state.workflows[id];
           if (existing === undefined) return {};
           return { workflows: { ...state.workflows, [id]: { ...existing, exportedAt: new Date().toISOString() } } };
+        }),
+
+      markInstalled: (id, installed) =>
+        set((state) => {
+          const existing = state.workflows[id];
+          if (existing === undefined) return {};
+          return { workflows: { ...state.workflows, [id]: { ...existing, installedAt: installed ? new Date().toISOString() : undefined } } };
         }),
 
       toggleWorkflow: (id, enabled) =>

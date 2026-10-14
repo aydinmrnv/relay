@@ -30,6 +30,8 @@ export interface AccountUser {
   emailVerified: boolean;
   image: string | null;
   createdAt: string;
+  /** Their GitHub login, when they signed in with GitHub: who the allowlist of a first workflow starts with. */
+  github?: string | null;
 }
 
 /** The onboarding answers, kept so the studio can tailor what it suggests. */
@@ -41,6 +43,8 @@ export interface OnboardingAnswers {
   review?: string;
   repository?: string;
   firstWorkflow?: string;
+  /** Where the first project runs: `actions`, `machine` or `cloud`. */
+  runner?: string;
 }
 
 export interface VersionSummary {

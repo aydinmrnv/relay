@@ -34,7 +34,7 @@ export function useConnectionActions() {
       try {
         const connection = await checkConnection(connector.id);
         if (connection.status === 'error') toast.error(`${connector.name} refused the connection`, { description: connection.credential?.error });
-        else toast.success(`${connector.name} still accepts it`, { description: 'Checked just now. Nothing was posted.' });
+        else toast.success(`${connector.name} still accepts it`, { description: 'Checked just now. Nothing was posted or changed.' });
       } catch (error) {
         toast.error(`Could not check ${connector.name}`, { description: message(error) });
       }

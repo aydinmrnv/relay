@@ -27,8 +27,10 @@ export const LIMITS = {
   write: { name: 'write', max: 600, windowSeconds: 60 },
   /** Loading a workspace reads everything in it. */
   load: { name: 'load', max: 60, windowSeconds: 60 },
-  /** Each attempt asks Slack or Discord whether a webhook is real: an oracle for leaked URLs, from the server's address. */
-  connect: { name: 'connect', max: 10, windowSeconds: 600 },
+  /** Each attempt asks an app whether a pasted webhook or token is real: an oracle for leaked ones, from the server's address. Enough to connect every app in one sitting. */
+  connect: { name: 'connect', max: 30, windowSeconds: 600 },
+  /** Asking again about one already stored. The dashboard does it for each connection that has not been checked in a while. */
+  check: { name: 'check', max: 60, windowSeconds: 600 },
   /** Each one posts a message to somebody's channel. */
   message: { name: 'message', max: 10, windowSeconds: 600 },
   /** Each one asks Clerk for a name. */

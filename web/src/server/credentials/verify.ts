@@ -2,14 +2,17 @@
  * Asking an app whether a credential works, without doing anything visible:
  * a Slack webhook sent an empty message answers `no_text` while it is alive
  * and `no_service` once it is removed; a Discord webhook describes itself to
- * a GET. Sending a test message is separate, and only on request.
+ * a GET; a token is shown to the app's own "who am I". Sending a test message
+ * is separate, only on request, and only a webhook has somewhere to send one.
  *
- * Every URL is matched against its pattern again here, so this module only
- * ever talks to Slack's and Discord's webhook hosts, and never follows a
- * redirect elsewhere.
+ * A webhook URL is matched against its pattern again here and a token only
+ * goes to its app's fixed address (`tokens.ts`), so this module only ever
+ * talks to the app the credential is for, and never follows a redirect
+ * elsewhere.
  */
-import type { CredentialKind } from '@/lib/workflow/schema';
-import { credentialSpecByKind } from '@/lib/connectors/credentials';
+import { getConnector } from '@/lib/connectors';
+import type { CredentialSpec } from '@/lib/connectors/credentials';
+import { accountName, pick, TOKEN_PROBES } from './tokens';
 
 export type CheckResult =
   | { ok: true; /** A name the app gave, when it gives one. */ account?: string }
@@ -20,32 +23,37 @@ type Fetch = typeof fetch;
 
 const TIMEOUT_MS = 8_000;
 
-export async function checkCredential(kind: CredentialKind, secret: string, fetcher: Fetch = fetch): Promise<CheckResult> {
-  const invalid = mismatch(kind, secret);
+/** Enough for any "who am I"; a list an app answers with instead is cut off here, not downloaded whole. */
+const BODY_LIMIT = 64_000;
+
+export async function checkCredential(spec: CredentialSpec, secret: string, fetcher: Fetch = fetch): Promise<CheckResult> {
+  const invalid = mismatch(spec, secret);
   if (invalid !== null) return invalid;
-  switch (kind) {
+  switch (spec.kind) {
     case 'slack-webhook':
       return slack(await call(fetcher, secret, { method: 'POST', body: '{}' }), 'check');
     case 'discord-webhook':
       return discordCheck(await call(fetcher, secret, { method: 'GET' }));
+    case 'api-token':
+      return token(spec, secret, fetcher);
   }
 }
 
-export async function sendTestMessage(kind: CredentialKind, secret: string, text: string, fetcher: Fetch = fetch): Promise<CheckResult> {
-  const invalid = mismatch(kind, secret);
+export async function sendTestMessage(spec: CredentialSpec, secret: string, text: string, fetcher: Fetch = fetch): Promise<CheckResult> {
+  const invalid = mismatch(spec, secret);
   if (invalid !== null) return invalid;
-  switch (kind) {
+  switch (spec.kind) {
     case 'slack-webhook':
       return slack(await call(fetcher, secret, { method: 'POST', body: JSON.stringify({ text }) }), 'send');
     case 'discord-webhook':
       return discordSend(await call(fetcher, secret, { method: 'POST', body: JSON.stringify({ content: text, allowed_mentions: { parse: [] } }) }));
+    case 'api-token':
+      return { ok: false, reason: 'refused', message: 'A token posts nowhere by itself, so there is no test message to send.' };
   }
 }
 
-function mismatch(kind: CredentialKind, secret: string): CheckResult | null {
-  const spec = credentialSpecByKind(kind);
-  if (spec === undefined || !spec.input.pattern.test(secret)) return { ok: false, reason: 'refused', message: spec?.input.mismatch ?? 'That is not a credential this server knows how to check.' };
-  return null;
+function mismatch(spec: CredentialSpec, secret: string): CheckResult | null {
+  return spec.input.pattern.test(secret) ? null : { ok: false, reason: 'refused', message: spec.input.mismatch };
 }
 
 interface Answer {
@@ -53,21 +61,73 @@ interface Answer {
   body: string;
 }
 
-async function call(fetcher: Fetch, url: string, init: { method: 'GET' | 'POST'; body?: string }): Promise<Answer | null> {
+async function call(fetcher: Fetch, url: string, init: { method: 'GET' | 'POST'; body?: string; headers?: Record<string, string> }): Promise<Answer | null> {
   try {
     const response = await fetcher(url, {
       method: init.method,
-      headers: init.body === undefined ? {} : { 'content-type': 'application/json' },
+      headers: { ...(init.body === undefined ? {} : { 'content-type': 'application/json' }), ...init.headers },
       body: init.body,
       redirect: 'error',
       cache: 'no-store',
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    return { status: response.status, body: (await response.text()).slice(0, 2_000) };
+    return { status: response.status, body: await readSome(response) };
   } catch {
     return null;
   }
 }
+
+/** The start of the answer, as text. Stops reading once it has enough. */
+async function readSome(response: Response): Promise<string> {
+  if (response.body === null) return '';
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < BODY_LIMIT) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks).toString('utf8').slice(0, BODY_LIMIT);
+}
+
+/* ------------------------------------------------------------------ */
+/* Tokens                                                               */
+/* ------------------------------------------------------------------ */
+
+async function token(spec: CredentialSpec, secret: string, fetcher: Fetch): Promise<CheckResult> {
+  const probe = TOKEN_PROBES[spec.connectorId];
+  if (probe === undefined) return { ok: false, reason: 'refused', message: 'That is not a credential this server knows how to check.' };
+  const app = getConnector(spec.connectorId)?.name ?? spec.connectorId;
+  const thing = spec.noun.replace(/^an? /, '');
+  const answer = await call(fetcher, probe.url, { method: probe.body === undefined ? 'GET' : 'POST', headers: probe.headers(secret), ...(probe.body === undefined ? {} : { body: probe.body }) });
+  if (answer === null) return { ok: false, reason: 'unreachable', message: `Could not reach ${app}. Try again in a minute.` };
+  if (answer.status === 429 || answer.status >= 500) return { ok: false, reason: 'unreachable', message: `${app} is not answering properly right now (HTTP ${answer.status}). Try again in a minute.` };
+  const unknown = `${app} does not know this ${thing}: it was revoked, has expired, or was not copied whole.`;
+  if (answer.status === 401) return { ok: false, reason: 'refused', message: unknown };
+  if (answer.status === 403) return { ok: false, reason: 'refused', message: probe.forbidden ?? unknown };
+  if (answer.status < 200 || answer.status >= 300) return { ok: false, reason: 'refused', message: `${app} refused the ${thing} (HTTP ${answer.status}).` };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(answer.body);
+  } catch {
+    // Accepted, with an answer that is not JSON or was cut short: there is just no name to take from it.
+    parsed = undefined;
+  }
+  // An app that answers 200 to anyone says who is asking inside. No one: the token was not taken.
+  if (probe.must !== undefined && (pick(parsed, probe.must) ?? null) === null) return { ok: false, reason: 'refused', message: probe.forbidden ?? unknown };
+  const account = accountName(probe, parsed);
+  return account === undefined ? { ok: true } : { ok: true, account };
+}
+
+/* ------------------------------------------------------------------ */
+/* Webhooks                                                             */
+/* ------------------------------------------------------------------ */
 
 const SLACK_REFUSALS: Record<string, string> = {
   no_service: 'Slack says this webhook was removed or switched off. Make a new one and paste it here.',

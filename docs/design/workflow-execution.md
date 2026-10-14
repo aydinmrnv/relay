@@ -279,6 +279,20 @@ kept (nothing is posted), rechecked from the dashboard when it is more than
 twelve hours old, and can send a test message on request. The browser only
 sees a summary. Nothing uses them in a run yet; that is the suffix above.
 
+**Built since:** the same table keeps an API key or token for the apps where
+one pasted value is the whole sign-in (Linear, Shortcut, Notion, Figma,
+CircleCI, Buildkite, Bitrise, Vercel, Netlify, Sentry, Bugsnag, Rollbar, Snyk,
+Semgrep, LaunchDarkly, Statsig, Intercom, Plain). Each is shown once to the
+app's own "who am I" endpoint, at a fixed address, before it is kept, and
+again on every recheck. This goes past "webhook URLs only": a token can do
+what its owner allowed it, so each connect form says what that is and asks
+for the narrowest one. The rule about code still holds. No token for GitHub,
+GitLab, Bitbucket or Azure DevOps is taken; those wait for the GitHub App and
+its like. Apps that need an OAuth client registered, several values, or an
+address of the user's own (Jira, Zendesk, Freshdesk, Jenkins, Datadog, Gmail,
+Outlook, Teams, Xcode Cloud, Firebase, Cypress) can still only be marked
+ready.
+
 ## What the studio stores
 
 | Table or column | Holds |
