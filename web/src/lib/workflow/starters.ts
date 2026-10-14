@@ -2,8 +2,9 @@
  * The automations setup offers first, and how each is fitted to the answers.
  *
  * A starter is one of the templates with the questions setup asks already
- * answered in it: the label that starts it, who may add that label, what a
- * run and a day may cost, which agents do the work. So the workflow somebody
+ * answered in it: the label that starts it, who may add that label, which
+ * agents do the work, and a budget where the workflow has a Budget gate. No
+ * starter has one: the agents run on plans their owner already has. So the workflow somebody
  * leaves setup with exports cleanly, with real logins on its allowlist, where
  * a template arrives with example names the export refuses.
  *
@@ -73,7 +74,7 @@ export const STARTERS: Starter[] = [
     id: 'ci-fix',
     title: 'Fix main when CI goes red',
     short: 'A failed build on main becomes the task, and a fix comes back as a draft pull request.',
-    body: 'When a workflow fails on main, the failing job and its log become the task. One fix at a time, under a budget, as a draft pull request.',
+    body: 'When a workflow fails on main, the failing job and its log become the task. One fix at a time, as a draft pull request.',
     when: 'A main branch that should never stay broken overnight.',
     templateId: 'ci-fix',
     defaults: { label: (brand) => brand.slug, maxRunCostUsd: 5, maxDailyCostUsd: 20, review: 'light' },

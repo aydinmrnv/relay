@@ -52,6 +52,28 @@ function node(typeId: string, id: string, config: Record<string, unknown> = {}):
   return { id, type: 'wf', position: { x: 0, y: 0 }, data: { typeId, config } };
 }
 
+/**
+ * No template carries a Budget gate: it is optional. This puts one in front of
+ * the pipeline, with its Refused output wired to a message, for the tests of
+ * what an export does with one.
+ */
+function withBudget(workflow: Workflow, config: Record<string, unknown>): Workflow {
+  const pipeline = workflow.nodes.find((entry) => entry.data.typeId === 'pipeline.action.run');
+  const into = workflow.edges.find((edge) => edge.target === pipeline?.id);
+  assert.ok(pipeline !== undefined && into !== undefined, 'the template has a pipeline with something in front of it');
+  const refused = node('slack.action.post-message', 'refused', { channel: '#builds', text: 'Not started, today’s budget is used up: {{issue.url}}' });
+  return {
+    ...workflow,
+    nodes: [...workflow.nodes, node('gates.action.budget', 'budget', config), { ...refused, data: { ...refused.data, label: 'Tell #builds it needs a person' } }],
+    edges: [
+      ...workflow.edges.filter((edge) => edge !== into),
+      { ...into, id: 'e_into_budget', target: 'budget', targetHandle: 'in' },
+      { id: 'e_budget_pass', source: 'budget', target: pipeline.id, sourceHandle: 'pass', targetHandle: into.targetHandle ?? null },
+      { id: 'e_budget_refused', source: 'budget', target: 'refused', sourceHandle: 'refused', targetHandle: 'in' },
+    ],
+  };
+}
+
 function workflowOf(nodes: WorkflowNode[], edges: Array<[string, string, string?]>): Workflow {
   const now = new Date(0).toISOString();
   return {
@@ -77,7 +99,7 @@ test('every template exports a workflow file that is valid YAML', () => {
 });
 
 test('steps run on the branch the canvas put them on, not on every run', () => {
-  const action = actionOf(compileWorkflow(template('ci-fix')));
+  const action = actionOf(compileWorkflow(withBudget(template('ci-fix'), { maxRunCostUsd: 5, maxDailyCostUsd: 20 })));
   const ready = step(action, 'Slack: Ask for review');
   const refused = step(action, 'Tell #builds it needs a person');
   assert.match(ready.if ?? '', /steps\.result\.outputs\.status == 'succeeded'/);
@@ -179,10 +201,21 @@ test('a message keeps its line breaks, and a variable the Action cannot fill in 
   assert.ok(compiled.warnings.some((warning) => warning.includes('{{issue.commit}}') && warning.includes('{{issue.job}}')));
 });
 
-test('a real run is held to the Budget gate’s per-run cap', () => {
-  const config = JSON.parse(compileWorkflow(template('label-run')).files[0]!.content) as { workflow: { maxCostUsd: number | null }; unattended: { maxRunCostUsd: number | null } };
-  assert.equal(config.workflow.maxCostUsd, config.unattended.maxRunCostUsd);
-  assert.ok(config.workflow.maxCostUsd !== null);
+test('a real run is held to the Budget gate’s per-run cap, and to none where there is no gate', () => {
+  type Ceilings = { workflow: { maxCostUsd: number | null }; unattended: { maxRunCostUsd: number | null; maxDailyCostUsd: number | null } };
+  const gated = JSON.parse(compileWorkflow(withBudget(template('label-run'), { maxRunCostUsd: 8, maxDailyCostUsd: 40 })).files[0]!.content) as Ceilings;
+  assert.equal(gated.workflow.maxCostUsd, 8);
+  assert.deepEqual([gated.unattended.maxRunCostUsd, gated.unattended.maxDailyCostUsd], [8, 40]);
+
+  // A Budget gate is optional. Without one the export carries no ceiling, and says nothing is missing.
+  const open = compileWorkflow(template('label-run'));
+  const config = JSON.parse(open.files[0]!.content) as Ceilings;
+  assert.deepEqual([config.workflow.maxCostUsd, config.unattended.maxRunCostUsd, config.unattended.maxDailyCostUsd], [null, null, null]);
+  assert.ok(!open.warnings.some((warning) => /budget gate/i.test(warning)), open.warnings.join(' | '));
+
+  // The one shape the engine refuses: a day's ceiling with nothing for a run in flight to reserve.
+  const dayOnly = compileWorkflow(withBudget(template('label-run'), { maxRunCostUsd: '', maxDailyCostUsd: 40 }));
+  assert.ok(dayOnly.warnings.some((warning) => warning.includes('a daily budget and no per-run cost')));
 });
 
 test('a template starts paused, and a paused export says its trigger is off', () => {

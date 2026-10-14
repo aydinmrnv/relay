@@ -151,7 +151,7 @@ function Understood({ result, showPreview }: { result: DescriptionResult; showPr
         <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
           <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
           <span className="text-pretty">
-            Didn’t place {result.unmatched.map((phrase) => `“${phrase}”`).join(', ')}. Try naming an app, a budget (“under $5”), who may start it (“only from alice”) or where the change goes (“a draft PR”).
+            Didn’t place {result.unmatched.map((phrase) => `“${phrase}”`).join(', ')}. Try naming an app, who may start it (“only from alice”) or where the change goes (“a draft PR”).
           </span>
         </p>
       ) : null}

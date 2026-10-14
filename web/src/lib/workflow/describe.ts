@@ -139,7 +139,7 @@ function sentenceFor(node: WorkflowNode, def: NodeTypeDef): string {
     case 'gates.action.budget': {
       const run = money(config['maxRunCostUsd']);
       const day = money(config['maxDailyCostUsd']);
-      return `Refuses to start if this run could cost more than ${run ?? 'the per-run limit'} or today's total would pass ${day ?? 'the daily limit'}.`;
+      return `Refuses to start if this run could use more than ${run ?? 'the per-run limit'} or today's total would pass ${day ?? 'the daily limit'}.`;
     }
     case 'gates.action.allowlist': {
       const authors = text(config['authors']).split('\n').map((line) => line.trim()).filter(Boolean);

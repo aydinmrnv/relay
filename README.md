@@ -47,10 +47,10 @@ make is checked against git rather than taken at face value. The result arrives
 as a commit, a branch or a draft pull request, as far as you allow.
 
 ```
- Linear issue ──▶ Budget gate ──▶ Author allowlist ──▶ Agent pipeline ──▶ Deliver ──▶ Slack message
- assigned                                                                 draft PR    "PR #412 is ready"
- ────────────     ────────────────────────────────     ──────────────     ──────────────────────────────
- trigger          guardrails                           the engine         delivery and notification
+ Linear issue ──▶ Author allowlist ──▶ Human approval ──▶ Agent pipeline ──▶ Deliver ──▶ Slack message
+ assigned                                                                    draft PR    "PR #412 is ready"
+ ────────────     ───────────────────────────────────     ──────────────     ──────────────────────────────
+ trigger          guardrails                              the engine         delivery and notification
 ```
 
 ## Quick start
@@ -58,14 +58,15 @@ as a commit, a branch or a draft pull request, as far as you allow.
 **Get started:** <https://relay-olive-omega.vercel.app>. Create a free
 account and setup takes you through it: connect a repository, choose where it
 runs (its own GitHub Actions, recommended, or your computer), pick a first
-workflow, set who may start it and what it may spend, and then the steps that
+workflow, set who may start it, and then the steps that
 install it in the repository. Each account can have a project per repository.
-Test runs are simulated, so it costs nothing to try.
+Test runs are simulated, and a real run uses the Claude and ChatGPT plans you
+already have: Relay charges nothing for either.
 
 To look before you sign up, the **playground** at
 [`/play`](https://relay-olive-omega.vercel.app/play) is the same builder with
 no account: start from a template, a sentence or a blank canvas, test-run it,
-read the spend forecast and export it. Your work stays in that browser, and
+read the usage forecast and export it. Your work stays in that browser, and
 what you changed is offered to you when you make an account there. Share links, version history and
 Relay Cloud need the account. (A development copy, `npm run dev` without Clerk
 keys, opens the whole studio without an account.)
@@ -90,8 +91,8 @@ package on current npm.)
 
 1. **Open the studio** and start from a template, or from a blank canvas.
 2. **Test-run it** with a sample ticket or your own JSON payload. Nodes and edges
-   light up as the run travels, with the same phases, review rounds, budgets and
-   refusals as a real run — and it costs nothing, because it is simulated.
+   light up as the run travels, with the same phases, review rounds and
+   refusals as a real run — and it calls nothing, because it is simulated.
 3. **Run it on your computer.** With `relay connect` running, pick *Run on your
    computer* next to Test run, name an issue or describe the change, and watch
    the same canvas light up from a real run: the plan, the reviews, the diff,
@@ -139,9 +140,9 @@ the studio uses.
   new, fix it under $3 and ping Discord"* — and the graph builds itself as you
   type. It is a parser over the live connector catalog, in your browser: no model
   call, no credits, nothing sent anywhere.
-- **A spend forecast before the first run.** Hundreds of simulated runs of your
-  exact graph give a typical and a bad-day cost per run, a monthly bill at your
-  ticket volume, and how often your budget gate will refuse.
+- **A usage forecast before the first run.** Hundreds of simulated runs of your
+  exact graph show roughly how much of your plans a typical run uses, what a
+  heavy one does, and a month at your ticket volume.
 - **Share, remix and badge.** Publish a workflow at a public link with secrets,
   links, email addresses, logins and your repository name removed; anyone can
   remix it into their own studio, and a README badge points to it.
@@ -152,9 +153,9 @@ the studio uses.
 
 ![A Linear step selected in the builder: “Runs for real. Done through Linear’s API with a personal API key. Reads LINEAR_API_KEY from the environment the runner was started with.”](docs/images/real-step.png)
 
-| Describe it | Spend forecast |
+| Describe it | Usage forecast |
 |---|---|
-| ![A sentence becoming a Sentry-to-pull-request workflow as it is typed](docs/images/describe.png) | ![The spend forecast: typical and 90th-percentile cost per run, a monthly projection and where the money goes](docs/images/forecast.png) |
+| ![A sentence becoming a Sentry-to-pull-request workflow as it is typed](docs/images/describe.png) | ![The usage forecast: typical and 90th-percentile usage per run, a monthly projection and where it goes](docs/images/forecast.png) |
 
 ## How a workflow is built
 
@@ -165,8 +166,8 @@ sense, like wiring a ticket into something that expects a pull request.
 | Building block | Nodes |
 |---|---|
 | **Triggers** | What hands the agents a task. Kept for real by `relay workflow serve`: an incoming webhook, a schedule, a label on a GitHub issue, and the webhooks GitHub, Linear and Sentry send themselves (an issue assigned or labelled, main going red, a security alert, a new error). A manual start works anywhere. The rest can be designed and test-run, and are started by hand or through an Incoming webhook until something reads their events: Jira, Shortcut, GitLab CI, CircleCI, Buildkite, Datadog, Crashlytics, Snyk, LaunchDarkly, Slack, Zendesk |
-| **Guardrails** | Budget gate, author allowlist, injection screen, human approval, concurrency limit, kill switch. Each refuses by default and says why. An approval is real: the run waits until a person answers, in the studio or with `relay workflow approve` |
-| **Agent pipeline** | Run the pipeline (choose the planner, plan reviewer, implementer and code reviewer, the review depth and the round limits), a fast run with no reviews, or a cost estimate |
+| **Guardrails** | Author allowlist, injection screen, human approval, concurrency limit, kill switch, and an optional budget gate. Each refuses by default and says why. An approval is real: the run waits until a person answers, in the studio or with `relay workflow approve` |
+| **Agent pipeline** | Run the pipeline (choose the planner, plan reviewer, implementer and code reviewer, the review depth and the round limits), a fast run with no reviews, or an estimate of what a run would use |
 | **Delivery** | Deliver the change — commit, branch or draft pull request — and comment the summary on the issue. A run started from the studio or by an event stops at a pull request; only `relay run` at a terminal, with a person there, can be allowed to merge |
 | **Logic** | Condition, filter, an AI step for triage or classification, merge paths, wait, wait for business hours, notes. Performed in a real run, and a Filter is evaluated the same way in a test run. The AI step is one read-only turn of your own Claude Code or Codex: Relay calls no model API. Transform passes its payload through unchanged. The exported GitHub Action cannot evaluate them, and says which it left out |
 | **Actions** | What closes the loop where the work was asked for: move the ticket and attach the PR, ask Slack for review, link the fix on the Sentry issue, leave support an internal note, call any HTTP endpoint. Performed today in Slack and Discord (a webhook), GitHub (`gh`), Linear (its API) and over HTTP. A step in any other app is handed to a bridge URL of yours, or skipped and reported |
@@ -189,9 +190,9 @@ situations involve; anything else is one Incoming webhook or HTTP request away.
 | Template | For when |
 |---|---|
 | Linear ticket to pull request | Small, well-written tickets sit in the backlog. Assign one to the bot: it comes back In Review with a draft PR attached, and #eng is asked for review |
-| GitHub label to pull request | A maintainer hands over an issue with one label, behind a kill switch, an allowlist and a budget. Runs unattended today through the exported Action |
-| Price new tickets before anyone picks them up | Every new Linear issue gets an estimate of what an agent run would cost, with no agent called; cheap ones are labelled agent-ready |
-| Fix main when CI goes red | The failing job and its log become the task. One fix at a time, under a budget; #builds gets the PR, or the reason there is none |
+| GitHub label to pull request | A maintainer hands over an issue with one label, behind a kill switch and an allowlist. Runs unattended today through the exported Action |
+| Size new tickets before anyone picks them up | Every new Linear issue gets an estimate of what an agent run would use, with no agent called; small ones are labelled agent-ready |
+| Fix main when CI goes red | The failing job and its log become the task. One fix at a time, with a light review; #builds gets the PR |
 | Sentry error to fix | A model reads the trace first. Fixable errors get a PR linked on the Sentry issue; ones needing a product decision become a Linear ticket |
 | Fix high-severity code scanning alerts | A new CodeQL alert is fixed with a thorough cross-review and opened as a draft PR for the security team |
 | Weekly dependency upgrades that pass CI | Every Monday the agents upgrade what they can, fix what breaks, and open one PR that already builds |
@@ -210,8 +211,8 @@ back to the canvas: a guardrail that passed, an approval that is waiting for
 you (answer it from the run panel), the plan, the reviews, the diff and the
 tests, the pull request, the Slack message. The kill switch and the allowlist
 decide whether an *event* may start a run, so a person pressing the button
-passes them; the per-run cost cap still applies, and delivery stops at a pull
-request. Reload the tab mid-run and the studio picks the run back up.
+passes them; a per-run cap, where one is set, still applies, and delivery stops
+at a pull request. Reload the tab mid-run and the studio picks the run back up.
 
 **Unattended, on a machine of your own.** `relay workflow serve` keeps the
 workflow's trigger and runs the whole graph each time it fires:
@@ -256,9 +257,9 @@ A run a trigger starts is unattended, with everything that means below: it
 stops at a draft pull request, reads only trusted comments, and its agents
 never see a secret-named variable. Deliveries are signed (HMAC-SHA256, the
 scheme GitHub, Linear and Sentry already use), one sent twice starts one run,
-and a delivery that is not the trigger starts nothing and says why. An event
-may not start the agents until the workflow has a Budget gate with a per-run
-cost and a daily budget, and `.relay/STOP` stops every one of them. What an
+and a delivery that is not the trigger starts nothing and says why. A Budget
+gate is optional: with none there is no ceiling, and one that is set is kept.
+`.relay/STOP` stops every one of them. What an
 event says is treated as a stranger's words all the way through: it can name
 an issue in a tracker and never a file, and its text is escaped before it
 lands in a Slack message, a JSON body or a URL. The app steps read their
@@ -344,16 +345,17 @@ ones a graph can break before it lets you test-run or export:
   you give both roles to one. Reviewers run read-only, and an agent with no
   read-only mode cannot be made a reviewer at all.
 - **Every claim is checked against git.** Relay computes the diff itself, judges
-  tests by exit code and takes cost from what the CLIs report. An agent saying
+  tests by exit code and takes usage from what the CLIs report. An agent saying
   "done" proves nothing.
 - **Unattended runs never merge.** A ticket assignment, a label, a schedule or a
   webhook is an unattended start; those runs stop at a draft pull request, and
   the studio refuses to export anything else.
 - **Guardrails refuse by default.** An empty allowlist means nobody may start a
-  run, and an unattended workflow will not start without a per-run and a daily
-  budget. On GitHub Actions every job starts on a clean machine, so there is no
-  record of the day's spend to add to: the per-run cap is what holds there, and
-  the daily budget and the audit trail work where `relay serve` keeps its state.
+  run. A budget is the one that is optional: runs use your own plans, so unset
+  means no ceiling, and a per-run or daily budget you set is kept. On GitHub
+  Actions every job starts on a clean machine, so there is no record of the
+  day's usage to add to: the per-run cap is what holds there, and the daily
+  budget and the audit trail work where `relay serve` keeps its state.
 - **Nothing leaves unscanned.** Delivery runs a secret scan between commit and
   push, and a hit stops the change at a local branch.
 - **An unattended run screens what it is about to read.** An issue whose text
@@ -394,7 +396,7 @@ beta: write to support@nullstack.one to ask for access.
 | Works today | Simulated in the studio | Not built yet |
 |---|---|---|
 | Accounts (Clerk: email, Google, GitHub), onboarding, cloud sync, share links and remixes, version history | | |
-| The builder, describe-to-workflow, validation, the plain-English description, the spend forecast and the export | Test runs: phases, costs, refusals and PR numbers are played back, deterministically | |
+| The builder, describe-to-workflow, validation, the plain-English description, the usage forecast and the export | Test runs: phases, usage, refusals and PR numbers are played back, deterministically | |
 | Running a workflow as drawn, with `relay workflow run` or *Run on your computer*: guardrails, conditions, filters, the AI step, waits, the pipeline, delivery | Transform: its payload passes through unchanged | A sandbox to run Transform's JavaScript in |
 | Human approval: the run waits for a yes or a no, from the studio's run panel or `relay workflow approve` | | Approvals asked and answered in Slack or by email |
 | Triggers kept by `relay workflow serve`: an incoming webhook, a schedule, a label on a GitHub issue, and the webhooks GitHub, Linear and Sentry send (read from the apps' documented deliveries, not yet exercised against the live services) | Every other app's trigger: Jira, Zendesk, Slack, LaunchDarkly, the other CI services | Reading those apps' events directly |

@@ -191,7 +191,7 @@ function ActionsInstall({ workflow, project }: { workflow: Workflow; project: Pr
       {others.length > 0 ? (
         <Notice>
           {repo} already has “{others[0]!.name}”{others.length > 1 ? ` and ${others.length - 1} more` : ''}. On GitHub Actions a repository starts one workflow by itself: installing this one replaces the other’s label, allowlist and
-          budget.
+          any budget.
         </Notice>
       ) : null}
 

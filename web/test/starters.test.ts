@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BRAND } from '@/lib/brand';
 import { compileWorkflow } from '@/lib/workflow/compile';
-import type { Workflow } from '@/lib/workflow/schema';
+import type { Workflow, WorkflowNode } from '@/lib/workflow/schema';
 import { asksOf, buildStarter, fitWorkflow, startsOn, STARTERS, type StarterOptions } from '@/lib/workflow/starters';
 import { instantiateTemplate } from '@/lib/workflow/templates';
 import { validateWorkflow } from '@/lib/workflow/validate';
@@ -35,11 +35,14 @@ test('the answers land in the nodes that take them', () => {
   const workflow = starter('issue-to-pr', { label: 'ship-it', agents: 'claude', review: 'thorough' });
   assert.equal(config(workflow, 'github-issues.trigger.issue-labelled')['label'], 'ship-it');
   assert.deepEqual(config(workflow, 'gates.action.allowlist'), { ...config(workflow, 'gates.action.allowlist'), authors: 'octocat\nhubot', teams: '' });
-  const budget = config(workflow, 'gates.action.budget');
-  assert.equal(budget['maxRunCostUsd'], 6);
-  assert.equal(budget['maxDailyCostUsd'], 30);
   const pipeline = config(workflow, 'pipeline.action.run');
   assert.deepEqual([pipeline['planner'], pipeline['planReviewer'], pipeline['implementer'], pipeline['codeReviewer'], pipeline['review']], ['claude', 'claude', 'claude', 'claude', 'thorough']);
+
+  // No starter has a Budget gate, so setup asks nothing about money. A workflow that has one gets the answers.
+  assert.ok(!workflow.nodes.some((node) => node.data.typeId === 'gates.action.budget'));
+  const gate: WorkflowNode = { id: 'n_budget', type: 'wf', position: { x: 0, y: 0 }, data: { typeId: 'gates.action.budget', config: {} } };
+  const budget = config(fitWorkflow({ ...workflow, nodes: [...workflow.nodes, gate] }, OPTIONS), 'gates.action.budget');
+  assert.deepEqual([budget['maxRunCostUsd'], budget['maxDailyCostUsd']], [6, 30]);
 });
 
 test('with both agents, neither reviews its own work', () => {
@@ -48,18 +51,19 @@ test('with both agents, neither reviews its own work', () => {
   assert.notEqual(pipeline['implementer'], pipeline['codeReviewer']);
 });
 
-test('the issue starters export with nothing in the way: real logins, a repository, a budget', () => {
+test('the issue starters export with nothing in the way: real logins, a repository, and no ceiling', () => {
   for (const id of ['issue-to-pr', 'quick-fix'] as const) {
     const compiled = compileWorkflow(starter(id), BRAND);
     assert.deepEqual(compiled.blockers, [], id);
     assert.equal(compiled.start.by, 'label');
     assert.equal(compiled.start.label, 'relay:go');
-    const relay = JSON.parse(compiled.files.find((file) => file.path === '.relay/config.json')!.content) as { unattended: { authors: string[]; teams: string[]; maxRunCostUsd: number; maxDailyCostUsd: number } };
+    const relay = JSON.parse(compiled.files.find((file) => file.path === '.relay/config.json')!.content) as { unattended: { authors: string[]; teams: string[]; maxRunCostUsd: number | null; maxDailyCostUsd: number | null } };
     assert.deepEqual(relay.unattended.authors, ['octocat', 'hubot']);
     assert.deepEqual(relay.unattended.teams, []);
-    assert.equal(relay.unattended.maxRunCostUsd, 6);
-    assert.equal(relay.unattended.maxDailyCostUsd, 30);
-    assert.ok(!compiled.warnings.some((warning) => /allowlist is empty|No budget gate/.test(warning)), compiled.warnings.join('\n'));
+    // A budget is optional, and unset is no ceiling: the engine starts a run without one.
+    assert.equal(relay.unattended.maxRunCostUsd, null);
+    assert.equal(relay.unattended.maxDailyCostUsd, null);
+    assert.ok(!compiled.warnings.some((warning) => /allowlist is empty|budget gate/i.test(warning)), compiled.warnings.join('\n'));
   }
 });
 
@@ -80,8 +84,8 @@ test('the quick fix is one agent in one session, on the same connections', () =>
   assert.ok(!quick.nodes.some((node) => node.data.typeId === 'pipeline.action.run'));
   assert.equal(config(quick, 'pipeline.action.fast')['implementer'], 'claude');
   assert.equal(quick.edges.length, full.edges.length);
-  assert.deepEqual(asksOf(quick), { label: true, allowlist: true, budget: true, review: false, agents: true });
-  assert.deepEqual(asksOf(full), { label: true, allowlist: true, budget: true, review: true, agents: true });
+  assert.deepEqual(asksOf(quick), { label: true, allowlist: true, budget: false, review: false, agents: true });
+  assert.deepEqual(asksOf(full), { label: true, allowlist: true, budget: false, review: true, agents: true });
 });
 
 test('fitting a workflow adds no gate it did not have', () => {

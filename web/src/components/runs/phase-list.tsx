@@ -22,7 +22,7 @@ interface Props {
 const ROUNDED: Record<string, string> = { REVIEWING_PLAN: 'plan', REVISING_PLAN: 'plan', REVIEWING_CODE: 'code', REVISING_CODE: 'code' };
 
 /**
- * Where the pipeline's time and money went, one bar per phase. The bar is the
+ * Where the pipeline's time and usage went, one bar per phase. The bar is the
  * phase's share of the whole run — by time or by cost, switchable — so the
  * expensive step is obvious at a glance.
  */
@@ -47,7 +47,7 @@ export function PhaseList({ phases, current = null, className }: Props) {
     <div className={cn('flex flex-col gap-4', className)}>
       {totalCost > 0 ? (
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">Bar = share of the run&rsquo;s {shown === 'time' ? 'time' : 'cost'}</p>
+          <p className="text-xs text-muted-foreground">Bar = share of the run&rsquo;s {shown === 'time' ? 'time' : 'usage'}</p>
           <ToggleGroup
             value={[shown]}
             onValueChange={(next: string[]) => {
@@ -63,7 +63,7 @@ export function PhaseList({ phases, current = null, className }: Props) {
               Time
             </ToggleGroupItem>
             <ToggleGroupItem value="cost" className="px-2.5 text-xs">
-              Cost
+              Usage
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
@@ -92,7 +92,7 @@ export function PhaseList({ phases, current = null, className }: Props) {
                   <span
                     className={shown === 'cost' ? 'text-foreground' : 'text-muted-foreground'}
                     // A real run's cost is reported per phase, so the last visit carries the figure for all of them.
-                    title={(phase.rounds ?? 1) > 1 && (phase.costUsd ?? 0) > 0 ? `For all ${phase.rounds} visits to this phase: the coding CLIs report cost per phase, not per round.` : undefined}
+                    title={(phase.rounds ?? 1) > 1 && (phase.costUsd ?? 0) > 0 ? `For all ${phase.rounds} visits to this phase: the coding CLIs report usage per phase, not per round.` : undefined}
                   >
                     {(phase.costUsd ?? 0) > 0 ? `${usd(phase.costUsd ?? 0)}${(phase.rounds ?? 1) > 1 ? ` · ${phase.rounds} rounds` : ''}` : '—'}
                   </span>

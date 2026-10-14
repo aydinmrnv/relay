@@ -9,7 +9,7 @@ import { getNodeType, nodeTypeId, type NodeTypeDef, type PortType } from '@/lib/
 import { cn } from '@/lib/utils';
 
 /**
- * A small, static picture of a real workflow — trigger → budget gate →
+ * A small, static picture of a real workflow — trigger → allowlist →
  * pipeline → delivery → Slack — built from the live catalog, so the names and
  * port colours here are exactly the ones the canvas draws.
  */
@@ -30,10 +30,10 @@ const STEPS: Step[] = [
     explain: 'Something happened: a Linear issue was assigned to the bot. Every workflow has exactly one trigger, and it only has outputs. This one hands on a ticket.',
   },
   {
-    typeId: nodeTypeId('gates', 'action', 'budget'),
+    typeId: nodeTypeId('gates', 'action', 'allowlist'),
     kicker: 'Guardrail',
-    setting: '$6 a run · $40 a day',
-    explain: 'Checks the spending ceilings before any agent starts. It has two outputs: the ticket carries on through Within budget, and Refused can be wired to a message so people learn why nothing happened.',
+    setting: 'alice, bob',
+    explain: 'Checks who asked before any agent starts. It has two outputs: the ticket carries on through Allowed, and Refused can be wired to a message so people learn why nothing happened.',
   },
   {
     typeId: nodeTypeId('pipeline', 'action', 'run'),
@@ -58,7 +58,7 @@ const STEPS: Step[] = [
 /** What each port colour carries, in plain words. */
 const PORT_MEANING: Record<PortType, string> = {
   issue: 'An issue with a title and a body, from a tracker, a chat message or an error report.',
-  run: 'A finished pipeline run: status, cost, phases, diff and tests.',
+  run: 'A finished pipeline run: status, usage, phases, diff and tests.',
   change: 'A branch or a pull request that delivery produced.',
   message: 'Text meant for a person.',
   event: 'A plain “this happened”, with nothing to work on. Refusals are events.',

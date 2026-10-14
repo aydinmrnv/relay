@@ -78,7 +78,7 @@ export function GuideView() {
         <Stagger className="grid gap-3 sm:grid-cols-3">
           {[
             { icon: MousePointerClick, title: 'Design it here', body: 'A workflow is a diagram you drag together here. It is saved to your account, so it is there in any browser you sign in to.' },
-            { icon: FlaskConical, title: 'Test it for free', body: 'A test run plays it back with simulated agents, costs and refusals. Nothing is called and nothing is billed.' },
+            { icon: FlaskConical, title: 'Test it for free', body: 'A test run plays it back with simulated agents, usage and refusals. Nothing is called and nothing is billed.' },
             { icon: GitPullRequest, title: 'Run it for real', body: 'On your own computer through relay connect, or exported as a GitHub Actions workflow that a label on an issue starts. Either way, your own subscriptions do the work.' },
           ].map((fact) => (
             <StaggerItem key={fact.title} className="border-t pt-4">
@@ -133,7 +133,7 @@ export function GuideView() {
             id="real-vs-simulated"
             eyebrow="Real or simulated"
             title="What is real today"
-            description="Most of the studio is the real thing. Test runs are played back, so you can design and try a workflow before anything runs or costs money."
+            description="Most of the studio is the real thing. Test runs are played back, so you can design and try a workflow before anything runs for real."
           >
             <RealVsSimulated />
           </GuideSection>
@@ -215,7 +215,7 @@ function StartSteps() {
     {
       key: 'test',
       title: 'Run a test',
-      body: 'Press Test run in the builder. It plays back with the same phases, budgets and refusals a real run has, costs nothing, and is recorded under Runs.',
+      body: 'Press Test run in the builder. It plays back with the same phases and refusals a real run has, calls nothing, and is recorded under Runs.',
       href: '/runs',
       cta: 'See your runs',
     },
@@ -340,7 +340,7 @@ const REALITY: Array<{ what: string; status: Reality; detail: string }> = [
   { what: 'Installing an export into your repository', status: 'real', detail: 'Through relay connect on your computer, or by unzipping the download yourself.' },
   { what: 'An exported workflow running in your repository', status: 'real', detail: 'Runs on GitHub Actions with your own minutes and subscriptions, started by a label on an issue. The Action runs the pipeline and the steps it can place; it does not make the decisions the canvas draws.' },
   { what: 'Accounts, sync, share links and version history', status: 'real', detail: 'Kept in the studio’s database, under your account.' },
-  { what: 'Describe-to-workflow and the spend forecast', status: 'real', detail: 'The sentence parser runs in your browser with no model call. The forecast is built from simulated runs, so it is an estimate.' },
+  { what: 'Describe-to-workflow and the usage forecast', status: 'real', detail: 'The sentence parser runs in your browser with no model call. The forecast is built from simulated runs, so it is an estimate.' },
   { what: 'Importing and exporting your data', status: 'real', detail: 'Everything in your account as one plain JSON file, and back again.' },
   { what: 'Slack and Discord connections', status: 'real', detail: 'A webhook you paste is checked with the app and kept encrypted. The studio posts test messages through it; an exported workflow posts with the same URL held as a secret in its repository.' },
   { what: 'Signing in to other apps with a key or token', status: 'real', detail: 'Linear, Notion, Sentry, Vercel and the other apps that take one pasted token: the app confirms whose it is, and the studio keeps it encrypted and asks again from the dashboard. A run does not act through it yet; it still reads its credentials from the runner’s environment.' },
@@ -424,8 +424,8 @@ function Faq({ slug }: { slug: string }) {
       question: 'Does any of this cost money?',
       answer: (
         <p>
-          The studio is free while in beta, and test runs call nothing. Exported workflows run on your repository’s own GitHub Actions minutes, which are free on public repositories and come out of your plan’s
-          included minutes on private ones. Model usage counts against the Claude and ChatGPT subscriptions you already pay for, or against your API keys if you choose those.
+          The studio is free while in beta, test runs call nothing, and nothing is charged here for a real run: the agents use the Claude and ChatGPT subscriptions you already have, or your API keys if you
+          choose those. Exported workflows run on your repository’s own GitHub Actions minutes, which are free on public repositories and come out of your plan’s included minutes on private ones.
         </p>
       ),
     },
@@ -501,11 +501,11 @@ function Faq({ slug }: { slug: string }) {
     },
     {
       id: 'costs-real',
-      question: 'Are the costs in test runs real?',
+      question: 'Are the usage figures in test runs real?',
       answer: (
         <p>
-          No. They are drawn from realistic ranges for each phase, so budget gates refuse where they would. In a real run the cost is what Claude Code and Codex report for each turn, summed per phase. On a
-          subscription nothing extra is billed, but the number is still what the budget gate compares.
+          No. They are drawn from realistic ranges for each phase. In a real run the figure is what Claude Code and Codex report for each turn, summed per phase. On a subscription nothing extra is billed: it
+          measures how much of your plan the run used, and it is the number a Budget gate compares if you add one.
         </p>
       ),
     },

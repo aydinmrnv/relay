@@ -51,7 +51,7 @@ export const SIGNAL_CONNECTORS: Connector[] = [
       },
     ],
     actions: [
-      { id: 'rerun-failed-jobs', name: 'Re-run failed jobs', description: 'Re-run only the failed jobs, to rule out a flaky runner before spending on a fix.', inputs: PORTS.anyIn },
+      { id: 'rerun-failed-jobs', name: 'Re-run failed jobs', description: 'Re-run only the failed jobs, to rule out a flaky runner before starting a fix.', inputs: PORTS.anyIn },
       { id: 'dispatch-workflow', name: 'Run a workflow', description: 'Start a workflow_dispatch workflow, such as the end-to-end suite against the new branch.', inputs: PORTS.anyIn, fields: [FIELDS.text('workflow', 'Workflow', 'e2e.yml', true), FIELDS.template('ref', 'Ref', '{{run.branch}}')] },
     ],
   }),
@@ -66,7 +66,7 @@ export const SIGNAL_CONNECTORS: Connector[] = [
     tags: ['ci', 'pipeline failed'],
     uses: ['A failed pipeline on main gets a fix proposed as a merge request.'],
     triggers: [{ id: 'pipeline-failed', name: 'Pipeline failed', description: 'A pipeline fails on a ref.', outputs: PORTS.issueOut, fields: [FIELDS.text('ref', 'Ref', 'main'), FIRST_ONLY], sample: failingBuild('pipeline#61024', 'Pipeline failing on main: test:unit', 'https://gitlab.com/acme/api/-/pipelines/61024', JEST_LOG, { job: 'test:unit' }) }],
-    actions: [{ id: 'retry-pipeline', name: 'Retry failed jobs', description: 'Retry the failed jobs once before spending on a fix.', inputs: PORTS.anyIn }],
+    actions: [{ id: 'retry-pipeline', name: 'Retry failed jobs', description: 'Retry the failed jobs once before starting a fix.', inputs: PORTS.anyIn }],
   }),
   defineConnector({
     id: 'circleci',
@@ -92,7 +92,7 @@ export const SIGNAL_CONNECTORS: Connector[] = [
     tags: ['ci', 'build failed'],
     uses: ['A red build on main gets a fix PR, one at a time however often it fails.'],
     triggers: [{ id: 'build-failed', name: 'Build failed', description: 'A build fails on a branch.', outputs: PORTS.issueOut, fields: [FIELDS.text('pipeline', 'Pipeline', 'api'), BRANCH, FIRST_ONLY], sample: failingBuild('api#2202', 'Build failing on main: :jest: unit tests', 'https://buildkite.com/acme/api/builds/2202', JEST_LOG, { job: ':jest: unit tests' }) }],
-    actions: [{ id: 'retry-job', name: 'Retry failed jobs', description: 'Retry the failed jobs once before spending on a fix.', inputs: PORTS.anyIn }],
+    actions: [{ id: 'retry-job', name: 'Retry failed jobs', description: 'Retry the failed jobs once before starting a fix.', inputs: PORTS.anyIn }],
   }),
   defineConnector({
     id: 'jenkins',

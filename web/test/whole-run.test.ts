@@ -104,7 +104,7 @@ async function runWhole(workflow: Workflow, task: RunTask, options: Parameters<t
 
 const statusByType = (workflow: Workflow, run: Run): Record<string, string> => Object.fromEntries(workflow.nodes.map((node) => [`${node.data.typeId}${node.data.label === undefined ? '' : `:${node.data.label}`}`, run.nodeStatus[node.id]!]));
 
-test('a real run of the Linear template lights every node it took, and skips the path it did not', async () => {
+test('a real run of the Linear template lights every node it took', async () => {
   const workflow = instantiateTemplate('ticket-to-pr', BRAND, 'acme/api')!;
   const { run, made } = await runWhole(workflow, { kind: 'issue', ref: 'ENG-142' }, { env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/x' } });
 
@@ -112,13 +112,11 @@ test('a real run of the Linear template lights every node it took, and skips the
   assert.equal(run.machine?.scope, 'workflow');
   assert.deepEqual(statusByType(workflow, run), {
     'linear.trigger.issue-assigned': 'done',
-    'gates.action.budget': 'done',
     'pipeline.action.run': 'done',
     'delivery.action.deliver': 'done',
     'linear.action.attach-pr': 'done',
     'linear.action.update-state': 'done',
     'slack.action.share-pr': 'done',
-    'linear.action.comment:Tell the ticket why': 'skipped',
   });
   assert.deepEqual([run.prUrl, run.costUsd, run.branch, run.tests?.passed], [PR, 1.84, 'relay/eng-142', true]);
   // Performed, not played: the ticket was moved and the channel was told, with the pull request the run opened.
@@ -179,26 +177,36 @@ test('a runner that cannot walk the graph still gets the pipeline-only record', 
   assert.ok(run.events.some((event) => /not run here/.test(event.message)));
 });
 
-test('every template that starts by itself carries the two ceilings an event needs before it may start the agents', async () => {
+test('every template that starts by itself may start the agents with no Budget gate', async () => {
   let checked = 0;
+  let reached = 0;
   for (const template of TEMPLATES) {
-    const workflow = instantiateTemplate(template.id, BRAND, 'acme/api')!;
+    // Switched on, as its owner would: a paused workflow is refused at its trigger and the walk would show nothing.
+    const workflow = { ...instantiateTemplate(template.id, BRAND, 'acme/api')!, enabled: true };
     const graph = compileWorkflow(workflow).graph as { nodes: Array<{ id: string; type: string; kind: string }>; config: { unattended?: Record<string, unknown> } };
     const trigger = graph.nodes.find((entry) => entry.kind === 'trigger')!;
     const pipeline = graph.nodes.find((entry) => entry.type === 'pipeline.action.run' || entry.type === 'pipeline.action.fast');
     if (pipeline === undefined || !nodeSupport(trigger.type).real || trigger.type === 'logic.trigger.manual') continue;
     checked += 1;
-    assert.equal(typeof graph.config.unattended?.['maxRunCostUsd'], 'number', `${template.id} has no per-run cost`);
-    assert.equal(typeof graph.config.unattended?.['maxDailyCostUsd'], 'number', `${template.id} has no daily budget`);
+    // A Budget gate is optional and no template has one, so the export carries no ceiling.
+    assert.ok(!graph.nodes.some((entry) => entry.type === 'gates.action.budget'), `${template.id} has a Budget gate`);
+    assert.deepEqual([graph.config.unattended?.['maxRunCostUsd'], graph.config.unattended?.['maxDailyCostUsd']], [null, null], template.id);
 
-    // And the engine agrees: walked for an event nobody is watching, the pipeline is not refused for want of a ceiling.
+    // And the engine agrees: walked for an event nobody is watching, nothing is refused for want of one.
     const made: World = { records: [], posted: [], linear: [] };
     const event = { id: 'delivery-1', source: 'webhook', attended: false, actor: 'maintainer', payload: { id: 'ENG-142', key: 'ENG-142', title: 'Fix the flaky timeout', body: 'It fails on CI.', labels: ['bug'] }, task: { kind: 'prompt', text: 'Fix the flaky timeout' }, at: NOW.toISOString() };
     await engine.executeGraph(engine.parseGraph(graph), event, effects(made, { env: { SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/x' } }), { dryRun: true });
-    const said = made.records.filter((record) => record['type'] === 'node_finished').map((record) => String(record['message']));
-    assert.ok(!said.some((message) => /no ceiling on what they spend/.test(message)), `${template.id}: ${said.join(' | ')}`);
+    const finished = made.records.filter((record) => record['type'] === 'node_finished');
+    const said = finished.map((record) => String(record['message']));
+    assert.ok(!said.some((message) => /ceiling|budget|per-run cost/i.test(message)), `${template.id}: ${said.join(' | ')}`);
+    const ran = finished.find((record) => record['node'] === pipeline.id);
+    if (ran !== undefined) {
+      reached += 1;
+      assert.equal(ran['status'], 'done', `${template.id}: ${String(ran['message'])}`);
+    }
   }
   assert.ok(checked >= 5, `only ${checked} templates start by themselves`);
+  assert.ok(reached >= 3, `the walk reached the pipeline in only ${reached} templates`);
 });
 
 test('a test run and a real one agree about a step that two paths lead to', async () => {

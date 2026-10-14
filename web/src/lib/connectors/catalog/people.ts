@@ -41,7 +41,7 @@ export const PEOPLE_CONNECTORS: Connector[] = [
       { id: 'reply-in-thread', name: 'Reply in thread', description: 'Reply under the message that started the run, so the person who asked sees it.', inputs: PORTS.anyIn, fields: [FIELDS.template('text', 'Reply', 'Draft PR ready for review: {{run.prUrl}}')] },
       { id: 'share-pr', name: 'Ask for review', description: 'Post the pull request to a channel for review.', inputs: PORTS.changeIn, fields: [FIELDS.text('channel', 'Channel', '#eng', true), SHARE_PR] },
       { id: 'post-message', name: 'Post message', description: 'Post to a channel, for example why a run was refused.', inputs: PORTS.anyIn, fields: [FIELDS.text('channel', 'Channel', '#eng', true), FIELDS.template('text', 'Message', '{{issue.title}}')] },
-      { id: 'post-run-summary', name: 'Post run summary', description: 'Post how a finished run went: outcome, PR, tests and cost.', inputs: PORTS.runIn, fields: [FIELDS.text('channel', 'Channel', '#eng', true), RUN_SUMMARY] },
+      { id: 'post-run-summary', name: 'Post run summary', description: 'Post how a finished run went: outcome, PR, tests and usage.', inputs: PORTS.runIn, fields: [FIELDS.text('channel', 'Channel', '#eng', true), RUN_SUMMARY] },
       { id: 'add-reaction', name: 'Add reaction', description: 'React to the message that started the run, e.g. :eyes: when picked up.', inputs: PORTS.anyIn, fields: [FIELDS.text('reaction', 'Emoji', 'eyes')] },
       { id: 'send-dm', name: 'Send direct message', description: 'Message one person, such as the owner of the code that broke.', inputs: PORTS.anyIn, fields: [FIELDS.text('user', 'User', '@jane', true), FIELDS.template('text', 'Message', '{{issue.title}}: {{run.prUrl}}')] },
     ],
@@ -178,7 +178,7 @@ export const PEOPLE_CONNECTORS: Connector[] = [
     icon: { si: 'SiGmail', color: '#EA4335' },
     docsUrl: 'https://developers.google.com/gmail/api',
     tags: ['email', 'inbox', 'google'],
-    uses: ['Email the on-call lead a daily summary of what the agents shipped and what they cost.'],
+    uses: ['Email the on-call lead a daily summary of what the agents shipped and what they used.'],
     triggers: [{ id: 'email-received', name: 'Email received', description: 'A message matching a search arrives, such as mail to bugs@.', outputs: PORTS.issueOut, fields: [FIELDS.text('query', 'Search', 'to:bugs@acme.com is:unread')], sample: customerBug('18f2c9a1b2', 'https://mail.google.com/mail/u/0/#inbox/18f2c9a1b2') }],
     actions: [
       { id: 'send-email', name: 'Send email', description: 'Send an email.', inputs: PORTS.anyIn, fields: [FIELDS.text('to', 'To', 'eng-leads@acme.com', true), FIELDS.template('subject', 'Subject', '{{issue.title}}'), FIELDS.template('body', 'Body', '{{run.summary}}\n\n{{run.prUrl}}')] },

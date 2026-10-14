@@ -48,7 +48,7 @@ const CAPABILITIES = [
   },
   {
     title: 'Free test runs',
-    body: 'Play the flow back with a sample ticket: phases, review rounds, budgets and refusals, simulated in your browser.',
+    body: 'Play the flow back with a sample ticket: phases, review rounds and refusals, simulated in your browser.',
   },
   { title: 'Export you can read', body: 'The files shown with the canvas are the config and the Actions workflow the compiler writes for this template, as it writes them.' },
 ];

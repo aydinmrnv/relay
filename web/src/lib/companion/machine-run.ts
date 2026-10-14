@@ -98,7 +98,7 @@ export function createMachineRun(workflow: Workflow, start: MachineRunStart): Ru
       kind: 'log',
       message: `${passedOver} node${passedOver === 1 ? '' : 's'} not run here.`,
       detail:
-        'A run you start from the studio goes straight to the agent pipeline. The guardrails in front of it decide whether an event may start a run, so a person pressing the button passes over them, and the actions after delivery run in the exported workflow. The per-run cost cap still applies, and delivery stops at a pull request.',
+        'A run you start from the studio goes straight to the agent pipeline. The guardrails in front of it decide whether an event may start a run, so a person pressing the button passes over them, and the actions after delivery run in the exported workflow. A per-run cap, where one is set, still applies, and delivery stops at a pull request.',
     });
   }
 

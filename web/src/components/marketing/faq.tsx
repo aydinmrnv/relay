@@ -20,7 +20,7 @@ export function Faq() {
       id: 'cost',
       question: 'Does this cost anything?',
       answer:
-        'The studio and accounts are free while in beta, and the engine is open source. Model usage counts against your own Claude and ChatGPT plans or API keys, and the spend forecast in the builder gives a rough range before you run anything. If you export to GitHub Actions, runner usage follows your GitHub plan.',
+        'The studio and accounts are free while in beta, the engine is open source, and Relay charges nothing for a run. Model usage counts against your own Claude and ChatGPT plans or API keys, and the usage forecast in the builder gives a rough range before you run anything. If you export to GitHub Actions, runner usage follows your GitHub plan.',
     },
     {
       id: 'account',

@@ -29,7 +29,7 @@ export interface DescriptionResult {
   steps: DescribedStep[];
   /** Phrases we could not map, for a gentle hint. */
   unmatched: string[];
-  /** Decisions taken on the writer's behalf: a default budget, a merge capped at a pull request. */
+  /** Decisions taken on the writer's behalf: a stand-in login, a merge capped at a pull request. */
   notes: string[];
   /** 0..1: how much of the sentence was understood. */
   confidence: number;
@@ -37,10 +37,10 @@ export interface DescriptionResult {
 
 /** Sentences that read well and, between them, touch every part of the reader. */
 export const DESCRIPTION_EXAMPLES: string[] = [
-  'When a GitHub issue is labelled bug, fix it under $5 and open a draft PR, then tell Slack #eng.',
+  'When a GitHub issue is labelled bug, fix it and open a draft PR, then tell Slack #eng.',
   'When a Linear issue is assigned to the bot, have Claude plan and Codex implement with a thorough review, then comment on the issue.',
   "When Sentry reports a new error in production, triage it: if it's a regression, quick-fix it with Codex and open a draft PR; otherwise open a Linear ticket.",
-  'Every weeknight at 2am, upgrade our dependencies with a budget of $20 a day and push a branch.',
+  'Every weeknight at 2am, upgrade our dependencies and push a branch.',
   'When a Zendesk ticket is tagged bug, wait for my approval in Slack, then fix it carefully with Claude, open a PR and reply to the customer.',
   'When CI fails on main, have Codex fix it under $3 a run, at most one at a time, and post to #builds.',
 ];
@@ -1206,9 +1206,10 @@ const ROW = 190;
 const MAIN = 1;
 const BELOW = 2.2;
 /**
- * The ceiling a budget gate gets when nobody named one: the starter templates'
- * numbers. A typical full run costs about $5 and the long tail goes past $6, so
- * the per-run cap leaves room rather than stopping good runs halfway.
+ * The other ceiling of a budget gate that was asked for with only one: "under
+ * $5" still needs a day, and "$20 a day" a run. A typical full run reports
+ * about $5 and the long tail goes past $6, so the per-run cap leaves room
+ * rather than stopping good runs halfway.
  */
 const DEFAULT_BUDGET = { run: 8, day: 40 };
 
@@ -1434,32 +1435,25 @@ export function workflowFromDescription(text: string, brand: Brand, repository =
     chain(def, { via: approval.via, approvers: approvers.join('\n') }, { kind: 'guardrail', label: `Human approval · ${listOf(approvers)}, ${where}` }, 'approved');
   }
 
-  // A budget whenever one was asked for, nobody is watching, or the ticket would otherwise not reach the pipeline intact.
+  // A budget only when one was asked for: the agents run on plans their owner already has, so a ceiling is theirs to choose.
   const pipelineDef = pipelineRead.fast ? coreNode('pipeline', 'action', ['fast']) : coreNode('pipeline', 'action', ['run the pipeline']);
   const mainTicket = outputs.find((output) => output.role === 'ticket' && output.branch === 'main');
   const scheduledTask = task !== undefined && trigger.def.connectorId !== 'logic';
-  const needsBudget = budgetRead !== undefined || unattended || (pipelineDef !== undefined && mainTicket === undefined && !scheduledTask && !graph.feeds(tail, pipelineDef));
-  if (needsBudget) {
+  if (budgetRead !== undefined) {
     const def = coreNode('gates', 'action', ['budget']);
-    let run = budgetRead?.run ?? DEFAULT_BUDGET.run;
-    let day = budgetRead?.day ?? DEFAULT_BUDGET.day;
-    if (budgetRead?.run !== undefined && budgetRead.day === undefined) day = Math.max(day, run);
-    if (budgetRead?.day !== undefined && budgetRead.run === undefined) run = Math.min(run, day);
-    if (budgetRead?.run !== undefined && budgetRead.day !== undefined) run = Math.min(run, day);
-    const limits = `${money(run)}/run, ${money(day)}/day${budgetRead?.from === undefined ? '' : ` (from ${budgetRead.from})`}`;
-    const said = budgetRead !== undefined;
+    let run = budgetRead.run ?? DEFAULT_BUDGET.run;
+    let day = budgetRead.day ?? DEFAULT_BUDGET.day;
+    if (budgetRead.run !== undefined && budgetRead.day === undefined) day = Math.max(day, run);
+    if (budgetRead.day !== undefined && budgetRead.run === undefined) run = Math.min(run, day);
+    if (budgetRead.run !== undefined && budgetRead.day !== undefined) run = Math.min(run, day);
+    const limits = `${money(run)}/run, ${money(day)}/day${budgetRead.from === undefined ? '' : ` (from ${budgetRead.from})`}`;
     const at = col;
-    const id = chain(def, { maxRunCostUsd: run, maxDailyCostUsd: day }, { kind: 'guardrail', label: said ? `Budget gate · ${limits}` : `Budget gate · added by default (${limits})` }, 'pass');
-    if (id !== undefined) {
-      refusedFrom = { port: { id, handle: 'refused' }, col: at };
-      if (!said) {
-        notes.push(
-          unattended
-            ? `Nobody watches an unattended run, so a Budget gate was added with the default limits (${limits}). Say “under $5” or “$20 a day” to set your own.`
-            : `A Budget gate with the default limits (${limits}) sits in front of the pipeline. Say “under $5” or “$20 a day” to set your own.`,
-        );
-      }
-    }
+    const id = chain(def, { maxRunCostUsd: run, maxDailyCostUsd: day }, { kind: 'guardrail', label: `Budget gate · ${limits}` }, 'pass');
+    if (id !== undefined) refusedFrom = { port: { id, handle: 'refused' }, col: at };
+  } else if (pipelineDef !== undefined && mainTicket === undefined && !scheduledTask && !graph.feeds(tail, pipelineDef)) {
+    // The trigger hands on an event and the pipeline takes a ticket. A kill switch hands on whatever it was given, so the event reaches the pipeline intact.
+    const id = chain(coreNode('gates', 'action', ['kill']), { enabled: true }, { kind: 'guardrail', label: 'Kill switch · re-read before every start' });
+    if (id !== undefined) notes.push('A Kill switch sits in front of the pipeline, so there is one place to stop new runs. It lets every event through until you switch it off.');
   }
 
   // The pipeline works from a ticket: one asked for here, or one made from the task a schedule or webhook runs.

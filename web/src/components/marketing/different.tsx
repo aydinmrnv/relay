@@ -31,12 +31,12 @@ export function Different() {
     {
       icon: Sparkles,
       title: 'Describe it, get a workflow',
-      body: 'Type one sentence — “when a Sentry error is new, fix it under $3 and ping Discord” — and watch the graph build itself. It runs in your browser: no model call, no credits, nothing leaves the page.',
+      body: 'Type one sentence — “when a Sentry error is new, fix it and ping Discord” — and watch the graph build itself. It runs in your browser: no model call, no credits, nothing leaves the page.',
     },
     {
       icon: ChartColumn,
-      title: 'A spend forecast before the first run',
-      body: 'Hundreds of simulated runs of your graph give a rough typical cost, a bad-day cost, a monthly range at your ticket volume, and how often your budget gate will say no.',
+      title: 'A usage forecast before the first run',
+      body: 'Hundreds of simulated runs of your graph show roughly how much of your plans a typical run uses, what a heavy one does, a month at your ticket volume, and how many tickets end in a pull request.',
     },
     {
       icon: Share2,
@@ -56,10 +56,10 @@ export function Different() {
     { label: 'Play a finished run back step by step, from a file you can share', ours: 'yes', agents: 'partial', canvases: 'partial' },
     { label: 'Runs on the Claude and ChatGPT plans you already pay for', ours: 'yes', agents: 'partial', canvases: 'no', note: 'Hosted agents usually bill seats or credits of their own; canvases call APIs per key.' },
     { label: cloud ? 'Your code stays on your computer, on a machine of yours in Relay Cloud, or on your own CI runner' : 'Your code stays on your computer or on your own CI runner', ours: 'yes', agents: 'no', canvases: 'partial' },
-    { label: 'A rough spend forecast before the first real run', ours: 'yes', agents: 'no', canvases: 'no' },
+    { label: 'A rough usage forecast before the first real run', ours: 'yes', agents: 'no', canvases: 'no' },
     { label: 'Build a workflow from a sentence without spending AI credits', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'The canvas is what runs: a step that cannot be performed is reported as not performed, never as done', ours: 'yes', agents: 'no', canvases: 'partial', note: 'One table says which steps are real, and the engine and the studio read the same copy of it.' },
-    { label: 'Guardrails that refuse by default: budgets, allowlists, an approval that waits for a person', ours: 'yes', agents: 'partial', canvases: 'partial' },
+    { label: 'Guardrails that refuse by default: allowlists, an injection screen, an approval that waits for a person', ours: 'yes', agents: 'partial', canvases: 'partial' },
     { label: 'Unattended runs can never merge on their own', ours: 'yes', agents: 'partial', canvases: 'no' },
     { label: 'Exports to plain files you own, run by an open-source CLI or GitHub Actions: nothing hosted in the loop', ours: 'yes', agents: 'no', canvases: 'partial' },
     { label: 'Public share links that anyone can remix', ours: 'yes', agents: 'no', canvases: 'partial' },

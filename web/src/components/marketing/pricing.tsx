@@ -39,7 +39,7 @@ export function Pricing() {
                   'Up to 300 workflows, and every template',
                   'Visual builder and connector catalog',
                   'Describe a workflow in a sentence',
-                  'Spend forecasts and free simulated test runs',
+                  'Usage forecasts and free simulated test runs',
                   'Sync across browsers, share links and version history',
                   'Export config and GitHub Actions',
                 ].map((item) => (

@@ -85,7 +85,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'estimate',
         name: 'Estimate cost',
-        description: 'Prices the run before any agent turn: from what earlier runs in the repository cost. A test run draws the price from a typical range.',
+        description: 'Sizes the run before any agent turn, in dollars of usage: from what earlier runs in the repository reported. A test run draws the figure from a typical range.',
         inputs: PORTS.issueIn,
         outputs: PORTS.issueOut,
         fields: [],
@@ -96,18 +96,18 @@ export const CORE_CONNECTORS: Connector[] = [
     id: 'gates',
     name: 'Guardrails',
     category: 'core',
-    description: 'Budgets, allowlists and human approval. Every gate refuses by default.',
+    description: 'Allowlists, human approval, an injection screen and an optional budget. Every gate refuses by default.',
     auth: 'none',
     icon: { lucide: 'ShieldCheck', color: CORE_INK },
     tags: ['budget', 'allowlist', 'approval', 'kill switch', 'prompt injection'],
     popular: true,
-    uses: ['Cap what a run and a day may cost, and refuse runs nobody on the allowlist asked for.', 'Hold a customer-reported fix until an engineer approves it.'],
+    uses: ['Refuse runs nobody on the allowlist asked for, and cap what a run and a day may use if you want a ceiling.', 'Hold a customer-reported fix until an engineer approves it.'],
     triggers: [],
     actions: [
       {
         id: 'budget',
         name: 'Budget gate',
-        description: 'Refuses to start when the daily or per-run ceiling is reached. Never queues for tomorrow.',
+        description: 'Optional. Refuses to start when the daily or per-run ceiling you set is reached. Never queues for tomorrow.',
         inputs: PORTS.anyIn,
         outputs: [
           { id: 'pass', label: 'Within budget', type: 'any' },
@@ -188,7 +188,8 @@ export const CORE_CONNECTORS: Connector[] = [
         name: 'Concurrency limit',
         description: 'At most this many runs at once per repository. Extra triggers wait.',
         inputs: PORTS.anyIn,
-        outputs: PORTS.eventOut,
+        // Hands on what it was given, like every gate: it can sit straight in front of the pipeline.
+        outputs: [{ id: 'out', label: 'Its turn', type: 'any' }],
         fields: [FIELDS.number('maxConcurrentRuns', 'Max concurrent runs', 1, 1, 10, 1)],
       },
       {
@@ -196,7 +197,7 @@ export const CORE_CONNECTORS: Connector[] = [
         name: 'Kill switch',
         description: 'A flag re-read before every start. Flip it and nothing new begins.',
         inputs: PORTS.anyIn,
-        outputs: PORTS.eventOut,
+        outputs: [{ id: 'out', label: 'Enabled', type: 'any' }],
         fields: [FIELDS.bool('enabled', 'Unattended runs enabled', false)],
       },
     ],
@@ -224,7 +225,7 @@ export const CORE_CONNECTORS: Connector[] = [
           FIELDS.select('mergeMethod', 'Merge method', MERGE_METHOD_OPTIONS, 'squash'),
           FIELDS.bool('draft', 'Open as draft', true),
           FIELDS.template('prTitle', 'PR title', '{{issue.key}}: {{issue.title}}'),
-          FIELDS.template('prBody', 'PR body', 'Closes {{issue.url}}\n\n{{run.summary}}\n\nReviewed by {{run.codeReviewer}}. Tests: {{run.tests}}. Cost: {{run.cost}}.'),
+          FIELDS.template('prBody', 'PR body', 'Closes {{issue.url}}\n\n{{run.summary}}\n\nReviewed by {{run.codeReviewer}}. Tests: {{run.tests}}. Usage: {{run.cost}}.'),
           { key: 'reviewers', label: 'Request reviewers', type: 'text', placeholder: 'logins, comma separated' },
           { key: 'labels', label: 'Labels', type: 'text', placeholder: 'agent, needs-review' },
           FIELDS.bool('deleteBranchOnMerge', 'Delete branch on merge', true),
@@ -234,7 +235,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'comment-summary',
         name: 'Comment the summary on the issue',
-        description: 'Posts phases, cost, tests and the PR link back where the work was asked for.',
+        description: 'Posts phases, usage, tests and the PR link back where the work was asked for.',
         inputs: PORTS.runIn,
         outputs: PORTS.eventOut,
         fields: [FIELDS.template('body', 'Comment', '{{run.summary}}')],
@@ -329,7 +330,7 @@ export const CORE_CONNECTORS: Connector[] = [
       {
         id: 'post-run-json',
         name: 'Post the run as JSON',
-        description: 'Sends the full run document — phases, cost, tests, delivery — to a URL.',
+        description: 'Sends the full run document — phases, usage, tests, delivery — to a URL.',
         inputs: PORTS.runIn,
         outputs: PORTS.eventOut,
         fields: [FIELDS.text('url', 'URL', 'https://', true)],

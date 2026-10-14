@@ -57,7 +57,7 @@ export function RunPanel({ run, workflow, running, open, onToggle, onCancel, onC
               <span className="min-w-0 truncate text-xs text-muted-foreground">{String(run.trigger.payload['title'] ?? run.trigger.label)}</span>
             )}
             {running ? <Progress value={progress} className="hidden w-28 md:flex" aria-label="Run progress" /> : null}
-            <span className="ml-auto text-xs text-muted-foreground tabular-nums" title={run.source === 'machine' ? 'What the coding CLIs reported for this run' : 'Simulated cost: what the coding CLIs would report'}>
+            <span className="ml-auto text-xs text-muted-foreground tabular-nums" title={run.source === 'machine' ? 'What the coding CLIs reported for this run' : 'Simulated usage: what the coding CLIs would report'}>
               {formatUsd(run.costUsd)}
             </span>
             <PullRequestLink run={run} className="shrink-0 text-xs" />
