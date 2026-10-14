@@ -13,6 +13,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { cancelRun } from '@/lib/run-launcher';
+import { useActiveProject, useProjectRuns } from '@/hooks/use-projects';
 import { useStudio } from '@/lib/store';
 import type { Run } from '@/lib/workflow/schema';
 
@@ -71,13 +72,17 @@ export function DeleteRunDialog({
 
 /** Confirms before the whole history goes. Playing runs are stopped first so nothing re-appears. */
 export function ClearRunsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const runs = useStudio((state) => state.runs);
+  // What the list shows is what is cleared: with a project in view, only its runs go.
+  const project = useActiveProject();
+  const runs = useProjectRuns();
   const clearRuns = useStudio((state) => state.clearRuns);
+  const deleteRun = useStudio((state) => state.deleteRun);
   const real = runs.filter((run) => run.source === 'machine' && run.status === 'running').length;
 
   const confirm = () => {
     for (const run of runs) cancelRun(run.id);
-    clearRuns();
+    if (project === null) clearRuns();
+    else for (const run of runs) deleteRun(run.id);
     onOpenChange(false);
   };
 
@@ -89,10 +94,11 @@ export function ClearRunsDialog({ open, onOpenChange }: { open: boolean; onOpenC
             <Trash2 />
           </AlertDialogMedia>
           <AlertDialogTitle>
-            Clear all {runs.length} {runs.length === 1 ? 'run' : 'runs'}?
+            Clear all {runs.length} {runs.length === 1 ? 'run' : 'runs'}
+            {project === null ? '' : ` in ${project.repository}`}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Every run recorded here is removed, including the dashboard&rsquo;s history and spend. Workflows, connections and settings are not touched.
+            {project === null ? 'Every run recorded here is removed' : `Every run recorded here for ${project.repository} is removed`}, including the dashboard&rsquo;s history and spend. Workflows, connections and settings are not touched.
             {real > 0 ? ` ${real === 1 ? 'One run is' : `${real} runs are`} still going for real on a runner, and ${real === 1 ? 'is' : 'are'} stopped first: work so far stays on ${real === 1 ? 'its branch' : 'their branches'}.` : ''}
           </AlertDialogDescription>
         </AlertDialogHeader>

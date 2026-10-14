@@ -55,7 +55,8 @@ function Step({ n, text, command }: { n: number; text: string; command?: string 
   return (
     <li className="flex gap-2.5">
       <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold">{n}</span>
-      <div className="grid min-w-0 flex-1 gap-1">
+      {/* The column may be narrower than its longest command: the command truncates, the card does not grow. */}
+      <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-1">
         <span className="text-pretty">{text}</span>
         {command === undefined ? null : <CommandLine command={command} />}
       </div>

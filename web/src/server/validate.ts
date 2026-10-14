@@ -32,6 +32,7 @@ export const onboardingSchema = z.object({
   review: z.string().max(40).optional(),
   repository: z.string().max(200).optional(),
   firstWorkflow: z.string().max(40).optional(),
+  runner: z.string().max(40).optional(),
 });
 
 export const importSchema = z.object({

@@ -25,7 +25,8 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { useBrand } from '@/hooks/use-brand';
 import { useNow } from '@/hooks/use-now';
 import { useCreateWorkflow } from '@/hooks/use-create-workflow';
-import { useStudio, useWorkflows } from '@/lib/store';
+import { useStudio } from '@/lib/store';
+import { useActiveProject, useProjectRuns, useProjectWorkflows } from '@/hooks/use-projects';
 import { getNodeType } from '@/lib/connectors';
 import { compileWorkflow } from '@/lib/workflow/compile';
 import { validateWorkflow } from '@/lib/workflow/validate';
@@ -45,8 +46,10 @@ export default function WorkflowsPage() {
   const router = useRouter();
   const brand = useBrand();
   const now = useNow();
-  const workflows = useWorkflows();
-  const runs = useStudio((state) => state.runs);
+  // The project in view: its workflows, and the ones still waiting for a repository.
+  const project = useActiveProject();
+  const workflows = useProjectWorkflows();
+  const runs = useProjectRuns();
   const hydrated = useStudio((state) => state.hydrated);
   const toggleWorkflow = useStudio((state) => state.toggleWorkflow);
   const deleteWorkflow = useStudio((state) => state.deleteWorkflow);
@@ -140,7 +143,7 @@ export default function WorkflowsPage() {
       <PageHeader
         title="Workflows"
         term="workflow"
-        description="Each workflow is a diagram: what starts it, what checks it, what the agents do, and where the result goes. Open one to edit it on the canvas, or test-run it from here."
+        description={`${project === null ? 'Each workflow' : `The workflows of ${project.repository}. Each`} is a diagram: what starts it, what checks it, what the agents do, and where the result goes. Open one to edit it on the canvas, or test-run it from here.`}
         actions={
           <>
             <Button variant="ghost" onClick={() => fileInput.current?.click()}>

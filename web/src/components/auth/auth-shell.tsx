@@ -13,7 +13,7 @@ import { stashPairing } from '@/lib/companion/client';
 
 const POINTS = [
   { icon: GitCompareArrows, title: 'Nothing grades its own homework', body: 'Claude Code and Codex review each other’s plan and diff before a pull request exists.' },
-  { icon: KeyRound, title: 'Your plans, on your computer', body: 'No API keys to paste. Agents run on the subscriptions you already pay for, where you signed them in.' },
+  { icon: KeyRound, title: 'Your repository, your Actions, your plans', body: 'It runs on your own GitHub Actions minutes, with the Claude and ChatGPT subscriptions you already pay for.' },
   { icon: ShieldCheck, title: 'Guardrails refuse by default', body: 'Budgets, allowlists and approvals stand in front of every unattended run.' },
 ];
 
@@ -47,8 +47,8 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
           <div className="flex max-w-lg flex-col gap-8">
             <div className="flex flex-col gap-3">
               {/* A paragraph, not a heading: the page's one heading is the form's, and this panel is beside the point for a screen reader. */}
-              <p className="text-3xl font-semibold tracking-tight text-balance xl:text-4xl">Ticket in. Reviewed PR out.</p>
-              <p className="text-pretty text-muted-foreground">Draw the workflow once. Every ticket after that is planned, cross-reviewed, implemented, tested and delivered the same way.</p>
+              <p className="text-3xl font-semibold tracking-tight text-balance xl:text-4xl">Automations for your repo, on your GitHub Actions.</p>
+              <p className="text-pretty text-muted-foreground">Connect a repository and pick a workflow. Every labelled issue after that is planned, cross-reviewed, implemented, tested and opened as a pull request.</p>
             </div>
             {/* Only the position moves: the receipt is in the server's HTML, and must be readable before any script runs. */}
             <motion.div
@@ -93,11 +93,11 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
               ))}
             </ul>
             <p className="border-t pt-4 text-sm text-pretty text-muted-foreground">
-              Your account keeps your workflows, runs and settings in every browser you sign in to{cloud ? ', and is how Relay Cloud knows which machine is yours' : ''}.
+              Your account keeps your projects, workflows and settings in every browser you sign in to{cloud ? ', and is how Relay Cloud knows which machine is yours' : ''}.
             </p>
           </div>
           <p className="text-xs text-muted-foreground">
-            Free while in beta. The studio’s servers never receive your code: the agents work in your repository, on your computer or your CI
+            Free while in beta. The studio’s servers never receive your code: the agents work in your repository, on your own GitHub Actions or your computer
             {cloud ? ', or on a Relay Cloud machine of your own, which is where your code and sign-ins then are' : ''}.
           </p>
         </div>

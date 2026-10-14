@@ -52,6 +52,8 @@ export interface Workflow {
   repository?: string;
   /** When the export dialog last produced files for this workflow. */
   exportedAt?: string;
+  /** When its files were found in its repository, or its owner said they were there. Per workflow: each has files of its own. */
+  installedAt?: string;
   /** One of the starter workflows a first visit is seeded with, rather than something a person made. */
   demo?: boolean;
 }
@@ -174,8 +176,44 @@ export type ExecutionTier = 'actions' | 'hosted' | 'self-hosted';
 
 export type AuthPreference = 'subscription' | 'api-key';
 
+/**
+ * Where a project's automations run: the repository's own GitHub Actions, the
+ * person's computer through `relay connect`, or their Relay Cloud machine.
+ */
+export type ProjectRunner = 'actions' | 'machine' | 'cloud';
+
+/**
+ * A repository somebody set Relay up for, and where its automations run. A
+ * workflow belongs to the project whose repository it is attached to, so a
+ * project holds no list of its own.
+ */
+export interface Project {
+  id: string;
+  /** `owner/name`, as on GitHub. */
+  repository: string;
+  runner: ProjectRunner;
+  createdAt: string;
+  /** From GitHub, when the repository could be read: public ones only. */
+  defaultBranch?: string;
+  /** False when GitHub showed it to a signed-out request. Absent when it could not be seen at all. */
+  private?: boolean;
+  /**
+   * Nobody set this one up: it is here because a workflow is attached to its
+   * repository, as every repository was before there were projects. Where it
+   * runs is a guess until somebody says, so nothing nags about it.
+   */
+  implied?: true;
+}
+
 export interface Settings {
   executionTier: ExecutionTier;
+  /**
+   * The repositories set up here. Absent on a workspace from before there
+   * were projects: those are read off the workflows (see `projectsOf`).
+   */
+  projects?: Project[];
+  /** The project the studio is showing, by id. `null` or absent: all of them. */
+  activeProject?: string | null;
   /**
    * How each agent authenticates in exported GitHub Actions workflows.
    * `subscription` uses the vendor's supported way of carrying a personal plan

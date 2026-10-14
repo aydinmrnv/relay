@@ -260,7 +260,7 @@ export function compileWorkflow(source: Workflow, brand: Brand = BRAND, options:
     { path: compiledGraphPath(workflow), language: 'json', content: JSON.stringify(graph, null, 2) + '\n', description: 'The whole workflow, compiled for the engine. `relay workflow run` performs it as drawn; `relay workflow serve` keeps its trigger.' },
     { path: `.github/workflows/${slugify(workflow.name)}.yml`, language: 'yaml', content: yaml, description: 'Runs the pipeline on your own GitHub Actions minutes.' },
     { path: `${brand.slug}-workflow.json`, language: 'json', content: JSON.stringify({ product: brand.name, exportedAt: new Date().toISOString(), workflow }, null, 2) + '\n', description: 'The graph itself, importable back into the builder. Secret fields are left empty.' },
-    { path: 'SETUP.md', language: 'markdown', content: renderSetup({ workflow, brand, secrets, warnings, start, auth, agents: pipeline !== undefined }), description: 'What to add where.' },
+    { path: 'SETUP.md', language: 'markdown', content: renderSetup({ workflow, brand, secrets, warnings, start, auth, agents: pipeline !== undefined, deliver }), description: 'What to add where.' },
   ];
 
   return { files, graph, blockers, warnings, secrets: [...new Map(secrets.map((secret) => [secret.name, secret])).values()], start };
@@ -860,7 +860,7 @@ ${steps.join('\n\n')}
 ${stepLines.length > 0 ? '\n' + stepLines.join('\n\n') + '\n' : ''}`;
 }
 
-function renderSetup(input: { workflow: Workflow; brand: Brand; secrets: Array<{ name: string; why: string }>; warnings: string[]; start: CompiledStart; auth: { claude: AuthPreference; codex: AuthPreference }; agents: boolean }): string {
+function renderSetup(input: { workflow: Workflow; brand: Brand; secrets: Array<{ name: string; why: string }>; warnings: string[]; start: CompiledStart; auth: { claude: AuthPreference; codex: AuthPreference }; agents: boolean; deliver: string }): string {
   const { workflow, brand, secrets, warnings, auth, start } = input;
   const unique = new Map(secrets.map((secret) => [secret.name, secret]));
   const repo = workflow.repository !== undefined && workflow.repository.trim().length > 0 ? workflow.repository.trim() : 'OWNER/REPO';
@@ -868,22 +868,24 @@ function renderSetup(input: { workflow: Workflow; brand: Brand; secrets: Array<{
   const file = `${slug}.yml`;
   const claudeHow = auth.claude === 'subscription'
     ? `\`\`\`bash
-claude setup-token                                   # opens a sign-in page; prints a one-year token
-gh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${repo}     # paste the token when asked
+claude setup-token
+gh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${repo}
 \`\`\`
-The token is tied to the person who created it and usage counts against that plan (Pro, Max, Team or Enterprise).`
+The first opens a sign-in page and prints a one-year token; the second asks for it, so paste it there. The token is tied to the person who created it and usage counts against that plan (Pro, Max, Team or Enterprise).`
     : `\`\`\`bash
-gh secret set ANTHROPIC_API_KEY -R ${repo}           # paste a key from the Anthropic Console
-\`\`\``;
+gh secret set ANTHROPIC_API_KEY -R ${repo}
+\`\`\`
+It asks for the value: paste a key from the Anthropic Console.`;
   const codexHow = auth.codex === 'subscription'
     ? `\`\`\`bash
-codex login                                          # sign in with ChatGPT if you have not already
+codex login
 gh secret set CODEX_AUTH_JSON -R ${repo} < ~/.codex/auth.json
 \`\`\`
-This is OpenAI's documented method for CI. Treat the file like a password, do not use it on a public repository, and re-seed the secret if runs stop signing in.`
+Sign in with ChatGPT in the first, if you have not already. This is OpenAI's documented method for CI. Treat the file like a password, do not use it on a public repository, and re-seed the secret if runs stop signing in.`
     : `\`\`\`bash
-gh secret set OPENAI_API_KEY -R ${repo}              # paste a key from the OpenAI Platform
-\`\`\``;
+gh secret set OPENAI_API_KEY -R ${repo}
+\`\`\`
+It asks for the value: paste a key from the OpenAI Platform.`;
   const startHow =
     start.by === 'label'
       ? `Add the label \`${start.label}\` to an issue. The person who adds it must be on the allowlist in \`.relay/config.json\`.`
@@ -896,6 +898,17 @@ gh workflow run ${file} -R ${repo} -f issue=142
 \`\`\`
 
 or Actions → ${brand.name} · ${workflow.name} → Run workflow.`;
+  // GitHub leaves this off for new repositories, and the run finds out only at the end, with the work done and no pull request.
+  const pullRequests =
+    input.agents && (input.deliver === 'pr' || input.deliver === 'merge')
+      ? `Once per repository, let Actions open pull requests: Settings → Actions → General → Workflow permissions → tick "Allow GitHub Actions to create and approve pull requests". GitHub switches this off for new repositories, and without it a run does the work and then cannot open its pull request. From a terminal:
+
+\`\`\`bash
+gh api -X PUT repos/${repo}/actions/permissions/workflow -F can_approve_pull_request_reviews=true
+\`\`\`
+
+`
+      : '';
   return `# ${brand.name} · ${workflow.name}
 
 This bundle runs the workflow on your own GitHub Actions minutes. Nothing is hosted, nothing is billed by ${brand.name}.
@@ -926,7 +939,7 @@ ${[...unique.values()].map((secret) => `- \`${secret.name}\` — ${secret.why}`)
 
 ## 3. Start it
 
-${startHow}
+${pullRequests}${startHow}
 
 ## 4. Run the whole workflow yourself
 

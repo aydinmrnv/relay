@@ -11,7 +11,7 @@ export interface Brand {
 
 export const BRAND: Brand = {
   name: 'Relay',
-  tagline: 'Coding agents that plan, review, implement and ship — wired to the tools you already use.',
+  tagline: 'Automations that run on your own GitHub Actions, in your repository: label an issue, get a reviewed pull request.',
   slug: 'relay',
 };
 

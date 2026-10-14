@@ -20,10 +20,10 @@ other, and every claim is shown beside what git and your tests say.
 
 **[Watch a real run →](https://relay-olive-omega.vercel.app/r)** — Relay working
 on its own repository, played back step by step, with the pull request it
-opened. **[Open the playground →](https://relay-olive-omega.vercel.app/play)** — the
-builder in your browser, with no account and nothing to install. Or
-**[try it free](https://relay-olive-omega.vercel.app)**: make a free account
-and your workflows, share links and version history follow you to any browser.
+opened. **[Get started](https://relay-olive-omega.vercel.app)**: make a free
+account, connect a repository, and Relay builds automations that run on that
+repository's own GitHub Actions. Or **[try the demo →](https://relay-olive-omega.vercel.app/play)** —
+the builder in your browser, with no account and nothing run for real.
 Relay is in beta, and free while it is.
 
 ![The Relay studio: a Linear-to-pull-request workflow on the canvas](docs/images/studio.png)
@@ -55,10 +55,12 @@ as a commit, a branch or a draft pull request, as far as you allow.
 
 ## Quick start
 
-**Try it free:** <https://relay-olive-omega.vercel.app>. Sign in, or create a
-free account in the same form, answer four onboarding questions and get a
-first workflow built from your answers. Test runs are simulated, so it costs
-nothing to try.
+**Get started:** <https://relay-olive-omega.vercel.app>. Create a free
+account and setup takes you through it: connect a repository, choose where it
+runs (its own GitHub Actions, recommended, or your computer), pick a first
+workflow, set who may start it and what it may spend, and then the steps that
+install it in the repository. Each account can have a project per repository.
+Test runs are simulated, so it costs nothing to try.
 
 To look before you sign up, the **playground** at
 [`/play`](https://relay-olive-omega.vercel.app/play) is the same builder with

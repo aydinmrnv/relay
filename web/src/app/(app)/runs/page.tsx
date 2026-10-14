@@ -23,7 +23,8 @@ import { formatRunDuration, isLive, triggerKey, triggerTitle } from '@/component
 import { isStatusFilter, StatusTabs, type StatusFilter } from '@/components/runs/status-tabs';
 import { useRunAgain } from '@/components/runs/use-run-again';
 import { useNow } from '@/hooks/use-now';
-import { useStudio, useWorkflows } from '@/lib/store';
+import { useStudio } from '@/lib/store';
+import { useActiveProject, useProjectRuns, useProjectWorkflows } from '@/hooks/use-projects';
 import { formatUsd } from '@/lib/format';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import type { Run } from '@/lib/workflow/schema';
@@ -45,10 +46,11 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
   const router = useRouter();
   const now = useNow();
   const reduce = useCalmMotion();
-  const runs = useStudio((state) => state.runs);
+  const project = useActiveProject();
+  const runs = useProjectRuns();
   const workflowMap = useStudio((state) => state.workflows);
   const hydrated = useStudio((state) => state.hydrated);
-  const workflows = useWorkflows();
+  const workflows = useProjectWorkflows();
   const runAgain = useRunAgain();
 
   const [status, setStatus] = useState<StatusFilter>(isStatusFilter(query['status']) ? query['status'] : 'all');
@@ -140,7 +142,7 @@ export default function RunsPage({ searchParams }: PageProps<'/runs'>) {
       <PageHeader
         title="Runs"
         term="run"
-        description="Every run in your account, newest first: test runs, played back for free, and runs on your runner, performed for real on your computer or in Relay Cloud and marked with its name. Open one for its timeline, node by node."
+        description={`${project === null ? 'Every run recorded here' : `Every run recorded here for ${project.repository}`}, newest first: test runs, played back for free, and runs on a paired runner, performed for real and marked with its name. Runs on GitHub Actions are kept by GitHub, under the repository’s Actions tab. Open one for its timeline, node by node.`}
         actions={
           <>
             {runs.length > 0 ? (
