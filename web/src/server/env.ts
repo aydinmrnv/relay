@@ -138,6 +138,63 @@ const CLOUD_TOKEN_TEMPLATE: string | null = (() => {
   return /^[A-Za-z0-9_-]{1,60}$/.test(raw) ? raw : null;
 })();
 
+/**
+ * A base URL from the environment, for pointing the GitHub client at a stand-in
+ * in tests: https anywhere, plain http only to this machine. Anything else is
+ * ignored rather than trusted with a person's GitHub token.
+ */
+function baseUrl(name: string, fallback: string): string {
+  const raw = (process.env[name] ?? '').trim();
+  if (raw.length === 0) return fallback;
+  try {
+    const url = new URL(raw);
+    const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
+    if (url.protocol === 'https:' || (url.protocol === 'http:' && loopback)) return url.toString().replace(/\/+$/, '');
+  } catch {
+    // Not a URL: the real one.
+  }
+  console.error(`[github] ${name} must be an https URL, or http on this machine; using ${fallback}.`);
+  return fallback;
+}
+
+/**
+ * The GitHub App people connect their GitHub account through (see
+ * docs/deploying.md, "GitHub"). Only the OAuth half is used: a person signs in
+ * to the app and installs it on the repositories they choose, and the studio
+ * acts with their own user token, which reaches only what both they and the
+ * app can. No private key: the studio never acts as the app itself.
+ */
+export interface GitHubAppConfig {
+  clientId: string;
+  clientSecret: string;
+  /** The app's URL name, as in github.com/apps/<slug>. */
+  slug: string;
+  api: string;
+  web: string;
+}
+
+export const GITHUB_APP: GitHubAppConfig | null = (() => {
+  const clientId = (process.env.GITHUB_APP_CLIENT_ID ?? '').trim();
+  const clientSecret = (process.env.GITHUB_APP_CLIENT_SECRET ?? '').trim();
+  const slug = (process.env.GITHUB_APP_SLUG ?? '').trim();
+  if (clientId.length === 0 || clientSecret.length === 0 || slug.length === 0) return null;
+  if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(slug)) {
+    console.error('[github] GITHUB_APP_SLUG is not an app slug (the name in github.com/apps/<slug>); connecting GitHub is off.');
+    return null;
+  }
+  return { clientId, clientSecret, slug, api: baseUrl('GITHUB_API_URL', 'https://api.github.com'), web: baseUrl('GITHUB_WEB_URL', 'https://github.com') };
+})();
+
+/** Why GitHub cannot be connected, for the log and development. `null` when it can. Tokens are sealed like app credentials, so it needs those too. */
+export const GITHUB_UNAVAILABLE_REASON: string | null =
+  GITHUB_APP === null
+    ? 'No GitHub App: set GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET and GITHUB_APP_SLUG (web/scripts/create-github-app.mjs makes one).'
+    : !CREDENTIALS_ENABLED
+      ? `Connecting GitHub keeps a token, so it needs what app credentials need. ${CREDENTIALS_UNAVAILABLE_REASON ?? ''}`.trim()
+      : null;
+
+export const GITHUB_ENABLED = GITHUB_UNAVAILABLE_REASON === null;
+
 /** What the browser is told about accounts: whether they exist here, nothing secret. */
 export function authCapabilities(): AuthCapabilities {
   const cloudHub = ACCOUNTS_ENABLED ? CLOUD_HUB_URL : null;
@@ -148,5 +205,6 @@ export function authCapabilities(): AuthCapabilities {
     cloudHub,
     credentials: CREDENTIALS_ENABLED,
     cloudTokenTemplate: cloudHub === null ? null : CLOUD_TOKEN_TEMPLATE,
+    github: GITHUB_ENABLED,
   };
 }

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
-import { ArrowLeft, ArrowRight, Check, ChevronDown, Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronDown, Loader2, Lock, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -17,10 +17,12 @@ import { useCalmMotion } from '@/components/motion/use-calm-motion';
 import { InstallGuide } from '@/components/projects/install-guide';
 import { DescribeWorkflowComposer } from '@/components/workflows/describe-workflow';
 import { useBrand } from '@/hooks/use-brand';
+import { connectGitHubHref, disconnectGitHub, installGitHubHref, reachableRepository, refreshGitHub, useGitHub, type GitHubState } from '@/hooks/use-github';
 import { projectActions, useProjects } from '@/hooks/use-projects';
 import { useAccount, useCapabilities } from '@/lib/cloud/account';
 import { api, importableGuestWorkflows, importGuestWorkflows, readGuestBackup } from '@/lib/cloud/sync';
 import type { OnboardingAnswers } from '@/lib/cloud/types';
+import type { GitHubRepository } from '@/lib/github-types';
 import { listPublicRepositories, lookupRepository, type PublicRepository, type RepositoryLookup } from '@/lib/github-public';
 import { parseRepository, projectId, workflowsOf } from '@/lib/projects';
 import { clearSetupDraft, markSetupLeft, readSetupDraft, writeSetupDraft } from '@/lib/setup-draft';
@@ -36,9 +38,18 @@ import { cn } from '@/lib/utils';
 type Choice = StarterId | 'describe' | 'blank';
 
 const STEPS = ['Repository', 'Where it runs', 'Workflow', 'Rules', 'Install'] as const;
+/**
+ * Connecting GitHub, before everything else where the studio offers it: the
+ * repository is then picked from the ones it reaches, private ones too, and
+ * the install step opens the pull request itself. Numbered below the others
+ * so the steps after it keep their numbers whether or not it is there.
+ */
+const GITHUB = -1;
 /** The last step with questions on it. The one after is the result, and has no way back. */
 const LAST_QUESTION = 3;
 const INSTALL = 4;
+/** How many of the repositories GitHub reaches are listed under the search box at once. */
+const LISTED = 6;
 
 const AGENTS: Array<{ id: AgentChoice; name: string; long: string }> = [
   { id: 'both', name: 'Both', long: 'Claude Code and Codex, each reviewing the other' },
@@ -68,6 +79,8 @@ interface Draft {
   maxDaily: number | null;
   agents: AgentChoice;
   review: ReviewLevel | null;
+  /** Chose to name the repository and commit the files themselves, rather than connect GitHub. */
+  byHand: boolean;
 }
 
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
@@ -92,6 +105,7 @@ function readDraft(mode: SetupMode): Draft {
     maxDaily: amount(saved['maxDaily']),
     agents: oneOf(saved['agents'], ['both', 'claude', 'codex'] as const) ?? 'both',
     review: oneOf(saved['review'], ['light', 'standard', 'thorough'] as const),
+    byHand: saved['byHand'] === true,
   };
 }
 
@@ -141,6 +155,10 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
   const user = useAccount((state) => state.user);
   const capabilities = useCapabilities();
   const cloudOffered = capabilities.cloudHub != null;
+  const github = useGitHub();
+  // Offered once the account is known: a guest, or a studio without the app, sets a repository up by hand.
+  const offersGitHub = capabilities.github === true && status === 'signed-in';
+  const setupPath = mode === 'first' ? '/onboarding' : '/projects/new';
   const hydrated = useStudio((state) => state.hydrated);
   const projects = useProjects();
   const inAccount = useStudio((state) => state.workflows);
@@ -163,6 +181,7 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
   const [maxDaily, setMaxDaily] = useState<number | null>(draft.maxDaily);
   const [agents, setAgents] = useState<AgentChoice>(draft.agents);
   const [review, setReview] = useState<ReviewLevel | null>(draft.review);
+  const [byHand, setByHand] = useState(draft.byHand);
   const [importIds, setImportIds] = useState<Set<string> | null>(null);
   // Folded away until asked for: the other workflows, and the settings that already have sensible answers.
   const [moreChoices, setMoreChoices] = useState(() => !FIRST_CHOICES.includes(draft.choice));
@@ -176,8 +195,8 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
   useEffect(() => {
     // The install step is the result, not an answer to come back to.
     if (wanted >= INSTALL) clearSetupDraft(mode);
-    else writeSetupDraft(mode, { step: wanted, repo: repoInput, runner: runnerChoice, choice, describeText: described.text, label, authors, maxRun, maxDaily, agents, review } satisfies Draft);
-  }, [mode, wanted, repoInput, runnerChoice, choice, described.text, label, authors, maxRun, maxDaily, agents, review]);
+    else writeSetupDraft(mode, { step: Math.max(0, wanted), repo: repoInput, runner: runnerChoice, choice, describeText: described.text, label, authors, maxRun, maxDaily, agents, review, byHand } satisfies Draft);
+  }, [mode, wanted, repoInput, runnerChoice, choice, described.text, label, authors, maxRun, maxDaily, agents, review, byHand]);
 
   // Each step is an entry in the tab's history, so Back goes to the step before, not out of setup.
   useEffect(() => {
@@ -187,7 +206,7 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
         // The install step has no way back into the questions: the project exists by then.
         if (current >= INSTALL) return current;
         setDirection(target > current ? 1 : -1);
-        return Math.max(0, Math.min(LAST_QUESTION, target));
+        return Math.max(GITHUB, Math.min(LAST_QUESTION, target));
       });
     };
     window.addEventListener('popstate', onPop);
@@ -196,9 +215,14 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
 
   const parsed = useMemo(() => parseRepository(repoInput), [repoInput]);
 
+  // What the connected account reaches: private repositories too, with what GitHub says about each.
+  const reachable = reachableRepository(github, parsed);
+  const known = reachable !== undefined;
+
   // Ask GitHub about the repository once the typing pauses. A private one answers like one that is not there, and that is fine.
+  // The connected account has already said everything about one it reaches.
   useEffect(() => {
-    if (parsed === null) return;
+    if (parsed === null || known) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       void lookupRepository(parsed, controller.signal).then((result) => {
@@ -209,7 +233,7 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [parsed]);
+  }, [parsed, known]);
 
   const login = user?.github ?? null;
   useEffect(() => {
@@ -224,7 +248,11 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
   const seen = parsed !== null && lookup !== null && lookup.repository === parsed ? lookup.result : null;
   const publicRepo = seen?.state === 'public' ? seen.repository : null;
   // GitHub's own capitalisation when it could be read, else what was typed.
-  const repo = publicRepo?.repository ?? parsed ?? '';
+  const repo = reachable?.repository ?? publicRepo?.repository ?? parsed ?? '';
+  const githubReady = github.status === 'connected' && github.repositories.length > 0;
+  // Until GitHub is connected and reaches a repository, it is the step on screen, unless they chose to do it by hand.
+  const needsGitHub = offersGitHub && !byHand && !githubReady;
+  const githubLoading = offersGitHub && (github.status === 'off' || github.status === 'loading');
   const existing = parsed === null ? undefined : projects.find((project) => project.id === projectId(parsed));
   // A repository that is already a project runs where it already runs, until somebody picks otherwise here.
   const runner: ProjectRunner = runnerChoice ?? (existing !== undefined && existing.implied !== true ? existing.runner : 'actions');
@@ -242,7 +270,7 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
   const said = useMemo(() => answersIn(base), [base]);
 
   // Whoever is setting this up may start runs, when GitHub says who they are: their own login, or the repository's owner if that is a person.
-  const defaultAuthors = login ?? (publicRepo?.ownerIsUser === true ? publicRepo.owner : '');
+  const defaultAuthors = login ?? github.login ?? (publicRepo?.ownerIsUser === true ? publicRepo.owner : reachable?.ownerIsUser === true ? reachable.owner : '');
   const authorsText = authors ?? said.authors ?? defaultAuthors;
   const authorList = useMemo(() => splitLogins(authorsText), [authorsText]);
   const badLogins = authorList.filter((entry) => !LOGIN.test(entry));
@@ -261,7 +289,11 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
   const workflow = useMemo(() => (base === null ? null : fitWorkflow(base, options)), [base, options]);
   const starts = useMemo(() => (workflow === null ? null : startsOn(workflow, runner, brand)), [workflow, runner, brand]);
   // The step on screen. The browser's Forward button can ask for one whose answer is gone: no repository, or no workflow to set rules for.
-  const step = wanted >= INSTALL ? wanted : parsed === null ? 0 : wanted === LAST_QUESTION && workflow === null ? 2 : wanted;
+  const step =
+    wanted >= INSTALL ? wanted : needsGitHub || (wanted === GITHUB && offersGitHub) ? GITHUB : parsed === null ? 0 : wanted === LAST_QUESTION && workflow === null ? 2 : Math.max(0, wanted);
+  // The steps as the progress bar counts them: GitHub first where it is offered.
+  const stepNames: readonly string[] = offersGitHub ? ['GitHub', ...STEPS] : STEPS;
+  const position = step + (offersGitHub ? 1 : 0);
 
   // How each starter starts on the runner that was picked, worked out from the workflow itself rather than written on the card.
   const starterStarts = useMemo(
@@ -305,7 +337,7 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
   };
 
   const rulesValid = asks === null || ((!asks.label || options.label.length > 0) && (!asks.allowlist || badLogins.length === 0) && (!asks.budget || (options.maxRunCostUsd > 0 && options.maxDailyCostUsd >= options.maxRunCostUsd)));
-  const canContinue = step === 0 ? parsed !== null : step === 2 ? workflow !== null : step === 3 ? workflow !== null && rulesValid : true;
+  const canContinue = step === GITHUB ? githubReady : step === 0 ? parsed !== null : step === 2 ? workflow !== null : step === 3 ? workflow !== null && rulesValid : true;
 
   const recordOnboarded = async (answers: OnboardingAnswers) => {
     if (mode !== 'first' || status !== 'signed-in') return;
@@ -317,7 +349,11 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
     if (workflow === null || parsed === null) return;
     setSaving(true);
     try {
-      projectActions.add({ repository: repo, runner, ...(publicRepo === null ? {} : { defaultBranch: publicRepo.defaultBranch, private: false }) });
+      projectActions.add({
+        repository: repo,
+        runner,
+        ...(reachable !== undefined ? { defaultBranch: reachable.defaultBranch, private: reachable.private } : publicRepo === null ? {} : { defaultBranch: publicRepo.defaultBranch, private: false }),
+      });
       const now = new Date().toISOString();
       // On GitHub Actions the files say whether a label may start anything, and somebody who has just set its
       // allowlist and its budget means it to. Elsewhere it starts paused, like every other workflow made here.
@@ -375,9 +411,9 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
           <BrandMark className="size-6" />
           {brand.name}
         </span>
-        <ol className="flex items-center gap-1.5" aria-label={`Step ${step + 1} of ${STEPS.length}: ${STEPS[step]}`}>
-          {STEPS.map((name, index) => (
-            <li key={name} aria-current={index === step ? 'step' : undefined} className={cn('h-1 w-7 rounded-full transition-colors sm:w-9', index <= step ? 'bg-foreground' : 'bg-border')}>
+        <ol className="flex items-center gap-1.5" aria-label={`Step ${position + 1} of ${stepNames.length}: ${stepNames[position]}`}>
+          {stepNames.map((name, index) => (
+            <li key={name} aria-current={index === position ? 'step' : undefined} className={cn('h-1 w-7 rounded-full transition-colors sm:w-9', index <= position ? 'bg-foreground' : 'bg-border')}>
               <span className="sr-only">{name}</span>
             </li>
           ))}
@@ -403,9 +439,28 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
               transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
               className="flex flex-col gap-6"
             >
+              {step === GITHUB ? (
+                <GitHubStep
+                  github={github}
+                  loading={githubLoading}
+                  next={setupPath}
+                  heading={(title, body) => <Heading step={position} total={stepNames.length} title={title} body={body} />}
+                  brandName={brand.name}
+                  onByHand={() => {
+                    setByHand(true);
+                    go(0);
+                  }}
+                />
+              ) : null}
+
               {step === 0 ? (
                 <>
-                  <Heading step={step} title="Connect your repository" body={`${brand.name} builds automations that live in your repository and run on its GitHub Actions.`} />
+                  <Heading
+                    step={position}
+                    total={stepNames.length}
+                    title={github.status === 'connected' ? 'Choose a repository' : 'Connect your repository'}
+                    body={`${brand.name} builds automations that live in your repository and run on its GitHub Actions.`}
+                  />
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="setup-repo" className="sr-only">
                       Repository
@@ -421,20 +476,26 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' && parsed !== null) go(1);
                         }}
-                        placeholder="owner/name, or paste its GitHub link"
+                        placeholder={github.status === 'connected' ? 'Search your repositories, or type owner/name' : 'owner/name, or paste its GitHub link'}
                         autoComplete="off"
                         spellCheck={false}
                         autoFocus
-                        aria-invalid={repoInput.trim().length > 0 && parsed === null}
+                        aria-invalid={repoInput.trim().length > 0 && parsed === null && github.status !== 'connected'}
                         aria-describedby="setup-repo-state"
                         className="h-12 pl-10 font-mono md:text-base"
                       />
                     </div>
                     <div id="setup-repo-state" aria-live="polite" className="min-h-5">
-                      <RepoState input={repoInput} parsed={parsed} seen={seen} existing={existing !== undefined} />
+                      {github.status === 'connected' ? (
+                        <ReachableState input={repoInput} parsed={parsed} reachable={reachable} existing={existing !== undefined} addHref={installGitHubHref(setupPath)} brandName={brand.name} />
+                      ) : (
+                        <RepoState input={repoInput} parsed={parsed} seen={seen} existing={existing !== undefined} />
+                      )}
                     </div>
                   </div>
-                  {mine.length > 0 ? (
+                  {github.status === 'connected' ? (
+                    <ReachableList repositories={github.repositories} input={repoInput} parsed={parsed} onSelect={setRepoInput} addHref={installGitHubHref(setupPath)} truncated={github.truncated} />
+                  ) : mine.length > 0 ? (
                     <div className="flex flex-col gap-2">
                       <p className="text-sm text-muted-foreground">Or pick one of yours</p>
                       <Choices label="Your public repositories">
@@ -445,14 +506,17 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
                     </div>
                   ) : null}
                   <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Lock className="size-3 shrink-0" aria-hidden /> {brand.name} never asks for access to your code. You commit its files yourself.
+                    <Lock className="size-3 shrink-0" aria-hidden />
+                    {github.status === 'connected'
+                      ? `${brand.name} sees only the repositories you chose on GitHub, and changes them only through pull requests you merge.`
+                      : `${brand.name} never asks for access to your code. You commit its files yourself.`}
                   </p>
                 </>
               ) : null}
 
               {step === 1 ? (
                 <>
-                  <Heading step={step} title="Where should it run?" body="You can change this later." />
+                  <Heading step={position} total={stepNames.length} title="Where should it run?" body="You can change this later." />
                   <Choices label="Where it runs">
                     <Choice selected={runner === 'actions'} onSelect={() => setRunner('actions')} title="GitHub Actions" tag="Recommended" body="In your repository, on its own minutes. Nothing to install or keep running." />
                     <Choice selected={runner === 'machine'} onSelect={() => setRunner('machine')} title="Your computer" body="Through the Relay CLI, with the agents already signed in there." />
@@ -468,7 +532,7 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
 
               {step === 2 ? (
                 <>
-                  <Heading step={step} title="What should it do?" body="Pick a first workflow. You can change every step of it afterwards." />
+                  <Heading step={position} total={stepNames.length} title="What should it do?" body="Pick a first workflow. You can change every step of it afterwards." />
                   <Choices label="First workflow">
                     {STARTERS.filter((starter) => moreChoices || FIRST_CHOICES.includes(starter.id)).map((starter, index) => (
                       <Choice
@@ -507,7 +571,8 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
               {step === 3 && workflow !== null && asks !== null ? (
                 <>
                   <Heading
-                    step={step}
+                    step={position}
+                    total={stepNames.length}
                     title={asks.allowlist ? 'Who can start a run?' : 'Almost done'}
                     body={asks.allowlist ? 'Only these GitHub users can start one by labelling an issue.' : `“${workflow.name}” will be added to ${repo}.`}
                   />
@@ -615,7 +680,8 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
               {step === INSTALL && createdWorkflow !== null && createdProject !== null ? (
                 <>
                   <Heading
-                    step={step}
+                    step={position}
+                    total={stepNames.length}
                     title={createdProject.runner === 'actions' ? `Add it to ${createdProject.repository}` : createdProject.runner === 'machine' ? 'Connect your computer' : 'Set up Relay Cloud'}
                     body={
                       createdProject.runner === 'actions'
@@ -631,14 +697,17 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
 
           {step < INSTALL ? (
             <div className="mt-8 flex items-center justify-between gap-3">
-              {step === 0 ? (
+              {step === GITHUB || (step === 0 && !offersGitHub) ? (
                 <span />
               ) : (
                 <Button variant="ghost" className="-ml-2.5 text-muted-foreground" onClick={() => go(step - 1)} disabled={saving}>
                   <ArrowLeft data-icon="inline-start" /> Back
                 </Button>
               )}
-              {step < LAST_QUESTION ? (
+              {step === GITHUB && !githubReady ? (
+                // The step's own button is the way on: to GitHub.
+                <span />
+              ) : step < LAST_QUESTION ? (
                 <Button size="lg" onClick={() => go(step + 1)} disabled={!canContinue}>
                   Continue <ArrowRight data-icon="inline-end" />
                 </Button>
@@ -665,6 +734,181 @@ export function SetupWizard({ mode }: { mode: SetupMode }) {
           )}
         </div>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Connecting GitHub: signing in to the app, then installing it on the
+ * repositories it may use. One thing to do on each screen, and a way to do
+ * it all by hand for anyone who would rather not.
+ */
+function GitHubStep({
+  github,
+  loading,
+  next,
+  heading,
+  brandName,
+  onByHand,
+}: {
+  github: GitHubState;
+  loading: boolean;
+  next: string;
+  heading: (title: string, body: string) => React.ReactNode;
+  brandName: string;
+  onByHand: () => void;
+}) {
+  const [leaving, setLeaving] = useState(false);
+  const byHand = (
+    <button type="button" onClick={onByHand} className="self-start text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+      Set it up by hand instead
+    </button>
+  );
+  const switchAccount = async () => {
+    setLeaving(true);
+    try {
+      await disconnectGitHub();
+      window.location.assign(connectGitHubHref(next));
+    } catch (error) {
+      setLeaving(false);
+      toast.error('Could not disconnect GitHub', { description: error instanceof Error ? error.message : undefined });
+    }
+  };
+
+  if (loading) {
+    return (
+      <>
+        {heading('Connect GitHub', `${brandName} sets your repository up with a pull request you review and merge.`)}
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" aria-hidden /> Checking GitHub…
+        </p>
+      </>
+    );
+  }
+
+  if (github.status === 'error') {
+    return (
+      <>
+        {heading('Connect GitHub', github.error ?? 'GitHub could not be asked.')}
+        <Button size="lg" variant="outline" className="self-start" onClick={() => void refreshGitHub()}>
+          <RefreshCw data-icon="inline-start" /> Try again
+        </Button>
+        {byHand}
+      </>
+    );
+  }
+
+  if (github.status !== 'connected') {
+    return (
+      <>
+        {heading('Connect GitHub', `${brandName} sets your repository up with a pull request you review and merge.`)}
+        <Button size="lg" className="h-12 self-stretch text-base sm:self-start sm:px-6" nativeButton={false} render={<a href={connectGitHubHref(next)} />}>
+          <AppMark connector="github" size={18} className="text-current" /> Continue with GitHub
+        </Button>
+        <p className="flex items-start gap-1.5 text-xs text-pretty text-muted-foreground">
+          <Lock className="mt-0.5 size-3 shrink-0" aria-hidden /> {brandName} sees only the repositories you choose, and changes them only through pull requests.
+        </p>
+        {byHand}
+      </>
+    );
+  }
+
+  const signedInAs = (
+    <p className="text-sm text-muted-foreground">
+      Signed in to GitHub as <span className="font-medium text-foreground">@{github.login}</span>.{' '}
+      <button type="button" onClick={() => void switchAccount()} disabled={leaving} className="underline-offset-4 hover:text-foreground hover:underline disabled:opacity-50">
+        Use another account
+      </button>
+    </p>
+  );
+
+  if (github.repositories.length === 0) {
+    return (
+      <>
+        {heading('Choose your repositories', `Install ${brandName} on your GitHub account or an organization, and pick the repositories it may use.`)}
+        <Button size="lg" className="h-12 self-stretch text-base sm:self-start sm:px-6" nativeButton={false} render={<a href={installGitHubHref(next)} />}>
+          <AppMark connector="github" size={18} className="text-current" /> Choose repositories on GitHub
+        </Button>
+        {github.installations.length > 0 ? <p className="text-xs text-pretty text-muted-foreground">It is installed on {github.installations.map((entry) => entry.account).join(', ')}, with no repositories you can reach yet.</p> : null}
+        {signedInAs}
+        {byHand}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {heading('GitHub is connected', `${github.repositories.length === 1 ? 'One repository' : `${github.repositories.length}${github.truncated ? '+' : ''} repositories`} to choose from.`)}
+      {signedInAs}
+      <a href={installGitHubHref(next)} className="self-start text-sm font-medium underline underline-offset-4">
+        Choose more repositories on GitHub
+      </a>
+    </>
+  );
+}
+
+/** What the connected account says about the repository being typed, in one line. */
+function ReachableState({ input, parsed, reachable, existing, addHref, brandName }: { input: string; parsed: string | null; reachable: GitHubRepository | undefined; existing: boolean; addHref: string; brandName: string }) {
+  if (input.trim().length === 0 || parsed === null) return null;
+  const also = existing ? ' Already one of your projects: this adds a workflow to it.' : '';
+  if (reachable === undefined) {
+    return (
+      <p className="flex items-start gap-1.5 text-xs text-pretty text-muted-foreground">
+        <Lock className="mt-0.5 size-3 shrink-0" aria-hidden />
+        <span>
+          {brandName} cannot reach <span className="font-mono text-foreground">{parsed}</span> yet.{' '}
+          <a href={addHref} className="font-medium text-foreground underline underline-offset-4">
+            Add it on GitHub
+          </a>
+          , or continue and commit the files yourself.{also}
+        </span>
+      </p>
+    );
+  }
+  return (
+    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-pretty text-muted-foreground">
+      <Check className="size-3.5 shrink-0 text-success" aria-hidden />
+      <span>
+        <span className="font-mono text-foreground">{reachable.repository}</span>, {reachable.private ? 'private' : 'public'}, on <span className="font-mono">{reachable.defaultBranch}</span>.
+        {reachable.archived ? <span className="text-amber-700 dark:text-warning"> It is archived, so nothing can push to it until you unarchive it.</span> : !reachable.canPush ? <span className="text-amber-700 dark:text-warning"> You cannot push to it, so its files will be yours to hand to someone who can.</span> : null}
+        {also}
+      </span>
+    </p>
+  );
+}
+
+/** The repositories the connected account reaches, narrowed by what is typed. */
+function ReachableList({ repositories, input, parsed, onSelect, addHref, truncated }: { repositories: GitHubRepository[]; input: string; parsed: string | null; onSelect: (repository: string) => void; addHref: string; truncated: boolean }) {
+  // Once one of them is picked, the list stays whole, so picking another is one click too.
+  const picked = parsed !== null && repositories.some((entry) => projectId(entry.repository) === projectId(parsed));
+  const query = picked ? '' : input.trim().toLowerCase();
+  const matches = repositories.filter((entry) => query.length === 0 || entry.repository.toLowerCase().includes(query) || (parsed !== null && projectId(parsed) === projectId(entry.repository)));
+  return (
+    <div className="flex flex-col gap-2">
+      {matches.length > 0 ? (
+        <Choices label="Your repositories">
+          {matches.slice(0, LISTED).map((entry) => (
+            <Choice
+              key={entry.repository}
+              selected={parsed !== null && projectId(parsed) === projectId(entry.repository)}
+              onSelect={() => onSelect(entry.repository)}
+              title={
+                <span className="flex min-w-0 items-center gap-1.5 font-mono text-[13px]">
+                  <span className="truncate">{entry.repository}</span>
+                  {entry.private ? <Lock className="size-3 shrink-0 text-muted-foreground" aria-label="Private" /> : null}
+                </span>
+              }
+            />
+          ))}
+        </Choices>
+      ) : null}
+      <p className="text-xs text-pretty text-muted-foreground">
+        {matches.length > LISTED ? `${matches.length - LISTED}${truncated ? '+' : ''} more: type to narrow them down. ` : matches.length === 0 && query.length > 0 ? 'None of your repositories matches. ' : ''}
+        Missing one?{' '}
+        <a href={addHref} className="font-medium text-foreground underline underline-offset-4">
+          Choose repositories on GitHub
+        </a>
+      </p>
     </div>
   );
 }
@@ -704,11 +948,11 @@ function RepoState({ input, parsed, seen, existing }: { input: string; parsed: s
   return <p className="text-xs text-pretty text-muted-foreground">{seen.reason === 'rate-limited' ? 'GitHub is not answering lookups right now.' : 'GitHub could not be reached to check.'} You can continue.</p>;
 }
 
-function Heading({ step, title, body }: { step: number; title: string; body: string }) {
+function Heading({ step, total, title, body }: { step: number; total: number; title: string; body: string }) {
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs text-muted-foreground">
-        Step {step + 1} of {STEPS.length}
+        Step {step + 1} of {total}
       </p>
       <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">{title}</h1>
       <p className="text-pretty text-muted-foreground">{body}</p>

@@ -20,6 +20,40 @@ On Vercel, import the repository with `web` as the root directory, then:
    with its signing secret in `CLERK_WEBHOOK_SIGNING_SECRET`, so an account
    deleted in Clerk takes its studio data with it.
 
+### Connecting GitHub
+
+With a GitHub App, setup starts with **Connect GitHub**. The person signs in
+to the app and installs it on the repositories they choose. Setup then lists
+those repositories, private ones included. Its last step opens a pull request
+with the workflow's files (`.relay/config.json`, the compiled workflow, the
+GitHub Actions workflow and the `.gitignore` lines for Relay's run logs) on a
+branch of Relay's own. Without the app, setup asks for the repository by
+name, and the person commits the files themselves.
+
+```bash
+cd web
+node scripts/create-github-app.mjs --studio https://relay.example.com          # on your own account
+node scripts/create-github-app.mjs --studio https://relay.example.com --org acme
+```
+
+The script opens github.com with the app's settings filled in. Press
+**Create GitHub App** there, and the script prints `GITHUB_APP_SLUG`,
+`GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`. Add the three to the
+deployment and redeploy. `--write` also puts them in `web/.env.local` for
+development, where `http://localhost:3000` is already a callback URL.
+
+Only the app's OAuth side is used. The studio acts with the person's own user
+token, which reaches only what both they and the app can, and keeps it sealed
+with `RELAY_CREDENTIALS_KEY`. There is no private key and no webhook. The app
+asks for contents, pull requests and workflows (to commit the files and open
+the pull request) and issues (to make the start label). If you make the app
+by hand instead, use these settings:
+
+- callback URL `<studio>/api/github/callback`
+- setup URL `<studio>/api/github/installed`, with **Redirect on update** ticked
+- **Request user authorization (OAuth) during installation** left off, since
+  GitHub sends that flow back without its `state`
+
 Every variable is described in [`web/.env.example`](../web/.env.example). Without
 a database or the Clerk keys the deployment keeps the site up, but the studio
 stays closed and `/sign-in` says sign-in is not available. `GET /api/health`

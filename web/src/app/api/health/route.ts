@@ -37,5 +37,5 @@ export async function GET() {
     !IS_PRODUCTION || connections ? null : 'credentials key',
   ].filter((item): item is string => item !== null);
   const ok = IS_PRODUCTION ? missing.length === 0 : database !== 'unreachable';
-  return json({ ok, database, accounts, deletionWebhook, connections, cloud: capabilities.cloudHub != null, ...(missing.length > 0 ? { missing } : {}) }, { status: ok ? 200 : 503 });
+  return json({ ok, database, accounts, deletionWebhook, connections, cloud: capabilities.cloudHub != null, github: capabilities.github === true, ...(missing.length > 0 ? { missing } : {}) }, { status: ok ? 200 : 503 });
 }

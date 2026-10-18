@@ -8,19 +8,10 @@ import { getUserId } from './auth';
 import { getDb } from './db';
 import { deletedUser } from './db/schema';
 import { ACCOUNTS_ENABLED } from './env';
+import { ApiError } from './errors';
 import { LIMITS, rateLimit, type Limit } from './rate-limit';
 
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-    /** Extra fields for the client, e.g. the server's copy on a conflict. */
-    readonly data?: Record<string, unknown>,
-  ) {
-    super(message);
-  }
-}
+export { ApiError };
 
 export function json(data: unknown, init: ResponseInit = {}): Response {
   return Response.json(data, { ...init, headers: { 'cache-control': 'no-store', ...init.headers } });

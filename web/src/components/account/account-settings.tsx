@@ -30,6 +30,8 @@ import { timeAgo } from '@/lib/format';
 import { SUPPORT_EMAIL } from '@/lib/links';
 import { useStudio } from '@/lib/store';
 import { UserAvatar } from './user-avatar';
+import { AppMark } from '@/components/marketing/primitives';
+import { connectGitHubHref, disconnectGitHub, installGitHubHref, useGitHub } from '@/hooks/use-github';
 
 /**
  * Settings → Account. Profile, email addresses, password, connected
@@ -45,6 +47,7 @@ export function AccountSettings() {
     <Card className="gap-0 p-0">
       <ProfileSummary />
       <Separator />
+      <GitHubConnection />
       <ImportFromBrowser />
       <DeleteAccount />
     </Card>
@@ -76,6 +79,60 @@ function ProfileSummary() {
         <p className="text-xs text-muted-foreground">Name, email, password, sign-in methods, two-factor and devices.</p>
       </div>
     </div>
+  );
+}
+
+/** The GitHub account setup lists repositories from and opens its pull requests as. Nothing where the studio does not offer it. */
+function GitHubConnection() {
+  const github = useGitHub();
+  const [leaving, setLeaving] = useState(false);
+  if (github.status === 'off') return null;
+  const disconnect = async () => {
+    setLeaving(true);
+    try {
+      await disconnectGitHub();
+      toast.success('GitHub is disconnected', { description: 'Relay is still installed on GitHub until you uninstall it there.' });
+    } catch (error) {
+      toast.error('Could not disconnect GitHub', { description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setLeaving(false);
+    }
+  };
+  return (
+    <>
+      <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+        <AppMark connector="github" size={20} className="shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">GitHub</p>
+          <p className="text-sm text-pretty text-muted-foreground">
+            {github.status === 'loading'
+              ? 'Checking…'
+              : github.status === 'connected'
+                ? `Connected as @${github.login}, with ${github.repositories.length === 1 ? 'one repository' : `${github.repositories.length}${github.truncated ? '+' : ''} repositories`}. Setup opens its pull requests as you.`
+                : github.status === 'error'
+                  ? (github.error ?? 'GitHub could not be asked.')
+                  : 'Connect it, and setup lists your repositories, private ones too, and opens its pull request for you.'}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {github.status === 'connected' ? (
+            <>
+              <Button variant="outline" nativeButton={false} render={<a href={installGitHubHref('/settings')} />}>
+                Choose repositories
+              </Button>
+              <Button variant="ghost" className="text-muted-foreground" onClick={() => void disconnect()} disabled={leaving}>
+                {leaving ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null} Disconnect
+              </Button>
+            </>
+          ) : github.status === 'disconnected' ? (
+            <Button nativeButton={false} render={<a href={connectGitHubHref('/settings')} />}>
+              Connect GitHub
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <Separator />
+    </>
   );
 }
 

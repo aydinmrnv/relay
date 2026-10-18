@@ -75,6 +75,16 @@ Launch readiness. Relay is in beta, and free while it is.
   starts with example workflows or runs in it.
 - SETUP.md in an export now says to let Actions open pull requests, which
   GitHub leaves off for new repositories.
+- Setup can start by connecting GitHub. You sign in to Relay's GitHub App and
+  install it on the repositories you choose. The repository step then lists
+  them, private ones included. The install step opens a pull request with the
+  workflow's files and the `.gitignore` lines for Relay's run logs, on a
+  branch of Relay's own, and makes the label that starts a run. Opening it
+  again brings the same pull request up to date. *Check GitHub* marks the
+  workflow installed once it is merged. Setting up by hand is still one click
+  away. Settings → Account shows the connection and disconnects it. A studio
+  offers this once it has a GitHub App (`web/scripts/create-github-app.mjs`;
+  see docs/deploying.md).
 
 ### The studio
 
