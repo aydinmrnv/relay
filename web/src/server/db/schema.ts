@@ -118,6 +118,20 @@ export const connection = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.connectorId] })],
 );
 
+/**
+ * The GitHub account a person connected (see `server/github/`). `token` is
+ * their user token and its refresh token, sealed with the server's key; it
+ * reaches only the repositories they installed the GitHub App on.
+ */
+export const githubAccount = pgTable('github_account', {
+  userId: text('user_id').primaryKey(),
+  githubId: bigint('github_id', { mode: 'number' }).notNull(),
+  login: text('login').notNull(),
+  token: text('token').notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 /** One counter per limited thing per window: `write:user_…`, `remix:203.0.113.7`. See `server/rate-limit.ts`. */
 export const rateLimit = pgTable(
   'relay_rate_limit',
@@ -139,4 +153,4 @@ export const deletedUser = pgTable('relay_deleted_user', {
   deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const schema = { workspace, workflow, run, workflowVersion, share, connection, rateLimit, deletedUser };
+export const schema = { workspace, workflow, run, workflowVersion, share, connection, githubAccount, rateLimit, deletedUser };

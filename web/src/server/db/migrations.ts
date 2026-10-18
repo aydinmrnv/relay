@@ -150,4 +150,18 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // A connected GitHub account: who it is, and its user token sealed like an app credential.
+    id: '0005_github_accounts',
+    sql: `
+      CREATE TABLE IF NOT EXISTS github_account (
+        user_id text PRIMARY KEY,
+        github_id bigint NOT NULL,
+        login text NOT NULL,
+        token text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+    `,
+  },
 ];

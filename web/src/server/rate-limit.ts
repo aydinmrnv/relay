@@ -38,6 +38,8 @@ export const LIMITS = {
   /** Each one saves up to hundreds of rows. */
   import: { name: 'import', max: 6, windowSeconds: 600 },
   account: { name: 'account', max: 5, windowSeconds: 3600 },
+  /** Each one asks GitHub several things with the person's token, which has an hourly limit of its own. */
+  github: { name: 'github', max: 60, windowSeconds: 600 },
   /** Open to anyone, so by address: counters, and images that cost a render. */
   remix: { name: 'remix', max: 20, windowSeconds: 60 },
   view: { name: 'view', max: 60, windowSeconds: 60 },

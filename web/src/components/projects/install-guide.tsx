@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { ArrowUpRight, Check, CircleAlert, Download, FolderInput, Loader2, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, Check, CircleAlert, Download, FolderInput, GitPullRequest, Loader2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,8 @@ import { CloudCard } from '@/components/companion/cloud-card';
 import { ConnectSteps } from '@/components/companion/machine-card';
 import { CommandBlock } from '@/components/settings/running-settings';
 import { useBrand } from '@/hooks/use-brand';
+import { connectGitHubHref, hereHref, installGitHubHref, openSetupPullRequest, reachableRepository, readPullRequest, readSavedPullRequest, savePullRequest, useGitHub, type SavedPullRequest } from '@/hooks/use-github';
+import { AppMark } from '@/components/marketing/primitives';
 import { AGENT_CREDENTIALS, agentOfSecret, type AgentKey } from '@/lib/agent-credentials';
 import { slugify } from '@/lib/brand';
 import { useCapabilities } from '@/lib/cloud/account';
@@ -38,6 +40,10 @@ import { cn } from '@/lib/utils';
  * file is written for it. The files and secret names come from the compiler,
  * so this guide and the export dialog cannot disagree; every command is
  * quoted for a shell, since a workflow's name and label are anybody's text.
+ *
+ * With GitHub connected and the repository among those it reaches, the files
+ * are not theirs to commit: the first step opens a pull request with them,
+ * and the last asks GitHub whether it was merged.
  */
 export function InstallGuide({ workflow, project }: { workflow: Workflow; project: Project }) {
   if (project.runner === 'machine') return <MachineInstall workflow={workflow} project={project} />;
@@ -158,6 +164,65 @@ function ActionsInstall({ workflow, project }: { workflow: Workflow; project: Pr
   const setAuth = (agent: AgentKey, choice: AuthPreference) => updateSettings({ auth: { ...auth, [agent]: choice } });
   const missing = found === null ? [] : Object.entries(found).filter(([, state]) => state !== 'present');
 
+  // GitHub, when it is connected and reaches this repository: the files go in as a pull request instead.
+  const github = useGitHub();
+  const reachable = reachableRepository(github, repo);
+  const opensItself = reachable !== undefined && reachable.canPush && !reachable.archived;
+  // Read once from this browser; the guide only appears once the studio has loaded, so the server never renders it.
+  const [savedPull, setPull] = useState<SavedPullRequest | null>(() => readSavedPullRequest(workflow.id));
+  const pull = savedPull !== null && sameRepository(savedPull.repository, repo) ? savedPull : null;
+  const [opening, setOpening] = useState(false);
+  const [asking, setAsking] = useState(false);
+  // The pull request was opened for one way of signing the agents in; changing it since means the workflow file in it is wrong.
+  const pullStale = pull !== null && pull.signIn !== signIn;
+
+  const openPull = async () => {
+    setOpening(true);
+    try {
+      const result = await openSetupPullRequest({ repository: repo, name: workflow.name, files: files.map((file) => ({ path: file.path, content: file.content })), ...(label ? { label } : {}), secrets: secrets.map((secret) => secret.name) });
+      markExported(workflow.id);
+      setHandedOver(signIn);
+      if (result.state === 'up-to-date') {
+        markInstalled(workflow.id, true);
+        toast.success(`${repo} already has these files`, { description: `Everything is on ${result.defaultBranch}, so there was nothing to open.` });
+        return;
+      }
+      const saved: SavedPullRequest = { repository: repo, number: result.number, url: result.url, signIn };
+      setPull(saved);
+      savePullRequest(workflow.id, saved);
+      const changed = result.files.filter((file) => file.status !== 'unchanged').length;
+      toast.success(result.state === 'opened' ? `Opened pull request #${result.number}` : `Updated pull request #${result.number}`, {
+        description: `${changed} ${changed === 1 ? 'file' : 'files'} on ${result.branch}.${result.label === 'created' ? ` Made the label ${label}.` : ''} Review and merge it on GitHub.`,
+      });
+    } catch (error) {
+      toast.error('Could not open the pull request', { description: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const askMerged = async () => {
+    if (pull === null) return;
+    setAsking(true);
+    try {
+      const state = await readPullRequest(pull.repository, pull.number);
+      if (state.state === 'merged') {
+        markInstalled(workflow.id, true);
+        toast.success(`“${workflow.name}” is in ${repo}`, { description: `Pull request #${pull.number} is merged.` });
+      } else if (state.state === 'closed') {
+        setPull(null);
+        savePullRequest(workflow.id, null);
+        toast.error(`Pull request #${pull.number} was closed without merging`, { description: 'Open it again when you are ready.' });
+      } else {
+        toast(`Pull request #${pull.number} is still open`, { description: 'Merge it on GitHub, then check again.' });
+      }
+    } catch (error) {
+      toast.error('Could not ask GitHub', { description: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setAsking(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       {blocked ? (
@@ -196,9 +261,51 @@ function ActionsInstall({ workflow, project }: { workflow: Workflow; project: Pr
       ) : null}
 
       <div className="overflow-hidden rounded-xl border bg-card">
-        {/* Closed to begin with: first a list of what there is to do, then each step when somebody gets to it. */}
-        <Accordion>
-          <Step value="secrets" n={1} title={secrets.length === 1 ? 'Add one secret' : `Add ${secrets.length} secrets`}>
+        {/* Closed to begin with: first a list of what there is to do, then each step when somebody gets to it. The pull request, when Relay opens it, is the one thing to do first. */}
+        <Accordion defaultValue={opensItself && !installed ? ['setup-pr'] : []}>
+          {opensItself ? (
+            <Step value="setup-pr" n={1} title={pull === null ? 'Open a pull request' : `Merge pull request #${pull.number}`} done={installed}>
+              {pull === null ? (
+                <p className="text-pretty text-muted-foreground">
+                  {brand.name} commits {files.length === 1 ? 'its file' : `its ${files.length} files`} and the <span className="font-mono text-foreground">.gitignore</span> lines for its run logs to a branch of its own, and opens a pull
+                  request into <span className="font-mono text-foreground">{reachable.defaultBranch}</span>. Nothing changes there until you merge it.
+                </p>
+              ) : (
+                <p className="text-pretty text-muted-foreground">
+                  #{pull.number} has {brand.name}’s {files.length === 1 ? 'file' : `${files.length} files`} and the <span className="font-mono text-foreground">.gitignore</span> lines for its run logs, on a branch of its own. Nothing changes
+                  on <span className="font-mono text-foreground">{reachable.defaultBranch}</span> until you merge it.
+                </p>
+              )}
+              <ul className="flex flex-col gap-0.5 font-mono text-xs text-muted-foreground">
+                {files.map((file) => (
+                  <li key={file.path}>{file.path}</li>
+                ))}
+              </ul>
+              {pullStale ? (
+                <p className="flex gap-1.5 text-xs text-pretty text-amber-700 dark:text-warning">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  You changed how an agent signs in after opening it. Update the pull request, so its workflow file matches.
+                </p>
+              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                {pull === null || pullStale ? (
+                  <Button size="sm" onClick={() => void openPull()} disabled={blocked || opening || !workflow.enabled}>
+                    {opening ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <GitPullRequest data-icon="inline-start" />} {pull === null ? 'Open pull request' : 'Update the pull request'}
+                  </Button>
+                ) : null}
+                {pull !== null ? (
+                  // The panel underlines its links and recolours them on hover; this one is a button.
+                  <Button size="sm" variant={pullStale ? 'outline' : 'default'} className={cn('no-underline!', pullStale ? 'hover:text-foreground!' : 'hover:text-primary-foreground!')} nativeButton={false} render={<a href={pull.url} target="_blank" rel="noreferrer" />}>
+                    Review #{pull.number} on GitHub <ArrowUpRight data-icon="inline-end" />
+                  </Button>
+                ) : null}
+                <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={download} disabled={blocked}>
+                  <Download data-icon="inline-start" /> Download instead
+                </Button>
+              </div>
+            </Step>
+          ) : null}
+          <Step value="secrets" n={opensItself ? 2 : 1} title={secrets.length === 1 ? 'Add one secret' : `Add ${secrets.length} secrets`}>
             <p className="text-muted-foreground">How your agents sign in on GitHub’s runners. Set from your own terminal; {brand.name} never sees them.</p>
             {secrets.map((secret) => {
               const agent = agentOfSecret(secret.name);
@@ -221,7 +328,9 @@ function ActionsInstall({ workflow, project }: { workflow: Workflow; project: Pr
             </p>
           </Step>
 
+          {opensItself ? null : (
           <Step value="files" n={2} title={`Commit ${files.length} files`} done={installed}>
+            <GitHubOffer github={github} repository={repo} brandName={brand.name} />
             <p className="text-muted-foreground">
               Download them, unzip at the root of your checkout, and push to <span className="font-mono text-foreground">{branch}</span>.
             </p>
@@ -252,6 +361,7 @@ function ActionsInstall({ workflow, project }: { workflow: Workflow; project: Pr
               ].join('\n')}
             />
           </Step>
+          )}
 
           {opensPullRequests ? (
             <Step value="pulls" n={3} title="Let Actions open pull requests">
@@ -301,6 +411,15 @@ function ActionsInstall({ workflow, project }: { workflow: Workflow; project: Pr
           </>
         ) : (
           <>
+            {opensItself && pull !== null ? (
+              <>
+                <p className="text-pretty text-muted-foreground">Merged pull request #{pull.number}?</p>
+                <Button size="sm" variant="outline" onClick={() => void askMerged()} disabled={asking}>
+                  {asking ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null} Check GitHub
+                </Button>
+              </>
+            ) : (
+            <>
             <p className="text-pretty text-muted-foreground">
               {missing.length === 0
                 ? 'Pushed the files?'
@@ -316,6 +435,8 @@ function ActionsInstall({ workflow, project }: { workflow: Workflow; project: Pr
               <Button size="sm" variant="outline" onClick={() => markInstalled(workflow.id, true)}>
                 <Check data-icon="inline-start" /> Mark as installed
               </Button>
+            )}
+            </>
             )}
           </>
         )}
@@ -364,6 +485,41 @@ function CloudInstall({ workflow }: { workflow: Workflow }) {
       <p className="px-1 text-sm text-pretty text-muted-foreground">Then open “{workflow.name}” and press Run. The machine wakes, checks the repository out and opens the pull request as you.</p>
     </div>
   );
+}
+
+/** Where the studio could open the pull request itself but cannot yet: what would let it. Nothing where GitHub is not offered. */
+function GitHubOffer({ github, repository, brandName }: { github: ReturnType<typeof useGitHub>; repository: string; brandName: string }) {
+  if (github.status === 'disconnected') {
+    return (
+      <p className="flex items-start gap-2 text-pretty text-muted-foreground">
+        <AppMark connector="github" size={14} className="mt-0.5 shrink-0" />
+        <span>
+          <a href={connectGitHubHref(hereHref())} className="font-medium text-foreground underline underline-offset-4">
+            Connect GitHub
+          </a>{' '}
+          and {brandName} opens these as a pull request for you.
+        </span>
+      </p>
+    );
+  }
+  if (github.status !== 'connected') return null;
+  const found = reachableRepository(github, repository);
+  if (found === undefined) {
+    return (
+      <p className="flex items-start gap-2 text-pretty text-muted-foreground">
+        <AppMark connector="github" size={14} className="mt-0.5 shrink-0" />
+        <span>
+          <a href={installGitHubHref(hereHref())} className="font-medium text-foreground underline underline-offset-4">
+            Add {repository} to {brandName} on GitHub
+          </a>{' '}
+          and it opens these as a pull request for you.
+        </span>
+      </p>
+    );
+  }
+  if (found.archived) return <p className="text-pretty text-amber-700 dark:text-warning">{repository} is archived on GitHub. Unarchive it before anything can be pushed to it.</p>;
+  if (!found.canPush) return <p className="text-pretty text-muted-foreground">You cannot push to {repository}, so {brandName} cannot open a pull request there as you. Hand these files to someone who can.</p>;
+  return null;
 }
 
 /** One thing to do: a numbered line that opens onto how to do it. */

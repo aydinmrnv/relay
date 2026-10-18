@@ -11,7 +11,7 @@ import { redactForSharing } from '@/lib/workflow/redact';
 import { ApiError } from './api';
 import { listConnections, mergeConnections } from './connections';
 import { getDb } from './db';
-import { connection, deletedUser, run, share, workflow, workflowVersion, workspace } from './db/schema';
+import { connection, deletedUser, githubAccount, run, share, workflow, workflowVersion, workspace } from './db/schema';
 import type { OnboardingAnswers } from './validate';
 
 export const MAX_WORKFLOWS = 300;
@@ -135,6 +135,7 @@ export async function deleteUserData(userId: string): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.insert(deletedUser).values({ userId }).onConflictDoNothing();
     await tx.delete(connection).where(eq(connection.userId, userId));
+    await tx.delete(githubAccount).where(eq(githubAccount.userId, userId));
     await tx.delete(share).where(eq(share.userId, userId));
     await tx.delete(workflowVersion).where(eq(workflowVersion.userId, userId));
     await tx.delete(run).where(eq(run.userId, userId));

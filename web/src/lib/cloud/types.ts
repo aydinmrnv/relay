@@ -19,9 +19,11 @@ export interface AuthCapabilities {
   credentials?: boolean;
   /** The Clerk JWT template the hub's token comes from, when the deployment has made one for it. */
   cloudTokenTemplate?: string | null;
+  /** Whether a person can connect their GitHub account, so setup lists their repositories and opens its pull request itself. */
+  github?: boolean;
 }
 
-export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, guests: false, reason: null, cloudHub: null, credentials: false };
+export const NO_ACCOUNTS: AuthCapabilities = { enabled: false, guests: false, reason: null, cloudHub: null, credentials: false, github: false };
 
 export interface AccountUser {
   id: string;
